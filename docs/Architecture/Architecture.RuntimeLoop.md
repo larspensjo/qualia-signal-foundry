@@ -1,0 +1,493 @@
+# Architecture: Runtime Loop
+
+Status: Draft  
+Maturity: Sketch  
+Area: Core Architecture
+
+## Purpose
+
+This document describes a candidate runtime loop for Qualia Signal Foundry.
+
+The runtime loop is the live part of the system: the part that receives input, updates state, selects relevant context, invokes model functions, produces output, and records what happened.
+
+This document is not a final implementation specification. It captures a working architectural shape that can guide early prototypes and experiments.
+
+## Summary
+
+The runtime loop should make the simulation feel continuous, responsive, and inspectable.
+
+A simplified shape is:
+
+```text
+External Input
+  -> Input Event
+  -> State Update
+  -> Attention / Focus Update
+  -> Memory Retrieval
+  -> Context Assembly
+  -> Model Invocation
+  -> Output Planning
+  -> Output Event
+  -> Logging
+  -> Memory Capture
+```
+
+The loop should keep live context small, expose internal state for research, and avoid mixing unrelated responsibilities into one opaque model call.
+
+## Design Intent
+
+The runtime loop should support:
+
+- real-time interaction
+- audio-driven presence
+- memory-informed responses
+- low inference cost
+- clear state transitions
+- inspectable behavior
+- replayable experiments
+- gradual introduction of more advanced cognitive components
+
+The loop should not be optimized only for task completion. Its main purpose is to support experiments in simulated presence, continuity, and consciousness-like behavior.
+
+## Candidate Flow
+
+### 1. Receive External Input
+
+Inputs may come from several sources:
+
+- text input
+- microphone audio
+- transcribed speech
+- timing events
+- local file inspection
+- web/search results
+- sensor-like inputs
+- future video input
+- internal scheduled events
+
+External inputs should be normalized into input events before they affect the simulation state.
+
+### 2. Create Input Event
+
+An input event is a structured representation of something that happened.
+
+Examples:
+
+```text
+UserSpoke
+UserTyped
+ToolResultReceived
+TimerElapsed
+SessionStarted
+SessionEnded
+AudioInterruptionDetected
+```
+
+Input events should preserve enough detail to support debugging, replay, and later memory extraction.
+
+### 3. Update Live State
+
+The system should update its live state before deciding how to respond.
+
+Live state may include:
+
+- current session information
+- recent conversation turns
+- current user activity
+- active topic
+- attention focus
+- pending tool requests
+- current response state
+- latency measurements
+- active audio state
+- temporary working memory
+
+This state should be explicit and inspectable where practical.
+
+### 4. Update Attention and Focus
+
+The system may need a lightweight attention mechanism that decides what currently matters.
+
+Possible focus signals:
+
+- the latest user utterance
+- repeated themes
+- unresolved questions
+- emotional or urgency signals
+- recent memory activations
+- current experiment mode
+- current audio state
+- tool results waiting for interpretation
+
+This does not need to be complicated in early prototypes. A simple focus object may be enough.
+
+### 5. Retrieve Relevant Memory
+
+The runtime loop should retrieve only a small number of relevant memories.
+
+Possible memory sources:
+
+- recent session history
+- short-term working memory
+- episodic memory
+- semantic summaries
+- associative memory nodes
+- prior decisions
+- unresolved research questions
+- user preferences or project facts
+
+Retrieval should be budgeted. The system should avoid loading large memory collections directly into the live model context.
+
+### 6. Assemble Model Context
+
+The context assembly step selects what the model sees.
+
+Possible context components:
+
+- current input
+- current focus
+- recent turns
+- selected memories
+- active project constraints
+- relevant tool results
+- current system state summary
+- response policy or mode
+- experiment instrumentation instructions
+
+This step is central to cost control and should be observable.
+
+A useful early rule:
+
+```text
+The live model should receive the smallest context that can plausibly support a coherent response.
+```
+
+### 7. Invoke Model Function
+
+The runtime loop may call one or more model functions.
+
+Possible roles:
+
+- live interaction model
+- speech-aware response model
+- memory extraction model
+- tool selection model
+- reflection model
+- critic/reviewer model
+- summarization model
+
+Early prototypes should keep this simple. More roles can be introduced when experiments justify the complexity.
+
+### 8. Plan Output
+
+Before producing external output, the system may create an output plan.
+
+The output plan may include:
+
+- text to speak
+- text to display
+- whether to pause
+- whether to ask a question
+- whether to call a read-only tool
+- whether to defer a thought
+- whether to store a memory candidate
+- whether to mark an issue for the sleep phase
+
+For real-time audio, the output plan may also include interruption and timing behavior.
+
+### 9. Emit Output Event
+
+Outputs should also be represented as structured events.
+
+Examples:
+
+```text
+AssistantSpoke
+AssistantDisplayedText
+ToolCallRequested
+ToolResultDisplayed
+MemoryCandidateCreated
+SleepTaskQueued
+```
+
+Even when the output is just text or speech, recording it as an event makes the system easier to replay and analyze.
+
+### 10. Log and Observe
+
+Each loop iteration should produce useful logs.
+
+Important things to log:
+
+- input event
+- state transition
+- retrieved memory candidates
+- selected context
+- model role invoked
+- model latency
+- token usage
+- tool use
+- output event
+- memory candidates
+- errors and fallback behavior
+
+For this project, observability is not only a debugging feature. It is part of the research method.
+
+### 11. Capture Memory Candidates
+
+The live loop should not necessarily write permanent memory directly.
+
+Instead, it may emit memory candidates such as:
+
+- notable user statement
+- repeated topic
+- unresolved question
+- possible preference
+- project decision candidate
+- surprising interaction
+- failure case
+- new association candidate
+
+A later memory process or sleep phase can decide how these candidates should be stored, merged, reinforced, or discarded.
+
+## Runtime Loop and Sleep Phase
+
+The runtime loop and sleep phase should be separate.
+
+The runtime loop should handle live interaction.
+
+The sleep phase should handle slower consolidation work, such as:
+
+- summarizing sessions
+- strengthening associations
+- decaying weak memories
+- merging duplicate memories
+- extracting research questions
+- updating diary notes
+- preparing future context
+
+This separation helps keep live interaction responsive and keeps expensive reflection outside the critical path.
+
+## Runtime Loop and Tools
+
+Tools should initially be treated as controlled perception extensions.
+
+In the runtime loop, a tool call should be represented as an event, not as hidden model behavior.
+
+A possible tool flow:
+
+```text
+Model requests observation
+  -> Tool permission check
+  -> Tool invocation
+  -> Tool result event
+  -> State update
+  -> Context assembly
+  -> Model interprets result
+```
+
+Early tools should preferably be read-only.
+
+Examples:
+
+- calculator
+- file reader
+- search
+- local metadata inspection
+- audio input
+- possibly video input
+
+Write-capable tools should be delayed or heavily constrained.
+
+## Runtime Loop and Real-Time Audio
+
+Audio makes the runtime loop more demanding because input and output may overlap.
+
+The loop should eventually account for:
+
+- partial speech input
+- voice activity detection
+- interruption
+- turn-taking
+- streaming transcription
+- response streaming
+- text-to-speech playback
+- cancellation
+- latency measurement
+
+Early prototypes may use a simpler turn-based audio loop before attempting fully overlapping real-time behavior.
+
+## Candidate State Categories
+
+The runtime state may be organized into categories such as:
+
+```text
+SessionState
+  Current session identity, start time, active mode, experiment metadata.
+
+InteractionState
+  Recent turns, active response, interruption state, current user input.
+
+AttentionState
+  Current focus, topic, salience signals, unresolved tensions.
+
+MemoryState
+  Retrieved memories, memory candidates, active associations.
+
+ToolState
+  Available tools, pending tool calls, recent tool results.
+
+AudioState
+  Microphone status, speech detection, transcription status, playback status.
+
+ObservationState
+  Logs, metrics, trace identifiers, model/tool latency.
+```
+
+These are candidate categories, not final module names.
+
+## Guiding Principles
+
+### Explicit State Over Hidden State
+
+The system should avoid hiding important state inside prompt text or model output alone.
+
+State should be represented explicitly where practical.
+
+### Event-Driven Interaction
+
+The runtime loop should be event-oriented.
+
+Events make it easier to replay sessions, debug behavior, and run controlled experiments.
+
+### Small Live Context
+
+The live model should not receive all available memory.
+
+It should receive a carefully selected working context.
+
+### Observable Decisions
+
+Memory retrieval, tool use, and context assembly should be inspectable.
+
+Researchers should be able to understand why the system saw a particular piece of information.
+
+### Safe Tool Use
+
+The early runtime loop should favor read-only observation over external action.
+
+### Progressive Complexity
+
+The runtime loop should begin simple and become more sophisticated only when experiments show a need.
+
+## Open Questions
+
+### RQ-Runtime-LoopGranularity
+
+How large should one runtime loop iteration be?
+
+Possible options:
+
+- one user turn
+- one audio segment
+- one partial speech update
+- one model response chunk
+- one event of any kind
+
+### RQ-Runtime-RealtimeOverlap
+
+How should the runtime loop handle overlapping input and output?
+
+For example, the user may interrupt while the system is speaking.
+
+### RQ-Runtime-ModelRoles
+
+Which decisions should be made by the live interaction model, and which should be delegated to specialized model roles?
+
+### RQ-Runtime-StatePersistence
+
+Which parts of live state should be persisted across sessions, and which should remain temporary?
+
+### RQ-Runtime-Replayability
+
+What information must be logged to replay an interaction accurately enough for research?
+
+### RQ-Runtime-ContextAssembly
+
+How should the system decide which memories, tool results, and state summaries enter the live model context?
+
+### RQ-Runtime-LatencyBudget
+
+What latency is acceptable for the system to feel present during text interaction, voice interaction, and interrupted speech?
+
+## Risks and Failure Modes
+
+### Opaque Behavior
+
+If too much logic is hidden inside prompts or model calls, researchers may not understand why the system behaved a certain way.
+
+### Context Bloat
+
+If every input pulls in too much memory, the system may become expensive, slow, and less focused.
+
+### Premature Complexity
+
+A multi-role cognitive architecture may become difficult to debug before the basic loop is understood.
+
+### Latency
+
+Real-time audio may fail to feel present if the loop is too slow.
+
+### Memory Pollution
+
+If the live loop stores too many low-quality memories directly, long-term memory may become noisy.
+
+### Tool Overreach
+
+If tools are introduced as action mechanisms too early, the project may drift toward agent automation instead of consciousness simulation.
+
+## Possible Early Prototype
+
+A minimal runtime loop could be:
+
+```text
+User text input
+  -> InputEvent
+  -> Update session state
+  -> Retrieve recent session summary and a few memory candidates
+  -> Assemble compact context
+  -> Invoke live model
+  -> Emit text response
+  -> Log trace
+  -> Create memory candidates
+```
+
+A later audio prototype could extend this:
+
+```text
+Microphone audio
+  -> Speech detection
+  -> Transcription
+  -> InputEvent
+  -> Runtime loop
+  -> Text response
+  -> Speech synthesis
+  -> Audio playback
+  -> Latency and interruption logging
+```
+
+## Related Documents
+
+- `docs/30-Architecture/Architecture.Overview.md`
+- `docs/30-Architecture/Architecture.AudioLoop.md`
+- `docs/10-Concepts/Concept.RealtimePresence.md`
+- `docs/10-Concepts/Concept.AssociativeMemory.md`
+- `docs/10-Concepts/Concept.ContextBudget.md`
+- `docs/10-Concepts/Concept.ToolsAsPerception.md`
+- `docs/10-Concepts/Concept.SleepPhase.md`
+- `docs/20-Research-Questions/ResearchQuestions.Audio.md`
+
+## Current Status
+
+This document is a sketch.
+
+The proposed runtime loop should be used to guide early prototypes and experiments, not as a fixed architecture. The design should be revised as the project learns more about real-time interaction, memory retrieval, model roles, and observability.
