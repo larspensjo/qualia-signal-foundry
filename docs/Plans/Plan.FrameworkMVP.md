@@ -92,8 +92,8 @@ Architecture/Architecture.ModelRoles.md
 Architecture/Architecture.StateAndObservability.md
 Architecture/Architecture.AudioLoop.md
 
-Experiments/ExperimentBacklog.md
-Experiments/ExperimentTemplate.md
+Experiments/Experiment.Backlog.md
+Experiments/Experiment.Template.md
 Experiments/Experiment.AssociativeMemoryToyModel.md
 Experiments/Experiment.ContextBudgetRetrievalTest.md
 Experiments/Experiment.SleepPhaseSessionSummary.md
@@ -192,84 +192,136 @@ Not every subsystem needs to be fully implemented immediately. Some can start as
 
 ## Proposed Initial Repository Shape
 
-A possible Rust source layout:
+A possible Rust workspace layout:
 
 ```text
-src/
-  main.rs
-  lib.rs
+Cargo.toml                       # workspace root
+Cargo.lock                       # committed because qsf_app is a binary/application
+crates/
+  engine_logging/                # already present; developer/operator logging facade
+  qsf_app/                       # binary + framework modules
+    Cargo.toml
+    src/
+      main.rs
+      lib.rs
 
-  experiments/
-    mod.rs
-    associative_memory_toy_model.rs
-    context_budget_retrieval_test.rs
-    sleep_phase_session_summary.rs
-    tool_as_perception_calculator.rs
+      experiments/
+        mod.rs
+        associative_memory_toy_model.rs
+        context_budget_retrieval_test.rs
+        sleep_phase_session_summary.rs
+        tool_as_perception_calculator.rs
 
-  runtime/
-    mod.rs
-    event.rs
-    runtime_loop.rs
-    state.rs
+      runtime/
+        mod.rs
+        event.rs
+        runtime_loop.rs
+        state.rs
 
-  observability/
-    mod.rs
-    event_log.rs
-    trace.rs
-    metrics.rs
+      observability/
+        mod.rs
+        event_log.rs
+        trace.rs
+        metrics.rs
 
-  memory/
-    mod.rs
-    memory_record.rs
-    association.rs
-    retrieval.rs
-    fixtures.rs
+      memory/
+        mod.rs
+        memory_record.rs
+        association.rs
+        retrieval.rs
+        fixtures.rs
 
-  context/
-    mod.rs
-    context_fragment.rs
-    context_budget.rs
-    context_assembler.rs
+      context/
+        mod.rs
+        context_fragment.rs
+        context_budget.rs
+        context_assembler.rs
 
-  tools/
-    mod.rs
-    tool_registry.rs
-    tool_request.rs
-    tool_result.rs
-    calculator_tool.rs
+      tools/
+        mod.rs
+        tool_registry.rs
+        tool_request.rs
+        tool_result.rs
+        calculator_tool.rs
 
-  models/
-    mod.rs
-    model_role.rs
-    model_client.rs
-    openai_provider.rs
-    mock_model.rs
+      models/
+        mod.rs
+        model_role.rs
+        model_client.rs
+        openai_provider.rs
+        mock_model.rs
 
-  sleep/
-    mod.rs
-    sleep_report.rs
-    session_summary.rs
+      sleep/
+        mod.rs
+        sleep_report.rs
+        session_summary.rs
 
-  reports/
-    mod.rs
-    markdown_report.rs
+      reports/
+        mod.rs
+        markdown_report.rs
 ```
 
 This structure is only a starting point. It should be adjusted when implementation reveals better boundaries.
 
+Important: the internal modules from the original single-crate shape still exist; they just live inside `crates/qsf_app/src/` instead of root `src/`.
+
 ## Initial Crate Strategy
 
-The project should initially be a Rust application crate with internal modules.
+The project should use a Cargo workspace from day one.
 
-Recommended starting point:
+This is no longer premature crate splitting. The repository already contains `crates/engine_logging`, and that crate uses workspace-inherited fields such as:
 
-```powershell
-cargo new qualia_signal_foundry
+```toml
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+log.workspace = true
+simplelog.workspace = true
 ```
 
-The project can later split internal modules into workspace crates if useful.
+Therefore the MVP requires a root `Cargo.toml` with workspace package metadata and shared dependencies before `cargo build` can succeed.
 
-A workspace may eventually make sense for:
+Recommended root workspace shape:
+
+```toml
+[workspace]
+members = ["crates/*"]
+resolver = "2"
+
+[workspace.package]
+edition = "2024"
+license = "MIT"
+authors = ["Lars Pensjö"]
+rust-version = "1.85"
+
+[workspace.dependencies]
+log = "0.4"
+simplelog = "0.12"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+anyhow = "1"
+thiserror = "2"
+clap = { version = "4", features = ["derive"] }
+uuid = { version = "1", features = ["v4", "serde"] }
+time = { version = "0.3", features = ["formatting", "parsing", "serde"] }
+```
+
+The exact dependency versions can be adjusted during implementation, but Phase 1 should include enough shared dependencies to compile both `engine_logging` and the placeholder `qsf_app` crate.
+
+Recommended initial crates:
+
+```text
+crates/engine_logging
+  Developer/operator log facade. Already present.
+
+crates/qsf_app
+  Binary application and framework modules for the MVP.
+```
+
+Further splitting should be deferred until implementation pressure justifies it. Possible later crates:
 
 ```text
 crates/qsf_core
@@ -279,7 +331,37 @@ crates/qsf_audio
 crates/qsf_tools
 ```
 
-But the first MVP should avoid premature crate splitting unless the implementation becomes clearly easier.
+The first MVP should avoid creating those crates until clear boundaries have emerged from working experiments.
+
+## Logging Strategy
+
+The project needs three separate observability layers. They should not be collapsed into one logging mechanism.
+
+| Layer | Purpose | Format | Owner |
+|---|---|---|---|
+| Developer/operator log | Human-readable diagnostics, warnings, errors, implementation notes during runs | `log`-style text lines | `engine_logging` |
+| Event log | Chronological structured facts: what happened | JSON Lines | `qsf_app::observability::event_log` |
+| Trace log | Explanations and measurements: why something happened, what was selected, what was omitted, how long it took | JSON Lines | `qsf_app::observability::trace` |
+
+`engine_logging` is the developer/operator logging facade. It is not the structured event log and it is not the trace log.
+
+Rules:
+
+```text
+- Use `engine_logging` macros from day one instead of calling `log::*` directly.
+- Use `initialize_to_path` from the experiment runner so each run writes `runs/<run-id>/engine.log`.
+- Keep `events.jsonl` as the chronological system-of-record for events.
+- Keep `traces.jsonl` as the system-of-record for context, memory, tool, model, and sleep explanations.
+- Developer logs may reference event IDs, trace IDs, run IDs, and experiment IDs.
+- Developer logs must not be required to reconstruct state transitions.
+- API keys, authorization headers, raw secrets, and sensitive local paths must not be logged by any layer.
+```
+
+The current `engine_logging` name is acceptable for the MVP, but the project should keep a decision candidate open for renaming it to `qsf_logging` or `foundry_logging` before many call sites accumulate.
+
+The current `set_sim_tick` / `get_sim_tick` functions are inherited game-engine residue. The MVP should either remove them or replace them with experiment/run terminology before they are used.
+
+`engine_logging` uses process-global logger initialization. That is acceptable while experiments run serially in one binary process. If experiments later run concurrently in-process, per-run diagnostic log routing will need to be revisited.
 
 ## OpenAI Provider Kit Dependency Strategy
 
@@ -305,7 +387,7 @@ The recommended transition workflow is:
 
 ### Committed Dependency
 
-In the committed `Cargo.toml`, use a pinned Git dependency:
+In the committed `crates/qsf_app/Cargo.toml`, use a pinned Git dependency when the OpenAI-backed model client is introduced:
 
 ```toml
 [dependencies]
@@ -328,14 +410,14 @@ This gives public users a buildable and repeatable dependency set.
 
 ### Local Development Override
 
-During local development, this patch may be temporarily added to `Cargo.toml`:
+During local development, this patch may be temporarily added to the root `Cargo.toml`:
 
 ```toml
 [patch."https://github.com/larspensjo/web_page_filet_mignon"]
 openai_provider_kit = { path = "C:/Users/larsp/src/web_page_filet_mignon/crates/openai_provider_kit" }
 ```
 
-This allows local builds to use the working copy of `openai_provider_kit`.
+This allows local builds to use the working copy of `openai_provider_kit`. The path shown above is the author's local Windows layout; other contributors should adjust the path for their machine and must not commit it.
 
 Important:
 
@@ -443,6 +525,30 @@ InputEvent
 
 The runtime loop should be simple enough that experiments can follow what happened.
 
+### State Update Model
+
+The runtime loop must follow the accepted unidirectional reducer commitment recorded in `docs/DecisionLog.md` and mirrored in `Architecture.RuntimeLoop.md`.
+
+Required shape:
+
+```text
+Input event
+  -> pure reducer: (State, Event) -> State
+  -> emitted effects or side-effect requests
+  -> side effects run outside the reducer
+  -> side-effect results return as new events
+```
+
+Rules:
+
+```text
+- Reducers stay pure and unit-testable.
+- Model calls, tool invocations, file I/O, logging, and report writing do not mutate runtime state directly.
+- Meaningful state transitions are represented as events.
+- Event records explain what happened.
+- Trace records explain why something happened.
+```
+
 ### Candidate Event Types
 
 Initial event types:
@@ -507,7 +613,7 @@ The event log is the chronological record of what happened.
 The first version can write JSON Lines:
 
 ```text
-logs/<experiment-id>/events.jsonl
+runs/<run-id>/events.jsonl
 ```
 
 Each event should include:
@@ -530,7 +636,7 @@ Traces explain why something happened.
 The first version can write JSON Lines:
 
 ```text
-logs/<experiment-id>/traces.jsonl
+runs/<run-id>/traces.jsonl
 ```
 
 Trace records should include:
@@ -881,6 +987,7 @@ Example:
 runs/
   2026-05-09-153000-associative-memory-toy-model/
     Report.md
+    engine.log
     events.jsonl
     traces.jsonl
     memory-fixture.json
@@ -889,11 +996,14 @@ runs/
 
 The `runs/` folder may or may not be committed depending on size and usefulness.
 
-Recommended `.gitignore` entry:
+Recommended `.gitignore` entries:
 
 ```text
 runs/
+engine.log
 ```
+
+`engine.log` is included as a safety net in case a developer accidentally calls the default `engine_logging::initialize()` from the repository root instead of the per-run `initialize_to_path()` helper.
 
 For useful example outputs, create a separate committed folder later:
 
@@ -956,34 +1066,56 @@ Useful tests:
 
 ## Implementation Order
 
-### Phase 1: Project Skeleton
+The immediate practical order is:
+
+```text
+1. Update this plan to reflect workspace-from-day-one.
+2. Add root Cargo.toml.
+3. Add crates/qsf_app.
+4. Wire qsf_app to engine_logging.
+5. Use initialize_to_path for per-run logs.
+6. Create placeholder experiment runner.
+7. Verify cargo build, cargo build -p engine_logging, cargo test, and cargo run -p qsf_app -- --help.
+8. Only after the workspace/logging implementation lands, record accepted workspace and logging decisions in docs/DecisionLog.md.
+```
+
+The key sequencing point is that the buildable workspace comes before framework behavior.
+
+
+### Phase 1: Workspace and Project Skeleton
 
 Goal:
 
-Create the basic Rust project structure and documentation-aware layout.
+Create a buildable Cargo workspace with the existing `engine_logging` crate and a placeholder `qsf_app` crate.
 
 Tasks:
 
 ```text
-1. Create Rust application crate.
-2. Add base modules.
-3. Add basic CLI entry point.
-4. Add initial config strategy.
-5. Add .gitignore entries for generated runs and local overrides.
-6. Add placeholder experiment runner.
+1. Add root Cargo.toml with [workspace], resolver = "2", [workspace.package], and [workspace.dependencies].
+2. Include at minimum log and simplelog in [workspace.dependencies] so engine_logging resolves.
+3. Add qsf_app as the initial binary/application crate under crates/qsf_app.
+4. Add qsf_app/src/main.rs and qsf_app/src/lib.rs as thin wrappers.
+5. Add the initial qsf_app module folders.
+6. Add basic CLI entry point with --help output.
+7. Add placeholder experiment runner.
+8. Wire qsf_app to engine_logging.
+9. Add a smoke path that calls engine_logging::initialize_for_tests() from a test or placeholder experiment.
+10. Add .gitignore entries for runs/, root engine.log, and local Cargo patch overrides if needed.
+11. Commit Cargo.lock because the workspace contains an application/binary.
 ```
 
 Verification:
 
 ```powershell
 cargo build
+cargo build -p engine_logging
 cargo test
-cargo run -- --help
+cargo run -p qsf_app -- --help
 ```
 
 Expected result:
 
-The project builds and has a placeholder way to run experiments.
+The workspace builds end-to-end, `engine_logging` resolves through workspace dependencies, and `qsf_app` has a placeholder way to run experiments.
 
 ### Phase 2: Event Log and Trace MVP
 
@@ -999,18 +1131,19 @@ Tasks:
 3. Write JSON Lines event log.
 4. Write JSON Lines trace log.
 5. Create per-run output directory.
-6. Write a minimal report file.
+6. Initialize developer/operator logging with `engine_logging::initialize_to_path(runs/<run-id>/engine.log)`.
+7. Write a minimal report file.
 ```
 
 Verification:
 
 ```text
-Run a placeholder experiment and inspect events.jsonl, traces.jsonl, and Report.md.
+Run a placeholder experiment and inspect engine.log, events.jsonl, traces.jsonl, and Report.md.
 ```
 
 Expected result:
 
-Every experiment has observable output from the beginning.
+Every experiment has observable output from the beginning, with developer logs, events, traces, and reports kept as separate artifacts.
 
 ### Phase 3: Experiment Runner MVP
 
@@ -1200,7 +1333,7 @@ Start with:
 Experiment.FrameworkSkeletonMVP
 ```
 
-If that experiment document does not yet exist, create it from `ExperimentTemplate.md`.
+If that experiment document does not yet exist, create it from `Experiment.Template.md`.
 
 Then immediately run:
 
@@ -1244,10 +1377,13 @@ This keeps the first milestone achievable.
 Before calling the Framework MVP useful, verify:
 
 ```text
-- The project builds.
-- Tests run.
+- The workspace builds.
+- `cargo build -p engine_logging` succeeds.
+- `cargo run -p qsf_app -- --help` succeeds.
+- Tests pass.
 - At least one named experiment can run.
 - Each run creates an output directory.
+- Each run writes a per-run `engine.log` developer/operator log.
 - Each run writes an event log.
 - Each run writes a trace log.
 - Each run writes a Markdown report.
@@ -1257,7 +1393,7 @@ Before calling the Framework MVP useful, verify:
 - Tool calls can be traced when tool experiments are added.
 - Model calls can be mocked.
 - OpenAI-backed model calls are behind a replaceable abstraction.
-- API keys are not logged.
+- API keys are not logged by event logs, traces, reports, or `engine_logging` macros.
 ```
 
 ## Documentation Updates During Implementation
@@ -1277,7 +1413,7 @@ docs/Experiments/Experiment.*.md
 docs/Architecture/Architecture.*.md
   when implementation clarifies architecture.
 
-docs/Decisions/DecisionLog.md
+docs/DecisionLog.md
   when a design choice becomes accepted.
 ```
 
@@ -1307,6 +1443,16 @@ Candidate: OpenAI access uses openai_provider_kit through a pinned Git dependenc
 Candidate: Local provider-kit development uses an uncommitted Cargo patch override.
 
 Candidate: The framework postpones real-time audio until event logging and traces exist.
+
+Candidate: The MVP uses a Cargo workspace from day one, with framework code in `crates/qsf_app`.
+
+Candidate: `engine_logging` is adopted as the developer/operator logging facade, while structured event and trace logs remain separate.
+
+Candidate: Per-run diagnostic logs are written to `runs/<run-id>/engine.log` through `engine_logging::initialize_to_path`.
+
+Candidate: Keep the `engine_logging` name for now, but revisit whether it should become `qsf_logging` or `foundry_logging`.
+
+Candidate: Remove or rename `set_sim_tick` / `get_sim_tick` before they become depended on.
 ```
 
 ## Open Questions
@@ -1343,6 +1489,22 @@ Which timing fields must exist before real audio is implemented?
 
 When should `openai_provider_kit` move from `web_page_filet_mignon` into a dedicated repository?
 
+### RQ-Framework-LoggingScope
+
+Should each experiment's `engine.log` live only under `runs/<run-id>/`, or should there also be a long-lived process-level log for binary startup and lifecycle events outside any experiment?
+
+### RQ-Framework-LogCrateName
+
+Should the project keep `engine_logging`, or rename it to `qsf_logging` / `foundry_logging` before many call sites accumulate?
+
+### RQ-Framework-SimTick
+
+Does the framework need the per-thread tick API inherited from `engine_logging`, or should it be removed or renamed to experiment-step terminology?
+
+### RQ-Framework-LogLevels
+
+Should the architecture-level observability modes such as Minimal, Normal, Research, Replay, and Debug remain documentation-level modes, or should they become a custom logging/tracing configuration separate from Rust `log` levels?
+
 ## Deferred Work
 
 Defer these until after the first experiments produce results:
@@ -1372,7 +1534,7 @@ The Framework MVP should preserve early safety boundaries:
 - Tools are read-only or compute-only by default.
 - Calculator has no external side effects.
 - Write-capable tools are not part of the MVP.
-- API keys are not logged.
+- API keys are not logged by event logs, traces, reports, or `engine_logging` macros.
 - Sleep phase does not silently create accepted decisions.
 - Model outputs are proposals unless explicitly promoted.
 - Local path overrides are not committed.
