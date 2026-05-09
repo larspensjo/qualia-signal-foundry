@@ -82,3 +82,20 @@ What changed:
 Refs: docs/EngineeringDiary.md, docs/DecisionLog.md,
 docs/ProjectFrame/ProjectWorkflow.md;
 implements: 2026-05-09 - Diary and decision-log document contracts
+
+## 2026-05-09 - Experiment runner MVP
+
+Named experiments now dispatch through a
+first-class runner abstraction instead of a single placeholder function.
+
+What changed:
+- Added an `Experiment` trait, explicit registry, run summary, and placeholder
+  experiment implementation.
+- Moved CLI experiment execution through the runner and kept output artifacts under
+  per-run directories.
+- Made report sections data-driven so future experiments can provide their own
+  observations, failure modes, follow-up questions, and decision candidates.
+
+Refs: crates/qsf_app/src/experiments,
+crates/qsf_app/src/runtime/run_context.rs,
+crates/qsf_app/src/reports/markdown_report.rs

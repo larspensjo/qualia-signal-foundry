@@ -7,10 +7,13 @@ pub struct ExperimentReport {
     pub run_id: String,
     pub status: String,
     pub summary: String,
+    pub configuration: Vec<String>,
     pub event_count: usize,
     pub trace_count: usize,
     pub observations: Vec<String>,
+    pub failure_modes: Vec<String>,
     pub follow_up_questions: Vec<String>,
+    pub decision_candidates: Vec<String>,
 }
 
 pub fn write_report(path: impl AsRef<Path>, report: &ExperimentReport) -> anyhow::Result<()> {
@@ -22,10 +25,7 @@ pub fn write_report(path: impl AsRef<Path>, report: &ExperimentReport) -> anyhow
     markdown.push_str("## Summary\n\n");
     markdown.push_str(&report.summary);
     markdown.push_str("\n\n## Configuration\n\n");
-    markdown.push_str("- Runner: placeholder Phase 2 runner\n");
-    markdown.push_str("- Event log: `events.jsonl`\n");
-    markdown.push_str("- Trace log: `traces.jsonl`\n");
-    markdown.push_str("- Developer log: `engine.log`\n");
+    push_list(&mut markdown, &report.configuration);
     markdown.push_str("\n## Key Measurements\n\n");
     markdown.push_str(&format!(
         "- Structured events written: {}\n",
@@ -38,11 +38,11 @@ pub fn write_report(path: impl AsRef<Path>, report: &ExperimentReport) -> anyhow
     markdown.push_str("\n## Observations\n\n");
     push_list(&mut markdown, &report.observations);
     markdown.push_str("\n## Failure Modes\n\n");
-    markdown.push_str("- Placeholder runner has no domain behavior yet.\n");
+    push_list(&mut markdown, &report.failure_modes);
     markdown.push_str("\n## Follow-up Questions\n\n");
     push_list(&mut markdown, &report.follow_up_questions);
     markdown.push_str("\n## Decision Candidates\n\n");
-    markdown.push_str("- Keep JSON Lines as the initial event and trace artifact format.\n");
+    push_list(&mut markdown, &report.decision_candidates);
     markdown.push_str("\n## Artifact Links\n\n");
     markdown.push_str("- `engine.log`\n");
     markdown.push_str("- `events.jsonl`\n");
@@ -82,10 +82,18 @@ mod tests {
                 run_id: "test-run".to_string(),
                 status: "completed".to_string(),
                 summary: "Test report.".to_string(),
+                configuration: vec![
+                    "Runner: test runner".to_string(),
+                    "Event log: `events.jsonl`".to_string(),
+                    "Trace log: `traces.jsonl`".to_string(),
+                    "Developer log: `engine.log`".to_string(),
+                ],
                 event_count: 3,
                 trace_count: 1,
                 observations: vec!["Observed JSONL output.".to_string()],
+                failure_modes: vec!["No failure.".to_string()],
                 follow_up_questions: vec![],
+                decision_candidates: vec!["Keep test report shape.".to_string()],
             },
         )
         .unwrap();

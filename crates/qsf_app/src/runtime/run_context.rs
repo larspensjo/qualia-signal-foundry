@@ -14,6 +14,8 @@ pub struct RunContext {
     run_dir: PathBuf,
     event_log: EventLogWriter,
     trace_log: TraceLogWriter,
+    event_count: usize,
+    trace_count: usize,
 }
 
 impl RunContext {
@@ -41,6 +43,8 @@ impl RunContext {
             event_log: EventLogWriter::create(run_dir.join("events.jsonl"))?,
             trace_log: TraceLogWriter::create(run_dir.join("traces.jsonl"))?,
             run_dir,
+            event_count: 0,
+            trace_count: 0,
         })
     }
 
@@ -68,6 +72,14 @@ impl RunContext {
         self.run_dir.join("Report.md")
     }
 
+    pub fn event_count(&self) -> usize {
+        self.event_count
+    }
+
+    pub fn trace_count(&self) -> usize {
+        self.trace_count
+    }
+
     pub fn record_event(
         &mut self,
         event_type: EventType,
@@ -76,11 +88,13 @@ impl RunContext {
     ) -> anyhow::Result<EventRecord> {
         let record = EventRecord::new(self.experiment_id.clone(), event_type, payload, trace_id);
         self.event_log.append(&record)?;
+        self.event_count += 1;
         Ok(record)
     }
 
     pub fn record_trace(&mut self, trace: TraceRecord) -> anyhow::Result<TraceRecord> {
         self.trace_log.append(&trace)?;
+        self.trace_count += 1;
         Ok(trace)
     }
 }
@@ -136,6 +150,8 @@ mod tests {
         assert!(events.contains("ExperimentStarted"));
         assert!(events.contains(&trace_id.to_string()));
         assert!(traces.contains("test-operation"));
+        assert_eq!(context.event_count(), 1);
+        assert_eq!(context.trace_count(), 1);
 
         fs::remove_dir_all(base_dir).unwrap();
     }

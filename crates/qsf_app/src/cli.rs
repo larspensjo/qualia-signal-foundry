@@ -27,7 +27,15 @@ pub fn run() -> anyhow::Result<()> {
     let cli = Cli::parse();
 
     match cli.command {
-        Some(Command::Experiment { name }) => experiments::run_placeholder(name),
+        Some(Command::Experiment { name }) => {
+            let summary = experiments::run_experiment(name)?;
+            println!(
+                "Experiment `{}` completed. Run artifacts: {}",
+                summary.experiment_id,
+                summary.run_dir.display()
+            );
+            Ok(())
+        }
         Some(Command::ListExperiments) => {
             for experiment in experiments::available_experiments() {
                 println!("{}\t{}", experiment.id, experiment.description);
