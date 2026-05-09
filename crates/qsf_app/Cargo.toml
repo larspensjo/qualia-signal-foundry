@@ -11,3 +11,7 @@ anyhow.workspace = true
 clap.workspace = true
 engine_logging = { path = "../engine_logging" }
 log.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+time.workspace = true
+uuid.workspace = true

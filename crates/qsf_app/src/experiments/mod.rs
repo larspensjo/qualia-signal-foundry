@@ -1,7 +1,14 @@
 use std::fmt;
 use std::str::FromStr;
+use std::time::Instant;
 
 use clap::ValueEnum;
+use serde_json::json;
+
+use crate::observability::event_log::EventType;
+use crate::observability::trace::TraceRecord;
+use crate::reports::markdown_report::{ExperimentReport, write_report};
+use crate::runtime::run_context::RunContext;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, ValueEnum)]
 #[value(rename_all = "kebab-case")]
@@ -80,13 +87,102 @@ pub fn available_experiments() -> Vec<ExperimentInfo> {
 }
 
 pub fn run_placeholder(name: ExperimentName) -> anyhow::Result<()> {
-    engine_logging::initialize();
-    engine_logging::engine_info!("starting placeholder experiment: {}", name);
+    let started_at = Instant::now();
+    let mut context = RunContext::create(name.id())?;
+    context.initialize_engine_logging();
 
-    println!("Experiment `{}` is registered as a placeholder.", name);
-    println!("Phase 1 verifies workspace, CLI dispatch, and engine_logging integration.");
+    engine_logging::engine_info!(
+        "starting placeholder experiment: experiment_id={} run_id={}",
+        name,
+        context.run_id()
+    );
 
-    engine_logging::engine_info!("completed placeholder experiment: {}", name);
+    context.record_event(
+        EventType::ExperimentStarted,
+        json!({
+            "run_id": context.run_id(),
+            "description": name.description(),
+        }),
+        None,
+    )?;
+
+    let trace = TraceRecord::new(
+        context.experiment_id(),
+        "placeholder-experiment-run",
+        "named placeholder experiment",
+        "runner emitted initial observability artifacts",
+    )
+    .with_details(json!({
+        "phase": "2",
+        "artifacts": ["engine.log", "events.jsonl", "traces.jsonl", "Report.md"],
+    }))
+    .with_latency_ms(
+        started_at
+            .elapsed()
+            .as_millis()
+            .try_into()
+            .unwrap_or(u64::MAX),
+    );
+    let trace_id = trace.trace_id;
+
+    context.record_trace(trace)?;
+    context.record_event(
+        EventType::TraceRecorded,
+        json!({
+            "operation": "placeholder-experiment-run",
+        }),
+        Some(trace_id),
+    )?;
+
+    let output_message = format!("Experiment `{}` completed placeholder Phase 2 run.", name);
+    context.record_event(
+        EventType::OutputProduced,
+        json!({
+            "message": output_message,
+        }),
+        Some(trace_id),
+    )?;
+
+    context.record_event(
+        EventType::ExperimentCompleted,
+        json!({
+            "status": "completed",
+            "elapsed_ms": started_at.elapsed().as_millis(),
+        }),
+        Some(trace_id),
+    )?;
+
+    write_report(
+        context.report_path(),
+        &ExperimentReport {
+            experiment_id: context.experiment_id().to_string(),
+            run_id: context.run_id().to_string(),
+            status: "completed".to_string(),
+            summary: "Phase 2 placeholder run verified per-run developer logging, structured event logging, structured trace logging, and Markdown report generation.".to_string(),
+            event_count: 4,
+            trace_count: 1,
+            observations: vec![
+                "Run artifacts are separated into developer log, event log, trace log, and report files.".to_string(),
+                "The placeholder runner now has the artifact shape expected by future experiments.".to_string(),
+            ],
+            follow_up_questions: vec![
+                "Which event payload fields should become strongly typed first?".to_string(),
+            ],
+        },
+    )?;
+
+    engine_logging::engine_info!(
+        "completed placeholder experiment: experiment_id={} run_id={}",
+        name,
+        context.run_id()
+    );
+
+    println!(
+        "Experiment `{}` completed. Run artifacts: {}",
+        name,
+        context.run_dir().display()
+    );
+
     Ok(())
 }
 

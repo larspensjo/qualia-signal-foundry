@@ -1,1 +1,3 @@
-//! Report generation placeholder module.
+//! Markdown report generation.
+
+pub mod markdown_report;

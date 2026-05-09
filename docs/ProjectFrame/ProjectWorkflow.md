@@ -45,10 +45,13 @@ docs/EngineeringDiary.md
 
 Purpose:
 
-Capture rough thoughts, discussion summaries, surprises, concerns, and emerging ideas.
+Chronological "what happened" log. Records every submitted code change plus rough
+thoughts, discussion summaries, surprises, concerns, and emerging ideas.
 
 Use this for:
 
+- every code change submitted (one entry per logical change; an entry can cover
+  several related commits)
 - informal notes
 - brainstorming summaries
 - observations from coding
@@ -57,24 +60,11 @@ Use this for:
 - small implementation discoveries
 - early experiment impressions
 
-The diary is allowed to be messy. It should preserve thinking before it is organized.
+The diary is allowed to be messy for non-code entries. It should preserve thinking
+before it is organized. Decisions and commitments do not belong here — they go in
+`docs/DecisionLog.md`.
 
-Good diary entry pattern:
-
-```markdown
-## 2026-05-08
-
-Discussed the first framework structure.
-
-Important idea:
-- The live loop should stay small and fast.
-
-Open question:
-- How much context is enough for continuity?
-
-Possible next step:
-- Add a small associative memory experiment.
-```
+See `docs/EngineeringDiary.md` for the entry template.
 
 ## Stage 2: Clarify Concepts
 
@@ -355,8 +345,14 @@ Use the decision log for:
 - technology choices
 - experiment conclusions promoted into design
 - naming or structural conventions
+- reusable rules derived from incidents (the rule is the entry, not the fix)
 
-Do not use the decision log for casual ideas.
+Do not use the decision log for:
+
+- implementation summaries (those are diary entries)
+- bug-fix postmortems on their own (those are diary entries; only the durable rule, if
+  any, is a decision-log entry)
+- casual ideas or speculation
 
 ## Stage 10: Continue the Loop
 
@@ -405,9 +401,10 @@ Should explain what the project is intentionally not trying to become.
 
 ### `docs/EngineeringDiary.md`
 
-Chronological thinking log.
+Chronological activity log and observations.
 
-Should capture informal notes, observations, and evolving thoughts.
+Should record every submitted code change plus informal notes, observations, surprises,
+and evolving thoughts. One entry per logical change.
 
 ### `docs/Concepts/`
 
@@ -435,9 +432,10 @@ Should describe how the system may be built, with maturity labels where useful.
 
 ### `docs/DecisionLog.md`
 
-Accepted decisions.
+Deliberate commitments only.
 
-Should capture commitments and their reasoning.
+Should capture decisions and their reasoning. Implementation summaries and bug-fix
+postmortems do not belong here — those go in the diary.
 
 ### `docs/Plans/`
 
