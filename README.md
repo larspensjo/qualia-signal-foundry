@@ -112,14 +112,12 @@ The documentation is part of the experiment. Some documents describe stable back
 Important documentation areas may include:
 
 ```text
-docs/00-Project-Frame/
-docs/10-Concepts/
-docs/20-Research-Questions/
-docs/30-Architecture/
-docs/40-Experiments/
-docs/50-Decisions/
-docs/60-Checklists/
-docs/70-Diary/
+docs/ProjectFrame/
+docs/Concepts/
+docs/Architecture/
+docs/Experiments/
+docs/Plans/
+docs/Research/
 ```
 
 The documentation should help both a project manager and a researcher understand:
