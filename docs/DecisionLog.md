@@ -20,17 +20,6 @@ Lessons Learned: (required for Bug Fix)
 Prevention: (required for Bug Fix)
 Refs: path/to/file.rs, test_name, commit abc1234
 
-## Entry Template: Decision
-
-## YYYY-MM-DD - Short title
-Type: Decision
-Decision: What was decided.
-Context: Why this decision was made.
-Consequences: What this commits the project to going forward.
-Refs: related docs, experiments, commits
-
----
-
 ## 2026-05-09 - Unidirectional event-reducer-state flow
 Type: Decision
 Decision: The runtime loop updates state exclusively through pure reducer functions of the
