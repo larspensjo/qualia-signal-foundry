@@ -1,0 +1,13 @@
+[package]
+name = "qsf_app"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+anyhow.workspace = true
+clap.workspace = true
+engine_logging = { path = "../engine_logging" }
+log.workspace = true
