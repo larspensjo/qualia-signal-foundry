@@ -49,6 +49,19 @@ The runtime loop should support:
 
 The loop should not be optimized only for task completion. Its main purpose is to support experiments in simulated presence, continuity, and consciousness-like behavior.
 
+## State Update Model
+
+The runtime loop uses a unidirectional, reducer-style state update model:
+
+- State is updated only through pure functions of the form `(State, Event) → State`.
+- Side effects (model calls, tool invocations, logging) are isolated from state update
+  functions and fed back into the loop as new events.
+- Reducers must remain unit-testable without mocks or external dependencies.
+- No meaningful state transition should be hidden inside a side effect.
+
+This is a deliberate architectural commitment recorded in `docs/DecisionLog.md`.
+See also: `Agents.md`, which carries this as a coding standard.
+
 ## Candidate Flow
 
 ### 1. Receive External Input
@@ -477,14 +490,14 @@ Microphone audio
 
 ## Related Documents
 
-- `docs/30-Architecture/Architecture.Overview.md`
-- `docs/30-Architecture/Architecture.AudioLoop.md`
-- `docs/10-Concepts/Concept.RealtimePresence.md`
-- `docs/10-Concepts/Concept.AssociativeMemory.md`
-- `docs/10-Concepts/Concept.ContextBudget.md`
-- `docs/10-Concepts/Concept.ToolsAsPerception.md`
-- `docs/10-Concepts/Concept.SleepPhase.md`
-- `docs/20-Research-Questions/ResearchQuestions.Audio.md`
+- `docs/Architecture/Architecture.Overview.md`
+- `docs/Architecture/Architecture.AudioLoop.md`
+- `docs/Concepts/Concept.RealtimePresence.md`
+- `docs/Concepts/Concept.AssociativeMemory.md`
+- `docs/Concepts/Concept.ContextBudget.md`
+- `docs/Concepts/Concept.ToolsAsPerception.md`
+- `docs/Concepts/Concept.SleepPhase.md`
+- `docs/Research/ResearchQuestions.Audio.md`
 
 ## Current Status
 
