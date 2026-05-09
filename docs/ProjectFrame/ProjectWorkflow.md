@@ -323,7 +323,7 @@ Architecture should not be treated as final unless the decision log says so.
 Use:
 
 ```text
-docs/Decisions/DecisionLog.md
+docs/DecisionLog.md
 ```
 
 Purpose:
@@ -433,7 +433,7 @@ Candidate system structure.
 
 Should describe how the system may be built, with maturity labels where useful.
 
-### `docs/Decisions/`
+### `docs/DecisionLog.md`
 
 Accepted decisions.
 
