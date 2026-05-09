@@ -1,0 +1,300 @@
+# Experiment: Associative Memory Toy Model
+
+## Experiment ID
+
+`Experiment.AssociativeMemoryToyModel`
+
+## Status
+
+Proposed
+
+## Summary
+
+This experiment tests a small, inspectable associative memory model.
+
+The goal is to determine whether simple weighted links between memories can retrieve more useful context than a baseline such as recency-only lookup or keyword matching.
+
+This is a deliberately small experiment. It should use a controlled set of synthetic or manually written memories rather than a large real memory database.
+
+## Motivation
+
+Associative memory is one of the central ideas in Qualia Signal Foundry.
+
+The live loop cannot afford to load all memory into context. The system needs a way to select relevant memories based on meaning, association, recency, reinforcement, and current focus.
+
+This experiment reduces uncertainty around:
+
+- whether weighted associations are useful
+- how retrieval decisions can be made inspectable
+- what metadata each memory needs
+- how memory retrieval interacts with context budgets
+- which retrieval baseline is worth improving upon
+
+## Related Documents
+
+```text
+Concepts/Concept.AssociativeMemory.md
+Concepts/Concept.ContextBudget.md
+Concepts/Concept.SleepPhase.md
+Architecture/Architecture.MemorySystem.md
+Architecture/Architecture.ContextManagement.md
+Architecture/Architecture.SleepPhase.md
+Architecture/Architecture.StateAndObservability.md
+```
+
+## Hypothesis
+
+A small associative memory graph with weighted links can retrieve more useful context than simple recency-only lookup for prompts that depend on indirect or thematic associations.
+
+## Scope
+
+### In Scope
+
+- small memory record format
+- manually created memory set
+- weighted associations between memories
+- simple retrieval scoring
+- recency-only baseline
+- keyword baseline, if easy
+- inspectable retrieval trace
+- manual relevance evaluation
+- small context budget simulation
+
+### Out of Scope
+
+- production memory database
+- embeddings, unless trivially available
+- large-scale retrieval
+- automatic memory extraction
+- real sleep-phase consolidation
+- complex decay policy
+- persistent identity model
+- full LLM integration
+
+## Setup
+
+Use a small memory set, for example 20-50 records.
+
+Each memory may include:
+
+```text
+memory_id
+summary
+tags
+created_at
+importance
+recency
+reinforcement_count
+association_links
+source_note
+```
+
+Each association may include:
+
+```text
+from_memory_id
+to_memory_id
+weight
+reason
+last_reinforced_at
+```
+
+Example memory themes:
+
+- audio loop
+- real-time presence
+- tools as perception
+- associative memory
+- context budget
+- sleep phase
+- project non-goals
+- model roles
+- observability
+- external inputs
+
+## Procedure
+
+1. Create a small controlled memory set.
+2. Add weighted links between related memories.
+3. Define several test prompts.
+4. For each prompt, retrieve memories using recency-only lookup.
+5. Retrieve memories using keyword lookup, if implemented.
+6. Retrieve memories using associative scoring.
+7. Apply the same context budget to each strategy.
+8. Record which memories were selected and omitted.
+9. Manually rate relevance.
+10. Compare strategies.
+11. Record failure modes and surprising retrievals.
+
+## Baseline
+
+Primary baseline:
+
+```text
+Recency-only retrieval.
+```
+
+Optional baseline:
+
+```text
+Keyword/tag-based retrieval.
+```
+
+Manual ideal selection can be used as a rough reference.
+
+## Measurements
+
+### Quantitative Measurements
+
+- number of memories selected
+- number of relevant memories selected
+- number of irrelevant memories selected
+- number of important memories omitted
+- retrieval score per selected memory
+- retrieval latency
+- simulated context budget used
+- association hops used
+
+### Qualitative Observations
+
+- whether selected memories feel relevant
+- whether associations reveal useful indirect connections
+- whether associations create distraction
+- whether scoring is understandable
+- whether the trace explains the result
+- whether the model feels too hand-tuned
+
+## Success Criteria
+
+The experiment is successful if:
+
+- associative retrieval can be compared against at least one baseline
+- retrieval traces explain why memories were selected
+- the experiment reveals whether association weights are useful
+- the result informs the first memory-system architecture
+- failure modes are clear
+
+It is acceptable if associative retrieval performs poorly, provided the reason is informative.
+
+## Failure Criteria
+
+The experiment is inconclusive if:
+
+- the memory set is too small or too artificial to reveal anything
+- scoring is opaque
+- selected memories cannot be manually evaluated
+- the baseline is not comparable
+- the implementation becomes too complex before producing results
+
+## Required Observability
+
+The experiment should log:
+
+- input query
+- retrieval strategy
+- candidate memories
+- selected memories
+- omitted memories
+- retrieval scores
+- association paths
+- context budget used
+- manual relevance rating
+- notes about surprising selections
+
+## Risks and Confounders
+
+- hand-authored memories may bias results
+- hand-authored links may make the task too easy
+- test prompts may overfit the memory graph
+- manual relevance ratings are subjective
+- simple scoring may not scale
+- recency-only baseline may be too weak
+- associative links may amplify irrelevant memories
+
+## Expected Output
+
+The experiment should produce:
+
+- experiment notes
+- memory set
+- association graph snapshot
+- retrieval traces
+- comparison table
+- failure-mode notes
+- follow-up questions
+- decision candidates
+
+## Results
+
+To be filled in after running the experiment.
+
+### What Happened
+
+TBD
+
+### Measurements
+
+TBD
+
+### Observations
+
+TBD
+
+### Surprises
+
+TBD
+
+### Failure Modes
+
+TBD
+
+## Interpretation
+
+TBD
+
+Use this distinction:
+
+```text
+Observed:
+  What happened.
+
+Interpreted:
+  What we think it means.
+
+Uncertain:
+  What remains unclear.
+```
+
+## Follow-Up Questions
+
+- Which metadata is actually useful for retrieval?
+- Should association weights be manually set, learned, or sleep-phase generated?
+- How many association hops should retrieval allow?
+- Should old but strongly reinforced memories beat recent memories?
+- How should decay affect retrieval?
+- How should retrieval results enter the context manager?
+
+## Follow-Up Experiments
+
+```text
+Experiment.ContextBudgetRetrievalTest
+Experiment.MemoryDecayPolicy
+Experiment.AssociationReinforcement
+Experiment.SleepPhaseAssociationUpdate
+Experiment.MemoryPromotionRules
+```
+
+## Decision Candidates
+
+- Candidate: Use explicit memory records with inspectable metadata in the first prototype.
+- Candidate: Store association links separately from memory records.
+- Candidate: Require retrieval traces for memory experiments.
+- Candidate: Compare all retrieval strategies against recency-only lookup.
+
+## Final Status
+
+TBD
+
+## Notes
+
+This should probably be one of the first experiments because it tests a central project idea without requiring audio, external services, or real-time infrastructure.
