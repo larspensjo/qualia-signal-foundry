@@ -48,6 +48,7 @@ Later
 | `Experiment.EventLogAndTraceMVP` | High | Proposed | What minimal event log and trace format is useful for understanding system behavior? |
 | `Experiment.ContextBudgetRetrievalComparison` | High | Proposed | How should the system select memories under a small context budget? |
 | `Experiment.SleepPhaseSessionSummary` | High | Proposed | Does a session-end summary improve continuity in the next session? |
+| `Experiment.StreamingTranscriptionMVP` | Medium | Proposed | Can live speech be represented as observable partial and final transcript events? |
 | `Experiment.AudioLoopMVP` | Medium | Proposed | Can a minimal audio loop create a stronger sense of presence than text-only interaction? |
 | `Experiment.ToolAsPerceptionCalculator` | Medium | Proposed | How should a simple read-only computational tool be represented as perception? |
 | `Experiment.MemoryDecayPolicy` | Medium | Proposed | Does memory decay improve relevance or accidentally hide useful older memories? |
@@ -232,12 +233,50 @@ Possible success criteria:
 
 ## Medium-Priority Experiments
 
+### Experiment.StreamingTranscriptionMVP
+
+**Priority:** Medium
+**Status:** Proposed
+
+Build the first provider-backed audio boundary by representing streaming speech-to-text
+as partial and final transcript events.
+
+This should come before the full audio loop because it tests real-time input, event
+ordering, transcript finalization, and latency tracing without requiring TTS, playback,
+or interruption handling.
+
+Related documents:
+
+```text
+Concepts/Concept.RealtimePresence.md
+Concepts/Concept.ExternalInputs.md
+Architecture/Architecture.AudioLoop.md
+Architecture/Architecture.RuntimeLoop.md
+Research/ResearchQuestions.Audio.md
+```
+
+Possible scope:
+
+- simulated transcript provider
+- OpenAI `gpt-realtime-whisper` provider adapter
+- partial transcript events
+- final transcript events
+- transcript latency traces
+- final transcript bridge into runtime input
+
+Possible success criteria:
+
+- Partial and final transcript events are distinguishable.
+- Final transcripts can enter the runtime loop as normal input.
+- Partial transcripts are logged without mutating committed state by default.
+- Provider failures and latency are visible in run artifacts.
+
 ### Experiment.AudioLoopMVP
 
 **Priority:** Medium  
 **Status:** Proposed
 
-Build a minimal audio input/output loop.
+Build a minimal audio input/output loop after streaming transcription events work.
 
 This may be the first experiment that tests real-time presence directly, but it may require more setup than memory experiments.
 

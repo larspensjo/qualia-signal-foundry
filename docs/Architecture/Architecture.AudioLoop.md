@@ -71,8 +71,8 @@ A simple audio interaction loop can be described as:
 Microphone
   -> Audio Capture
   -> Voice Activity Detection
-  -> Speech Recognition or Realtime Model Input
-  -> Interaction Event
+  -> Transcript Provider or Realtime Session Provider
+  -> Partial or Final Transcript Event
   -> Simulation State Update
   -> Context Selection
   -> Model Response
@@ -82,6 +82,10 @@ Microphone
 ```
 
 This should be treated as a pipeline of events, not as one monolithic function.
+
+The first provider-backed implementation should use streaming transcription as the
+boundary into the runtime loop. A full realtime voice session can be tested later,
+but it should still map provider events back into the same QSF event stream.
 
 ## Candidate Runtime Model
 
@@ -166,6 +170,24 @@ Possible modes:
 - direct realtime model input, if supported by the selected provider
 
 The architecture should not assume only one mode.
+
+Current provider direction:
+
+```text
+TranscriptProvider
+  -> simulated transcript provider for tests
+  -> gpt-realtime-whisper adapter for streaming speech-to-text
+
+RealtimeSessionProvider
+  -> gpt-realtime-2 adapter for later speech-to-speech experiments
+
+TranslationProvider
+  -> gpt-realtime-translate adapter for separate translation experiments
+```
+
+The transcript provider is the first real audio integration point. It should emit
+partial and final transcript events while leaving state updates, memory promotion,
+and tool permissions to the normal QSF runtime.
 
 ### Interaction Controller
 
@@ -449,6 +471,31 @@ Important boundaries:
 A minimal first prototype could be:
 
 ```text
+Simulated or microphone audio source
+  -> streaming transcript provider
+  -> partial transcript events
+  -> final transcript event
+  -> runtime input event
+  -> report with latency trace
+```
+
+This should be implemented before a microphone-to-speaker loop because it validates
+the event boundary, partial/final transcript semantics, and latency traces with less
+hardware and playback complexity.
+
+Useful success criteria:
+
+- partial transcript events are logged
+- final transcript events enter the runtime loop as input
+- latency is measured for transcript deltas and finalization
+- failures are visible
+- code structure does not lock in one provider
+
+## Candidate Second Prototype
+
+After streaming transcription works, a minimal voice loop could be:
+
+```text
 Push-to-talk microphone input
   -> record speech segment
   -> transcribe after release
@@ -469,9 +516,9 @@ Useful success criteria:
 - failures are visible
 - code structure does not lock in one provider
 
-## Candidate Second Prototype
+## Candidate Third Prototype
 
-A second prototype could add automatic turn detection:
+The next prototype could add automatic turn detection:
 
 ```text
 Always-listening input
@@ -483,7 +530,7 @@ Always-listening input
 
 This would test whether the system starts to feel more present when the user does not need to press a key.
 
-## Candidate Third Prototype
+## Candidate Fourth Prototype
 
 A later prototype could test interruption:
 
@@ -499,8 +546,8 @@ This would test whether interruption handling significantly improves the feeling
 
 ## Open Questions
 
-- Should the first prototype use push-to-talk or automatic voice activity detection?
-- Should transcription be batch-based, streaming, or direct realtime model input?
+- Should the first voice-output prototype use push-to-talk or automatic
+  automatic voice activity detection?
 - How much partial transcript should the simulation see before the user turn is finalized?
 - Should the system be allowed to respond before the user has fully stopped speaking?
 - How should interruption be represented in the model input?
@@ -541,16 +588,23 @@ Always-listening behavior can feel sensitive. The system should make listening, 
 This architecture document should eventually be supported by:
 
 ```text
-docs/20-Research-Questions/ResearchQuestions.Audio.md
-docs/40-Experiments/Experiment.AudioMVP.md
-docs/40-Experiments/Experiment.AudioInterruption.md
-docs/30-Architecture/Architecture.EventLog.md
+docs/Research/ResearchQuestions.Audio.md
+docs/Experiments/Experiment.StreamingTranscriptionMVP.md
+docs/Experiments/Experiment.AudioLoopMVP.md
+docs/Experiments/Experiment.InterruptionHandlingAudio.md (planned)
+docs/Architecture/Architecture.StateAndObservability.md
 ```
 
 ## Current Recommendation
 
-Start with a simple push-to-talk audio loop.
+Start with streaming transcription, not a full voice loop.
 
-Do not begin with full duplex realtime audio. Instead, build the smallest observable pipeline that captures speech, produces voice output, logs timing, and keeps the implementation replaceable.
+Do not begin with full duplex realtime audio. Instead, build the smallest observable
+pipeline that turns audio into partial and final transcript events, logs timing, and
+keeps the implementation replaceable. A simulated transcript provider should come
+first for deterministic tests; `gpt-realtime-whisper` is the first provider-backed
+target when real streaming speech-to-text is needed.
 
-Once that loop works, use experiments to decide whether to add automatic turn detection, streaming transcription, and interruption handling.
+Once transcript events are working, use experiments to decide whether to add push-to-talk
+voice output, automatic turn detection, `gpt-realtime-2` speech-to-speech sessions,
+and interruption handling.

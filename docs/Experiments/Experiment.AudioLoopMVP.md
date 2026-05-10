@@ -16,6 +16,10 @@ The goal is to determine whether the project can capture microphone input, conve
 
 This is not intended to create a polished voice assistant. It is an experiment in real-time presence.
 
+This experiment should follow `Experiment.StreamingTranscriptionMVP`. The transcript
+event boundary should be working before this experiment adds speech synthesis,
+playback, and voice-loop timing.
+
 ## Motivation
 
 Audio is a central part of simulated presence because it introduces timing, turn-taking, interruption, hesitation, and latency.
@@ -38,6 +42,7 @@ Architecture/Architecture.RuntimeLoop.md
 Architecture/Architecture.StateAndObservability.md
 Architecture/Architecture.ModelRoles.md
 Research/ResearchQuestions.Audio.md
+Experiments/Experiment.StreamingTranscriptionMVP.md
 ```
 
 ## Hypothesis
@@ -49,7 +54,7 @@ A minimal microphone-to-model-to-speech loop can create a noticeably stronger se
 ### In Scope
 
 - microphone capture
-- speech-to-text
+- speech-to-text through the transcript provider boundary
 - passing finalized text into a runtime loop
 - generating a simple model response
 - text-to-speech output
@@ -70,6 +75,8 @@ A minimal microphone-to-model-to-speech loop can create a noticeably stronger se
 - multi-party conversation
 - always-on background operation
 - production audio device management
+- full duplex `gpt-realtime-2` sessions; these belong in a separate realtime
+  voice-session experiment, see Phase 10 of `Plan.FrameworkMVP.md`
 
 ## Setup
 
@@ -85,6 +92,13 @@ Possible setup:
 - trace output for timing
 
 The first implementation may use placeholder model responses if needed. The experiment is still useful if the audio path and timing traces can be tested independently.
+
+Prerequisite:
+
+```text
+Experiment.StreamingTranscriptionMVP has established partial transcript events,
+final transcript events, and transcript latency traces.
+```
 
 ## Procedure
 

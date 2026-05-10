@@ -98,6 +98,7 @@ Experiments/Experiment.AssociativeMemoryToyModel.md
 Experiments/Experiment.ContextBudgetRetrievalTest.md
 Experiments/Experiment.SleepPhaseSessionSummary.md
 Experiments/Experiment.ToolAsPerceptionCalculator.md
+Experiments/Experiment.StreamingTranscriptionMVP.md
 Experiments/Experiment.AudioLoopMVP.md
 ```
 
@@ -162,6 +163,7 @@ Why this is useful:
 ### Later First-Presence Experiment
 
 ```text
+Experiment.StreamingTranscriptionMVP
 Experiment.AudioLoopMVP
 ```
 
@@ -170,6 +172,10 @@ Why this should probably come after the framework skeleton:
 - audio introduces hardware, latency, transcription, TTS, and streaming complexity
 - the framework should already have events and traces before audio is added
 - audio should plug into the same event and observability model
+- streaming transcription is the first useful real-time audio integration because it
+  produces text events without requiring the full speech-to-speech loop
+- full audio output and interruption behavior should follow only after transcript
+  events are observable and replayable
 
 ## MVP Architecture Shape
 
@@ -484,6 +490,63 @@ OpenAI-backed model
 ```
 
 The first experiments should not require the OpenAI client unless they specifically need model reasoning.
+
+## OpenAI Realtime Speech Direction
+
+The project should incorporate the new OpenAI realtime speech models in stages rather
+than treating them as one audio feature.
+
+Current model mapping:
+
+```text
+gpt-realtime-whisper
+  First target for real audio integration.
+  Use for streaming speech-to-text and transcript deltas.
+
+gpt-realtime-2
+  Later target for full speech-to-speech realtime presence.
+  Use for interruption, preambles, tool-call transparency, and voice-native reasoning
+  only after transcript events and latency traces are working.
+
+gpt-realtime-translate
+  Separate translation experiment.
+  Do not fold it into the first framework or audio MVP unless multilingual presence
+  becomes an active research question.
+```
+
+These API model IDs were verified against the OpenAI API documentation on
+2026-05-10:
+
+```text
+https://developers.openai.com/api/docs/guides/realtime-transcription
+https://developers.openai.com/api/docs/models/gpt-realtime-2
+https://developers.openai.com/api/docs/models/gpt-realtime-translate
+```
+
+Integration rule:
+
+```text
+Realtime providers are side-effect adapters.
+They emit QSF events back into the runtime loop.
+They do not own runtime state, memory promotion, tool permissions, or decisions.
+```
+
+The first OpenAI realtime implementation should therefore be a transcript provider,
+not a full voice agent. Its outputs should become structured events such as:
+
+```text
+AudioInputStarted
+AudioInputChunkCaptured
+AudioPartialTranscript
+AudioFinalTranscript
+AudioInputEnded
+AudioTranscriptionFailed
+LatencyMeasurementRecorded
+```
+
+Only finalized transcript events should enter the normal input -> action -> reducer
+-> state -> render flow by default. Partial transcripts may be logged and traced
+first, then used by later experiments if they prove useful.
 
 ## API Key Handling
 
@@ -1323,7 +1386,104 @@ Confirm event and trace output.
 
 Expected result:
 
-The later audio MVP has a clean place to plug in.
+The later streaming transcription and audio MVPs have a clean place to plug in.
+
+### Phase 9: Streaming Transcription MVP
+
+Goal:
+
+Test real-time speech input as structured transcript events before building a full
+voice loop.
+
+Tasks:
+
+```text
+1. Create Experiment.StreamingTranscriptionMVP.
+2. Define a TranscriptProvider abstraction.
+3. Implement a simulated transcript provider for deterministic tests.
+4. Add an OpenAI realtime transcription adapter using gpt-realtime-whisper.
+5. Record partial transcript events.
+6. Record final transcript events.
+7. Record audio/transcription latency traces.
+8. Ensure finalized transcript events enter the runtime loop as normal input events.
+9. Avoid logging API keys, raw authorization headers, or unnecessary raw audio.
+```
+
+Verification:
+
+```text
+Run the simulated transcript provider.
+Run the OpenAI-backed provider when OPENAI_API_KEY is available.
+Confirm partial and final transcript events are written.
+Confirm latency traces identify transcription timing.
+Confirm a final transcript event produces a runtime input event without bypassing the reducer.
+Confirm reducers remain pure and receive transcript results only as events.
+```
+
+Expected result:
+
+The framework can observe live speech as event-stream input without taking on full
+speech synthesis, playback, or interruption behavior.
+
+### Phase 10: Realtime Voice Session MVP
+
+Goal:
+
+Evaluate full speech-to-speech presence after transcript-first observability exists.
+
+Tasks:
+
+```text
+1. Define a RealtimeSessionProvider abstraction.
+2. Add a gpt-realtime-2-backed provider behind that abstraction.
+3. Map provider session events into QSF event records.
+4. Record preambles, response start, response completion, and interruption events.
+5. Keep provider tool calls routed through QSF tool permission boundaries.
+6. Trace reasoning effort, latency, model name, and voice/session configuration.
+7. Keep transcript, memory, and state updates inside QSF-owned reducers and effects.
+```
+
+Verification:
+
+```text
+Run a small realtime voice session when OPENAI_API_KEY and audio devices are available.
+Inspect events and traces for turn timing, provider events, and interruptions.
+Confirm provider events do not bypass QSF state or tool boundaries.
+```
+
+Expected result:
+
+The project can test whether gpt-realtime-2 improves perceived presence while keeping
+the runtime loop, memory system, and observability model intact.
+
+### Phase 11: Realtime Translation Experiment (conditional on multilingual scope)
+
+Goal:
+
+Keep live translation separate from core audio presence until it becomes a targeted
+research question.
+
+Tasks:
+
+```text
+1. Create Experiment.RealtimeTranslationMVP only when multilingual presence is in scope.
+2. Add a gpt-realtime-translate adapter behind a translation-specific provider boundary.
+3. Record source transcript, translated transcript, audio duration, and latency.
+4. Keep translation output as perception/context, not an automatic decision or action.
+```
+
+Verification:
+
+```text
+Run a short controlled translation session.
+Inspect source and translated transcript events.
+Confirm translation does not bypass memory promotion or context-budget rules.
+```
+
+Expected result:
+
+Translation remains available as a future capability without complicating the first
+audio or framework milestones.
 
 ## Suggested First Implementation Target
 
@@ -1444,6 +1604,16 @@ Candidate: Local provider-kit development uses an uncommitted Cargo patch overri
 
 Candidate: The framework postpones real-time audio until event logging and traces exist.
 
+Candidate: The first real audio integration is streaming transcription, not a full
+speech-to-speech voice agent.
+
+Candidate: OpenAI realtime speech integrations are side-effect adapters that emit QSF
+events and do not own runtime state, memory promotion, tool permissions, or decisions.
+
+Candidate: `gpt-realtime-whisper` is the first OpenAI realtime speech target,
+`gpt-realtime-2` is reserved for later full voice-session experiments, and
+`gpt-realtime-translate` remains a separate translation experiment.
+
 Candidate: The MVP uses a Cargo workspace from day one, with framework code in `crates/qsf_app`.
 
 Candidate: `engine_logging` is adopted as the developer/operator logging facade, while structured event and trace logs remain separate.
@@ -1509,9 +1679,9 @@ Should the architecture-level observability modes such as Minimal, Normal, Resea
 
 Defer these until after the first experiments produce results:
 
-- real-time audio implementation
-- streaming audio transcription
+- full speech-to-speech real-time audio implementation
 - TTS playback integration
+- realtime translation
 - video input
 - memory database
 - embedding search
@@ -1556,6 +1726,7 @@ At the end of the Framework MVP, the project should be able to:
 8. Use mock model calls.
 9. Optionally use OpenAI-backed model calls through openai_provider_kit.
 10. Prepare for later audio-loop experiments.
+11. Treat streaming transcription as the first real audio provider integration.
 ```
 
 The MVP succeeds if it lets the project learn from small experiments.

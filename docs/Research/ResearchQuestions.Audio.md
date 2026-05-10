@@ -19,7 +19,16 @@ Relevant related documents:
 - `docs/Concepts/Concept.RealtimePresence.md`
 - `docs/Concepts/Concept.ExternalInputs.md`
 - `docs/Architecture/Architecture.AudioLoop.md`
-- `docs/Experiments/Experiment.AudioMVP.md` *(planned)*
+- `docs/Experiments/Experiment.StreamingTranscriptionMVP.md`
+- `docs/Experiments/Experiment.AudioLoopMVP.md`
+
+Current implementation direction:
+
+- Start with streaming transcription as partial and final transcript events.
+- Use `gpt-realtime-whisper` as the first OpenAI-backed realtime speech target.
+- Defer `gpt-realtime-2` full speech-to-speech sessions until transcript events,
+  latency traces, and runtime bridging are working.
+- Keep `gpt-realtime-translate` as a separate translation experiment.
 
 ## Research Theme: Audio and Presence
 
@@ -170,8 +179,8 @@ Streaming audio may support better real-time behavior, but it can also increase 
 
 - Push-to-talk batch transcription
 - Voice activity based chunks
-- Continuous streaming transcription
-- Realtime model session with audio input
+- Continuous streaming transcription through transcript events
+- Realtime model session with audio input, after transcript-first experiments
 - Hybrid mode with cheap detection and selective deeper processing
 
 #### Status
@@ -358,21 +367,22 @@ Open
 
 ## Early Candidate Questions for the First Audio MVP
 
-The first audio experiment should probably focus on a small number of questions:
+The first audio-adjacent experiment should focus on streaming transcription before
+the full microphone-to-speaker loop:
 
-1. Can the system run a basic microphone-to-model-to-speaker loop?
-2. What is the measured end-to-end latency?
-3. Does the loop feel more present than text interaction?
-4. Where is most latency introduced?
-5. How often does turn detection fail?
-6. What information should be logged for later analysis?
+1. Can the system represent live speech as partial and final transcript events?
+2. What is the measured latency to first partial transcript and final transcript?
+3. Should partial transcripts affect live state or only traces?
+4. How often do partial transcripts revise meaningfully before finalization?
+5. What provider errors and fallback paths need explicit events?
+6. What information should be logged before adding TTS and playback?
 
 ## Not Yet Decided
 
 The following should remain undecided for now:
 
-- exact audio API or provider
-- local versus cloud transcription
+- provider choice for full speech-to-speech voice sessions
+- local versus cloud transcription after the first OpenAI-backed streaming test
 - local versus cloud text-to-speech
 - always-listening versus push-to-talk
 - voice identity
@@ -384,11 +394,11 @@ The following should remain undecided for now:
 
 This research question document may lead to:
 
-- `docs/40-Experiments/Experiment.AudioMVP.md`
-- `docs/30-Architecture/Architecture.AudioDeviceAbstraction.md`
-- `docs/30-Architecture/Architecture.RealtimeSession.md`
-- `docs/50-Decisions/ADR-000x-AudioInputMode.md`
-- `docs/50-Decisions/ADR-000x-ReadOnlyExternalInputsFirst.md`
+- `docs/Experiments/Experiment.StreamingTranscriptionMVP.md`
+- `docs/Experiments/Experiment.AudioLoopMVP.md`
+- `docs/Architecture/Architecture.AudioDeviceAbstraction.md`
+- `docs/Architecture/Architecture.RealtimeSession.md`
+- `docs/DecisionLog.md` entries for accepted audio input and provider-boundary decisions
 
 ## Summary
 

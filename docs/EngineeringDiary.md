@@ -99,3 +99,27 @@ What changed:
 Refs: crates/qsf_app/src/experiments,
 crates/qsf_app/src/runtime/run_context.rs,
 crates/qsf_app/src/reports/markdown_report.rs
+
+## 2026-05-10 - Transcript-first realtime speech planning
+
+Accepted a transcript-first path for incorporating OpenAI realtime speech models:
+streaming transcription before full speech-to-speech voice sessions.
+
+What changed:
+- Added `Experiment.StreamingTranscriptionMVP` as the first real audio provider
+  experiment.
+- Updated framework, audio architecture, realtime presence, audio research, and backlog
+  docs to route realtime speech through QSF events.
+- Verified the OpenAI realtime model IDs against current OpenAI API documentation and
+  tightened the plan after review.
+- Recorded the durable rule that realtime providers are side-effect adapters, not owners
+  of runtime state or memory/tool decisions.
+
+Refs: docs/Plans/Plan.FrameworkMVP.md,
+docs/Experiments/Experiment.StreamingTranscriptionMVP.md,
+docs/Architecture/Architecture.AudioLoop.md,
+docs/Concepts/Concept.RealtimePresence.md,
+docs/Research/ResearchQuestions.Audio.md,
+docs/Experiments/Experiment.Backlog.md,
+docs/DecisionLog.md;
+implements: 2026-05-10 - Transcript-first realtime speech integration

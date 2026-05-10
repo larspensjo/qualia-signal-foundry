@@ -55,3 +55,24 @@ itself is the entry. Diary entries that implement a prior decision should refere
 in their Refs line.
 Refs: docs/EngineeringDiary.md, docs/DecisionLog.md,
 docs/ProjectFrame/ProjectWorkflow.md
+
+## 2026-05-10 - Transcript-first realtime speech integration
+Decision: The first real audio provider integration uses streaming transcription as
+partial and final transcript events. Full speech-to-speech realtime sessions and live
+translation remain separate later experiments.
+Context: OpenAI's May 2026 realtime speech models make realtime audio more practical,
+but the framework is still centered on observable event flow, pure reducers, and
+replaceable side-effect providers. Streaming transcription fits that boundary with
+less complexity than a full voice agent. The model IDs were checked against current
+OpenAI API documentation on 2026-05-10.
+Consequences: `gpt-realtime-whisper` is the first OpenAI realtime speech target.
+`gpt-realtime-2` is reserved for later voice-session experiments, and
+`gpt-realtime-translate` is reserved for translation-specific experiments. Realtime
+providers emit QSF events and do not own runtime state, memory promotion, tool
+permissions, or decisions.
+Refs: docs/Plans/Plan.FrameworkMVP.md,
+docs/Experiments/Experiment.StreamingTranscriptionMVP.md,
+docs/Architecture/Architecture.AudioLoop.md,
+https://developers.openai.com/api/docs/guides/realtime-transcription,
+https://developers.openai.com/api/docs/models/gpt-realtime-2,
+https://developers.openai.com/api/docs/models/gpt-realtime-translate

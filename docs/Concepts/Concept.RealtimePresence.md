@@ -87,6 +87,11 @@ The loop may include:
 
 This does not need to be perfect at first. The first goal is to create a minimal loop that can be measured, observed, and improved.
 
+The current implementation direction is transcript-first: establish streaming speech-to-text
+as partial and final transcript events before adding full speech output or full duplex
+voice sessions. This keeps realtime presence connected to the same event, reducer,
+state, and trace model as the rest of the framework.
+
 ### State-Oriented Interaction
 
 Realtime presence should probably be modeled as state, not as isolated messages.
@@ -358,6 +363,14 @@ Build a minimal loop with:
 - text-to-speech
 
 Measure latency and observe interaction quality.
+
+### Experiment: Streaming Transcription MVP
+
+Represent live speech as partial and final transcript events.
+
+Compare simulated transcript input with provider-backed streaming transcription, and
+measure whether transcript timing gives useful presence signals before full voice
+output is implemented.
 
 ### Experiment: Interruptible Speech
 
