@@ -76,3 +76,25 @@ docs/Architecture/Architecture.AudioLoop.md,
 https://developers.openai.com/api/docs/guides/realtime-transcription,
 https://developers.openai.com/api/docs/models/gpt-realtime-2,
 https://developers.openai.com/api/docs/models/gpt-realtime-translate
+
+## 2026-05-10 - Memory schema versioning is per record type and run artifacts are sealed
+Decision: `MemoryRecord` and `Association` each carry an independent `schema_version: u16`
+field from v1. The live runtime reads and writes only the current version. Past memory
+artifacts are immutable and never migrated in place; versioned readers for older artifacts
+live in a separate compatibility module used for replay and analysis. Pure additive
+changes (new optional fields with serde defaults) do not bump the version; removed,
+renamed, or semantically changed fields do.
+Context: Phase 4 of Plan.FrameworkMVP introduces memory records. The framework's replay
+goal — "would the same input retrieve the same memories?" — is incompatible with
+forward-migrating old run artifacts, which would distort historical evidence. Adding the
+version field at v1 is cheap; retrofitting it later is not. Memory records and
+associations evolve on independent timelines and should not share a version.
+Consequences: Every persisted memory record and association carries its own
+`schema_version`. The live `MemoryStore` errors loudly on off-version records rather than
+attempting to interpret them. Compatibility readers are written only when a schema
+actually changes, and are kept out of the live runtime. A future cross-run shared memory
+store (for example, from sleep-phase consolidation) is out of scope and may use a
+different policy.
+Refs: docs/Plans/Design.MemorySchemaVersioning.md,
+docs/Plans/Plan.FrameworkMVP.md,
+docs/Architecture/Architecture.MemorySystem.md
