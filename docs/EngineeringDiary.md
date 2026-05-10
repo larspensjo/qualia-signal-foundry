@@ -123,3 +123,26 @@ docs/Research/ResearchQuestions.Audio.md,
 docs/Experiments/Experiment.Backlog.md,
 docs/DecisionLog.md;
 implements: 2026-05-10 - Transcript-first realtime speech integration
+
+## 2026-05-10 - Memory and context MVP
+
+Phase 4 now has deterministic in-process memory retrieval and context assembly for
+the first two framework experiments.
+
+What changed:
+- Added schema-versioned memory records and associations, a small Phase 4 fixture,
+  and recency, keyword/tag, and association-weighted retrieval strategies.
+- Added context fragments, explicit fragment/token budgets, greedy assembly, and
+  omitted-fragment reasons.
+- Replaced the associative-memory and context-budget placeholders with real runs
+  that write memory/context events, traces, fixture snapshots, and comparison reports.
+- Follow-up review fixes made Phase 4 experiment descriptions current, linked
+  extra run artifacts from reports, added nanosecond latency fields, and documented
+  the first scorer rationale.
+
+Observed:
+- Both Phase 4 experiments run end-to-end and produce selected/omitted memory and
+  context artifacts for manual review.
+
+Refs: crates/qsf_app/src/memory, crates/qsf_app/src/context,
+crates/qsf_app/src/experiments/phase_four.rs

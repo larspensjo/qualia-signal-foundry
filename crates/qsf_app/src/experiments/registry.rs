@@ -11,6 +11,9 @@ use crate::observability::event_log::EventType;
 use crate::reports::markdown_report::{ExperimentReport, write_report};
 use crate::runtime::run_context::RunContext;
 
+use super::phase_four::{
+    AssociativeMemoryToyModelExperiment, ContextBudgetRetrievalTestExperiment,
+};
 use super::placeholder::PlaceholderExperiment;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, ValueEnum)]
@@ -38,9 +41,11 @@ impl ExperimentName {
         match self {
             Self::FrameworkSkeletonMvp => "Placeholder framework skeleton smoke experiment",
             Self::AssociativeMemoryToyModel => {
-                "Placeholder associative memory toy model experiment"
+                "Compare recency, keyword/tag, and association-weighted memory retrieval"
             }
-            Self::ContextBudgetRetrievalTest => "Placeholder context budget retrieval experiment",
+            Self::ContextBudgetRetrievalTest => {
+                "Compare selected and omitted memory context under a deliberately small budget"
+            }
             Self::SleepPhaseSessionSummary => "Placeholder sleep phase session summary experiment",
             Self::ToolAsPerceptionCalculator => {
                 "Placeholder tool-as-perception calculator experiment"
@@ -80,6 +85,7 @@ pub struct ExperimentOutcome {
     pub failure_modes: Vec<String>,
     pub follow_up_questions: Vec<String>,
     pub decision_candidates: Vec<String>,
+    pub extra_artifacts: Vec<String>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -181,6 +187,7 @@ pub fn run_experiment_in(
                     failure_modes: vec![error_message],
                     follow_up_questions: vec![],
                     decision_candidates: vec![],
+                    extra_artifacts: vec![],
                 },
             )?;
 
@@ -217,6 +224,7 @@ pub fn run_experiment_in(
             failure_modes: outcome.failure_modes,
             follow_up_questions: outcome.follow_up_questions,
             decision_candidates: outcome.decision_candidates,
+            extra_artifacts: outcome.extra_artifacts,
         },
     )?;
 
@@ -247,7 +255,13 @@ fn experiment_names() -> [ExperimentName; 5] {
 }
 
 fn experiment_for(name: ExperimentName) -> Box<dyn Experiment> {
-    Box::new(PlaceholderExperiment::new(name))
+    match name {
+        ExperimentName::AssociativeMemoryToyModel => Box::new(AssociativeMemoryToyModelExperiment),
+        ExperimentName::ContextBudgetRetrievalTest => {
+            Box::new(ContextBudgetRetrievalTestExperiment)
+        }
+        _ => Box::new(PlaceholderExperiment::new(name)),
+    }
 }
 
 fn report_configuration() -> Vec<String> {
@@ -274,11 +288,11 @@ mod tests {
                 .iter()
                 .any(|experiment| { experiment.id == ExperimentName::FrameworkSkeletonMvp.id() })
         );
-        assert!(
-            experiments.iter().any(|experiment| {
-                experiment.id == ExperimentName::AssociativeMemoryToyModel.id()
-            })
-        );
+        let associative = experiments
+            .iter()
+            .find(|experiment| experiment.id == ExperimentName::AssociativeMemoryToyModel.id())
+            .unwrap();
+        assert!(!associative.description.contains("Placeholder"));
     }
 
     #[test]
@@ -296,8 +310,8 @@ mod tests {
 
         assert_eq!(summary.experiment_id, "associative-memory-toy-model");
         assert_eq!(summary.status, "completed");
-        assert_eq!(summary.event_count, 5);
-        assert_eq!(summary.trace_count, 1);
+        assert_eq!(summary.event_count, 15);
+        assert_eq!(summary.trace_count, 6);
 
         let events = fs::read_to_string(summary.run_dir.join("events.jsonl")).unwrap();
         let traces = fs::read_to_string(summary.run_dir.join("traces.jsonl")).unwrap();
@@ -305,10 +319,15 @@ mod tests {
 
         assert!(events.contains("ExperimentStarted"));
         assert!(events.contains("InputReceived"));
+        assert!(events.contains("MemoryRetrieved"));
+        assert!(events.contains("ContextAssembled"));
         assert!(events.contains("ExperimentCompleted"));
-        assert!(traces.contains("placeholder-experiment-run"));
-        assert!(report.contains("Phase 3 runner dispatch"));
-        assert!(report.contains("first-class Phase 3 experiment runner"));
+        assert!(traces.contains("memory-retrieval"));
+        assert!(traces.contains("context-assembly"));
+        assert!(report.contains("Phase 4 associative memory toy model"));
+        assert!(report.contains("Require memory retrieval traces"));
+        assert!(report.contains("memory-fixture.json"));
+        assert!(report.contains("retrieval-comparison.md"));
 
         fs::remove_dir_all(base_dir).unwrap();
     }

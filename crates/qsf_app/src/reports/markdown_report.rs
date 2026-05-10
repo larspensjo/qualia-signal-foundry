@@ -14,6 +14,7 @@ pub struct ExperimentReport {
     pub failure_modes: Vec<String>,
     pub follow_up_questions: Vec<String>,
     pub decision_candidates: Vec<String>,
+    pub extra_artifacts: Vec<String>,
 }
 
 pub fn write_report(path: impl AsRef<Path>, report: &ExperimentReport) -> anyhow::Result<()> {
@@ -47,6 +48,9 @@ pub fn write_report(path: impl AsRef<Path>, report: &ExperimentReport) -> anyhow
     markdown.push_str("- `engine.log`\n");
     markdown.push_str("- `events.jsonl`\n");
     markdown.push_str("- `traces.jsonl`\n");
+    for artifact in &report.extra_artifacts {
+        markdown.push_str(&format!("- `{artifact}`\n"));
+    }
 
     fs::write(path, markdown)?;
     Ok(())
@@ -94,6 +98,7 @@ mod tests {
                 failure_modes: vec!["No failure.".to_string()],
                 follow_up_questions: vec![],
                 decision_candidates: vec!["Keep test report shape.".to_string()],
+                extra_artifacts: vec!["extra.md".to_string()],
             },
         )
         .unwrap();
@@ -103,6 +108,7 @@ mod tests {
         assert!(markdown.contains("events.jsonl"));
         assert!(markdown.contains("traces.jsonl"));
         assert!(markdown.contains("engine.log"));
+        assert!(markdown.contains("extra.md"));
 
         fs::remove_dir_all(base_dir).unwrap();
     }

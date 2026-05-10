@@ -362,6 +362,15 @@ Associative memory appears central to the project, but the final design is not d
 
 The next useful step is to define a minimal experiment that tests whether a small associative memory structure can improve continuity while keeping live context small.
 
+## MVP Scoring Notes
+
+The first toy retrieval scorer is deliberately simple and inspectable. Curated tag
+matches weigh more than free-text matches because tags are hand-authored retrieval
+cues. Association weights can surface one-hop linked memories, but direct query
+matches still matter. Importance and recency are small nudges rather than substitutes
+for relevance. Reinforcement is capped in the MVP so repeated use can help a memory
+without letting one frequently retrieved item dominate every query.
+
 ## Notes
 
 This concept should not be treated as a finalized memory architecture.

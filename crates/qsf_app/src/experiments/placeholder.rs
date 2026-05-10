@@ -40,6 +40,7 @@ impl Experiment for PlaceholderExperiment {
             None,
         )?;
 
+        let elapsed = started_at.elapsed();
         let trace = TraceRecord::new(
             context.experiment_id(),
             "placeholder-experiment-run",
@@ -50,13 +51,7 @@ impl Experiment for PlaceholderExperiment {
             "phase": "3",
             "artifacts": ["engine.log", "events.jsonl", "traces.jsonl", "Report.md"],
         }))
-        .with_latency_ms(
-            started_at
-                .elapsed()
-                .as_millis()
-                .try_into()
-                .unwrap_or(u64::MAX),
-        );
+        .with_latency_ns(elapsed.as_nanos().try_into().unwrap_or(u64::MAX));
         let trace_id = trace.trace_id;
 
         context.record_trace(trace)?;
@@ -93,8 +88,10 @@ impl Experiment for PlaceholderExperiment {
                 "Which Phase 4 experiment should replace the placeholder implementation first?".to_string(),
             ],
             decision_candidates: vec![
-                "Keep experiment registration explicit until dynamic discovery becomes necessary.".to_string(),
+                "Keep experiment registration explicit until dynamic discovery becomes necessary."
+                    .to_string(),
             ],
+            extra_artifacts: vec![],
         })
     }
 }

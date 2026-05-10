@@ -18,6 +18,7 @@ pub struct TraceRecord {
     pub output_summary: String,
     pub details: Value,
     pub latency_ms: Option<u64>,
+    pub latency_ns: Option<u64>,
     pub error: Option<String>,
 }
 
@@ -37,6 +38,7 @@ impl TraceRecord {
             output_summary: output_summary.into(),
             details: json!({}),
             latency_ms: None,
+            latency_ns: None,
             error: None,
         }
     }
@@ -48,6 +50,13 @@ impl TraceRecord {
 
     pub fn with_latency_ms(mut self, latency_ms: u64) -> Self {
         self.latency_ms = Some(latency_ms);
+        self.latency_ns = latency_ms.checked_mul(1_000_000);
+        self
+    }
+
+    pub fn with_latency_ns(mut self, latency_ns: u64) -> Self {
+        self.latency_ms = Some(latency_ns / 1_000_000);
+        self.latency_ns = Some(latency_ns);
         self
     }
 }
@@ -95,5 +104,6 @@ mod tests {
         assert_eq!(serialized["operation"], "placeholder-run");
         assert_eq!(serialized["details"]["selected"], 1);
         assert_eq!(serialized["latency_ms"], 7);
+        assert_eq!(serialized["latency_ns"], 7_000_000);
     }
 }
