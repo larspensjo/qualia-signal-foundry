@@ -98,3 +98,11 @@ different policy.
 Refs: docs/Plans/Design.MemorySchemaVersioning.md,
 docs/Plans/Plan.FrameworkMVP.md,
 docs/Architecture/Architecture.MemorySystem.md
+
+## 2026-05-11 - Model access uses explicit roles and optional provider adapters
+Decision: Model invocations are expressed as typed `ModelRole` plus `ModelRequest` pairs and execute through a synchronous `ModelClient` boundary. The OpenAI-backed path remains an optional adapter over `openai_provider_kit` and is selected explicitly by configuration rather than automatically when `OPENAI_API_KEY` happens to be present.
+Context: Phase 6 needed deterministic model-role experiments and a real OpenAI-backed path without forcing the whole runtime loop async or letting ambient environment variables silently change behavior.
+Consequences: Mock and OpenAI clients share one provider-agnostic contract, model-role traces can stay uniform across providers, and future async or multi-provider work changes the adapter/effects boundary rather than every call site. Possessing an API key alone does not switch the runtime away from deterministic mock behavior.
+Refs: Cargo.toml, crates/qsf_app/src/models,
+crates/qsf_app/src/experiments/model_role_smoke.rs,
+docs/Architecture/Architecture.ModelRoles.md

@@ -6,12 +6,18 @@ license.workspace = true
 authors.workspace = true
 rust-version.workspace = true
 
+[features]
+default = []
+openai = ["dep:openai_provider_kit", "dep:tokio"]
+
 [dependencies]
 anyhow.workspace = true
 clap.workspace = true
 engine_logging = { path = "../engine_logging" }
 log.workspace = true
+openai_provider_kit = { git = "https://github.com/larspensjo/web_page_filet_mignon", package = "openai_provider_kit", rev = "ca28629d42fb350a7935df6907573e2f972b3ba9", optional = true }
 serde.workspace = true
 serde_json.workspace = true
 time.workspace = true
+tokio = { workspace = true, optional = true }
 uuid.workspace = true

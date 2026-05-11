@@ -3,7 +3,7 @@
 ## Workflow
 - Build with `cargo build`.
 - When a task is complete, run `cargo clippy --all-targets -- -D warnings` and then `cargo fmt`.
-- For plan-driven work, write commit messages about the code change, not the plan. Follow recommended practices for teh design of the comment.
+- For plan-driven work, entries in the EngineeringDiary.md should be about the code change, not the plan. The git commit message, on the other hand, can reference the plan.
 - When creating complex plans, they should be divided into incremental phases that can be tested.
 
 ## Planning & Documentation

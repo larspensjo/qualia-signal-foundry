@@ -14,6 +14,7 @@ use crate::runtime::run_context::RunContext;
 use super::memory_and_context::{
     AssociativeMemoryToyModelExperiment, ContextBudgetRetrievalTestExperiment,
 };
+use super::model_role_smoke::ModelRoleSmokeExperiment;
 use super::placeholder::PlaceholderExperiment;
 use super::tool_as_perception_calculator::ToolAsPerceptionCalculatorExperiment;
 
@@ -23,6 +24,7 @@ pub enum ExperimentName {
     FrameworkSkeletonMvp,
     AssociativeMemoryToyModel,
     ContextBudgetRetrievalTest,
+    ModelRoleSmokeTest,
     SleepPhaseSessionSummary,
     ToolAsPerceptionCalculator,
 }
@@ -33,6 +35,7 @@ impl ExperimentName {
             Self::FrameworkSkeletonMvp => "framework-skeleton-mvp",
             Self::AssociativeMemoryToyModel => "associative-memory-toy-model",
             Self::ContextBudgetRetrievalTest => "context-budget-retrieval-test",
+            Self::ModelRoleSmokeTest => "model-role-smoke-test",
             Self::SleepPhaseSessionSummary => "sleep-phase-session-summary",
             Self::ToolAsPerceptionCalculator => "tool-as-perception-calculator",
         }
@@ -46,6 +49,9 @@ impl ExperimentName {
             }
             Self::ContextBudgetRetrievalTest => {
                 "Compare selected and omitted memory context under a deliberately small budget"
+            }
+            Self::ModelRoleSmokeTest => {
+                "Invoke a model role through a deterministic mock client or the optional OpenAI adapter"
             }
             Self::SleepPhaseSessionSummary => "Placeholder sleep phase session summary experiment",
             Self::ToolAsPerceptionCalculator => {
@@ -245,11 +251,12 @@ pub fn run_experiment_in(
     })
 }
 
-fn experiment_names() -> [ExperimentName; 5] {
+fn experiment_names() -> [ExperimentName; 6] {
     [
         ExperimentName::FrameworkSkeletonMvp,
         ExperimentName::AssociativeMemoryToyModel,
         ExperimentName::ContextBudgetRetrievalTest,
+        ExperimentName::ModelRoleSmokeTest,
         ExperimentName::SleepPhaseSessionSummary,
         ExperimentName::ToolAsPerceptionCalculator,
     ]
@@ -261,6 +268,7 @@ fn experiment_for(name: ExperimentName) -> Box<dyn Experiment> {
         ExperimentName::ContextBudgetRetrievalTest => {
             Box::new(ContextBudgetRetrievalTestExperiment)
         }
+        ExperimentName::ModelRoleSmokeTest => Box::new(ModelRoleSmokeExperiment),
         ExperimentName::ToolAsPerceptionCalculator => {
             Box::new(ToolAsPerceptionCalculatorExperiment)
         }

@@ -59,6 +59,11 @@ impl TraceRecord {
         self.latency_ns = Some(latency_ns);
         self
     }
+
+    pub fn with_error(mut self, error: impl Into<String>) -> Self {
+        self.error = Some(error.into());
+        self
+    }
 }
 
 pub struct TraceLogWriter {

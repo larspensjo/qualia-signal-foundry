@@ -178,3 +178,38 @@ crates/qsf_app/src/experiments/registry.rs,
 crates/qsf_app/src/experiments/memory_and_context.rs,
 crates/qsf_app/src/experiments/tool_as_perception_calculator.rs,
 Agents.md
+
+## 2026-05-11 - Model role and OpenAI client MVP
+
+`qsf_app` now has typed model roles, deterministic mock-model behavior, and an optional OpenAI-backed adapter that flows through the same event and trace artifacts as the earlier subsystems.
+
+What changed:
+- Added `qsf_app::models` modules for role definitions, request/response payloads, a synchronous `ModelClient` boundary, a deterministic `MockModelClient`, and an optional `OpenAiProviderModelClient` backed by `openai_provider_kit`.
+- Added `ModelRoleRequested`, `ModelRoleCompleted`, and `ModelRoleFailed` event types plus linked model invocation traces.
+- Added a `model-role-smoke-test` experiment that defaults to the mock provider, writes `model-invocation.md`, and can target OpenAI explicitly through configuration when the `openai` Cargo feature is enabled.
+- Pinned `openai_provider_kit` in `crates/qsf_app/Cargo.toml` and updated `Cargo.lock`.
+
+Observed:
+- The existing run context and report shape were sufficient for model-role observability without widening the experiment runner API.
+
+Refs: Cargo.toml, Cargo.lock, crates/qsf_app/src/models,
+crates/qsf_app/src/experiments/model_role_smoke.rs,
+crates/qsf_app/src/observability/event_log.rs
+
+## 2026-05-11 - Phase 6 review follow-up fixes
+
+Applied the relevant follow-up fixes from the Phase 6 review without widening the model subsystem scope.
+
+What changed:
+- Refactored provider selection so tests can exercise the mock path through explicit provider arguments instead of mutating `QSF_MODEL_PROVIDER` with `unsafe` environment writes.
+- Added a `debug_assert!` when provider-reported cached input tokens exceed total input tokens, while preserving the existing clamp in release behavior.
+- Added an ignored `openai`-feature smoke test that compiles the real OpenAI adapter path and can run manually when `OPENAI_API_KEY` is available.
+- Cleaned the OpenAI adapter imports so default builds remain warning-free under `cargo clippy --all-targets -- -D warnings`.
+
+Observed:
+- The provider-selection boundary was already narrow enough that the unsafe-test fix only required a small helper split and a test-only experiment entry point.
+
+Refs: crates/qsf_app/src/models/openai_provider.rs,
+crates/qsf_app/src/models/model_client.rs,
+crates/qsf_app/src/experiments/model_role_smoke.rs,
+docs/Reviews/Review.Phase6.ModelRoleAndOpenAIClient.md
