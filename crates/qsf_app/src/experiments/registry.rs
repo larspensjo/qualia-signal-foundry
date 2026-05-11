@@ -11,11 +11,11 @@ use crate::observability::event_log::EventType;
 use crate::reports::markdown_report::{ExperimentReport, write_report};
 use crate::runtime::run_context::RunContext;
 
-use super::phase_five::ToolAsPerceptionCalculatorExperiment;
-use super::phase_four::{
+use super::memory_and_context::{
     AssociativeMemoryToyModelExperiment, ContextBudgetRetrievalTestExperiment,
 };
 use super::placeholder::PlaceholderExperiment;
+use super::tool_as_perception_calculator::ToolAsPerceptionCalculatorExperiment;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, ValueEnum)]
 #[value(rename_all = "kebab-case")]

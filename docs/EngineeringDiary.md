@@ -145,7 +145,7 @@ Observed:
   context artifacts for manual review.
 
 Refs: crates/qsf_app/src/memory, crates/qsf_app/src/context,
-crates/qsf_app/src/experiments/phase_four.rs
+crates/qsf_app/src/experiments/memory_and_context.rs
 
 ## 2026-05-11 - Tool-as-perception MVP
 
@@ -161,5 +161,20 @@ What changed:
 Observed:
 - The existing event, trace, and context-budget infrastructure was enough to host tools without widening the runner or report shape.
 
-Refs: crates/qsf_app/src/tools, crates/qsf_app/src/experiments/phase_five.rs,
+Refs: crates/qsf_app/src/tools, crates/qsf_app/src/experiments/tool_as_perception_calculator.rs,
 crates/qsf_app/src/observability/event_log.rs
+
+## 2026-05-11 - Experiment modules renamed to stable domains
+
+Renamed the experiment source files away from MVP phase labels so the runtime code still reads cleanly after the plan document is deleted.
+
+What changed:
+- Renamed the shared Phase 4 experiment module to `memory_and_context.rs`.
+- Renamed the Phase 5 experiment module to `tool_as_perception_calculator.rs`.
+- Updated experiment module wiring and added a short repo instruction to avoid phase-based names for runtime modules.
+
+Refs: crates/qsf_app/src/experiments/mod.rs,
+crates/qsf_app/src/experiments/registry.rs,
+crates/qsf_app/src/experiments/memory_and_context.rs,
+crates/qsf_app/src/experiments/tool_as_perception_calculator.rs,
+Agents.md

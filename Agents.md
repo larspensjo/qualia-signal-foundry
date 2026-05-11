@@ -14,6 +14,7 @@
 - Reducers must stay pure and unit-testable.
 - Keep entry points (`main.rs`, `mod.rs` and `lib.rs`) files as thin wrappers only.
 - Keep shared constants and behavior DRY; prefer one source of truth over duplicated definitions.
+- Name runtime modules after stable behavior or domain concepts, not temporary plan phases or milestones.
 
 ## Testing
 - Bug fixes should include a regression test when practical.

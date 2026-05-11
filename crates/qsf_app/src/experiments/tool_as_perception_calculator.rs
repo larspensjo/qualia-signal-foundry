@@ -286,7 +286,7 @@ mod tests {
 
         assert!(
             error.to_string().contains("expected number")
-                || error.to_string().contains("expected closing ')'")
+                || error.to_string().contains("expected closing ')'"),
         );
         assert_eq!(context.event_count(), 1);
         assert!(events.contains("ToolFailed"));

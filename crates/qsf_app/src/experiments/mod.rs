@@ -1,9 +1,9 @@
 //! Experiment definitions, registration, and runner dispatch.
 
-mod phase_five;
-mod phase_four;
+mod memory_and_context;
 mod placeholder;
 mod registry;
+mod tool_as_perception_calculator;
 
 pub use registry::{
     Experiment, ExperimentInfo, ExperimentName, ExperimentOutcome, ExperimentRunSummary,
