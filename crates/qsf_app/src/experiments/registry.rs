@@ -11,6 +11,7 @@ use crate::observability::event_log::EventType;
 use crate::reports::markdown_report::{ExperimentReport, write_report};
 use crate::runtime::run_context::RunContext;
 
+use super::phase_five::ToolAsPerceptionCalculatorExperiment;
 use super::phase_four::{
     AssociativeMemoryToyModelExperiment, ContextBudgetRetrievalTestExperiment,
 };
@@ -48,7 +49,7 @@ impl ExperimentName {
             }
             Self::SleepPhaseSessionSummary => "Placeholder sleep phase session summary experiment",
             Self::ToolAsPerceptionCalculator => {
-                "Placeholder tool-as-perception calculator experiment"
+                "Execute a compute-only calculator tool and treat the result as a context candidate"
             }
         }
     }
@@ -259,6 +260,9 @@ fn experiment_for(name: ExperimentName) -> Box<dyn Experiment> {
         ExperimentName::AssociativeMemoryToyModel => Box::new(AssociativeMemoryToyModelExperiment),
         ExperimentName::ContextBudgetRetrievalTest => {
             Box::new(ContextBudgetRetrievalTestExperiment)
+        }
+        ExperimentName::ToolAsPerceptionCalculator => {
+            Box::new(ToolAsPerceptionCalculatorExperiment)
         }
         _ => Box::new(PlaceholderExperiment::new(name)),
     }

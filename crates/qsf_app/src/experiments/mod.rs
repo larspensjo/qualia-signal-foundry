@@ -1,5 +1,6 @@
 //! Experiment definitions, registration, and runner dispatch.
 
+mod phase_five;
 mod phase_four;
 mod placeholder;
 mod registry;

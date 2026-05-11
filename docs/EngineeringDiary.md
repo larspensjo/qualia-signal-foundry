@@ -146,3 +146,20 @@ Observed:
 
 Refs: crates/qsf_app/src/memory, crates/qsf_app/src/context,
 crates/qsf_app/src/experiments/phase_four.rs
+
+## 2026-05-11 - Tool-as-perception MVP
+
+A concrete compute-only tool path replaced the placeholder experiment, and the review follow-up tightened failure observability and removed redundant validation.
+
+What changed:
+- Added tool request, permission, metadata, registry, result, and calculator modules under `qsf_app::tools`.
+- Replaced the tool-as-perception placeholder with a real calculator experiment that records tool request and completion events, writes a tool invocation trace, and converts the result into a tool-observation context fragment.
+- Added `ToolRegistry::validate_and_execute()` so the Phase 5 experiment can capture metadata and result without validating the same request twice.
+- Recorded `ToolFailed` when tool validation or execution errors out before the experiment bubbles the error to the runner.
+- Added focused tests for request validation, calculator parsing, the end-to-end Phase 5 experiment artifact flow, and malformed calculator input that must write a `ToolFailed` event into `events.jsonl`.
+
+Observed:
+- The existing event, trace, and context-budget infrastructure was enough to host tools without widening the runner or report shape.
+
+Refs: crates/qsf_app/src/tools, crates/qsf_app/src/experiments/phase_five.rs,
+crates/qsf_app/src/observability/event_log.rs
