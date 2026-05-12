@@ -251,3 +251,24 @@ Refs: crates/qsf_app/src/audio, crates/qsf_app/src/experiments/audio_preparation
 crates/qsf_app/src/observability/event_log.rs,
 crates/qsf_app/src/observability/trace.rs,
 docs/Reviews/Review.Phase8.AudioPreparationLayer.md
+
+## 2026-05-12 - Streaming transcription MVP start
+
+Deterministic transcript-provider boundary that emits partial
+and final transcript events before bridging finalized text into normal runtime input.
+
+What changed:
+- Added a `TranscriptProvider` contract, deterministic simulated provider, transcript
+  session data, and an OpenAI realtime provider target constant for
+  `gpt-realtime-whisper`.
+- Registered the `streaming-transcription-mvp` experiment and report artifact.
+- Added traces for provider session timing, transcription latency, and final
+  transcript-to-runtime input dispatch.
+
+Observed:
+- Phase 8's audio event names and latency trace fields were sufficient for the first
+  transcript-first implementation slice.
+
+Refs: crates/qsf_app/src/audio/transcript_provider.rs,
+crates/qsf_app/src/experiments/streaming_transcription_mvp.rs,
+crates/qsf_app/src/experiments/registry.rs

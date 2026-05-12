@@ -18,6 +18,7 @@ use super::memory_and_context::{
 use super::model_role_smoke::ModelRoleSmokeExperiment;
 use super::placeholder::PlaceholderExperiment;
 use super::sleep_phase_session_summary::SleepPhaseSessionSummaryExperiment;
+use super::streaming_transcription_mvp::StreamingTranscriptionMvpExperiment;
 use super::tool_as_perception_calculator::ToolAsPerceptionCalculatorExperiment;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, ValueEnum)]
@@ -29,6 +30,7 @@ pub enum ExperimentName {
     ContextBudgetRetrievalTest,
     ModelRoleSmokeTest,
     SleepPhaseSessionSummary,
+    StreamingTranscriptionMvp,
     ToolAsPerceptionCalculator,
 }
 
@@ -41,6 +43,7 @@ impl ExperimentName {
             Self::ContextBudgetRetrievalTest => "context-budget-retrieval-test",
             Self::ModelRoleSmokeTest => "model-role-smoke-test",
             Self::SleepPhaseSessionSummary => "sleep-phase-session-summary",
+            Self::StreamingTranscriptionMvp => "streaming-transcription-mvp",
             Self::ToolAsPerceptionCalculator => "tool-as-perception-calculator",
         }
     }
@@ -62,6 +65,9 @@ impl ExperimentName {
             }
             Self::SleepPhaseSessionSummary => {
                 "Summarize a session into reviewable sleep-phase outputs and artifacts"
+            }
+            Self::StreamingTranscriptionMvp => {
+                "Stream transcript deltas as audio-derived events before committing final text to runtime input"
             }
             Self::ToolAsPerceptionCalculator => {
                 "Execute a compute-only calculator tool and treat the result as a context candidate"
@@ -260,7 +266,7 @@ pub fn run_experiment_in(
     })
 }
 
-fn experiment_names() -> [ExperimentName; 7] {
+fn experiment_names() -> [ExperimentName; 8] {
     [
         ExperimentName::FrameworkSkeletonMvp,
         ExperimentName::AudioPreparationLayer,
@@ -268,6 +274,7 @@ fn experiment_names() -> [ExperimentName; 7] {
         ExperimentName::ContextBudgetRetrievalTest,
         ExperimentName::ModelRoleSmokeTest,
         ExperimentName::SleepPhaseSessionSummary,
+        ExperimentName::StreamingTranscriptionMvp,
         ExperimentName::ToolAsPerceptionCalculator,
     ]
 }
@@ -281,6 +288,7 @@ fn experiment_for(name: ExperimentName) -> Box<dyn Experiment> {
         }
         ExperimentName::ModelRoleSmokeTest => Box::new(ModelRoleSmokeExperiment),
         ExperimentName::SleepPhaseSessionSummary => Box::new(SleepPhaseSessionSummaryExperiment),
+        ExperimentName::StreamingTranscriptionMvp => Box::new(StreamingTranscriptionMvpExperiment),
         ExperimentName::ToolAsPerceptionCalculator => {
             Box::new(ToolAsPerceptionCalculatorExperiment)
         }

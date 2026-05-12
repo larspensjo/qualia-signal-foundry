@@ -3,6 +3,17 @@ use serde_json::{Value, json};
 
 use crate::observability::event_log::EventType;
 
+mod transcript_provider;
+
+pub use transcript_provider::{
+    AudioSafetyMarkers, FinalTranscript, OPENAI_REALTIME_TRANSCRIPTION_MODEL,
+    OpenAiRealtimeTranscriptProvider, PartialTranscript, SimulatedTranscriptProvider,
+    TRANSCRIPT_PROVIDER_ENV_VAR, TranscriptAudioChunk, TranscriptInputSource, TranscriptProvider,
+    TranscriptProviderError, TranscriptProviderRequest, TranscriptProviderSession,
+    build_transcript_provider, requested_transcript_provider,
+    requested_transcript_provider_from_env,
+};
+
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum AudioRuntimeEntryPoint {
@@ -156,6 +167,7 @@ impl SimulatedAudioSession {
                     "session_id": self.session_id,
                     "input_device": self.input_device,
                     "entry_point": AudioRuntimeEntryPoint::TranscriptProvider,
+                    "safety": AudioSafetyMarkers::no_secret_or_raw_audio(),
                 }),
             ),
             PreparedAudioEvent::new(
@@ -164,8 +176,11 @@ impl SimulatedAudioSession {
                     "session_id": self.session_id,
                     "chunk_index": 0,
                     "captured_chunk_count": self.captured_chunk_count,
+                    "captured_at_ms": 0,
+                    "duration_ms": 14,
                     "provider": self.transcript_provider,
                     "entry_point": AudioRuntimeEntryPoint::TranscriptProvider,
+                    "safety": AudioSafetyMarkers::no_secret_or_raw_audio(),
                 }),
             ),
             PreparedAudioEvent::new(
@@ -176,6 +191,7 @@ impl SimulatedAudioSession {
                     "chunk_index": 0,
                     "transcript": self.partial_transcript,
                     "entry_point": AudioRuntimeEntryPoint::TranscriptProvider,
+                    "safety": AudioSafetyMarkers::no_secret_or_raw_audio(),
                 }),
             ),
         ]
@@ -193,6 +209,7 @@ impl SimulatedAudioSession {
                     "utterance_index": 0,
                     "transcript": self.final_transcript,
                     "boundary": boundary,
+                    "safety": AudioSafetyMarkers::no_secret_or_raw_audio(),
                 }),
             ),
             PreparedAudioEvent::new(
@@ -201,6 +218,7 @@ impl SimulatedAudioSession {
                     "session_id": self.session_id,
                     "provider": self.transcript_provider,
                     "captured_chunk_count": self.captured_chunk_count,
+                    "safety": AudioSafetyMarkers::no_secret_or_raw_audio(),
                 }),
             ),
             PreparedAudioEvent::new(
@@ -212,6 +230,7 @@ impl SimulatedAudioSession {
                     "domain": "audio",
                     "stage": "transcription",
                     "measurements": self.transcription_latency_measurements(),
+                    "safety": AudioSafetyMarkers::no_secret_or_raw_audio(),
                 }),
             ),
             PreparedAudioEvent::new(
