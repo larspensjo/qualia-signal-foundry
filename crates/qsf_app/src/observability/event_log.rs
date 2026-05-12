@@ -23,6 +23,8 @@ pub enum EventType {
     ModelRoleRequested,
     ModelRoleCompleted,
     ModelRoleFailed,
+    SleepPhaseRequested,
+    SleepPhaseCompleted,
     OutputProduced,
     ErrorOccurred,
     TraceRecorded,

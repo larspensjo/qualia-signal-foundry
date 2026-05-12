@@ -16,6 +16,7 @@ use super::memory_and_context::{
 };
 use super::model_role_smoke::ModelRoleSmokeExperiment;
 use super::placeholder::PlaceholderExperiment;
+use super::sleep_phase_session_summary::SleepPhaseSessionSummaryExperiment;
 use super::tool_as_perception_calculator::ToolAsPerceptionCalculatorExperiment;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, ValueEnum)]
@@ -53,7 +54,9 @@ impl ExperimentName {
             Self::ModelRoleSmokeTest => {
                 "Invoke a model role through a deterministic mock client or the optional OpenAI adapter"
             }
-            Self::SleepPhaseSessionSummary => "Placeholder sleep phase session summary experiment",
+            Self::SleepPhaseSessionSummary => {
+                "Summarize a session into reviewable sleep-phase outputs and artifacts"
+            }
             Self::ToolAsPerceptionCalculator => {
                 "Execute a compute-only calculator tool and treat the result as a context candidate"
             }
@@ -269,6 +272,7 @@ fn experiment_for(name: ExperimentName) -> Box<dyn Experiment> {
             Box::new(ContextBudgetRetrievalTestExperiment)
         }
         ExperimentName::ModelRoleSmokeTest => Box::new(ModelRoleSmokeExperiment),
+        ExperimentName::SleepPhaseSessionSummary => Box::new(SleepPhaseSessionSummaryExperiment),
         ExperimentName::ToolAsPerceptionCalculator => {
             Box::new(ToolAsPerceptionCalculatorExperiment)
         }

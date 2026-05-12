@@ -213,3 +213,21 @@ Refs: crates/qsf_app/src/models/openai_provider.rs,
 crates/qsf_app/src/models/model_client.rs,
 crates/qsf_app/src/experiments/model_role_smoke.rs,
 docs/Reviews/Review.Phase6.ModelRoleAndOpenAIClient.md
+
+## 2026-05-12 - Sleep phase MVP
+
+A real sleep-phase experiment and subsystem that turns a session transcript into explicit reviewable sleep outputs through the existing model-role boundary.
+
+What changed:
+- Added `qsf_app::sleep` modules for sleep input bundles, parsed sleep reports, and session summarization through the shared `SleepSummarizer` model role.
+- Replaced the sleep-phase placeholder with a real `sleep-phase-session-summary` experiment that records sleep request/completion events, writes a dedicated sleep trace, and emits `sleep-report.json` plus `sleep-report.md` artifacts.
+- Extended the mock sleep summarizer fixture so deterministic runs exercise structured memory candidates and review notes.
+- Added focused tests for sleep-report parsing, session summarization, and end-to-end Phase 7 artifact generation.
+
+Observed:
+- The Phase 6 model-role path was already sufficient for sleep summarization, so Phase 7 only needed sleep-specific types, parsing, and artifacts rather than a second model abstraction.
+
+Refs: crates/qsf_app/src/sleep, crates/qsf_app/src/experiments/sleep_phase_session_summary.rs,
+crates/qsf_app/src/models/mock_model.rs,
+crates/qsf_app/src/observability/event_log.rs;
+implements: 2026-05-11 - Model access uses explicit roles and optional provider adapters

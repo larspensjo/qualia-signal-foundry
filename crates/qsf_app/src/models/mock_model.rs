@@ -53,7 +53,11 @@ impl Default for MockModelClient {
                 output_text: json!({
                     "session_summary": "Mock sleep summarizer reviewed the session and preserved explicit follow-up fields.",
                     "memory_candidates": [
-                        "Model roles now flow through the same event and trace artifacts as other subsystems."
+                        {
+                            "summary": "Model roles now flow through the same event and trace artifacts as other subsystems.",
+                            "importance": 0.88,
+                            "source_reference": "session-transcript:phase-6"
+                        }
                     ],
                     "open_questions": [
                         "Should future sleep consolidation split extraction and summarization into separate roles?"
@@ -63,6 +67,9 @@ impl Default for MockModelClient {
                     ],
                     "future_context_hints": [
                         "Include the selected provider and structured output expectation in later sleep reports."
+                    ],
+                    "review_notes": [
+                        "All extracted items remain proposals pending manual review."
                     ]
                 })
                 .to_string(),
