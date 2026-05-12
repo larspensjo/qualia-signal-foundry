@@ -272,3 +272,27 @@ Observed:
 Refs: crates/qsf_app/src/audio/transcript_provider.rs,
 crates/qsf_app/src/experiments/streaming_transcription_mvp.rs,
 crates/qsf_app/src/experiments/registry.rs
+
+## 2026-05-12 - OpenAI realtime transcription adapter
+
+Implemented the provider-backed path for OpenAI realtime transcription with
+environment-selected simulated, prerecorded WAV, and live microphone input sources.
+
+What changed:
+- Added a feature-gated OpenAI Realtime WebSocket transcript provider that streams
+  base64 PCM16 chunks and records partial/final transcript revisions as existing audio
+  events.
+- Added prerecorded WAV validation for 24 kHz mono PCM and a bounded live microphone
+  capture path for evaluation runs.
+- Routed the streaming transcription experiment through `TranscriptProviderRequest::from_env`
+  so real inputs are selectable without code edits.
+- Kept provider timings relative to session start so latency traces remain comparable
+  with the simulated provider.
+
+Observed:
+- The provider boundary stayed compatible with the existing transcript-to-runtime bridge;
+  most of the change was isolated to the side-effect adapter.
+
+Refs: crates/qsf_app/src/audio/transcript_provider.rs,
+crates/qsf_app/src/audio/mod.rs,
+crates/qsf_app/src/experiments/streaming_transcription_mvp.rs

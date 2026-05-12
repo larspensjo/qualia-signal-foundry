@@ -8,10 +8,11 @@ mod transcript_provider;
 pub use transcript_provider::{
     AudioSafetyMarkers, FinalTranscript, OPENAI_REALTIME_TRANSCRIPTION_MODEL,
     OpenAiRealtimeTranscriptProvider, PartialTranscript, SimulatedTranscriptProvider,
-    TRANSCRIPT_PROVIDER_ENV_VAR, TranscriptAudioChunk, TranscriptInputSource, TranscriptProvider,
-    TranscriptProviderError, TranscriptProviderRequest, TranscriptProviderSession,
-    build_transcript_provider, requested_transcript_provider,
-    requested_transcript_provider_from_env,
+    TRANSCRIPT_INPUT_SOURCE_ENV_VAR, TRANSCRIPT_MIC_DEVICE_ENV_VAR,
+    TRANSCRIPT_MIC_DURATION_MS_ENV_VAR, TRANSCRIPT_PROVIDER_ENV_VAR, TRANSCRIPT_WAV_PATH_ENV_VAR,
+    TranscriptAudioChunk, TranscriptInputSource, TranscriptProvider, TranscriptProviderError,
+    TranscriptProviderRequest, TranscriptProviderSession, build_transcript_provider,
+    requested_transcript_provider, requested_transcript_provider_from_env,
 };
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]

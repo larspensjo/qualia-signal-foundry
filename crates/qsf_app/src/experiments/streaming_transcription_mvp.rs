@@ -38,7 +38,7 @@ impl StreamingTranscriptionMvpExperiment {
         provider: &dyn TranscriptProvider,
     ) -> anyhow::Result<ExperimentOutcome> {
         let request =
-            TranscriptProviderRequest::simulated(format!("{}-transcription", context.run_id()));
+            TranscriptProviderRequest::from_env(format!("{}-transcription", context.run_id()));
         let session = match provider.transcribe(&request) {
             Ok(session) => session,
             Err(error) => {
@@ -122,16 +122,16 @@ impl StreamingTranscriptionMvpExperiment {
         write_streaming_transcription_report(context, &session)?;
 
         Ok(ExperimentOutcome {
-            summary: "Phase 9 streaming transcription now has a deterministic provider path that emits partial transcript events, records final transcript events, and bridges finalized speech text back into the existing InputReceived runtime event.".to_string(),
+            summary: "Phase 9 streaming transcription now supports simulated, prerecorded WAV, and live microphone request paths behind the transcript provider boundary, then bridges finalized speech text back into the existing InputReceived runtime event.".to_string(),
             observations: vec![
-                "The simulated transcript provider emits multiple partial revisions before one final transcript.".to_string(),
+                "The transcript provider emits partial revisions before one final transcript.".to_string(),
                 "Partial transcripts are logged as AudioPartialTranscript events and do not create InputReceived events.".to_string(),
                 "The final transcript is explicitly bridged through AudioFinalTranscript before becoming normal runtime input.".to_string(),
                 "Latency traces capture first partial, final transcript, and runtime dispatch timing without storing raw audio.".to_string(),
             ],
             failure_modes: vec![
-                "The default experiment path is simulated and does not validate microphone capture, device permissions, or network behavior.".to_string(),
-                "The OpenAI realtime adapter target is declared, but the WebSocket streaming implementation remains a follow-up task.".to_string(),
+                "The default experiment path remains simulated unless QSF_TRANSCRIPT_PROVIDER and QSF_TRANSCRIPT_INPUT_SOURCE select a real provider path.".to_string(),
+                "Real microphone evaluation depends on local device support, permission prompts, and ambient recording conditions.".to_string(),
             ],
             follow_up_questions: vec![
                 "Should prerecorded WAV fixtures be added before live microphone testing?".to_string(),

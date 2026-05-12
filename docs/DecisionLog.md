@@ -106,3 +106,19 @@ Consequences: Mock and OpenAI clients share one provider-agnostic contract, mode
 Refs: Cargo.toml, crates/qsf_app/src/models,
 crates/qsf_app/src/experiments/model_role_smoke.rs,
 docs/Architecture/Architecture.ModelRoles.md
+
+## 2026-05-12 - Real audio providers remain explicit evaluation paths
+Decision: Real streaming transcription inputs are selected explicitly through
+`QSF_TRANSCRIPT_PROVIDER` and `QSF_TRANSCRIPT_INPUT_SOURCE`; the default path remains
+deterministic simulation, and provider adapters report transcript metadata rather than
+persisting raw audio.
+Context: Phase 9 introduced OpenAI Realtime WebSocket transcription plus prerecorded
+WAV and live microphone evaluation paths. Real audio depends on credentials, devices,
+permissions, network behavior, and local recording conditions, so it should not activate
+just because those capabilities are compiled in.
+Consequences: Tests and normal experiment runs stay deterministic by default. WAV and
+microphone evaluation are opt-in side-effect paths, and any future provider must preserve
+the same no-secret/no-raw-audio observability boundary.
+Refs: crates/qsf_app/src/audio/transcript_provider.rs,
+crates/qsf_app/src/experiments/streaming_transcription_mvp.rs,
+docs/Plans/Plan.FrameworkMVP.md
