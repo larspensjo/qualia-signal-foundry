@@ -11,6 +11,7 @@ use crate::observability::event_log::EventType;
 use crate::reports::markdown_report::{ExperimentReport, write_report};
 use crate::runtime::run_context::RunContext;
 
+use super::audio_preparation_layer::AudioPreparationLayerExperiment;
 use super::memory_and_context::{
     AssociativeMemoryToyModelExperiment, ContextBudgetRetrievalTestExperiment,
 };
@@ -23,6 +24,7 @@ use super::tool_as_perception_calculator::ToolAsPerceptionCalculatorExperiment;
 #[value(rename_all = "kebab-case")]
 pub enum ExperimentName {
     FrameworkSkeletonMvp,
+    AudioPreparationLayer,
     AssociativeMemoryToyModel,
     ContextBudgetRetrievalTest,
     ModelRoleSmokeTest,
@@ -34,6 +36,7 @@ impl ExperimentName {
     pub fn id(self) -> &'static str {
         match self {
             Self::FrameworkSkeletonMvp => "framework-skeleton-mvp",
+            Self::AudioPreparationLayer => "audio-preparation-layer",
             Self::AssociativeMemoryToyModel => "associative-memory-toy-model",
             Self::ContextBudgetRetrievalTest => "context-budget-retrieval-test",
             Self::ModelRoleSmokeTest => "model-role-smoke-test",
@@ -45,6 +48,9 @@ impl ExperimentName {
     pub fn description(self) -> &'static str {
         match self {
             Self::FrameworkSkeletonMvp => "Placeholder framework skeleton smoke experiment",
+            Self::AudioPreparationLayer => {
+                "Simulate transcript and speech playback boundaries before real audio providers are added"
+            }
             Self::AssociativeMemoryToyModel => {
                 "Compare recency, keyword/tag, and association-weighted memory retrieval"
             }
@@ -254,9 +260,10 @@ pub fn run_experiment_in(
     })
 }
 
-fn experiment_names() -> [ExperimentName; 6] {
+fn experiment_names() -> [ExperimentName; 7] {
     [
         ExperimentName::FrameworkSkeletonMvp,
+        ExperimentName::AudioPreparationLayer,
         ExperimentName::AssociativeMemoryToyModel,
         ExperimentName::ContextBudgetRetrievalTest,
         ExperimentName::ModelRoleSmokeTest,
@@ -267,6 +274,7 @@ fn experiment_names() -> [ExperimentName; 6] {
 
 fn experiment_for(name: ExperimentName) -> Box<dyn Experiment> {
     match name {
+        ExperimentName::AudioPreparationLayer => Box::new(AudioPreparationLayerExperiment),
         ExperimentName::AssociativeMemoryToyModel => Box::new(AssociativeMemoryToyModelExperiment),
         ExperimentName::ContextBudgetRetrievalTest => {
             Box::new(ContextBudgetRetrievalTestExperiment)

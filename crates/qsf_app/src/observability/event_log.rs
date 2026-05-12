@@ -12,7 +12,16 @@ use uuid::Uuid;
 pub enum EventType {
     ExperimentStarted,
     ExperimentCompleted,
+    AudioInputStarted,
+    AudioInputChunkCaptured,
+    AudioPartialTranscript,
+    AudioFinalTranscript,
+    AudioInputEnded,
+    /// Reserved for Phase 9 transcript-provider failures once simulated audio grows a real error path.
+    AudioTranscriptionFailed,
     InputReceived,
+    /// Chronological record that latency measurements were produced; linked traces hold the boundary rationale.
+    LatencyMeasurementRecorded,
     MemoryRetrievalRequested,
     MemoryRetrieved,
     ContextAssemblyRequested,
@@ -26,6 +35,11 @@ pub enum EventType {
     SleepPhaseRequested,
     SleepPhaseCompleted,
     OutputProduced,
+    /// Phase 8 uses this as an explicit runtime-to-adapter boundary marker before routing exists.
+    SpeechPlaybackRequested,
+    SpeechPlaybackStarted,
+    SpeechPlaybackCompleted,
+    UserInterrupted,
     ErrorOccurred,
     TraceRecorded,
 }

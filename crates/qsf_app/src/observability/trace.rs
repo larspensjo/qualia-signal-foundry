@@ -17,6 +17,8 @@ pub struct TraceRecord {
     pub input_summary: String,
     pub output_summary: String,
     pub details: Value,
+    pub latency_domain: Option<String>,
+    pub latency_stage: Option<String>,
     pub latency_ms: Option<u64>,
     pub latency_ns: Option<u64>,
     pub error: Option<String>,
@@ -37,6 +39,8 @@ impl TraceRecord {
             input_summary: input_summary.into(),
             output_summary: output_summary.into(),
             details: json!({}),
+            latency_domain: None,
+            latency_stage: None,
             latency_ms: None,
             latency_ns: None,
             error: None,
@@ -45,6 +49,16 @@ impl TraceRecord {
 
     pub fn with_details(mut self, details: Value) -> Self {
         self.details = details;
+        self
+    }
+
+    pub fn with_latency_context(
+        mut self,
+        latency_domain: impl Into<String>,
+        latency_stage: impl Into<String>,
+    ) -> Self {
+        self.latency_domain = Some(latency_domain.into());
+        self.latency_stage = Some(latency_stage.into());
         self
     }
 
@@ -110,5 +124,19 @@ mod tests {
         assert_eq!(serialized["details"]["selected"], 1);
         assert_eq!(serialized["latency_ms"], 7);
         assert_eq!(serialized["latency_ns"], 7_000_000);
+        assert_eq!(serialized["latency_domain"], serde_json::Value::Null);
+        assert_eq!(serialized["latency_stage"], serde_json::Value::Null);
+    }
+
+    #[test]
+    fn trace_record_serializes_latency_context() {
+        let trace = TraceRecord::new("test-experiment", "audio-transcription", "input", "output")
+            .with_latency_context("audio", "final-transcription")
+            .with_latency_ms(82);
+
+        let serialized = serde_json::to_value(trace).unwrap();
+
+        assert_eq!(serialized["latency_domain"], "audio");
+        assert_eq!(serialized["latency_stage"], "final-transcription");
     }
 }

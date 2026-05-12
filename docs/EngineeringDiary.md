@@ -231,3 +231,23 @@ Refs: crates/qsf_app/src/sleep, crates/qsf_app/src/experiments/sleep_phase_sessi
 crates/qsf_app/src/models/mock_model.rs,
 crates/qsf_app/src/observability/event_log.rs;
 implements: 2026-05-11 - Model access uses explicit roles and optional provider adapters
+
+## 2026-05-12 - Audio preparation layer
+
+A concrete simulated audio boundary that shows how transcript input and speech playback will plug into the existing event and trace model before any real audio provider is added, with the review follow-up kept inside the same logical Phase 8 change.
+
+What changed:
+- Added `qsf_app::audio` with simulated audio session data, explicit transcript and playback runtime boundary definitions, and placeholder audio latency measurements.
+- Extended shared observability with typed audio events plus `latency_domain` and `latency_stage` fields on traces so audio timing can stay first-class.
+- Added an `audio-preparation-layer` experiment that emits simulated audio events, records linked transcription and playback traces, and writes `audio-preparation.md`.
+- Changed `AudioRuntimeBoundary.description` from `&'static str` to `String` and added a JSON round-trip test.
+- Documented that `LatencyMeasurementRecorded` intentionally duplicates stage timing already summarized in traces because the event log records chronology while traces record rationale.
+- Marked `SpeechPlaybackRequested` and `AudioTranscriptionFailed` as boundary and future-work placeholders in the shared event type enum.
+
+Observed:
+- The existing runner, event log, and trace log were already sufficient for audio preparation work; Phase 8 only needed typed boundary definitions and a deterministic simulation path.
+
+Refs: crates/qsf_app/src/audio, crates/qsf_app/src/experiments/audio_preparation_layer.rs,
+crates/qsf_app/src/observability/event_log.rs,
+crates/qsf_app/src/observability/trace.rs,
+docs/Reviews/Review.Phase8.AudioPreparationLayer.md
