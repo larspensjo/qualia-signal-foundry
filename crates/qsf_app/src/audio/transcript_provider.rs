@@ -1,5 +1,7 @@
 use std::fmt;
 #[cfg(feature = "openai")]
+use std::sync::OnceLock;
+#[cfg(feature = "openai")]
 use std::time::{Duration, Instant};
 
 use serde::{Deserialize, Serialize};
@@ -28,6 +30,8 @@ const OPENAI_REALTIME_CHUNK_MS: u64 = 100;
 const DEFAULT_LIVE_MICROPHONE_DURATION_MS: u64 = 4_000;
 #[cfg(feature = "openai")]
 const DEFAULT_OPENAI_REALTIME_TIMEOUT_MS: u64 = 30_000;
+#[cfg(feature = "openai")]
+const DEFAULT_OPENAI_REALTIME_CONNECT_TIMEOUT_MS: u64 = 15_000;
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct AudioSafetyMarkers {
@@ -356,14 +360,13 @@ impl OpenAiRealtimeTranscriptProvider {
             DEFAULT_OPENAI_REALTIME_TIMEOUT_MS,
         );
 
-        let runtime = tokio::runtime::Runtime::new().map_err(|error| {
-            TranscriptProviderError::Unavailable {
+        if tokio::runtime::Handle::try_current().is_ok() {
+            return Err(TranscriptProviderError::Unavailable {
                 provider: self.provider_name().to_string(),
-                reason: format!(
-                    "failed to build Tokio runtime for realtime transcription: {error}"
-                ),
-            }
-        })?;
+                reason: "synchronous realtime transcript provider cannot be called from inside an existing Tokio runtime".to_string(),
+            });
+        }
+        let runtime = openai_realtime_runtime(self.provider_name())?;
 
         runtime.block_on(transcribe_openai_realtime(
             self.provider_name(),
@@ -420,6 +423,11 @@ pub fn requested_transcript_provider_from_env() -> &'static str {
     requested_transcript_provider(std::env::var(TRANSCRIPT_PROVIDER_ENV_VAR).ok().as_deref())
 }
 
+/// Builds a transcript provider from the external selector value.
+///
+/// Accepted selector values are configuration aliases such as `simulated`,
+/// `openai`, and `openai-realtime`; `provider_name()` returns the longer
+/// diagnostic provider label used in events and traces.
 pub fn build_transcript_provider(provider_name: &str) -> Box<dyn TranscriptProvider> {
     match requested_transcript_provider(Some(provider_name)) {
         "openai-realtime" => Box::new(OpenAiRealtimeTranscriptProvider::default()),
@@ -444,8 +452,10 @@ fn simulated_chunks(input_source: &TranscriptInputSource) -> Vec<TranscriptAudio
 
 fn sanitize_provider_error_message(message: &str) -> String {
     let lower = message.to_ascii_lowercase();
-    if lower.contains("authorization")
+    if contains_credential_like_content(message)
+        || lower.contains("authorization")
         || lower.contains("bearer ")
+        || lower.contains("token ")
         || lower.contains("api_key")
         || lower.contains("api-key")
         || lower.contains("apikey")
@@ -461,6 +471,37 @@ fn sanitize_provider_error_message(message: &str) -> String {
         format!("{truncated}...")
     } else {
         truncated
+    }
+}
+
+fn contains_credential_like_content(message: &str) -> bool {
+    message
+        .split(|character: char| {
+            !(character.is_ascii_alphanumeric() || matches!(character, '-' | '_' | '.' | '~'))
+        })
+        .any(|token| {
+            (token.starts_with("sk-") || token.starts_with("sess_") || token.starts_with("rk-"))
+                && token.len() >= 16
+        })
+}
+
+#[cfg(feature = "openai")]
+fn openai_realtime_runtime(
+    provider_name: &str,
+) -> Result<&'static tokio::runtime::Runtime, TranscriptProviderError> {
+    static OPENAI_REALTIME_RUNTIME: OnceLock<Result<tokio::runtime::Runtime, String>> =
+        OnceLock::new();
+
+    match OPENAI_REALTIME_RUNTIME.get_or_init(|| {
+        tokio::runtime::Runtime::new().map_err(|error| {
+            format!("failed to build Tokio runtime for realtime transcription: {error}")
+        })
+    }) {
+        Ok(runtime) => Ok(runtime),
+        Err(error) => Err(TranscriptProviderError::Unavailable {
+            provider: provider_name.to_string(),
+            reason: error.clone(),
+        }),
     }
 }
 
@@ -521,6 +562,21 @@ fn pcm16_to_bytes(samples: &[i16]) -> Vec<u8> {
 #[cfg(feature = "openai")]
 fn elapsed_ms(started_at: Instant) -> u64 {
     started_at.elapsed().as_millis() as u64
+}
+
+#[cfg(feature = "openai")]
+fn parse_realtime_server_event(provider_name: &str, text: &str) -> Option<serde_json::Value> {
+    match serde_json::from_str(text) {
+        Ok(event) => Some(event),
+        Err(error) => {
+            engine_logging::engine_warn!(
+                "failed to parse realtime server event: provider={} error={}",
+                provider_name,
+                error
+            );
+            None
+        }
+    }
 }
 
 #[cfg(feature = "openai")]
@@ -625,6 +681,14 @@ fn capture_live_pcm16(
             })?
     };
 
+    let sample_format = device
+        .default_input_config()
+        .map_err(|e| TranscriptProviderError::Unavailable {
+            provider: provider_name.to_string(),
+            reason: format!("failed to read default audio input config for `{device_name}`: {e}"),
+        })?
+        .sample_format();
+
     let stream_config = cpal::StreamConfig {
         channels: OPENAI_REALTIME_PCM_CHANNELS,
         sample_rate: OPENAI_REALTIME_PCM_RATE_HZ,
@@ -632,25 +696,72 @@ fn capture_live_pcm16(
     };
 
     let samples: Arc<Mutex<Vec<i16>>> = Arc::new(Mutex::new(Vec::new()));
-    let samples_writer = Arc::clone(&samples);
     let capture_error: Arc<Mutex<Option<String>>> = Arc::new(Mutex::new(None));
-    let error_writer = Arc::clone(&capture_error);
 
-    let stream = device
-        .build_input_stream(
-            &stream_config,
-            move |data: &[i16], _| {
-                samples_writer.lock().unwrap().extend_from_slice(data);
-            },
-            move |err| {
-                *error_writer.lock().unwrap() = Some(err.to_string());
-            },
-            None,
-        )
-        .map_err(|e| TranscriptProviderError::Unavailable {
-            provider: provider_name.to_string(),
-            reason: format!("failed to build audio input stream for `{device_name}`: {e}"),
-        })?;
+    let stream = match sample_format {
+        cpal::SampleFormat::I16 => {
+            let samples_writer = Arc::clone(&samples);
+            let error_writer = Arc::clone(&capture_error);
+            device.build_input_stream(
+                &stream_config,
+                move |data: &[i16], _| {
+                    samples_writer.lock().unwrap().extend_from_slice(data);
+                },
+                move |err| {
+                    *error_writer.lock().unwrap() = Some(err.to_string());
+                },
+                None,
+            )
+        }
+        cpal::SampleFormat::F32 => {
+            let samples_writer = Arc::clone(&samples);
+            let error_writer = Arc::clone(&capture_error);
+            device.build_input_stream(
+                &stream_config,
+                move |data: &[f32], _| {
+                    samples_writer.lock().unwrap().extend(
+                        data.iter()
+                            .map(|sample| (sample.clamp(-1.0, 1.0) * i16::MAX as f32) as i16),
+                    );
+                },
+                move |err| {
+                    *error_writer.lock().unwrap() = Some(err.to_string());
+                },
+                None,
+            )
+        }
+        cpal::SampleFormat::U16 => {
+            let samples_writer = Arc::clone(&samples);
+            let error_writer = Arc::clone(&capture_error);
+            device.build_input_stream(
+                &stream_config,
+                move |data: &[u16], _| {
+                    samples_writer.lock().unwrap().extend(
+                        data.iter()
+                            .map(|sample| (*sample as i32 - i16::MAX as i32 - 1) as i16),
+                    );
+                },
+                move |err| {
+                    *error_writer.lock().unwrap() = Some(err.to_string());
+                },
+                None,
+            )
+        }
+        unsupported_format => {
+            return Err(TranscriptProviderError::Unavailable {
+                provider: provider_name.to_string(),
+                reason: format!(
+                    "audio input device `{device_name}` uses unsupported sample format {unsupported_format:?}"
+                ),
+            });
+        }
+    }
+    .map_err(|e| TranscriptProviderError::Unavailable {
+        provider: provider_name.to_string(),
+        reason: format!(
+            "failed to build {sample_format:?} audio input stream for `{device_name}`: {e}"
+        ),
+    })?;
 
     stream
         .play()
@@ -688,7 +799,6 @@ async fn transcribe_openai_realtime(
     use tokio_tungstenite::tungstenite::http::HeaderValue;
 
     let started_at = Instant::now();
-    let started_at_ms = 0;
     let mut ws_request = OPENAI_REALTIME_WEBSOCKET_URL
         .into_client_request()
         .map_err(|e| TranscriptProviderError::Unavailable {
@@ -706,14 +816,20 @@ async fn transcribe_openai_realtime(
         })?,
     );
 
+    let connect_timeout = timeout.min(Duration::from_millis(
+        DEFAULT_OPENAI_REALTIME_CONNECT_TIMEOUT_MS,
+    ));
     let (ws_stream, _) = tokio::time::timeout(
-        Duration::from_secs(15),
+        connect_timeout,
         tokio_tungstenite::connect_async(ws_request),
     )
     .await
     .map_err(|_| TranscriptProviderError::Unavailable {
         provider: provider_name.to_string(),
-        reason: "WebSocket connection timed out after 15 seconds".to_string(),
+        reason: format!(
+            "WebSocket connection timed out after {} ms",
+            connect_timeout.as_millis()
+        ),
     })?
     .map_err(|e| TranscriptProviderError::Unavailable {
         provider: provider_name.to_string(),
@@ -730,8 +846,9 @@ async fn transcribe_openai_realtime(
                 message: format!("read error before transcription_session.created: {e}"),
             })?;
             if let Message::Text(text) = msg {
-                let event: serde_json::Value =
-                    serde_json::from_str(&text).unwrap_or(serde_json::Value::Null);
+                let Some(event) = parse_realtime_server_event(provider_name, &text) else {
+                    continue;
+                };
                 match event["type"].as_str() {
                     Some("transcription_session.created") | Some("session.created") => {
                         return Ok::<String, TranscriptProviderError>(
@@ -766,8 +883,8 @@ async fn transcribe_openai_realtime(
         reason: "timed out waiting for transcription_session.created".to_string(),
     })??;
 
-    // Configure session for streaming transcription. gpt-realtime-whisper rejects
-    // prompt hints, so keep the provider payload to the supported core fields.
+    // Keep the provider payload to the documented core fields for realtime
+    // transcription; prompts can be reintroduced after provider compatibility is clear.
     let mut transcription_config = serde_json::json!({
         "model": model,
     });
@@ -865,8 +982,9 @@ async fn transcribe_openai_realtime(
                     });
                 }
                 Ok(Message::Text(text)) => {
-                    let event: serde_json::Value =
-                        serde_json::from_str(&text).unwrap_or(serde_json::Value::Null);
+                    let Some(event) = parse_realtime_server_event(provider_name, &text) else {
+                        continue;
+                    };
                     match event["type"].as_str() {
                         Some("conversation.item.input_audio_transcription.delta") => {
                             let received_at_ms = elapsed_ms(started_at);
@@ -934,7 +1052,7 @@ async fn transcribe_openai_realtime(
         provider_name: provider_name.to_string(),
         model: Some(confirmed_model),
         input_source: request.input_source.clone(),
-        started_at_ms,
+        started_at_ms: 0,
         completed_at_ms,
         chunks: chunk_records,
         partials,
@@ -1070,11 +1188,15 @@ mod tests {
     fn provider_errors_redact_credential_like_messages() {
         let error = TranscriptProviderError::TranscriptionFailed {
             provider: "test-provider".to_string(),
-            message: "upstream returned Authorization: Bearer sk-secret".to_string(),
+            message: "upstream returned token sk-abcdefghijklmnopqrstuvwxyz".to_string(),
         };
 
         assert_eq!(error.category(), "transcription_failed");
-        assert!(!error.sanitized_message().contains("sk-secret"));
-        assert!(!error.sanitized_message().contains("Bearer"));
+        assert!(
+            !error
+                .sanitized_message()
+                .contains("abcdefghijklmnopqrstuvwxyz")
+        );
+        assert!(!error.sanitized_message().contains("sk-"));
     }
 }

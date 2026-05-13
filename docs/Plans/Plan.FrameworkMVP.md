@@ -503,6 +503,10 @@ gpt-realtime-whisper
   First target for real audio integration.
   Use for streaming speech-to-text and transcript deltas.
 
+gpt-4o-transcribe
+  Evaluation alternative for accuracy-sensitive transcription.
+  Use to compare transcript quality when lowest latency is less important.
+
 gpt-realtime-2
   Later target for full speech-to-speech realtime presence.
   Use for interruption, preambles, tool-call transparency, and voice-native reasoning
@@ -514,11 +518,14 @@ gpt-realtime-translate
   becomes an active research question.
 ```
 
-These API model IDs were verified against the OpenAI API documentation on
-2026-05-10:
+The realtime transcription model was rechecked against the OpenAI API
+documentation on 2026-05-13 after live Phase 9 evaluation. The default remains
+`gpt-realtime-whisper` because the project prioritizes low-latency transcript
+deltas for presence experiments. `gpt-4o-transcribe` remains useful as an
+accuracy comparison target.
 
 ```text
-https://developers.openai.com/api/docs/guides/realtime-transcription
+https://platform.openai.com/docs/guides/realtime-transcription
 https://developers.openai.com/api/docs/models/gpt-realtime-2
 https://developers.openai.com/api/docs/models/gpt-realtime-translate
 ```

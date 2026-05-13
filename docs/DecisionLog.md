@@ -134,3 +134,21 @@ Consequences: Changes to optional audio adapters should include at least one tar
 audio evaluation.
 Refs: crates/qsf_app/src/audio/transcript_provider.rs,
 docs/EngineeringDiary.md
+
+## 2026-05-13 - Realtime transcription optimizes for latency first
+Decision: The OpenAI realtime transcription adapter defaults to `gpt-realtime-whisper`.
+`gpt-4o-transcribe` remains an evaluation alternative for accuracy-sensitive runs.
+Context: Phase 9 live tests proved the provider boundary. A follow-up model review
+rechecked the official OpenAI model catalog and realtime transcription guide, which
+list `gpt-realtime-whisper` as the lowest-latency streaming transcription path for
+live audio and transcript deltas. The project values realtime presence, so latency is
+the first defaulting criterion for Phase 9.
+Consequences: `gpt-realtime-whisper` is the first provider-backed transcription
+target. Accuracy comparisons should use explicit model selection rather than changing
+the default away from the realtime path. Full speech-to-speech work remains separate
+and should use the documented Realtime conversation model family.
+Refs: crates/qsf_app/src/audio/transcript_provider.rs,
+docs/Plans/Plan.FrameworkMVP.md,
+docs/Experiments/Experiment.StreamingTranscriptionMVP.md,
+https://developers.openai.com/api/docs/guides/realtime-transcription,
+https://developers.openai.com/api/docs/models/gpt-realtime-whisper

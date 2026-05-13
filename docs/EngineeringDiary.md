@@ -360,3 +360,30 @@ Observed:
 Refs: runs/2026-05-13-190700-streaming-transcription-mvp,
 crates/qsf_app/src/audio/transcript_provider.rs,
 crates/qsf_app/src/experiments/streaming_transcription_mvp.rs
+
+## 2026-05-13 - Audio module review follow-up
+
+Applied relevant follow-ups from the audio module review after Phase 9 live
+validation.
+
+What changed:
+- Rechecked the realtime transcription model choice against the official OpenAI model
+  catalog and kept `gpt-realtime-whisper` as the default because Phase 9 prioritizes
+  low-latency live transcript deltas.
+- Documented `gpt-4o-transcribe` as an accuracy-oriented comparison target rather
+  than the Phase 9 default.
+- Reused one OpenAI realtime Tokio runtime and returned a structured error if the
+  synchronous provider is called from inside an existing Tokio runtime.
+- Made microphone capture handle `i16`, `f32`, and `u16` input sample formats.
+- Logged malformed realtime server events instead of silently dropping parse failures.
+- Derived the WebSocket connect timeout from the configured realtime timeout and
+  strengthened best-effort credential redaction.
+
+Observed:
+- The Phase 8 simulator duplication and a fuller async-provider redesign remain
+  larger follow-up topics; they were not needed to stabilize the completed Phase 9 path.
+
+Refs: docs/Reviews/Review.AudioModule.md,
+crates/qsf_app/src/audio/transcript_provider.rs,
+docs/Plans/Plan.FrameworkMVP.md,
+docs/Experiments/Experiment.StreamingTranscriptionMVP.md

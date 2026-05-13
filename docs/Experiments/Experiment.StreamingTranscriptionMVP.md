@@ -60,6 +60,8 @@ transcripts enter committed runtime state by default.
 - transcript provider abstraction
 - deterministic simulated transcript provider
 - OpenAI-backed streaming transcription adapter using `gpt-realtime-whisper`
+- optional comparison runs with `gpt-4o-transcribe` for accuracy-sensitive
+  transcription
 - partial transcript events
 - final transcript events
 - transcript latency traces
