@@ -684,21 +684,27 @@ async fn transcribe_openai_realtime(
     use base64::Engine as _;
     use futures_util::{SinkExt, StreamExt};
     use tokio_tungstenite::tungstenite::Message;
-    use tokio_tungstenite::tungstenite::http::Request as WsRequest;
+    use tokio_tungstenite::tungstenite::client::IntoClientRequest;
+    use tokio_tungstenite::tungstenite::http::HeaderValue;
 
     let started_at = Instant::now();
     let started_at_ms = 0;
-    let url = format!("{}&model={}", OPENAI_REALTIME_WEBSOCKET_URL, model);
-
-    let ws_request = WsRequest::builder()
-        .uri(&url)
-        .header("Authorization", format!("Bearer {api_key}"))
-        .header("OpenAI-Beta", "realtime=v1")
-        .body(())
+    let mut ws_request = OPENAI_REALTIME_WEBSOCKET_URL
+        .into_client_request()
         .map_err(|e| TranscriptProviderError::Unavailable {
             provider: provider_name.to_string(),
             reason: format!("failed to build WebSocket request: {e}"),
         })?;
+    let headers = ws_request.headers_mut();
+    headers.insert(
+        "Authorization",
+        HeaderValue::from_str(&format!("Bearer {api_key}")).map_err(|e| {
+            TranscriptProviderError::Unavailable {
+                provider: provider_name.to_string(),
+                reason: format!("failed to build authorization header: {e}"),
+            }
+        })?,
+    );
 
     let (ws_stream, _) = tokio::time::timeout(
         Duration::from_secs(15),
@@ -716,21 +722,22 @@ async fn transcribe_openai_realtime(
 
     let (mut write, mut read) = ws_stream.split();
 
-    // Await session.created before sending configuration
+    // Await the transcription-session creation event before sending configuration.
     let confirmed_model = tokio::time::timeout(timeout, async {
         while let Some(msg) = read.next().await {
             let msg = msg.map_err(|e| TranscriptProviderError::TranscriptionFailed {
                 provider: provider_name.to_string(),
-                message: format!("read error before session.created: {e}"),
+                message: format!("read error before transcription_session.created: {e}"),
             })?;
             if let Message::Text(text) = msg {
                 let event: serde_json::Value =
                     serde_json::from_str(&text).unwrap_or(serde_json::Value::Null);
                 match event["type"].as_str() {
-                    Some("session.created") => {
+                    Some("transcription_session.created") | Some("session.created") => {
                         return Ok::<String, TranscriptProviderError>(
-                            event["session"]["model"]
+                            event["session"]["input_audio_transcription"]["model"]
                                 .as_str()
+                                .or_else(|| event["session"]["model"].as_str())
                                 .unwrap_or(model)
                                 .to_string(),
                         );
@@ -750,16 +757,23 @@ async fn transcribe_openai_realtime(
         }
         Err(TranscriptProviderError::TranscriptionFailed {
             provider: provider_name.to_string(),
-            message: "connection closed before session.created".to_string(),
+            message: "connection closed before transcription_session.created".to_string(),
         })
     })
     .await
     .map_err(|_| TranscriptProviderError::Unavailable {
         provider: provider_name.to_string(),
-        reason: "timed out waiting for session.created".to_string(),
+        reason: "timed out waiting for transcription_session.created".to_string(),
     })??;
 
-    // Configure session for streaming transcription
+    // Configure session for streaming transcription. gpt-realtime-whisper rejects
+    // prompt hints, so keep the provider payload to the supported core fields.
+    let mut transcription_config = serde_json::json!({
+        "model": model,
+    });
+    if let Some(language) = &request.language {
+        transcription_config["language"] = serde_json::json!(language);
+    }
     let session_update = serde_json::json!({
         "type": "session.update",
         "session": {
@@ -770,11 +784,7 @@ async fn transcribe_openai_realtime(
                         "type": "audio/pcm",
                         "rate": OPENAI_REALTIME_PCM_RATE_HZ,
                     },
-                    "transcription": {
-                        "model": model,
-                        "language": request.language,
-                        "prompt": request.prompt,
-                    },
+                    "transcription": transcription_config,
                     "turn_detection": null,
                 },
             },

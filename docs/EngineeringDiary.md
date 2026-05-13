@@ -311,3 +311,52 @@ Observed:
   through its local-input validation test.
 
 Refs: crates/qsf_app/src/audio/transcript_provider.rs
+
+## 2026-05-13 - Real WAV realtime transcription evaluation
+
+Ran the Phase 9 streaming transcription experiment against a converted prerecorded
+WAV file and corrected the OpenAI Realtime transcription adapter to match the GA
+WebSocket surface.
+
+What changed:
+- Fixed WebSocket request construction so Tungstenite owns the handshake headers and
+  the adapter only adds OpenAI authorization.
+- Removed the beta realtime header and model query parameter for GA transcription
+  sessions.
+- Updated the session configuration to send `session.update` with
+  `session.type = "transcription"` and `audio.input` transcription settings.
+- Made the streaming transcription experiment test independent of ambient
+  `QSF_TRANSCRIPT_*` environment variables.
+
+Observed:
+- `output.wav` transcribed successfully through `gpt-realtime-whisper` as
+  "Hello, this is an example of an audio recording."
+- The completed run emitted partial transcript events, an `AudioFinalTranscript`,
+  and the expected bridged `InputReceived` event without logging raw audio or secrets.
+
+Refs: crates/qsf_app/src/audio/transcript_provider.rs,
+crates/qsf_app/src/experiments/streaming_transcription_mvp.rs,
+runs/2026-05-13-184740-streaming-transcription-mvp
+
+## 2026-05-13 - Live microphone realtime transcription milestone
+
+Validated the Phase 9 streaming transcription experiment end to end with live
+microphone input through the OpenAI Realtime provider.
+
+What changed:
+- Ran `streaming-transcription-mvp` with `QSF_TRANSCRIPT_INPUT_SOURCE=mic` and the
+  default microphone device.
+- Confirmed the provider emitted partial transcript events, one final transcript,
+  latency traces, and the bridged `InputReceived` runtime event.
+- Treated this as the Phase 9 live-input validation milestone.
+
+Observed:
+- The live run completed successfully with `gpt-realtime-whisper` and produced the
+  final transcript: "recording. I don't know how long it's going to".
+- Safety markers stayed clean: no raw audio, API key, or authorization data was logged.
+- Captured chunk timing suggests microphone capture duration should be revisited later,
+  but it does not block closing Phase 9.
+
+Refs: runs/2026-05-13-190700-streaming-transcription-mvp,
+crates/qsf_app/src/audio/transcript_provider.rs,
+crates/qsf_app/src/experiments/streaming_transcription_mvp.rs

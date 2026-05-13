@@ -367,10 +367,10 @@ mod tests {
 
     use super::StreamingTranscriptionMvpExperiment;
     use crate::audio::{
-        TranscriptProvider, TranscriptProviderError, TranscriptProviderRequest,
-        TranscriptProviderSession,
+        SimulatedTranscriptProvider, TranscriptProvider, TranscriptProviderError,
+        TranscriptProviderRequest, TranscriptProviderSession,
     };
-    use crate::experiments::registry::{Experiment, ExperimentName, run_experiment_in};
+    use crate::experiments::registry::{Experiment, ExperimentName};
     use crate::observability::event_log::{EventRecord, EventType};
     use crate::runtime::run_context::RunContext;
     use serde_json::Value;
@@ -397,13 +397,16 @@ mod tests {
     #[test]
     fn streaming_transcription_experiment_writes_transcript_events_and_traces() {
         let base_dir = std::env::temp_dir().join(format!("qsf-streaming-test-{}", Uuid::new_v4()));
+        let mut context = RunContext::create_in(&base_dir, "streaming-transcription-mvp").unwrap();
+        let experiment = StreamingTranscriptionMvpExperiment;
 
-        let summary =
-            run_experiment_in(&base_dir, ExperimentName::StreamingTranscriptionMvp).unwrap();
-        let events = fs::read_to_string(summary.run_dir.join("events.jsonl")).unwrap();
-        let traces = fs::read_to_string(summary.run_dir.join("traces.jsonl")).unwrap();
+        experiment
+            .run_with_provider(&mut context, &SimulatedTranscriptProvider)
+            .unwrap();
+        let events = fs::read_to_string(context.run_dir().join("events.jsonl")).unwrap();
+        let traces = fs::read_to_string(context.run_dir().join("traces.jsonl")).unwrap();
         let report =
-            fs::read_to_string(summary.run_dir.join("streaming-transcription.md")).unwrap();
+            fs::read_to_string(context.run_dir().join("streaming-transcription.md")).unwrap();
         let event_records = parse_event_records(&events);
 
         assert!(
