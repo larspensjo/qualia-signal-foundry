@@ -614,7 +614,11 @@ fn capture_live_pcm16(
                 provider: provider_name.to_string(),
                 reason: format!("cannot enumerate audio input devices: {e}"),
             })?
-            .find(|d| d.name().map(|n| n == device_name).unwrap_or(false))
+            .find(|d| {
+                d.description()
+                    .map(|description| description.name() == device_name)
+                    .unwrap_or(false)
+            })
             .ok_or_else(|| TranscriptProviderError::Unavailable {
                 provider: provider_name.to_string(),
                 reason: format!("audio input device `{device_name}` not found"),
@@ -623,7 +627,7 @@ fn capture_live_pcm16(
 
     let stream_config = cpal::StreamConfig {
         channels: OPENAI_REALTIME_PCM_CHANNELS,
-        sample_rate: cpal::SampleRate(OPENAI_REALTIME_PCM_RATE_HZ),
+        sample_rate: OPENAI_REALTIME_PCM_RATE_HZ,
         buffer_size: cpal::BufferSize::Default,
     };
 
@@ -777,7 +781,7 @@ async fn transcribe_openai_realtime(
         }
     });
     write
-        .send(Message::Text(session_update.to_string()))
+        .send(Message::Text(session_update.to_string().into()))
         .await
         .map_err(|e| TranscriptProviderError::TranscriptionFailed {
             provider: provider_name.to_string(),
@@ -806,7 +810,7 @@ async fn transcribe_openai_realtime(
             "audio": audio_b64,
         });
         write
-            .send(Message::Text(append_msg.to_string()))
+            .send(Message::Text(append_msg.to_string().into()))
             .await
             .map_err(|e| TranscriptProviderError::TranscriptionFailed {
                 provider: provider_name.to_string(),
@@ -824,7 +828,9 @@ async fn transcribe_openai_realtime(
     // Commit the audio buffer to trigger transcription
     write
         .send(Message::Text(
-            serde_json::json!({"type": "input_audio_buffer.commit"}).to_string(),
+            serde_json::json!({"type": "input_audio_buffer.commit"})
+                .to_string()
+                .into(),
         ))
         .await
         .map_err(|e| TranscriptProviderError::TranscriptionFailed {

@@ -296,3 +296,18 @@ Observed:
 Refs: crates/qsf_app/src/audio/transcript_provider.rs,
 crates/qsf_app/src/audio/mod.rs,
 crates/qsf_app/src/experiments/streaming_transcription_mvp.rs
+
+## 2026-05-13 - Phase 9 OpenAI feature compile check
+
+Fixed the feature-gated OpenAI realtime transcription path so Phase 9 can be
+compiled before real WAV or microphone evaluation.
+
+What changed:
+- Updated CPAL 0.17 microphone configuration and device lookup usage.
+- Updated Tungstenite text WebSocket messages to use the current message payload type.
+
+Observed:
+- The simulated Phase 9 tests still pass, and the OpenAI feature path now compiles
+  through its local-input validation test.
+
+Refs: crates/qsf_app/src/audio/transcript_provider.rs

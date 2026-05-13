@@ -122,3 +122,15 @@ the same no-secret/no-raw-audio observability boundary.
 Refs: crates/qsf_app/src/audio/transcript_provider.rs,
 crates/qsf_app/src/experiments/streaming_transcription_mvp.rs,
 docs/Plans/Plan.FrameworkMVP.md
+
+## 2026-05-13 - Feature-gated audio providers need explicit compile checks
+Decision: Phase 9 real-audio readiness includes compiling the `qsf_app/openai` feature
+path, not only running the default simulated transcript tests.
+Context: The default build kept deterministic streaming transcription tests green, but
+the OpenAI realtime transcription adapter had drifted against current CPAL and
+Tungstenite APIs. Real WAV and microphone smoke tests depend on this feature-gated path.
+Consequences: Changes to optional audio adapters should include at least one targeted
+`--features openai` compile or test pass before considering the phase ready for real
+audio evaluation.
+Refs: crates/qsf_app/src/audio/transcript_provider.rs,
+docs/EngineeringDiary.md
