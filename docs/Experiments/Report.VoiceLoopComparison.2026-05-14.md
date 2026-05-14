@@ -160,6 +160,11 @@ assembly. The next live comparison run should validate the new `MemoryRetrievalR
 and `MemoryRetrieved` events, the selected memory id in `text-owned-voice-loop.md`, and
 whether the responder uses that memory naturally in the answer.
 
+Latency note: the live memory-context run exposed that the generated
+`text-owned-voice-loop.md` total undercounted model-role runtime. The experiment has
+been updated so future reports list memory retrieval, context assembly, model role,
+speech output, and total observed turn latency separately.
+
 ## Tool Boundary
 
 The realtime voice-session run requested zero provider tool calls, but the experiment
@@ -199,7 +204,8 @@ Do not add OpenAI TTS yet.
 First, run the updated text-owned loop with a memory-oriented live prompt and compare
 latency plus answer quality against the prior text-owned run. The run should prove that
 memory retrieval is observable and that selected memory context reaches
-`ConversationalResponder`.
+`ConversationalResponder`. Use the corrected generated latency fields for future
+comparisons rather than the older `Total deterministic turn latency` line.
 
 After that, add a short comparison section to the generated
 `text-owned-voice-loop.md` report so future runs show response ownership and

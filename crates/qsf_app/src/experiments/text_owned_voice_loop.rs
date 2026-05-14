@@ -1,4 +1,5 @@
 use std::fs;
+use std::time::Instant;
 
 use anyhow::Context;
 use serde_json::json;
@@ -130,12 +131,15 @@ impl TextOwnedVoiceLoopExperiment {
             &transcript_session.final_transcript.transcript,
             &context_assembly,
         );
+        let model_started_at = Instant::now();
         let model_response = invoke_model_role(context, model_client, &model_request)?;
+        let model_latency_ms = elapsed_ms(model_started_at);
         let model_trace_id = record_voice_model_response(
             context,
             &transcript_session.session_id,
             &model_request,
             &model_response,
+            model_latency_ms,
         )?;
 
         context.record_event(
@@ -191,13 +195,17 @@ impl TextOwnedVoiceLoopExperiment {
         let latency_trace_id = record_voice_loop_latency(
             context,
             &transcript_session,
+            &memory_retrieval,
             &speech_session,
             context_assembly.used_estimated_tokens,
+            model_latency_ms,
         )?;
         record_latency_event(
             context,
             &transcript_session,
+            &memory_retrieval,
             &speech_session,
+            model_latency_ms,
             latency_trace_id,
         )?;
 
@@ -205,8 +213,10 @@ impl TextOwnedVoiceLoopExperiment {
             context,
             &transcript_session,
             &context_assembly,
+            &memory_retrieval,
             &model_response,
             &speech_session,
+            model_latency_ms,
         )?;
 
         Ok(ExperimentOutcome {
@@ -499,6 +509,7 @@ fn record_voice_model_response(
     session_id: &str,
     request: &ModelRequest,
     response: &ModelResponse,
+    model_latency_ms: u64,
 ) -> anyhow::Result<uuid::Uuid> {
     let trace = TraceRecord::new(
         context.experiment_id(),
@@ -517,8 +528,10 @@ fn record_voice_model_response(
         "response_length": response.output_text.chars().count(),
         "usage": &response.usage,
         "finish_reason": &response.finish_reason,
+        "model_latency_ms": model_latency_ms,
     }))
-    .with_latency_context("runtime", "voice-model-response-summary");
+    .with_latency_context("runtime", "voice-model-response-summary")
+    .with_latency_ms(model_latency_ms);
     let trace_id = trace.trace_id;
     context.record_trace(trace)?;
     Ok(trace_id)
@@ -601,8 +614,10 @@ fn record_speech_events(
 fn record_voice_loop_latency(
     context: &mut RunContext,
     transcript_session: &TranscriptProviderSession,
+    memory_retrieval: &RetrievalResult,
     speech_session: &SpeechOutputSession,
     context_tokens: usize,
+    model_latency_ms: u64,
 ) -> anyhow::Result<uuid::Uuid> {
     let capture_completed_ms = transcript_session
         .chunks
@@ -610,10 +625,12 @@ fn record_voice_loop_latency(
         .map(|chunk| chunk.captured_at_ms + chunk.duration_ms)
         .unwrap_or(transcript_session.completed_at_ms);
     let input_received_ms = transcript_session.completed_at_ms;
-    let context_started_ms = input_received_ms;
+    let memory_started_ms = input_received_ms;
+    let memory_completed_ms = memory_started_ms.saturating_add(memory_retrieval.latency_ms);
+    let context_started_ms = memory_completed_ms;
     let context_completed_ms = context_started_ms + VOICE_CONTEXT_ASSEMBLY_LATENCY_MS;
     let model_started_ms = context_completed_ms;
-    let model_completed_ms = model_started_ms;
+    let model_completed_ms = model_started_ms.saturating_add(model_latency_ms);
     let output_produced_ms = model_completed_ms;
     let speech_requested_ms = output_produced_ms;
     let speech_provider_first_audio_offset_ms = speech_session
@@ -622,11 +639,17 @@ fn record_voice_loop_latency(
         .saturating_sub(speech_session.started_at_ms);
     let speech_started_ms = speech_requested_ms + speech_provider_first_audio_offset_ms;
     let speech_completed_ms = speech_requested_ms + speech_session.total_latency_ms();
+    let total_turn_ms = voice_loop_total_latency_ms(
+        transcript_session,
+        memory_retrieval,
+        model_latency_ms,
+        speech_session,
+    );
 
     let trace = TraceRecord::new(
         context.experiment_id(),
         "voice-loop-latency",
-        "deterministic text-owned voice turn timing",
+        "text-owned voice turn timing",
         "capture, transcription, runtime, model, and speech output timings recorded",
     )
     .with_details(json!({
@@ -636,10 +659,15 @@ fn record_voice_loop_latency(
         "first_partial_transcript_ms": transcript_session.partials.first().map(|partial| partial.received_at_ms),
         "final_transcript_ms": transcript_session.final_transcript.received_at_ms,
         "input_received_ms": input_received_ms,
+        "memory_started_ms": memory_started_ms,
+        "memory_completed_ms": memory_completed_ms,
+        "memory_retrieval_latency_ms": memory_retrieval.latency_ms,
         "context_started_ms": context_started_ms,
         "context_completed_ms": context_completed_ms,
+        "context_assembly_latency_ms": VOICE_CONTEXT_ASSEMBLY_LATENCY_MS,
         "model_started_ms": model_started_ms,
         "model_completed_ms": model_completed_ms,
+        "model_role_latency_ms": model_latency_ms,
         "output_produced_ms": output_produced_ms,
         "speech_requested_ms": speech_requested_ms,
         "speech_started_ms": speech_started_ms,
@@ -647,10 +675,10 @@ fn record_voice_loop_latency(
         "context_used_estimated_tokens": context_tokens,
         "transcript_measurements": transcript_session.latency_measurements(),
         "speech_measurements": speech_session.latency_measurements(),
-        "total_turn_ms": speech_completed_ms.saturating_sub(transcript_session.started_at_ms),
+        "total_turn_ms": total_turn_ms,
     }))
     .with_latency_context("audio", "text-owned-voice-loop")
-    .with_latency_ms(speech_completed_ms.saturating_sub(transcript_session.started_at_ms));
+    .with_latency_ms(total_turn_ms);
     let trace_id = trace.trace_id;
     context.record_trace(trace)?;
     Ok(trace_id)
@@ -659,9 +687,18 @@ fn record_voice_loop_latency(
 fn record_latency_event(
     context: &mut RunContext,
     transcript_session: &TranscriptProviderSession,
+    memory_retrieval: &RetrievalResult,
     speech_session: &SpeechOutputSession,
+    model_latency_ms: u64,
     trace_id: uuid::Uuid,
 ) -> anyhow::Result<()> {
+    let total_turn_ms = voice_loop_total_latency_ms(
+        transcript_session,
+        memory_retrieval,
+        model_latency_ms,
+        speech_session,
+    );
+
     context.record_event(
         EventType::LatencyMeasurementRecorded,
         json!({
@@ -672,8 +709,11 @@ fn record_latency_event(
             "speech_measurements": speech_session.latency_measurements(),
             "first_partial_latency_ms": transcript_session.first_partial_latency_ms(),
             "final_transcript_latency_ms": transcript_session.final_transcript_latency_ms(),
+            "memory_retrieval_latency_ms": memory_retrieval.latency_ms,
+            "context_assembly_latency_ms": VOICE_CONTEXT_ASSEMBLY_LATENCY_MS,
+            "model_role_latency_ms": model_latency_ms,
             "speech_output_latency_ms": speech_session.total_latency_ms(),
-            "total_turn_ms": voice_loop_total_latency_ms(transcript_session, speech_session),
+            "total_turn_ms": total_turn_ms,
             "safety": AudioSafetyMarkers::no_secret_or_raw_audio(),
         }),
         Some(trace_id),
@@ -767,8 +807,10 @@ fn write_text_owned_voice_loop_report(
     context: &RunContext,
     transcript_session: &TranscriptProviderSession,
     context_assembly: &ContextAssembly,
+    memory_retrieval: &RetrievalResult,
     model_response: &ModelResponse,
     speech_session: &SpeechOutputSession,
+    model_latency_ms: u64,
 ) -> anyhow::Result<()> {
     let mut markdown = String::new();
     markdown.push_str("# Text-Owned Voice Loop\n\n");
@@ -821,12 +863,26 @@ fn write_text_owned_voice_loop_report(
         transcript_session.final_transcript_latency_ms()
     ));
     markdown.push_str(&format!(
+        "- Memory retrieval latency: {} ms\n",
+        memory_retrieval.latency_ms
+    ));
+    markdown.push_str(&format!(
+        "- Context assembly latency: {} ms\n",
+        VOICE_CONTEXT_ASSEMBLY_LATENCY_MS
+    ));
+    markdown.push_str(&format!("- Model role latency: {} ms\n", model_latency_ms));
+    markdown.push_str(&format!(
         "- Speech output latency: {} ms\n",
         speech_session.total_latency_ms()
     ));
     markdown.push_str(&format!(
-        "- Total deterministic turn latency: {} ms\n",
-        voice_loop_total_latency_ms(transcript_session, speech_session)
+        "- Total observed turn latency: {} ms\n",
+        voice_loop_total_latency_ms(
+            transcript_session,
+            memory_retrieval,
+            model_latency_ms,
+            speech_session
+        )
     ));
 
     fs::write(context.run_dir().join("text-owned-voice-loop.md"), markdown).with_context(|| {
@@ -835,6 +891,14 @@ fn write_text_owned_voice_loop_report(
             context.run_id()
         )
     })
+}
+
+fn elapsed_ms(started_at: Instant) -> u64 {
+    started_at
+        .elapsed()
+        .as_millis()
+        .try_into()
+        .unwrap_or(u64::MAX)
 }
 
 fn write_voice_memory_fixture_snapshot(
@@ -882,11 +946,15 @@ fn memory_ids(memories: &[RetrievedMemory]) -> Vec<String> {
 
 fn voice_loop_total_latency_ms(
     transcript_session: &TranscriptProviderSession,
+    memory_retrieval: &RetrievalResult,
+    model_latency_ms: u64,
     speech_session: &SpeechOutputSession,
 ) -> u64 {
     transcript_session
         .completed_at_ms
+        .saturating_add(memory_retrieval.latency_ms)
         .saturating_add(VOICE_CONTEXT_ASSEMBLY_LATENCY_MS)
+        .saturating_add(model_latency_ms)
         .saturating_add(speech_session.total_latency_ms())
         .saturating_sub(transcript_session.started_at_ms)
 }
@@ -894,8 +962,9 @@ fn voice_loop_total_latency_ms(
 #[cfg(test)]
 mod tests {
     use std::fs;
+    use std::time::Duration;
 
-    use super::TextOwnedVoiceLoopExperiment;
+    use super::{TextOwnedVoiceLoopExperiment, VOICE_CONTEXT_ASSEMBLY_LATENCY_MS};
     use crate::audio::test_support::{
         assert_events_have_safety_markers, assert_payloads_do_not_contain_raw_audio_fields,
         is_audio_or_speech_event, parse_event_records,
@@ -922,6 +991,21 @@ mod tests {
 
         fn complete(&self, _request: &ModelRequest) -> anyhow::Result<ModelResponse> {
             Err(anyhow!("model boom"))
+        }
+    }
+
+    struct SlowModelClient {
+        delay: Duration,
+    }
+
+    impl ModelClient for SlowModelClient {
+        fn client_name(&self) -> &str {
+            "slow-mock-model"
+        }
+
+        fn complete(&self, request: &ModelRequest) -> anyhow::Result<ModelResponse> {
+            std::thread::sleep(self.delay);
+            MockModelClient::default().complete(request)
         }
     }
 
@@ -1024,7 +1108,67 @@ mod tests {
         assert!(traces.contains("voice-loop-latency"));
         assert!(report.contains("Text-Owned Voice Loop"));
         assert!(report.contains("Selected memory context: `memory."));
+        assert!(report.contains("Model role latency:"));
+        assert!(report.contains("Total observed turn latency:"));
         assert!(context.run_dir().join("memory-fixture.json").exists());
+
+        fs::remove_dir_all(base_dir).unwrap();
+    }
+
+    #[test]
+    fn latency_summary_includes_model_runtime() {
+        let base_dir =
+            std::env::temp_dir().join(format!("qsf-text-owned-latency-{}", Uuid::new_v4()));
+        let mut context = RunContext::create_in(&base_dir, "text-owned-voice-loop").unwrap();
+        let experiment = TextOwnedVoiceLoopExperiment;
+
+        experiment
+            .run_with_components(
+                &mut context,
+                &SimulatedTranscriptProvider,
+                &SlowModelClient {
+                    delay: Duration::from_millis(25),
+                },
+                &SimulatedSpeechOutputProvider,
+            )
+            .unwrap();
+
+        let events = fs::read_to_string(context.run_dir().join("events.jsonl")).unwrap();
+        let report =
+            fs::read_to_string(context.run_dir().join("text-owned-voice-loop.md")).unwrap();
+        let event_records = parse_event_records(&events);
+        let latency = text_owned_loop_latency_event(&event_records);
+
+        let final_transcript_latency_ms = latency.payload["final_transcript_latency_ms"]
+            .as_u64()
+            .unwrap();
+        let memory_retrieval_latency_ms = latency.payload["memory_retrieval_latency_ms"]
+            .as_u64()
+            .unwrap();
+        let context_assembly_latency_ms = latency.payload["context_assembly_latency_ms"]
+            .as_u64()
+            .unwrap();
+        let model_role_latency_ms = latency.payload["model_role_latency_ms"].as_u64().unwrap();
+        let speech_output_latency_ms = latency.payload["speech_output_latency_ms"]
+            .as_u64()
+            .unwrap();
+        let total_turn_ms = latency.payload["total_turn_ms"].as_u64().unwrap();
+
+        assert_eq!(
+            context_assembly_latency_ms,
+            VOICE_CONTEXT_ASSEMBLY_LATENCY_MS
+        );
+        assert!(model_role_latency_ms >= 10);
+        assert!(
+            total_turn_ms
+                >= final_transcript_latency_ms
+                    + memory_retrieval_latency_ms
+                    + context_assembly_latency_ms
+                    + model_role_latency_ms
+                    + speech_output_latency_ms
+        );
+        assert!(report.contains(&format!("Model role latency: {model_role_latency_ms} ms")));
+        assert!(report.contains(&format!("Total observed turn latency: {total_turn_ms} ms")));
 
         fs::remove_dir_all(base_dir).unwrap();
     }
@@ -1243,5 +1387,16 @@ mod tests {
             .unwrap();
 
         assert_eq!(output_text, speech_text);
+    }
+
+    fn text_owned_loop_latency_event(records: &[EventRecord]) -> &EventRecord {
+        records
+            .iter()
+            .rev()
+            .find(|record| {
+                record.event_type == EventType::LatencyMeasurementRecorded
+                    && record.payload["stage"] == "text-owned-voice-loop"
+            })
+            .unwrap()
     }
 }

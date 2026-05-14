@@ -67,6 +67,8 @@ The experiment records:
 - speech playback request/start/completion metadata
 - latency trace for capture, transcription, runtime bridge, context/model, and speech
   output stages
+- generated turn reports list final transcript, memory retrieval, context assembly,
+  model role, speech output, and total observed turn latency separately
 
 Successful runs also print the QSF-owned response text to stdout so live microphone
 tests can be checked without opening the run artifact first. Run artifacts include
@@ -116,7 +118,9 @@ The regression tests assert that only final transcripts create `InputReceived`, 
 session id correlates the turn, one retrieved memory fragment participates in selected
 context, `SpeechPlaybackRequested.payload["text"]` equals
 `OutputProduced.payload["message"]`, model failure prevents `OutputProduced`, and
-speech-provider failure sanitizes credential-like errors.
+speech-provider failure sanitizes credential-like errors. A latency regression test
+uses a deliberately delayed mock model to ensure total turn latency includes model-role
+runtime.
 
 ## Live Evaluation Notes
 
@@ -152,3 +156,6 @@ speech-provider failure sanitizes credential-like errors.
   same path before context assembly. New runs should show `MemoryRetrievalRequested`,
   `MemoryRetrieved`, and a `Selected memory context` entry in
   `text-owned-voice-loop.md`.
+- The latency report was corrected after the first memory-context live run exposed that
+  total turn latency did not include model-role runtime. New reports should show
+  `Model role latency` and `Total observed turn latency`.

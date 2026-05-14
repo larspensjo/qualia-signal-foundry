@@ -180,3 +180,16 @@ the three voice-boundary fragments remain inside the four-fragment context budge
 Refs: crates/qsf_app/src/experiments/text_owned_voice_loop.rs,
 docs/Experiments/Experiment.TextOwnedVoiceLoop.md,
 docs/Experiments/Report.VoiceLoopComparison.2026-05-14.md
+
+## 2026-05-14 - Voice-loop latency reports include model runtime
+Decision: Text-owned voice-loop latency totals include transcript dispatch, memory
+retrieval, context assembly, model-role runtime, and speech output.
+Context: The first live memory-context run showed successful answer ownership but the
+generated report undercounted total turn latency by omitting the OpenAI model-call
+duration. That made comparisons against provider-owned realtime voice misleading.
+Consequences: Generated reports and latency events now expose each stage separately
+and use a total observed turn latency that includes model runtime. Future comparison
+reports should use those corrected fields.
+Refs: crates/qsf_app/src/experiments/text_owned_voice_loop.rs,
+docs/Experiments/Experiment.TextOwnedVoiceLoop.md,
+docs/Experiments/Report.VoiceLoopComparison.2026-05-14.md

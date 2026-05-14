@@ -633,3 +633,19 @@ What changed:
 Refs: crates/qsf_app/src/experiments/text_owned_voice_loop.rs,
 docs/Experiments/Experiment.TextOwnedVoiceLoop.md,
 docs/Experiments/Report.VoiceLoopComparison.2026-05-14.md
+
+## 2026-05-14 - Text-owned voice loop latency accounting
+
+Fixed the generated text-owned voice-loop latency summary to include model-role
+runtime.
+
+What changed:
+- Measured the `ConversationalResponder` invocation inside the voice-loop experiment.
+- Added memory retrieval, context assembly, model role, speech output, and total
+  observed turn latency fields to the latency event and generated markdown report.
+- Added a delayed mock-model regression test so total turn latency cannot undercount
+  model runtime again.
+
+Refs: crates/qsf_app/src/experiments/text_owned_voice_loop.rs,
+docs/Experiments/Experiment.TextOwnedVoiceLoop.md,
+docs/Experiments/Report.VoiceLoopComparison.2026-05-14.md
