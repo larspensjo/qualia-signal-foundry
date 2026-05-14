@@ -87,6 +87,22 @@ The first provider-backed implementation should use streaming transcription as t
 boundary into the runtime loop. A full realtime voice session can be tested later,
 but it should still map provider events back into the same QSF event stream.
 
+The current text-owned voice-loop experiment adds a second, deterministic boundary:
+speech output is a renderer for QSF-owned `OutputProduced` text, not the owner of the
+answer. The default loop therefore treats audio providers as adapters around a normal
+QSF text turn:
+
+```text
+TranscriptProvider
+  -> AudioFinalTranscript
+  -> InputReceived
+  -> ContextAssembled
+  -> ConversationalResponder
+  -> OutputProduced
+  -> SpeechOutputProvider
+  -> SpeechPlaybackCompleted
+```
+
 ## Candidate Runtime Model
 
 The audio loop should probably be event-driven.
@@ -178,6 +194,10 @@ TranscriptProvider
   -> simulated transcript provider for tests
   -> gpt-realtime-whisper adapter for streaming speech-to-text
 
+SpeechOutputProvider
+  -> simulated speech output provider for exact-text boundary tests
+  -> future render-only TTS provider after the simulated boundary is proven
+
 RealtimeSessionProvider
   -> gpt-realtime-2 adapter for later speech-to-speech experiments
 
@@ -243,6 +263,10 @@ Responsibilities:
 - expose whether the system is currently speaking
 
 The playback controller should be connected to interruption detection.
+
+The first `SpeechOutputProvider` implementation is metadata-only by default. It
+records provider, voice, timing, and byte-count metadata while preserving the invariant
+that `SpeechPlaybackRequested.text` is exactly the `OutputProduced.message`.
 
 ### Transcript and Event Log
 
@@ -597,14 +621,16 @@ docs/Architecture/Architecture.StateAndObservability.md
 
 ## Current Recommendation
 
-Start with streaming transcription, not a full voice loop.
+Start with streaming transcription and deterministic text-owned voice-loop boundaries,
+not a full duplex voice product.
 
 Do not begin with full duplex realtime audio. Instead, build the smallest observable
-pipeline that turns audio into partial and final transcript events, logs timing, and
-keeps the implementation replaceable. A simulated transcript provider should come
-first for deterministic tests; `gpt-realtime-whisper` is the first provider-backed
-target when real streaming speech-to-text is needed.
+pipeline that turns audio into partial and final transcript events, logs timing, routes
+finalized text through QSF-owned context/model behavior, and only then hands
+`OutputProduced` text to speech output. A simulated transcript provider and simulated
+speech output provider should come first for deterministic tests; `gpt-realtime-whisper`
+is the first provider-backed target when real streaming speech-to-text is needed.
 
-Once transcript events are working, use experiments to decide whether to add push-to-talk
-voice output, automatic turn detection, `gpt-realtime-2` speech-to-speech sessions,
-and interruption handling.
+Once transcript events and the text-owned output boundary are working, use experiments
+to decide whether to add push-to-talk voice output, automatic turn detection,
+render-only TTS, `gpt-realtime-2` speech-to-speech sessions, and interruption handling.

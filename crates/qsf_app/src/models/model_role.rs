@@ -8,6 +8,7 @@ use crate::context::ContextBudget;
 #[serde(rename_all = "snake_case")]
 pub enum ModelRoleId {
     MockResponder,
+    ConversationalResponder,
     MemoryExtractor,
     SleepSummarizer,
     ResearchPlanner,
@@ -18,6 +19,7 @@ impl ModelRoleId {
     pub fn as_str(self) -> &'static str {
         match self {
             Self::MockResponder => "mock_responder",
+            Self::ConversationalResponder => "conversational_responder",
             Self::MemoryExtractor => "memory_extractor",
             Self::SleepSummarizer => "sleep_summarizer",
             Self::ResearchPlanner => "research_planner",
@@ -58,6 +60,16 @@ impl ModelRole {
                     .to_string(),
                 allowed_tools: vec![],
                 context_budget: ContextBudget::new(4, 800),
+                default_model: "gpt-5.4-nano".to_string(),
+                output_expectation: ModelOutputExpectation::Text,
+            },
+            ModelRoleId::ConversationalResponder => Self {
+                role_id,
+                purpose:
+                    "Produce short spoken replies from QSF-owned context and user input."
+                        .to_string(),
+                allowed_tools: vec![],
+                context_budget: ContextBudget::new(4, 600),
                 default_model: "gpt-5.4-nano".to_string(),
                 output_expectation: ModelOutputExpectation::Text,
             },

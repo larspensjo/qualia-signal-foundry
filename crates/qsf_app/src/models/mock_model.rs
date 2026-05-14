@@ -48,6 +48,15 @@ impl Default for MockModelClient {
             },
         );
         fixtures.insert(
+            ModelRoleId::ConversationalResponder,
+            MockFixture {
+                output_text: "I am a QSF runtime voice loop. I turn your speech into events, assemble context, and answer through the framework before speech playback."
+                    .to_string(),
+                input_tokens: 58,
+                output_tokens: 28,
+            },
+        );
+        fixtures.insert(
             ModelRoleId::SleepSummarizer,
             MockFixture {
                 output_text: json!({

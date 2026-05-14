@@ -20,6 +20,7 @@ use super::placeholder::PlaceholderExperiment;
 use super::realtime_voice_session::RealtimeVoiceSessionExperiment;
 use super::sleep_phase_session_summary::SleepPhaseSessionSummaryExperiment;
 use super::streaming_transcription_mvp::StreamingTranscriptionMvpExperiment;
+use super::text_owned_voice_loop::TextOwnedVoiceLoopExperiment;
 use super::tool_as_perception_calculator::ToolAsPerceptionCalculatorExperiment;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, ValueEnum)]
@@ -33,6 +34,7 @@ pub enum ExperimentName {
     RealtimeVoiceSession,
     SleepPhaseSessionSummary,
     StreamingTranscriptionMvp,
+    TextOwnedVoiceLoop,
     ToolAsPerceptionCalculator,
 }
 
@@ -47,6 +49,7 @@ impl ExperimentName {
             Self::RealtimeVoiceSession => "realtime-voice-session",
             Self::SleepPhaseSessionSummary => "sleep-phase-session-summary",
             Self::StreamingTranscriptionMvp => "streaming-transcription-mvp",
+            Self::TextOwnedVoiceLoop => "text-owned-voice-loop",
             Self::ToolAsPerceptionCalculator => "tool-as-perception-calculator",
         }
     }
@@ -74,6 +77,9 @@ impl ExperimentName {
             }
             Self::StreamingTranscriptionMvp => {
                 "Stream transcript deltas as audio-derived events before committing final text to runtime input"
+            }
+            Self::TextOwnedVoiceLoop => {
+                "Capture or simulate speech, route finalized text through QSF-owned model behavior, then synthesize speech output from the QSF text response"
             }
             Self::ToolAsPerceptionCalculator => {
                 "Execute a compute-only calculator tool and treat the result as a context candidate"
@@ -272,7 +278,7 @@ pub fn run_experiment_in(
     })
 }
 
-fn experiment_names() -> [ExperimentName; 9] {
+fn experiment_names() -> [ExperimentName; 10] {
     [
         ExperimentName::FrameworkSkeletonMvp,
         ExperimentName::AudioPreparationLayer,
@@ -282,6 +288,7 @@ fn experiment_names() -> [ExperimentName; 9] {
         ExperimentName::RealtimeVoiceSession,
         ExperimentName::SleepPhaseSessionSummary,
         ExperimentName::StreamingTranscriptionMvp,
+        ExperimentName::TextOwnedVoiceLoop,
         ExperimentName::ToolAsPerceptionCalculator,
     ]
 }
@@ -297,6 +304,7 @@ fn experiment_for(name: ExperimentName) -> Box<dyn Experiment> {
         ExperimentName::RealtimeVoiceSession => Box::new(RealtimeVoiceSessionExperiment),
         ExperimentName::SleepPhaseSessionSummary => Box::new(SleepPhaseSessionSummaryExperiment),
         ExperimentName::StreamingTranscriptionMvp => Box::new(StreamingTranscriptionMvpExperiment),
+        ExperimentName::TextOwnedVoiceLoop => Box::new(TextOwnedVoiceLoopExperiment),
         ExperimentName::ToolAsPerceptionCalculator => {
             Box::new(ToolAsPerceptionCalculatorExperiment)
         }

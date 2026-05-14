@@ -454,3 +454,56 @@ crates/qsf_app/src/experiments/realtime_voice_session.rs,
 crates/qsf_app/src/observability/event_log.rs,
 docs/Experiments/Experiment.RealtimeVoiceSessionMVP.md,
 docs/Reviews/Review.Phase10.RealtimeVoiceSessionMVP.md
+
+## 2026-05-14 - Text-owned voice loop first pass
+
+Added a deterministic voice-loop experiment where simulated speech input becomes QSF
+runtime input, a `ConversationalResponder` model role owns the answer text, and a
+simulated speech output provider receives that exact `OutputProduced` text.
+
+What changed:
+- Registered `text-owned-voice-loop` and added the end-to-end experiment artifact.
+- Added `ConversationalResponder` role defaults and a deterministic mock response.
+- Added `SpeechOutputProvider` with a simulated metadata-only implementation reusing
+  existing playback timing fixtures.
+- Added regression tests for event ordering, final-transcript-only input commit,
+  session correlation, exact text handoff, model failure, speech failure sanitization,
+  and no raw-audio-like event payloads.
+
+Observed:
+- The existing transcript provider, context assembler, model-role helper, and event/trace
+  writers were enough to build the deterministic voice loop without adding a parallel
+  runtime path.
+
+Refs: crates/qsf_app/src/experiments/text_owned_voice_loop.rs,
+crates/qsf_app/src/audio/speech_output_provider.rs,
+crates/qsf_app/src/models/model_role.rs,
+docs/Experiments/Experiment.TextOwnedVoiceLoop.md,
+docs/Architecture/Architecture.AudioLoop.md
+
+## 2026-05-14 - Text-owned voice loop review follow-up
+
+Applied the relevant first-pass review findings before moving on to live microphone
+input.
+
+What changed:
+- Extracted shared transcript event emission for streaming transcription and the
+  text-owned voice loop.
+- Added shared audio test helpers for event parsing, safety-marker assertions, and
+  raw-audio-like payload checks.
+- Added optional `session_id` metadata to model requests so model role events can
+  correlate with a voice-loop turn.
+- Added speech playback safety markers, default speech-output model materialization,
+  stronger event-order tests, and a consistent deterministic latency timeline.
+- Documented the voice-turn runtime shape in the runtime-loop architecture note.
+
+Observed:
+- The review fixes removed duplication without changing the public experiment command
+  or starting Slice 3 live microphone work.
+
+Refs: crates/qsf_app/src/audio/transcript_event_emitter.rs,
+crates/qsf_app/src/audio/test_support.rs,
+crates/qsf_app/src/models/model_client.rs,
+crates/qsf_app/src/experiments/text_owned_voice_loop.rs,
+crates/qsf_app/src/experiments/streaming_transcription_mvp.rs,
+docs/Architecture/Architecture.RuntimeLoop.md

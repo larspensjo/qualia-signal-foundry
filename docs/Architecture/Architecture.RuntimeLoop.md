@@ -311,6 +311,30 @@ Examples:
 
 Write-capable tools should be delayed or heavily constrained.
 
+## Runtime Loop and Voice Turns
+
+The text-owned voice loop uses the same runtime ownership rule as text interaction:
+providers adapt input and output, while QSF owns interpretation, context assembly,
+model-role invocation, and `OutputProduced` text.
+
+The current voice-turn shape is:
+
+```text
+AudioFinalTranscript
+  -> InputReceived
+  -> ContextAssemblyRequested
+  -> ContextAssembled
+  -> ModelRoleRequested
+  -> ModelRoleCompleted
+  -> OutputProduced
+  -> SpeechPlaybackRequested
+```
+
+One `session_id` should correlate the voice turn across transcript, runtime input,
+model role, output, speech playback, and latency records. Model role requests may be
+used outside voice turns, so the model request metadata carries `session_id` only when
+a caller has a turn/session identifier to propagate.
+
 ## Runtime Loop and Real-Time Audio
 
 Audio makes the runtime loop more demanding because input and output may overlap.

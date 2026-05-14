@@ -4,9 +4,10 @@ use anyhow::Context;
 use serde_json::json;
 
 use crate::audio::{
-    AudioRuntimeBoundary, AudioRuntimeEntryPoint, AudioSafetyMarkers, TranscriptProvider,
-    TranscriptProviderError, TranscriptProviderRequest, TranscriptProviderSession,
-    build_transcript_provider, requested_transcript_provider_from_env,
+    AudioRuntimeBoundary, AudioRuntimeEntryPoint, AudioSafetyMarkers, TranscriptEventEmission,
+    TranscriptEventTraceIds, TranscriptProvider, TranscriptProviderError,
+    TranscriptProviderRequest, TranscriptProviderSession, build_transcript_provider,
+    record_transcript_runtime_events, requested_transcript_provider_from_env,
 };
 use crate::observability::event_log::EventType;
 use crate::observability::trace::TraceRecord;
@@ -112,12 +113,15 @@ impl StreamingTranscriptionMvpExperiment {
         let runtime_bridge_trace_id = runtime_bridge_trace.trace_id;
         context.record_trace(runtime_bridge_trace)?;
 
-        record_transcript_events(
+        record_transcript_runtime_events(
             context,
             &session,
-            provider_trace_id,
-            latency_trace_id,
-            runtime_bridge_trace_id,
+            TranscriptEventTraceIds {
+                provider_trace_id,
+                latency_trace_id,
+                runtime_bridge_trace_id,
+            },
+            TranscriptEventEmission::new(transcription_boundary(), "streaming-transcription"),
         )?;
         write_streaming_transcription_report(context, &session)?;
 
@@ -157,117 +161,6 @@ fn transcription_boundary() -> AudioRuntimeBoundary {
         runtime_event: EventType::InputReceived,
         description: "Final transcript text becomes committed runtime input only after the provider emits AudioFinalTranscript.".to_string(),
     }
-}
-
-fn record_transcript_events(
-    context: &mut RunContext,
-    session: &TranscriptProviderSession,
-    provider_trace_id: uuid::Uuid,
-    latency_trace_id: uuid::Uuid,
-    runtime_bridge_trace_id: uuid::Uuid,
-) -> anyhow::Result<()> {
-    context.record_event(
-        EventType::AudioInputStarted,
-        json!({
-            "session_id": &session.session_id,
-            "provider": &session.provider_name,
-            "model": &session.model,
-            "input_source": &session.input_source,
-            "entry_point": AudioRuntimeEntryPoint::TranscriptProvider,
-            "safety": AudioSafetyMarkers::no_secret_or_raw_audio(),
-        }),
-        Some(provider_trace_id),
-    )?;
-
-    for chunk in &session.chunks {
-        context.record_event(
-            EventType::AudioInputChunkCaptured,
-            json!({
-                "session_id": &session.session_id,
-                "provider": &session.provider_name,
-                "chunk_index": chunk.chunk_index,
-                "captured_chunk_count": session.chunks.len(),
-                "captured_at_ms": chunk.captured_at_ms,
-                "duration_ms": chunk.duration_ms,
-                "entry_point": AudioRuntimeEntryPoint::TranscriptProvider,
-                "safety": AudioSafetyMarkers::no_secret_or_raw_audio(),
-            }),
-            Some(provider_trace_id),
-        )?;
-    }
-
-    for partial in &session.partials {
-        context.record_event(
-            EventType::AudioPartialTranscript,
-            json!({
-                "session_id": &session.session_id,
-                "provider": &session.provider_name,
-                "utterance_index": partial.utterance_index,
-                "revision_index": partial.revision_index,
-                "source_chunk_index": partial.source_chunk_index,
-                "received_at_ms": partial.received_at_ms,
-                "transcript": &partial.transcript,
-                "committed_to_runtime": false,
-                "safety": AudioSafetyMarkers::no_secret_or_raw_audio(),
-            }),
-            Some(provider_trace_id),
-        )?;
-    }
-
-    let boundary = transcription_boundary();
-    context.record_event(
-        EventType::AudioFinalTranscript,
-        json!({
-            "session_id": &session.session_id,
-            "provider": &session.provider_name,
-            "utterance_index": session.final_transcript.utterance_index,
-            "received_at_ms": session.final_transcript.received_at_ms,
-            "transcript": &session.final_transcript.transcript,
-            "boundary": boundary,
-            "safety": AudioSafetyMarkers::no_secret_or_raw_audio(),
-        }),
-        Some(runtime_bridge_trace_id),
-    )?;
-
-    context.record_event(
-        EventType::AudioInputEnded,
-        json!({
-            "session_id": &session.session_id,
-            "provider": &session.provider_name,
-            "captured_chunk_count": session.chunks.len(),
-            "completed_at_ms": session.completed_at_ms,
-            "safety": AudioSafetyMarkers::no_secret_or_raw_audio(),
-        }),
-        Some(provider_trace_id),
-    )?;
-
-    context.record_event(
-        EventType::LatencyMeasurementRecorded,
-        json!({
-            "session_id": &session.session_id,
-            "domain": "audio",
-            "stage": "streaming-transcription",
-            "measurements": session.latency_measurements(),
-            "first_partial_latency_ms": session.first_partial_latency_ms(),
-            "final_transcript_latency_ms": session.final_transcript_latency_ms(),
-            "safety": AudioSafetyMarkers::no_secret_or_raw_audio(),
-        }),
-        Some(latency_trace_id),
-    )?;
-
-    context.record_event(
-        EventType::InputReceived,
-        json!({
-            "session_id": &session.session_id,
-            "source_event": EventType::AudioFinalTranscript,
-            "input_text": &session.final_transcript.transcript,
-            "entry_point": AudioRuntimeEntryPoint::RuntimeInput,
-            "entry_point_description": AudioRuntimeEntryPoint::RuntimeInput.description(),
-        }),
-        Some(runtime_bridge_trace_id),
-    )?;
-
-    Ok(())
 }
 
 fn record_provider_failure(
@@ -366,14 +259,17 @@ mod tests {
     use std::fs;
 
     use super::StreamingTranscriptionMvpExperiment;
+    use crate::audio::test_support::{
+        assert_events_have_safety_markers, assert_payloads_do_not_contain_raw_audio_fields,
+        is_audio_input_or_transcript_event, parse_event_records,
+    };
     use crate::audio::{
         SimulatedTranscriptProvider, TranscriptProvider, TranscriptProviderError,
         TranscriptProviderRequest, TranscriptProviderSession,
     };
     use crate::experiments::registry::{Experiment, ExperimentName};
-    use crate::observability::event_log::{EventRecord, EventType};
+    use crate::observability::event_log::EventType;
     use crate::runtime::run_context::RunContext;
-    use serde_json::Value;
     use uuid::Uuid;
 
     struct FailingProvider;
@@ -428,7 +324,7 @@ mod tests {
             record.event_type == EventType::AudioPartialTranscript
                 && record.payload["committed_to_runtime"] == false
         }));
-        assert_audio_events_have_safety_markers(&event_records);
+        assert_events_have_safety_markers(&event_records, is_audio_input_or_transcript_event);
         assert_payloads_do_not_contain_raw_audio_fields(&event_records);
         assert!(traces.contains("transcript-provider-session"));
         assert!(traces.contains("transcript-latency"));
@@ -473,66 +369,5 @@ mod tests {
 
         assert_eq!(experiment.name(), ExperimentName::StreamingTranscriptionMvp);
         assert_eq!(experiment.id(), "streaming-transcription-mvp");
-    }
-
-    fn parse_event_records(events: &str) -> Vec<EventRecord> {
-        events
-            .lines()
-            .map(|line| serde_json::from_str(line).unwrap())
-            .collect()
-    }
-
-    fn assert_audio_events_have_safety_markers(records: &[EventRecord]) {
-        for record in records
-            .iter()
-            .filter(|record| is_audio_event(&record.event_type))
-        {
-            assert_eq!(record.payload["safety"]["raw_audio_logged"], false);
-            assert_eq!(record.payload["safety"]["authorization_logged"], false);
-            assert_eq!(record.payload["safety"]["api_key_logged"], false);
-        }
-    }
-
-    fn is_audio_event(event_type: &EventType) -> bool {
-        matches!(
-            event_type,
-            EventType::AudioInputStarted
-                | EventType::AudioInputChunkCaptured
-                | EventType::AudioPartialTranscript
-                | EventType::AudioFinalTranscript
-                | EventType::AudioInputEnded
-                | EventType::AudioTranscriptionFailed
-                | EventType::LatencyMeasurementRecorded
-        )
-    }
-
-    fn assert_payloads_do_not_contain_raw_audio_fields(records: &[EventRecord]) {
-        for record in records {
-            assert_value_does_not_contain_raw_audio_fields(&record.payload);
-        }
-    }
-
-    fn assert_value_does_not_contain_raw_audio_fields(value: &Value) {
-        match value {
-            Value::Object(map) => {
-                for (key, value) in map {
-                    let normalized_key = key.to_ascii_lowercase();
-                    assert!(
-                        !matches!(
-                            normalized_key.as_str(),
-                            "pcm" | "audio_bytes" | "wav" | "raw_audio" | "audio_data"
-                        ),
-                        "payload contains raw-audio-like field `{key}`"
-                    );
-                    assert_value_does_not_contain_raw_audio_fields(value);
-                }
-            }
-            Value::Array(values) => {
-                for value in values {
-                    assert_value_does_not_contain_raw_audio_fields(value);
-                }
-            }
-            _ => {}
-        }
     }
 }

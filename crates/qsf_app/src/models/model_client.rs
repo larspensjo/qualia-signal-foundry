@@ -64,6 +64,7 @@ impl From<ModelOutputExpectation> for ModelResponseFormat {
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 pub struct ModelRequest {
     pub role: ModelRole,
+    pub session_id: Option<String>,
     pub model_name: String,
     pub messages: Vec<ModelMessage>,
     pub temperature: Option<f32>,
@@ -78,6 +79,7 @@ impl ModelRequest {
 
         Self {
             role,
+            session_id: None,
             model_name,
             messages,
             temperature: None,
@@ -88,6 +90,11 @@ impl ModelRequest {
 
     pub fn with_model_name(mut self, model_name: impl Into<String>) -> Self {
         self.model_name = model_name.into();
+        self
+    }
+
+    pub fn with_session_id(mut self, session_id: impl Into<String>) -> Self {
+        self.session_id = Some(session_id.into());
         self
     }
 
@@ -209,6 +216,7 @@ pub fn invoke_model_role(
     context.record_event(
         EventType::ModelRoleRequested,
         json!({
+            "session_id": &request.session_id,
             "role_id": request.role.role_id,
             "provider_client": client.client_name(),
             "model_name": request.model_name,
@@ -245,6 +253,7 @@ pub fn invoke_model_role(
             context.record_event(
                 EventType::ModelRoleCompleted,
                 json!({
+                    "session_id": &request.session_id,
                     "role_id": request.role.role_id,
                     "provider_name": &response.provider_name,
                     "model_name": &response.model_name,
@@ -284,6 +293,7 @@ pub fn invoke_model_role(
             context.record_event(
                 EventType::ModelRoleFailed,
                 json!({
+                    "session_id": &request.session_id,
                     "role_id": request.role.role_id,
                     "provider_client": client.client_name(),
                     "model_name": request.model_name,

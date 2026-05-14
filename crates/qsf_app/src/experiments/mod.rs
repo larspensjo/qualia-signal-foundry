@@ -8,6 +8,7 @@ mod realtime_voice_session;
 mod registry;
 mod sleep_phase_session_summary;
 mod streaming_transcription_mvp;
+mod text_owned_voice_loop;
 mod tool_as_perception_calculator;
 
 pub use registry::{

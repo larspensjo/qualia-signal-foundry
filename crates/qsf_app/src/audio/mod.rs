@@ -3,9 +3,24 @@ use serde_json::{Value, json};
 
 use crate::observability::event_log::EventType;
 
+mod speech_output_provider;
+#[cfg(test)]
+pub mod test_support;
+mod transcript_event_emitter;
 mod transcript_provider;
 mod voice_session_provider;
 
+pub use speech_output_provider::{
+    DEFAULT_SPEECH_OUTPUT_MODEL, DEFAULT_SPEECH_OUTPUT_VOICE, SPEECH_OUTPUT_MODE_ENV_VAR,
+    SPEECH_OUTPUT_MODEL_ENV_VAR, SPEECH_OUTPUT_PROVIDER_ENV_VAR, SPEECH_OUTPUT_VOICE_ENV_VAR,
+    SimulatedSpeechOutputProvider, SpeechOutputMode, SpeechOutputProvider,
+    SpeechOutputProviderError, SpeechOutputRequest, SpeechOutputSession,
+    build_speech_output_provider, requested_speech_output_provider,
+    requested_speech_output_provider_from_env,
+};
+pub use transcript_event_emitter::{
+    TranscriptEventEmission, TranscriptEventTraceIds, record_transcript_runtime_events,
+};
 pub use transcript_provider::{
     AudioSafetyMarkers, FinalTranscript, OPENAI_REALTIME_TRANSCRIPTION_MODEL,
     OpenAiRealtimeTranscriptProvider, PartialTranscript, SimulatedTranscriptProvider,
