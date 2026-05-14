@@ -166,3 +166,17 @@ explicitly selected and remain observable through QSF events and traces.
 Refs: crates/qsf_app/src/audio/voice_session_provider.rs,
 crates/qsf_app/src/experiments/realtime_voice_session.rs,
 docs/Experiments/Experiment.RealtimeVoiceSessionMVP.md
+
+## 2026-05-14 - Voice answers retrieve memory before context assembly
+Decision: Text-owned voice responses retrieve memory after final speech becomes
+`InputReceived` and before `ContextAssemblyRequested`.
+Context: Slice 5 showed that the text-owned voice loop proved QSF response ownership
+but only used fixed runtime context. The next slice needed memory participation without
+letting audio providers own answer content or bypass the existing context budget.
+Consequences: Voice turns now reuse the existing association-weighted memory retrieval
+path and log `MemoryRetrievalRequested`/`MemoryRetrieved` before selected fragments are
+passed to `ConversationalResponder`. The first slice selects one memory candidate so
+the three voice-boundary fragments remain inside the four-fragment context budget.
+Refs: crates/qsf_app/src/experiments/text_owned_voice_loop.rs,
+docs/Experiments/Experiment.TextOwnedVoiceLoop.md,
+docs/Experiments/Report.VoiceLoopComparison.2026-05-14.md

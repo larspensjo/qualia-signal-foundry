@@ -2,9 +2,8 @@
 
 ## Status
 
-Implemented as a deterministic first-pass experiment path. Live microphone input has
-been wired through the same experiment, but the first local live evaluations returned
-empty final transcripts rather than useful speech text.
+Implemented as a deterministic first-pass experiment path. Live microphone input and
+one retrieved memory context fragment now flow through the same QSF-owned answer path.
 
 ## Purpose
 
@@ -23,6 +22,9 @@ QSF owns the transcript-to-context-to-model-to-output path.
   is intentionally unavailable until the simulated exact-text boundary is proven.
 - Empty final transcripts are treated as transcription failures and do not become
   `InputReceived`.
+- Memory retrieval uses the existing Phase 4 fixture and association-weighted
+  retrieval, selecting one memory candidate into the four-fragment voice context
+  budget.
 
 Default flow:
 
@@ -30,6 +32,7 @@ Default flow:
 SimulatedTranscriptProvider
   -> AudioFinalTranscript
   -> InputReceived
+  -> association-weighted memory retrieval
   -> voice context assembly
   -> ConversationalResponder model role
   -> OutputProduced
@@ -45,6 +48,7 @@ QSF_TRANSCRIPT_INPUT_SOURCE=mic
   -> OpenAI realtime transcript provider
   -> AudioFinalTranscript
   -> InputReceived
+  -> association-weighted memory retrieval
   -> ConversationalResponder
   -> OutputProduced
   -> simulated speech output metadata
@@ -56,6 +60,7 @@ The experiment records:
 
 - audio input lifecycle and partial/final transcripts
 - `AudioFinalTranscript -> InputReceived` bridge
+- `MemoryRetrievalRequested` and `MemoryRetrieved`
 - context assembly request and result
 - `ConversationalResponder` model role request/completion/failure
 - `OutputProduced` before speech output receives text
@@ -64,7 +69,8 @@ The experiment records:
   output stages
 
 Successful runs also print the QSF-owned response text to stdout so live microphone
-tests can be checked without opening the run artifact first.
+tests can be checked without opening the run artifact first. Run artifacts include
+`memory-fixture.json` and the selected memory context id in `text-owned-voice-loop.md`.
 
 Raw audio, API keys, and authorization headers are not written to events, traces, or
 reports.
@@ -107,7 +113,8 @@ cargo run -p qsf_app --features openai -- experiment text-owned-voice-loop
 ```
 
 The regression tests assert that only final transcripts create `InputReceived`, one
-session id correlates the turn, `SpeechPlaybackRequested.payload["text"]` equals
+session id correlates the turn, one retrieved memory fragment participates in selected
+context, `SpeechPlaybackRequested.payload["text"]` equals
 `OutputProduced.payload["message"]`, model failure prevents `OutputProduced`, and
 speech-provider failure sanitizes credential-like errors.
 
@@ -132,3 +139,16 @@ speech-provider failure sanitizes credential-like errors.
 - Measured first partial transcript latency was 1648 ms, final transcript latency was
   2923 ms, and total text-owned voice-loop latency was 3069 ms with simulated speech
   output.
+- A follow-up live run used `QSF_MODEL_PROVIDER=openai` for the
+  `ConversationalResponder` while keeping speech output simulated.
+- OpenAI model artifact: `runs/2026-05-14-113743-text-owned-voice-loop`.
+- The follow-up run transcribed "Tell me something funny and unexpected about
+  yourself.", completed the model role through OpenAI
+  (`gpt-5.4-nano-2026-03-17`), and produced QSF-owned output text before simulated
+  speech output received it.
+- The OpenAI model call reported 1937 ms model latency, 89 input tokens, and 45 output
+  tokens.
+- The next implementation pass wired association-weighted memory retrieval into the
+  same path before context assembly. New runs should show `MemoryRetrievalRequested`,
+  `MemoryRetrieved`, and a `Selected memory context` entry in
+  `text-owned-voice-loop.md`.

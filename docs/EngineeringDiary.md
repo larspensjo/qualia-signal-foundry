@@ -567,3 +567,69 @@ Observed:
 
 Refs: crates/qsf_app/src/experiments/text_owned_voice_loop.rs,
 docs/Experiments/Experiment.TextOwnedVoiceLoop.md
+
+## 2026-05-14 - Text-owned voice loop OpenAI responder run
+
+Validated the text-owned voice loop with live microphone transcription and an
+OpenAI-backed `ConversationalResponder`, while keeping speech output simulated.
+
+Observed:
+- The live run transcribed "Tell me something funny and unexpected about yourself."
+- `ModelRoleRequested` and `ModelRoleCompleted` used the `openai` provider, resolving
+  to `gpt-5.4-nano-2026-03-17`.
+- The OpenAI model response was emitted as QSF-owned `OutputProduced` text before the
+  simulated speech provider received the exact same text.
+- Model latency was 1937 ms with 89 input tokens and 45 output tokens.
+- Total loop latency was 4997 ms with simulated speech output metadata.
+
+Refs: runs/2026-05-14-113743-text-owned-voice-loop,
+docs/Experiments/Experiment.TextOwnedVoiceLoop.md
+
+## 2026-05-14 - Voice loop comparison report
+
+Created the Slice 5 comparison report using one streaming transcription run, one
+provider-owned realtime voice run, and one text-owned voice loop run.
+
+What changed:
+- Compared transcript latency, response ownership, context participation, speech output,
+  tool boundary, and safety boundary across the three run artifacts.
+- Documented that text-owned voice now proves live speech can enter QSF-owned context
+  and model-role response generation before speech output receives exact text.
+- Kept OpenAI TTS deferred; the report recommends improving comparison baselines and
+  adding richer memory/context participation first.
+
+Refs: docs/Experiments/Report.VoiceLoopComparison.2026-05-14.md,
+runs/2026-05-14-133230-streaming-transcription-mvp,
+runs/2026-05-14-075918-realtime-voice-session,
+runs/2026-05-14-113743-text-owned-voice-loop
+
+## 2026-05-14 - Same-prompt realtime voice comparison
+
+Updated the voice-loop comparison with a same-prompt realtime voice-session run.
+
+What changed:
+- Replaced the older realtime baseline in the comparison report with
+  `runs/2026-05-14-133853-realtime-voice-session`.
+- Compared provider-owned realtime voice, streaming transcription, and text-owned voice
+  on the spoken prompt "Tell me something funny and unexpected about yourself."
+- Recorded that the realtime provider began response generation 246 ms before final
+  transcript completion and observed 480000 provider audio bytes.
+
+Refs: docs/Experiments/Report.VoiceLoopComparison.2026-05-14.md,
+runs/2026-05-14-133853-realtime-voice-session
+
+## 2026-05-14 - Text-owned voice loop memory context
+
+Wired the text-owned voice loop to retrieve one association-weighted memory candidate
+after `InputReceived` and before context assembly.
+
+What changed:
+- Reused the Phase 4 memory fixture and retrieval scorer in the voice-loop answer path.
+- Added `MemoryRetrievalRequested` and `MemoryRetrieved` events plus a
+  `voice-memory-retrieval` trace to the run artifacts.
+- Included the selected memory context id in `text-owned-voice-loop.md` and kept the
+  exact `OutputProduced` to speech-output handoff unchanged.
+
+Refs: crates/qsf_app/src/experiments/text_owned_voice_loop.rs,
+docs/Experiments/Experiment.TextOwnedVoiceLoop.md,
+docs/Experiments/Report.VoiceLoopComparison.2026-05-14.md

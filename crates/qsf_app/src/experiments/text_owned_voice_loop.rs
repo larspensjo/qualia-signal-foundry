@@ -14,6 +14,10 @@ use crate::audio::{
 use crate::context::{
     ContextAssembly, ContextBudget, ContextFragment, ContextSourceKind, assemble_context,
 };
+use crate::memory::{
+    MemoryFixture, RetrievalResult, RetrievalStrategy, RetrievedMemory, phase_four_fixture,
+    retrieve_memories,
+};
 use crate::models::{
     ModelClient, ModelMessage, ModelRequest, ModelResponse, ModelRole, ModelRoleId, build_client,
     invoke_model_role, requested_provider_from_env,
@@ -25,6 +29,8 @@ use crate::runtime::run_context::RunContext;
 use super::registry::{Experiment, ExperimentName, ExperimentOutcome};
 
 const VOICE_CONTEXT_ASSEMBLY_LATENCY_MS: u64 = 6;
+const VOICE_MEMORY_RETRIEVAL_LIMIT: usize = 1;
+const VOICE_MEMORY_RETRIEVAL_STRATEGY: RetrievalStrategy = RetrievalStrategy::AssociationWeighted;
 
 pub struct TextOwnedVoiceLoopExperiment;
 
@@ -97,8 +103,19 @@ impl TextOwnedVoiceLoopExperiment {
             TranscriptEventEmission::new(transcript_to_input_boundary(), "transcription"),
         )?;
 
-        let context_assembly =
-            assemble_voice_context(&transcript_session.final_transcript.transcript);
+        let memory_fixture = phase_four_fixture();
+        write_voice_memory_fixture_snapshot(context, &memory_fixture)?;
+        let memory_retrieval = retrieve_voice_memories(
+            context,
+            &transcript_session.session_id,
+            &transcript_session.final_transcript.transcript,
+            &memory_fixture,
+        )?;
+
+        let context_assembly = assemble_voice_context(
+            &transcript_session.final_transcript.transcript,
+            &memory_retrieval.selected,
+        );
         let context_trace_id =
             record_context_assembly(context, &transcript_session.session_id, &context_assembly)?;
         record_context_events(
@@ -196,6 +213,7 @@ impl TextOwnedVoiceLoopExperiment {
             summary: "The deterministic text-owned voice loop now turns simulated speech into AudioFinalTranscript, bridges it to InputReceived, assembles QSF context, invokes the ConversationalResponder model role, emits OutputProduced, and hands that exact text to a simulated speech output provider.".to_string(),
             observations: vec![
                 "The answer text is produced by the QSF model-role path before speech output receives it.".to_string(),
+                "One retrieved memory fragment now participates in the selected context passed to ConversationalResponder.".to_string(),
                 "The default speech output provider records metadata-only playback lifecycle events without persisting raw audio.".to_string(),
                 "One voice-loop session id correlates transcript, context, model, speech output, and latency records.".to_string(),
             ],
@@ -211,7 +229,10 @@ impl TextOwnedVoiceLoopExperiment {
                 "Voice interfaces should adapt around QSF-owned text turns unless an experiment is explicitly provider-owned.".to_string(),
                 "Speech output providers receive exactly OutputProduced text and do not alter response ownership.".to_string(),
             ],
-            extra_artifacts: vec!["text-owned-voice-loop.md".to_string()],
+            extra_artifacts: vec![
+                "text-owned-voice-loop.md".to_string(),
+                "memory-fixture.json".to_string(),
+            ],
         })
     }
 }
@@ -275,8 +296,75 @@ fn record_input_bridge_trace(
     Ok(trace_id)
 }
 
-fn assemble_voice_context(final_transcript: &str) -> ContextAssembly {
-    let fragments = vec![
+fn retrieve_voice_memories(
+    context: &mut RunContext,
+    session_id: &str,
+    query: &str,
+    fixture: &MemoryFixture,
+) -> anyhow::Result<RetrievalResult> {
+    context.record_event(
+        EventType::MemoryRetrievalRequested,
+        json!({
+            "session_id": session_id,
+            "query": query,
+            "strategy": VOICE_MEMORY_RETRIEVAL_STRATEGY,
+            "retrieval_limit": VOICE_MEMORY_RETRIEVAL_LIMIT,
+            "memory_records": fixture.records.len(),
+            "associations": fixture.associations.len(),
+        }),
+        None,
+    )?;
+
+    let retrieval = retrieve_memories(
+        &fixture.records,
+        &fixture.associations,
+        query,
+        VOICE_MEMORY_RETRIEVAL_STRATEGY,
+        VOICE_MEMORY_RETRIEVAL_LIMIT,
+    )?;
+    let trace = TraceRecord::new(
+        context.experiment_id(),
+        "voice-memory-retrieval",
+        format!("strategy={} query={}", retrieval.strategy, retrieval.query),
+        format!(
+            "selected {} memory fragments and omitted {}",
+            retrieval.selected.len(),
+            retrieval.omitted.len()
+        ),
+    )
+    .with_details(json!({
+        "session_id": session_id,
+        "query": &retrieval.query,
+        "strategy": retrieval.strategy,
+        "selected": &retrieval.selected,
+        "omitted": &retrieval.omitted,
+    }))
+    .with_latency_context("runtime", "voice-memory-retrieval")
+    .with_latency_ns(retrieval.latency_ns);
+    let trace_id = trace.trace_id;
+    context.record_trace(trace)?;
+
+    context.record_event(
+        EventType::MemoryRetrieved,
+        json!({
+            "session_id": session_id,
+            "strategy": retrieval.strategy,
+            "selected": memory_ids(&retrieval.selected),
+            "omitted": memory_ids(&retrieval.omitted),
+            "latency_ms": retrieval.latency_ms,
+            "latency_ns": retrieval.latency_ns,
+        }),
+        Some(trace_id),
+    )?;
+
+    Ok(retrieval)
+}
+
+fn assemble_voice_context(
+    final_transcript: &str,
+    retrieved_memories: &[RetrievedMemory],
+) -> ContextAssembly {
+    let mut fragments = vec![
         ContextFragment {
             fragment_id: "voice-loop-runtime-boundary".to_string(),
             source_kind: ContextSourceKind::RuntimeState,
@@ -310,6 +398,7 @@ fn assemble_voice_context(final_transcript: &str) -> ContextAssembly {
             selection_reason: "current turn input anchors the spoken response".to_string(),
         },
     ];
+    fragments.extend(retrieved_memories.iter().map(ContextFragment::from));
 
     assemble_context(fragments, ContextBudget::new(4, 600))
 }
@@ -380,7 +469,12 @@ fn build_conversational_request(
     let context_summary = assembly
         .selected
         .iter()
-        .map(|selection| format!("- {}", selection.fragment.summary))
+        .map(|selection| {
+            format!(
+                "- {}: {}",
+                selection.fragment.fragment_id, selection.fragment.summary
+            )
+        })
         .collect::<Vec<_>>()
         .join("\n");
 
@@ -696,6 +790,14 @@ fn write_text_owned_voice_loop_report(
         context_assembly.selected.len()
     ));
     markdown.push_str(&format!(
+        "- Selected context: `{}`\n",
+        selected_context_ids(context_assembly).join(", ")
+    ));
+    markdown.push_str(&format!(
+        "- Selected memory context: `{}`\n",
+        selected_memory_context_ids(context_assembly).join(", ")
+    ));
+    markdown.push_str(&format!(
         "- Model role: `{}` via `{}`\n",
         model_response.role_id, model_response.provider_name
     ));
@@ -733,6 +835,49 @@ fn write_text_owned_voice_loop_report(
             context.run_id()
         )
     })
+}
+
+fn write_voice_memory_fixture_snapshot(
+    context: &RunContext,
+    fixture: &MemoryFixture,
+) -> anyhow::Result<()> {
+    let contents = serde_json::to_string_pretty(fixture)?;
+    fs::write(context.run_dir().join("memory-fixture.json"), contents).with_context(|| {
+        format!(
+            "failed to write voice memory fixture snapshot for run {}",
+            context.run_id()
+        )
+    })
+}
+
+fn selected_context_ids(assembly: &ContextAssembly) -> Vec<String> {
+    assembly
+        .selected
+        .iter()
+        .map(|selection| selection.fragment.fragment_id.clone())
+        .collect()
+}
+
+fn selected_memory_context_ids(assembly: &ContextAssembly) -> Vec<String> {
+    let ids = assembly
+        .selected
+        .iter()
+        .filter(|selection| selection.fragment.source_kind == ContextSourceKind::Memory)
+        .map(|selection| selection.fragment.fragment_id.clone())
+        .collect::<Vec<_>>();
+
+    if ids.is_empty() {
+        vec!["none".to_string()]
+    } else {
+        ids
+    }
+}
+
+fn memory_ids(memories: &[RetrievedMemory]) -> Vec<String> {
+    memories
+        .iter()
+        .map(|memory| memory.memory.id.clone())
+        .collect()
 }
 
 fn voice_loop_total_latency_ms(
@@ -851,6 +996,8 @@ mod tests {
                 EventType::AudioInputEnded,
                 EventType::LatencyMeasurementRecorded,
                 EventType::InputReceived,
+                EventType::MemoryRetrievalRequested,
+                EventType::MemoryRetrieved,
                 EventType::ContextAssemblyRequested,
                 EventType::ContextAssembled,
                 EventType::ModelRoleRequested,
@@ -863,17 +1010,21 @@ mod tests {
             ],
         );
         assert_only_final_transcript_commits_runtime_input(&event_records);
+        assert_memory_context_participates_in_model_path(&event_records);
         assert_one_session_id_links_voice_loop_events(&event_records);
         assert_output_text_is_handed_exactly_to_speech_provider(&event_records);
         assert_events_have_safety_markers(&event_records, is_audio_or_speech_event);
         assert_payloads_do_not_contain_raw_audio_fields(&event_records);
         assert!(traces.contains("transcript-provider-session"));
         assert!(traces.contains("voice-runtime-input-bridge"));
+        assert!(traces.contains("voice-memory-retrieval"));
         assert!(traces.contains("voice-context-assembly"));
         assert!(traces.contains("voice-model-response"));
         assert!(traces.contains("speech-output-provider"));
         assert!(traces.contains("voice-loop-latency"));
         assert!(report.contains("Text-Owned Voice Loop"));
+        assert!(report.contains("Selected memory context: `memory."));
+        assert!(context.run_dir().join("memory-fixture.json").exists());
 
         fs::remove_dir_all(base_dir).unwrap();
     }
@@ -1023,6 +1174,35 @@ mod tests {
         assert_eq!(input_count, 1);
     }
 
+    fn assert_memory_context_participates_in_model_path(records: &[EventRecord]) {
+        let retrieval = records
+            .iter()
+            .find(|record| record.event_type == EventType::MemoryRetrieved)
+            .unwrap();
+        assert_eq!(retrieval.payload["strategy"], "association_weighted");
+        let selected_memories = retrieval.payload["selected"].as_array().unwrap();
+        assert_eq!(selected_memories.len(), 1);
+        assert!(
+            selected_memories[0]
+                .as_str()
+                .unwrap()
+                .starts_with("memory.")
+        );
+
+        let context = records
+            .iter()
+            .find(|record| record.event_type == EventType::ContextAssembled)
+            .unwrap();
+        let selected_context = context.payload["selected"].as_array().unwrap();
+        assert!(selected_context.iter().any(|selection| {
+            selection["fragment"]["source_kind"] == "memory"
+                && selection["fragment"]["fragment_id"]
+                    .as_str()
+                    .unwrap()
+                    .starts_with("memory.")
+        }));
+    }
+
     fn assert_one_session_id_links_voice_loop_events(records: &[EventRecord]) {
         let session_ids = records
             .iter()
@@ -1031,6 +1211,8 @@ mod tests {
                     record.event_type,
                     EventType::AudioFinalTranscript
                         | EventType::InputReceived
+                        | EventType::MemoryRetrievalRequested
+                        | EventType::MemoryRetrieved
                         | EventType::ModelRoleRequested
                         | EventType::ModelRoleCompleted
                         | EventType::OutputProduced
