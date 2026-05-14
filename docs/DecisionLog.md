@@ -152,3 +152,17 @@ docs/Plans/Plan.FrameworkMVP.md,
 docs/Experiments/Experiment.StreamingTranscriptionMVP.md,
 https://developers.openai.com/api/docs/guides/realtime-transcription,
 https://developers.openai.com/api/docs/models/gpt-realtime-whisper
+
+## 2026-05-14 - Realtime voice providers cannot execute tools directly
+Decision: Realtime voice-session providers are side-effect adapters. Provider tool-call
+requests are recorded as QSF `ToolRequested` events with automatic execution disabled
+until the QSF tool permission boundary explicitly handles them.
+Context: Phase 10 introduces full voice-session provider events, including possible
+function/tool requests from realtime models. The project needs voice-native behavior
+without letting provider sessions bypass reducers, memory rules, or tool permissions.
+Consequences: Realtime voice providers may report requested tool calls, but they must
+not invoke tools or mutate runtime state directly. Voice-session experiments stay
+explicitly selected and remain observable through QSF events and traces.
+Refs: crates/qsf_app/src/audio/voice_session_provider.rs,
+crates/qsf_app/src/experiments/realtime_voice_session.rs,
+docs/Experiments/Experiment.RealtimeVoiceSessionMVP.md

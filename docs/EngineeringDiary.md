@@ -387,3 +387,70 @@ Refs: docs/Reviews/Review.AudioModule.md,
 crates/qsf_app/src/audio/transcript_provider.rs,
 docs/Plans/Plan.FrameworkMVP.md,
 docs/Experiments/Experiment.StreamingTranscriptionMVP.md
+
+## 2026-05-14 - Realtime voice session MVP
+
+Added a realtime voice-session provider boundary and a default simulated experiment
+path for observing speech-to-speech lifecycle events without handing runtime state or
+tool execution to the provider, then applied the relevant Phase 10 review fixes before
+commit.
+
+What changed:
+- Added `RealtimeSessionProvider` with simulated and feature-gated OpenAI realtime
+  implementations targeting `gpt-realtime-2`.
+- Registered `realtime-voice-session`, which records provider session lifecycle,
+  preambles, response start/completion, interruptions, speech playback metadata,
+  provider tool-call requests, and audio latency traces.
+- Added a dedicated experiment document and regression tests for event mapping,
+  no-secret/no-raw-audio markers, sanitized provider failures, and the OpenAI feature
+  compile path.
+- Removed the duplicate `RuntimeInputDispatch` latency measurement from voice-session
+  provider timing so provider response-start latency is not counted twice.
+- Added prerecorded WAV validation before OpenAI realtime voice WebSocket setup, keeping
+  the feature-gated validation test from accidentally making a network connection.
+- Moved observed output-byte metadata out of `SpeechPlaybackRequested`, documented the
+  new realtime event variants, documented simulated-provider input-source behavior, and
+  added parser/serialization tests for realtime session types.
+- Fixed the first live OpenAI microphone failure by including
+  `session.audio.output.format.rate` in the realtime voice session update and accepting
+  both GA `response.output_audio*` and older `response.audio*` server event names.
+- Fixed the next live OpenAI validation failure by changing the realtime voice default
+  output modality from `["audio", "text"]` to the supported speech-to-speech
+  combination `["audio"]`.
+- Removed `response.modalities` from realtime voice `response.create`; the current
+  WebSocket API takes output modality from session configuration.
+- Enabled input transcription metadata for realtime voice sessions and changed the
+  non-simulated transcript fallback from the prompt text to `<no-input-transcript>` so
+  QSF artifacts do not mislabel the configured prompt as user speech.
+- Printed and flushed a live microphone "Speak now" cue after the CPAL input stream
+  starts so manual realtime tests have a clear beginning-of-capture signal.
+- Fixed realtime voice latency recording for cases where provider response generation
+  starts before asynchronous input transcription completes, and added an explicit
+  response-start offset field to traces and reports.
+
+Observed:
+- The existing event and trace layers were sufficient for voice sessions once
+  provider tool calls were represented as QSF `ToolRequested` events with automatic
+  execution disabled.
+- The first live OpenAI run failed before response generation because output PCM format
+  now requires an explicit sample rate, matching the input PCM configuration.
+- Realtime voice sessions can request either text or audio output, but not both in the
+  same `modalities` list; audio transcript events remain the text observation path for
+  voice runs.
+- The GA realtime WebSocket response-creation shape is stricter than the session shape:
+  session configuration accepts `output_modalities`, while `response.create` rejects
+  a `response.modalities` field.
+- In the first successful microphone run, the model responded as if it heard the later
+  counting, but the artifact's input transcript was a fallback prompt because input
+  transcription was not enabled yet.
+- Manual microphone tests need an explicit capture-start cue because process startup,
+  realtime session setup, and audio stream setup happen before user speech is captured.
+- Successful live voice runs showed that response generation can begin before the final
+  input transcript event arrives, so the trace needs to represent that ordering instead
+  of forcing a final-transcript-before-response timeline.
+
+Refs: crates/qsf_app/src/audio/voice_session_provider.rs,
+crates/qsf_app/src/experiments/realtime_voice_session.rs,
+crates/qsf_app/src/observability/event_log.rs,
+docs/Experiments/Experiment.RealtimeVoiceSessionMVP.md,
+docs/Reviews/Review.Phase10.RealtimeVoiceSessionMVP.md

@@ -100,6 +100,7 @@ Experiments/Experiment.SleepPhaseSessionSummary.md
 Experiments/Experiment.ToolAsPerceptionCalculator.md
 Experiments/Experiment.StreamingTranscriptionMVP.md
 Experiments/Experiment.AudioLoopMVP.md
+Experiments/Experiment.RealtimeVoiceSessionMVP.md
 ```
 
 ## First Supported Experiments

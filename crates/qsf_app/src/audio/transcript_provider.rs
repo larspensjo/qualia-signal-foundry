@@ -20,18 +20,19 @@ pub const OPENAI_API_KEY_ENV_VAR: &str = "OPENAI_API_KEY";
 pub const OPENAI_REALTIME_TIMEOUT_MS_ENV_VAR: &str = "QSF_OPENAI_REALTIME_TIMEOUT_MS";
 
 #[cfg(feature = "openai")]
-const OPENAI_REALTIME_WEBSOCKET_URL: &str = "wss://api.openai.com/v1/realtime?intent=transcription";
+pub(super) const OPENAI_REALTIME_TRANSCRIPTION_WEBSOCKET_URL: &str =
+    "wss://api.openai.com/v1/realtime?intent=transcription";
 #[cfg(feature = "openai")]
-const OPENAI_REALTIME_PCM_RATE_HZ: u32 = 24_000;
+pub(super) const OPENAI_REALTIME_PCM_RATE_HZ: u32 = 24_000;
 #[cfg(feature = "openai")]
-const OPENAI_REALTIME_PCM_CHANNELS: u16 = 1;
+pub(super) const OPENAI_REALTIME_PCM_CHANNELS: u16 = 1;
 #[cfg(feature = "openai")]
-const OPENAI_REALTIME_CHUNK_MS: u64 = 100;
+pub(super) const OPENAI_REALTIME_CHUNK_MS: u64 = 100;
 const DEFAULT_LIVE_MICROPHONE_DURATION_MS: u64 = 4_000;
 #[cfg(feature = "openai")]
-const DEFAULT_OPENAI_REALTIME_TIMEOUT_MS: u64 = 30_000;
+pub(super) const DEFAULT_OPENAI_REALTIME_TIMEOUT_MS: u64 = 30_000;
 #[cfg(feature = "openai")]
-const DEFAULT_OPENAI_REALTIME_CONNECT_TIMEOUT_MS: u64 = 15_000;
+pub(super) const DEFAULT_OPENAI_REALTIME_CONNECT_TIMEOUT_MS: u64 = 15_000;
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct AudioSafetyMarkers {
@@ -450,7 +451,7 @@ fn simulated_chunks(input_source: &TranscriptInputSource) -> Vec<TranscriptAudio
         .collect()
 }
 
-fn sanitize_provider_error_message(message: &str) -> String {
+pub(super) fn sanitize_provider_error_message(message: &str) -> String {
     let lower = message.to_ascii_lowercase();
     if contains_credential_like_content(message)
         || lower.contains("authorization")
@@ -486,7 +487,7 @@ fn contains_credential_like_content(message: &str) -> bool {
 }
 
 #[cfg(feature = "openai")]
-fn openai_realtime_runtime(
+pub(super) fn openai_realtime_runtime(
     provider_name: &str,
 ) -> Result<&'static tokio::runtime::Runtime, TranscriptProviderError> {
     static OPENAI_REALTIME_RUNTIME: OnceLock<Result<tokio::runtime::Runtime, String>> =
@@ -506,7 +507,7 @@ fn openai_realtime_runtime(
 }
 
 #[cfg(feature = "openai")]
-fn read_env_u64(env_var: &str, default: u64) -> u64 {
+pub(super) fn read_env_u64(env_var: &str, default: u64) -> u64 {
     std::env::var(env_var)
         .ok()
         .and_then(|s| s.parse().ok())
@@ -560,12 +561,15 @@ fn pcm16_to_bytes(samples: &[i16]) -> Vec<u8> {
 }
 
 #[cfg(feature = "openai")]
-fn elapsed_ms(started_at: Instant) -> u64 {
+pub(super) fn elapsed_ms(started_at: Instant) -> u64 {
     started_at.elapsed().as_millis() as u64
 }
 
 #[cfg(feature = "openai")]
-fn parse_realtime_server_event(provider_name: &str, text: &str) -> Option<serde_json::Value> {
+pub(super) fn parse_realtime_server_event(
+    provider_name: &str,
+    text: &str,
+) -> Option<serde_json::Value> {
     match serde_json::from_str(text) {
         Ok(event) => Some(event),
         Err(error) => {
@@ -580,7 +584,7 @@ fn parse_realtime_server_event(provider_name: &str, text: &str) -> Option<serde_
 }
 
 #[cfg(feature = "openai")]
-fn realtime_audio_from_source(
+pub(super) fn realtime_audio_from_source(
     input_source: &TranscriptInputSource,
     provider_name: &str,
 ) -> Result<Vec<u8>, TranscriptProviderError> {
@@ -654,6 +658,7 @@ fn capture_live_pcm16(
     provider_name: &str,
 ) -> Result<Vec<u8>, TranscriptProviderError> {
     use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
+    use std::io::Write;
     use std::sync::{Arc, Mutex};
 
     let host = cpal::default_host();
@@ -770,6 +775,17 @@ fn capture_live_pcm16(
             reason: format!("failed to start audio capture on `{device_name}`: {e}"),
         })?;
 
+    println!(
+        "Microphone capture started for {} ms on `{}`. Speak now.",
+        duration_ms, device_name
+    );
+    std::io::stdout()
+        .flush()
+        .map_err(|e| TranscriptProviderError::Unavailable {
+            provider: provider_name.to_string(),
+            reason: format!("failed to flush microphone capture prompt: {e}"),
+        })?;
+
     std::thread::sleep(Duration::from_millis(duration_ms));
     drop(stream);
 
@@ -799,7 +815,7 @@ async fn transcribe_openai_realtime(
     use tokio_tungstenite::tungstenite::http::HeaderValue;
 
     let started_at = Instant::now();
-    let mut ws_request = OPENAI_REALTIME_WEBSOCKET_URL
+    let mut ws_request = OPENAI_REALTIME_TRANSCRIPTION_WEBSOCKET_URL
         .into_client_request()
         .map_err(|e| TranscriptProviderError::Unavailable {
             provider: provider_name.to_string(),

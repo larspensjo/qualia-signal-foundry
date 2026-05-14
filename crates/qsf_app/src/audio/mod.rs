@@ -4,6 +4,7 @@ use serde_json::{Value, json};
 use crate::observability::event_log::EventType;
 
 mod transcript_provider;
+mod voice_session_provider;
 
 pub use transcript_provider::{
     AudioSafetyMarkers, FinalTranscript, OPENAI_REALTIME_TRANSCRIPTION_MODEL,
@@ -13,6 +14,16 @@ pub use transcript_provider::{
     TranscriptAudioChunk, TranscriptInputSource, TranscriptProvider, TranscriptProviderError,
     TranscriptProviderRequest, TranscriptProviderSession, build_transcript_provider,
     requested_transcript_provider, requested_transcript_provider_from_env,
+};
+pub use voice_session_provider::{
+    OPENAI_REALTIME_VOICE_INPUT_TRANSCRIPTION_MODEL, OPENAI_REALTIME_VOICE_MODEL,
+    OpenAiRealtimeSessionProvider, REALTIME_SESSION_INPUT_SOURCE_ENV_VAR,
+    REALTIME_SESSION_MIC_DEVICE_ENV_VAR, REALTIME_SESSION_MIC_DURATION_MS_ENV_VAR,
+    REALTIME_SESSION_PROVIDER_ENV_VAR, REALTIME_SESSION_WAV_PATH_ENV_VAR, RealtimeInterruption,
+    RealtimeResponse, RealtimeSessionConfig, RealtimeSessionProvider, RealtimeSessionProviderError,
+    RealtimeSessionRequest, RealtimeSessionTranscript, RealtimeToolCallRequest,
+    SimulatedRealtimeSessionProvider, VoiceProviderSession, build_realtime_session_provider,
+    requested_realtime_session_provider, requested_realtime_session_provider_from_env,
 };
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -52,6 +63,10 @@ pub enum AudioLatencyStage {
     RuntimeInputDispatch,
     PlaybackQueue,
     PlaybackSynthesis,
+    RealtimeResponseStart,
+    RealtimeResponseCompletion,
+    RealtimeInterruption,
+    RealtimeAudioOutput,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]

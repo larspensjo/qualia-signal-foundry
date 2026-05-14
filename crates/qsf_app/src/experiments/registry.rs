@@ -17,6 +17,7 @@ use super::memory_and_context::{
 };
 use super::model_role_smoke::ModelRoleSmokeExperiment;
 use super::placeholder::PlaceholderExperiment;
+use super::realtime_voice_session::RealtimeVoiceSessionExperiment;
 use super::sleep_phase_session_summary::SleepPhaseSessionSummaryExperiment;
 use super::streaming_transcription_mvp::StreamingTranscriptionMvpExperiment;
 use super::tool_as_perception_calculator::ToolAsPerceptionCalculatorExperiment;
@@ -29,6 +30,7 @@ pub enum ExperimentName {
     AssociativeMemoryToyModel,
     ContextBudgetRetrievalTest,
     ModelRoleSmokeTest,
+    RealtimeVoiceSession,
     SleepPhaseSessionSummary,
     StreamingTranscriptionMvp,
     ToolAsPerceptionCalculator,
@@ -42,6 +44,7 @@ impl ExperimentName {
             Self::AssociativeMemoryToyModel => "associative-memory-toy-model",
             Self::ContextBudgetRetrievalTest => "context-budget-retrieval-test",
             Self::ModelRoleSmokeTest => "model-role-smoke-test",
+            Self::RealtimeVoiceSession => "realtime-voice-session",
             Self::SleepPhaseSessionSummary => "sleep-phase-session-summary",
             Self::StreamingTranscriptionMvp => "streaming-transcription-mvp",
             Self::ToolAsPerceptionCalculator => "tool-as-perception-calculator",
@@ -62,6 +65,9 @@ impl ExperimentName {
             }
             Self::ModelRoleSmokeTest => {
                 "Invoke a model role through a deterministic mock client or the optional OpenAI adapter"
+            }
+            Self::RealtimeVoiceSession => {
+                "Run a realtime voice-session provider and map session events back into QSF records"
             }
             Self::SleepPhaseSessionSummary => {
                 "Summarize a session into reviewable sleep-phase outputs and artifacts"
@@ -266,13 +272,14 @@ pub fn run_experiment_in(
     })
 }
 
-fn experiment_names() -> [ExperimentName; 8] {
+fn experiment_names() -> [ExperimentName; 9] {
     [
         ExperimentName::FrameworkSkeletonMvp,
         ExperimentName::AudioPreparationLayer,
         ExperimentName::AssociativeMemoryToyModel,
         ExperimentName::ContextBudgetRetrievalTest,
         ExperimentName::ModelRoleSmokeTest,
+        ExperimentName::RealtimeVoiceSession,
         ExperimentName::SleepPhaseSessionSummary,
         ExperimentName::StreamingTranscriptionMvp,
         ExperimentName::ToolAsPerceptionCalculator,
@@ -287,6 +294,7 @@ fn experiment_for(name: ExperimentName) -> Box<dyn Experiment> {
             Box::new(ContextBudgetRetrievalTestExperiment)
         }
         ExperimentName::ModelRoleSmokeTest => Box::new(ModelRoleSmokeExperiment),
+        ExperimentName::RealtimeVoiceSession => Box::new(RealtimeVoiceSessionExperiment),
         ExperimentName::SleepPhaseSessionSummary => Box::new(SleepPhaseSessionSummaryExperiment),
         ExperimentName::StreamingTranscriptionMvp => Box::new(StreamingTranscriptionMvpExperiment),
         ExperimentName::ToolAsPerceptionCalculator => {

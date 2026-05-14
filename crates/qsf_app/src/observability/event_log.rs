@@ -40,6 +40,18 @@ pub enum EventType {
     SpeechPlaybackStarted,
     SpeechPlaybackCompleted,
     UserInterrupted,
+    /// Realtime voice provider session opened and reported its configuration.
+    RealtimeSessionStarted,
+    /// Realtime provider emitted an early spoken/text preamble before completion.
+    RealtimePreambleProduced,
+    /// Realtime provider began producing a response for a voice turn.
+    RealtimeResponseStarted,
+    /// Realtime provider completed the response lifecycle for a voice turn.
+    RealtimeResponseCompleted,
+    /// Realtime provider session completed without owning QSF runtime state.
+    RealtimeSessionCompleted,
+    /// Realtime provider failed before a complete voice-session result was produced.
+    RealtimeSessionFailed,
     ErrorOccurred,
     TraceRecorded,
 }

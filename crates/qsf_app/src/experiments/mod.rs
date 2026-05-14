@@ -4,6 +4,7 @@ mod audio_preparation_layer;
 mod memory_and_context;
 mod model_role_smoke;
 mod placeholder;
+mod realtime_voice_session;
 mod registry;
 mod sleep_phase_session_summary;
 mod streaming_transcription_mvp;
