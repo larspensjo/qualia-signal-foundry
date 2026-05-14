@@ -507,3 +507,63 @@ crates/qsf_app/src/models/model_client.rs,
 crates/qsf_app/src/experiments/text_owned_voice_loop.rs,
 crates/qsf_app/src/experiments/streaming_transcription_mvp.rs,
 docs/Architecture/Architecture.RuntimeLoop.md
+
+## 2026-05-14 - Text-owned voice loop live microphone input attempt
+
+Started Slice 3 by running the text-owned voice loop with OpenAI realtime microphone
+transcription while keeping the responder mock-backed and speech output simulated.
+
+What changed:
+- Verified the OpenAI transcript provider still compiles with the text-owned loop
+  refactor.
+- Ran live microphone input through `text-owned-voice-loop` with
+  `QSF_TRANSCRIPT_PROVIDER=openai` and `QSF_TRANSCRIPT_INPUT_SOURCE=mic`.
+- Added an empty-final-transcript guard so silence or unusable live transcription
+  records `AudioTranscriptionFailed` and stops before `InputReceived`.
+- Added a regression test for the empty transcript guard.
+- Documented the live microphone command and observed failure mode in the experiment
+  document.
+
+Observed:
+- The live provider path connected successfully, but local microphone evaluations
+  returned empty final transcripts rather than useful speech text.
+- The guarded failure run correctly emitted `AudioTranscriptionFailed` and did not
+  emit `InputReceived`, model role, output, or speech playback events.
+
+Refs: crates/qsf_app/src/experiments/text_owned_voice_loop.rs,
+docs/Experiments/Experiment.TextOwnedVoiceLoop.md,
+runs/2026-05-14-112211-text-owned-voice-loop
+
+## 2026-05-14 - Text-owned voice loop live microphone success
+
+Validated Slice 3 with a live microphone run through the OpenAI realtime transcript
+provider while keeping the QSF responder mock-backed and speech output simulated.
+
+Observed:
+- The run transcribed "Tell me something about yourself." as the final transcript.
+- Six partial transcript revisions were recorded before `AudioFinalTranscript`.
+- The final transcript became `InputReceived`, context was assembled, the
+  `ConversationalResponder` mock role produced QSF-owned text, and the simulated
+  speech output provider received exactly that text.
+- First partial transcript latency was 1648 ms, final transcript latency was 2923 ms,
+  and total text-owned voice-loop latency was 3069 ms with simulated speech output.
+
+Refs: runs/2026-05-14-113329-text-owned-voice-loop,
+docs/Experiments/Experiment.TextOwnedVoiceLoop.md
+
+## 2026-05-14 - Text-owned voice loop stdout response
+
+Printed the QSF-owned `OutputProduced` text to stdout for successful text-owned voice
+loop runs.
+
+What changed:
+- Added a concise console line after `OutputProduced` is recorded so simulated speech
+  output runs still show the answer without opening `text-owned-voice-loop.md`.
+- Documented the stdout behavior in the experiment note.
+
+Observed:
+- The speech output provider remains metadata-only; stdout only mirrors the QSF-owned
+  text response for manual live-test ergonomics.
+
+Refs: crates/qsf_app/src/experiments/text_owned_voice_loop.rs,
+docs/Experiments/Experiment.TextOwnedVoiceLoop.md

@@ -24,6 +24,8 @@ use crate::runtime::run_context::RunContext;
 
 use super::registry::{Experiment, ExperimentName, ExperimentOutcome};
 
+const VOICE_CONTEXT_ASSEMBLY_LATENCY_MS: u64 = 6;
+
 pub struct TextOwnedVoiceLoopExperiment;
 
 impl Experiment for TextOwnedVoiceLoopExperiment {
@@ -68,6 +70,19 @@ impl TextOwnedVoiceLoopExperiment {
                 return Err(error).context("transcript provider failed");
             }
         };
+        if transcript_session
+            .final_transcript
+            .transcript
+            .trim()
+            .is_empty()
+        {
+            let error = TranscriptProviderError::TranscriptionFailed {
+                provider: transcript_session.provider_name.clone(),
+                message: "transcript provider returned an empty final transcript".to_string(),
+            };
+            record_transcript_failure(context, &error)?;
+            return Err(error).context("transcript provider failed");
+        }
 
         let provider_trace_id = record_transcript_provider_trace(context, &transcript_session)?;
         let input_bridge_trace_id = record_input_bridge_trace(context, &transcript_session)?;
@@ -120,6 +135,10 @@ impl TextOwnedVoiceLoopExperiment {
             }),
             Some(model_trace_id),
         )?;
+        println!(
+            "QSF text-owned voice response: {}",
+            model_response.output_text
+        );
 
         let speech_request = SpeechOutputRequest::from_env(
             &transcript_session.session_id,
@@ -315,7 +334,7 @@ fn record_context_assembly(
         "assembly": assembly,
     }))
     .with_latency_context("runtime", "voice-context-assembly")
-    .with_latency_ms(6);
+    .with_latency_ms(VOICE_CONTEXT_ASSEMBLY_LATENCY_MS);
     let trace_id = trace.trace_id;
     context.record_trace(trace)?;
     Ok(trace_id)
@@ -498,7 +517,7 @@ fn record_voice_loop_latency(
         .unwrap_or(transcript_session.completed_at_ms);
     let input_received_ms = transcript_session.completed_at_ms;
     let context_started_ms = input_received_ms;
-    let context_completed_ms = context_started_ms + 6;
+    let context_completed_ms = context_started_ms + VOICE_CONTEXT_ASSEMBLY_LATENCY_MS;
     let model_started_ms = context_completed_ms;
     let model_completed_ms = model_started_ms;
     let output_produced_ms = model_completed_ms;
@@ -560,7 +579,7 @@ fn record_latency_event(
             "first_partial_latency_ms": transcript_session.first_partial_latency_ms(),
             "final_transcript_latency_ms": transcript_session.final_transcript_latency_ms(),
             "speech_output_latency_ms": speech_session.total_latency_ms(),
-            "total_turn_ms": speech_session.completed_at_ms.saturating_sub(transcript_session.started_at_ms),
+            "total_turn_ms": voice_loop_total_latency_ms(transcript_session, speech_session),
             "safety": AudioSafetyMarkers::no_secret_or_raw_audio(),
         }),
         Some(trace_id),
@@ -705,9 +724,7 @@ fn write_text_owned_voice_loop_report(
     ));
     markdown.push_str(&format!(
         "- Total deterministic turn latency: {} ms\n",
-        speech_session
-            .completed_at_ms
-            .saturating_sub(transcript_session.started_at_ms)
+        voice_loop_total_latency_ms(transcript_session, speech_session)
     ));
 
     fs::write(context.run_dir().join("text-owned-voice-loop.md"), markdown).with_context(|| {
@@ -716,6 +733,17 @@ fn write_text_owned_voice_loop_report(
             context.run_id()
         )
     })
+}
+
+fn voice_loop_total_latency_ms(
+    transcript_session: &TranscriptProviderSession,
+    speech_session: &SpeechOutputSession,
+) -> u64 {
+    transcript_session
+        .completed_at_ms
+        .saturating_add(VOICE_CONTEXT_ASSEMBLY_LATENCY_MS)
+        .saturating_add(speech_session.total_latency_ms())
+        .saturating_sub(transcript_session.started_at_ms)
 }
 
 #[cfg(test)]
@@ -728,8 +756,10 @@ mod tests {
         is_audio_or_speech_event, parse_event_records,
     };
     use crate::audio::{
-        SimulatedSpeechOutputProvider, SimulatedTranscriptProvider, SpeechOutputProvider,
-        SpeechOutputProviderError, SpeechOutputRequest, SpeechOutputSession,
+        FinalTranscript, SimulatedSpeechOutputProvider, SimulatedTranscriptProvider,
+        SpeechOutputProvider, SpeechOutputProviderError, SpeechOutputRequest, SpeechOutputSession,
+        TranscriptProvider, TranscriptProviderError, TranscriptProviderRequest,
+        TranscriptProviderSession,
     };
     use crate::experiments::registry::{Experiment, ExperimentName};
     use crate::models::{MockModelClient, ModelClient, ModelRequest, ModelResponse};
@@ -751,6 +781,28 @@ mod tests {
     }
 
     struct FailingSpeechOutputProvider;
+
+    struct EmptyFinalTranscriptProvider;
+
+    impl TranscriptProvider for EmptyFinalTranscriptProvider {
+        fn provider_name(&self) -> &str {
+            "empty-final-transcript-provider"
+        }
+
+        fn transcribe(
+            &self,
+            request: &TranscriptProviderRequest,
+        ) -> Result<TranscriptProviderSession, TranscriptProviderError> {
+            let mut session = SimulatedTranscriptProvider.transcribe(request)?;
+            session.provider_name = self.provider_name().to_string();
+            session.final_transcript = FinalTranscript {
+                utterance_index: 0,
+                received_at_ms: 86,
+                transcript: "   ".to_string(),
+            };
+            Ok(session)
+        }
+    }
 
     impl SpeechOutputProvider for FailingSpeechOutputProvider {
         fn provider_name(&self) -> &str {
@@ -859,6 +911,43 @@ mod tests {
             !event_records
                 .iter()
                 .any(|record| record.event_type == EventType::SpeechPlaybackRequested)
+        );
+
+        fs::remove_dir_all(base_dir).unwrap();
+    }
+
+    #[test]
+    fn empty_final_transcript_does_not_commit_runtime_input() {
+        let base_dir =
+            std::env::temp_dir().join(format!("qsf-text-owned-empty-{}", Uuid::new_v4()));
+        let mut context = RunContext::create_in(&base_dir, "text-owned-voice-loop").unwrap();
+        let experiment = TextOwnedVoiceLoopExperiment;
+
+        let error = experiment
+            .run_with_components(
+                &mut context,
+                &EmptyFinalTranscriptProvider,
+                &MockModelClient::default(),
+                &SimulatedSpeechOutputProvider,
+            )
+            .unwrap_err();
+        let events = fs::read_to_string(context.run_dir().join("events.jsonl")).unwrap();
+        let event_records = parse_event_records(&events);
+
+        assert_eq!(error.to_string(), "transcript provider failed");
+        assert!(event_records.iter().any(|record| {
+            record.event_type == EventType::AudioTranscriptionFailed
+                && record.payload["error_category"] == "transcription_failed"
+        }));
+        assert!(
+            !event_records
+                .iter()
+                .any(|record| record.event_type == EventType::InputReceived)
+        );
+        assert!(
+            !event_records
+                .iter()
+                .any(|record| record.event_type == EventType::OutputProduced)
         );
 
         fs::remove_dir_all(base_dir).unwrap();

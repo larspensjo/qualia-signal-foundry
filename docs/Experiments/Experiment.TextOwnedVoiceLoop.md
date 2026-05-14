@@ -2,7 +2,9 @@
 
 ## Status
 
-Implemented as a deterministic first-pass experiment path.
+Implemented as a deterministic first-pass experiment path. Live microphone input has
+been wired through the same experiment, but the first local live evaluations returned
+empty final transcripts rather than useful speech text.
 
 ## Purpose
 
@@ -19,6 +21,8 @@ QSF owns the transcript-to-context-to-model-to-output path.
 - Model provider selection reuses `QSF_MODEL_PROVIDER`.
 - Speech output selection uses `QSF_SPEECH_OUTPUT_PROVIDER`, but OpenAI speech output
   is intentionally unavailable until the simulated exact-text boundary is proven.
+- Empty final transcripts are treated as transcription failures and do not become
+  `InputReceived`.
 
 Default flow:
 
@@ -31,6 +35,19 @@ SimulatedTranscriptProvider
   -> OutputProduced
   -> SimulatedSpeechOutputProvider
   -> SpeechPlaybackStarted / SpeechPlaybackCompleted
+```
+
+Live microphone input keeps the same QSF-owned response path:
+
+```text
+QSF_TRANSCRIPT_PROVIDER=openai
+QSF_TRANSCRIPT_INPUT_SOURCE=mic
+  -> OpenAI realtime transcript provider
+  -> AudioFinalTranscript
+  -> InputReceived
+  -> ConversationalResponder
+  -> OutputProduced
+  -> simulated speech output metadata
 ```
 
 ## Observability
@@ -46,8 +63,15 @@ The experiment records:
 - latency trace for capture, transcription, runtime bridge, context/model, and speech
   output stages
 
+Successful runs also print the QSF-owned response text to stdout so live microphone
+tests can be checked without opening the run artifact first.
+
 Raw audio, API keys, and authorization headers are not written to events, traces, or
 reports.
+
+If the live provider returns an empty final transcript, the experiment records
+`AudioTranscriptionFailed` and stops before runtime input, context assembly, model
+role invocation, or speech playback.
 
 ## Verification
 
@@ -63,7 +87,48 @@ Targeted regression tests:
 cargo test -p qsf_app text_owned_voice_loop
 ```
 
+OpenAI transcript-provider compile check:
+
+```powershell
+cargo test -p qsf_app --features openai audio::transcript_provider::tests::openai_realtime_provider_validates_local_inputs_before_network_call
+```
+
+Live microphone evaluation:
+
+```powershell
+$env:QSF_TRANSCRIPT_PROVIDER="openai"
+$env:QSF_TRANSCRIPT_INPUT_SOURCE="mic"
+$env:QSF_TRANSCRIPT_MIC_DEVICE="default"
+$env:QSF_TRANSCRIPT_MIC_DURATION_MS="4000"
+$env:QSF_MODEL_PROVIDER="mock"
+$env:QSF_SPEECH_OUTPUT_PROVIDER="simulated"
+$env:QSF_SPEECH_OUTPUT_MODE="metadata-only"
+cargo run -p qsf_app --features openai -- experiment text-owned-voice-loop
+```
+
 The regression tests assert that only final transcripts create `InputReceived`, one
 session id correlates the turn, `SpeechPlaybackRequested.payload["text"]` equals
 `OutputProduced.payload["message"]`, model failure prevents `OutputProduced`, and
 speech-provider failure sanitizes credential-like errors.
+
+## Live Evaluation Notes
+
+2026-05-14:
+
+- The OpenAI realtime transcript provider compiled with the current text-owned loop
+  refactor.
+- Two live microphone runs reached `openai-realtime-transcript-provider` and returned
+  final transcript events, but the transcript text was empty.
+- The loop was updated so empty final transcripts fail as `AudioTranscriptionFailed`
+  and do not create `InputReceived`.
+- Guarded failure artifact: `runs/2026-05-14-112211-text-owned-voice-loop`.
+- A later live microphone run succeeded with the final transcript
+  "Tell me something about yourself."
+- Successful live artifact: `runs/2026-05-14-113329-text-owned-voice-loop`.
+- The successful run emitted six partial transcript revisions, one final transcript,
+  `InputReceived`, `ContextAssembled`, `ModelRoleRequested`,
+  `ModelRoleCompleted`, `OutputProduced`, `SpeechPlaybackRequested`, and
+  `SpeechPlaybackCompleted`.
+- Measured first partial transcript latency was 1648 ms, final transcript latency was
+  2923 ms, and total text-owned voice-loop latency was 3069 ms with simulated speech
+  output.
