@@ -208,3 +208,19 @@ memory can be evaluated deliberately, and every run records the loaded source in
 Refs: crates/qsf_app/src/experiments/text_owned_voice_loop.rs,
 crates/qsf_app/src/memory/fixtures.rs,
 docs/Experiments/Experiment.TextOwnedVoiceLoop.md
+
+## 2026-05-15 - Self-reflection can use project introspection as perception
+Decision: Explore self-reflection by letting selected model roles inspect project
+documentation, experiment artifacts, traces, and eventually source code through
+read-only, on-demand introspection tools.
+Context: The project documentation and implementation are part of the system's
+evolving research record, but loading the whole repository into every live context
+would violate the context-budget discipline and blur the boundary between reflection
+and autonomous development agency.
+Consequences: The first useful shape is documentation-only introspection for an
+offline reflection role, with source inspection delayed until retrieval, permissions,
+and observability are proven. Introspection results should enter context as compact
+observations with references, not raw repository dumps.
+Refs: docs/Plans/Idea.SelfReflectionProjectIntrospection.md,
+docs/Concepts/Concept.ToolsAsPerception.md,
+docs/Architecture/Architecture.ContextManagement.md
