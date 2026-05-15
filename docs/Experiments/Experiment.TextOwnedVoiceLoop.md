@@ -188,3 +188,11 @@ runtime.
 - The voice loop can now load memory from an opt-in JSON file source with
   `QSF_VOICE_MEMORY_SOURCE=file` and `QSF_VOICE_MEMORY_FILE=<path>`. The deterministic
   default remains `phase_four_fixture`.
+- Live file-backed memory validation artifact:
+  `runs/2026-05-15-090612-text-owned-voice-loop`.
+- That run used `docs\Experiments\Fixtures\voice-memory.example.json`, selected
+  `memory.voice-memory-source`, completed through OpenAI
+  (`gpt-5.4-nano-2026-03-17`), and recorded `Exact speech handoff: true`.
+- The corrected total observed turn latency was 6734 ms, with 3999 ms final transcript
+  latency, 0 ms memory retrieval latency, 6 ms context assembly latency, 2589 ms model
+  latency, and 140 ms simulated speech output latency.

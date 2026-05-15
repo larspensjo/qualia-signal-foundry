@@ -710,3 +710,23 @@ What changed:
 
 Refs: docs/Experiments/Fixtures/voice-memory.example.json,
 docs/Experiments/Experiment.TextOwnedVoiceLoop.md
+
+## 2026-05-15 - Live file-backed voice memory validation
+
+Validated the text-owned voice loop against the repeatable file-backed voice memory
+fixture.
+
+Observed:
+- Live microphone input transcribed "What do you remember about voice loop ownership
+  and memory source configuration?"
+- The file memory source `docs\Experiments\Fixtures\voice-memory.example.json` loaded
+  five records and four associations.
+- Association-weighted retrieval selected `memory.voice-memory-source`, and the answer
+  reflected explicit source-boundary and configuration behavior.
+- Diagnostics reported `Exact speech handoff: true`, model latency 2589 ms, and total
+  observed turn latency 6734 ms.
+
+Refs: runs/2026-05-15-090612-text-owned-voice-loop,
+docs/Experiments/Fixtures/voice-memory.example.json,
+docs/Experiments/Experiment.TextOwnedVoiceLoop.md,
+docs/Experiments/Report.VoiceLoopComparison.2026-05-14.md

@@ -180,6 +180,27 @@ output providers receive the text.
 This proves memory retrieval is now part of the live spoken response path, not only a
 standalone memory experiment.
 
+## File-Backed Memory Validation
+
+Run `runs/2026-05-15-090612-text-owned-voice-loop` validated the opt-in file memory
+source using `docs\Experiments\Fixtures\voice-memory.example.json`.
+
+| Dimension | Result |
+|---|---|
+| Memory source | `file` |
+| Memory records | 5 |
+| Associations | 4 |
+| Selected memory | `memory.voice-memory-source` |
+| Retrieval strategy | `association-weighted` |
+| Model | OpenAI `gpt-5.4-nano-2026-03-17` |
+| Exact speech handoff | `true` |
+| Total observed turn latency | 6734 ms |
+
+The spoken prompt asked about voice-loop ownership and memory source configuration.
+Retrieval selected the expected record through direct term matches and association
+paths, and the answer explained that voice-loop memory loads through an explicit source
+boundary while file-backed memory is selected only by configuration.
+
 ## Tool Boundary
 
 The realtime voice-session run requested zero provider tool calls, but the experiment
