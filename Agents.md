@@ -3,7 +3,7 @@
 ## Workflow
 - Build with `cargo build`.
 - When a task is complete, run `cargo clippy --all-targets -- -D warnings` and then `cargo fmt`.
-- For plan-driven work, entries in the EngineeringDiary.md should be about the code change, not the plan. The git commit message, on the other hand, can reference the plan.
+- When implementing changes, document them in EngineeringDiary.md. But first look up Instructions how to use in the beginning of the document.
 - When creating complex plans, they should be divided into incremental phases that can be tested.
 
 ## Planning & Documentation
@@ -25,7 +25,6 @@
 - Use `engine_logging` for runtime logging.
 - Include enough context in error logs to identify the failing job, URL, or operation.
 
-## Diary
-- Keep `docs/DecisionLog.md` up to date for noteworthy implementations, important decisions, and bug fixes with reusable lessons.
-- Keep diary entries short and reference concrete artifacts.
-- Add new entries to the end.
+## Decisions
+- Keep `docs/DecisionLog.md` up to date for noteworthy decisions.
+- See the How to use section in the beginning.

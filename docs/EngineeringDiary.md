@@ -5,7 +5,7 @@ planning notes, surprises, and open questions encountered during work. This is S
 the project workflow; entries may later be promoted to concept notes, research questions,
 experiments, or decisions.
 
-How to use:
+## Instructions how to use
 - Add one entry per logical change. A logical change can span several related commits.
 - Every code change submitted must be reflected by some diary entry. Non-code activities
   (research, planning, observations, things tried that did not pan out) also belong here.
@@ -14,6 +14,7 @@ How to use:
 - New entries go to the end of the file.
 - If a change implements a prior decision, note it in the Refs line.
 - Don't reference planning documents. Entries shall stand on their own, even after plans are archived.
+- There is no need for entries when meta documents are created. E.g. plans or ideas. Only changes to the application.
 
 Entry template (only the topic line and summary are mandatory; add other sections when
 they apply):

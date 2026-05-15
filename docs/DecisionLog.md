@@ -3,7 +3,7 @@
 Purpose: durable record of deliberate commitments — the source of truth for what the
 project has agreed to do going forward.
 
-How to use:
+## How to use
 - One entry per decision. Decisions are commitments, not summaries of work.
 - Implementation summaries and bug-fix postmortems belong in `EngineeringDiary.md`.
   A bug fix earns a decision-log entry only when it produces a durable rule, and the
