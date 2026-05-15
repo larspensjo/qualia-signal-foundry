@@ -1,0 +1,128 @@
+{
+  "records": [
+    {
+      "schema_version": 1,
+      "id": "memory.voice-loop-ownership",
+      "kind": "architecture_note",
+      "title": "Text-owned voice loop",
+      "summary": "Voice input should become finalized text before QSF owns the turn, and QSF should produce OutputProduced before any speech output provider receives the exact response text.",
+      "tags": [
+        "voice",
+        "audio",
+        "ownership",
+        "output"
+      ],
+      "created_at": "2026-05-15T07:30:00Z",
+      "importance": 0.95,
+      "reinforcement_count": 2,
+      "source_reference": "docs/Experiments/Experiment.TextOwnedVoiceLoop.md",
+      "estimated_tokens": 39
+    },
+    {
+      "schema_version": 1,
+      "id": "memory.voice-memory-source",
+      "kind": "decision",
+      "title": "Explicit voice memory source",
+      "summary": "Voice-loop memory should load through an explicit source boundary; the deterministic fixture remains the default, while file-backed memory is selected only by configuration.",
+      "tags": [
+        "voice",
+        "memory",
+        "source",
+        "configuration"
+      ],
+      "created_at": "2026-05-15T07:35:00Z",
+      "importance": 0.9,
+      "reinforcement_count": 1,
+      "source_reference": "docs/DecisionLog.md",
+      "estimated_tokens": 36
+    },
+    {
+      "schema_version": 1,
+      "id": "memory.context-budget-discipline",
+      "kind": "concept",
+      "title": "Context budget discipline",
+      "summary": "Retrieved memory must compete under explicit fragment and token budgets so the live loop carries compact context instead of loading everything into the responder.",
+      "tags": [
+        "context",
+        "budget",
+        "retrieval",
+        "selection"
+      ],
+      "created_at": "2026-05-15T07:40:00Z",
+      "importance": 0.88,
+      "reinforcement_count": 1,
+      "source_reference": "docs/Experiments/Report.VoiceLoopComparison.2026-05-14.md",
+      "estimated_tokens": 34
+    },
+    {
+      "schema_version": 1,
+      "id": "memory.sleep-review-candidates",
+      "kind": "concept",
+      "title": "Sleep review memory candidates",
+      "summary": "Sleep-phase review can propose reusable memory candidates from session notes, but candidates should remain inspectable and should not become accepted memory without review.",
+      "tags": [
+        "sleep",
+        "review",
+        "memory",
+        "candidates"
+      ],
+      "created_at": "2026-05-15T07:45:00Z",
+      "importance": 0.82,
+      "reinforcement_count": 0,
+      "source_reference": "docs/Experiments/Experiment.SleepPhaseSessionSummary.md",
+      "estimated_tokens": 35
+    },
+    {
+      "schema_version": 1,
+      "id": "memory.provider-tool-boundary",
+      "kind": "decision",
+      "title": "Provider tool boundary",
+      "summary": "Realtime providers may report tool-call requests, but QSF must record them as events and keep automatic execution disabled until the permission boundary handles them.",
+      "tags": [
+        "provider",
+        "tools",
+        "boundary",
+        "safety"
+      ],
+      "created_at": "2026-05-15T07:50:00Z",
+      "importance": 0.86,
+      "reinforcement_count": 1,
+      "source_reference": "docs/DecisionLog.md",
+      "estimated_tokens": 37
+    }
+  ],
+  "associations": [
+    {
+      "schema_version": 1,
+      "from_memory_id": "memory.voice-loop-ownership",
+      "to_memory_id": "memory.voice-memory-source",
+      "weight": 0.84,
+      "reason": "QSF-owned voice turns need an explicit memory source before context assembly",
+      "last_reinforced_at": "2026-05-15T08:00:00Z"
+    },
+    {
+      "schema_version": 1,
+      "from_memory_id": "memory.voice-memory-source",
+      "to_memory_id": "memory.context-budget-discipline",
+      "weight": 0.78,
+      "reason": "loaded memory still has to compete under the context budget",
+      "last_reinforced_at": "2026-05-15T08:05:00Z"
+    },
+    {
+      "schema_version": 1,
+      "from_memory_id": "memory.sleep-review-candidates",
+      "to_memory_id": "memory.voice-memory-source",
+      "weight": 0.72,
+      "reason": "reviewed sleep outputs are a likely future file-backed memory source",
+      "last_reinforced_at": "2026-05-15T08:10:00Z"
+    },
+    {
+      "schema_version": 1,
+      "from_memory_id": "memory.provider-tool-boundary",
+      "to_memory_id": "memory.voice-loop-ownership",
+      "weight": 0.69,
+      "reason": "provider side effects must not bypass QSF-owned voice response ownership",
+      "last_reinforced_at": "2026-05-15T08:15:00Z"
+    }
+  ]
+}

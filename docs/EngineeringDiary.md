@@ -698,3 +698,15 @@ What changed:
 Refs: crates/qsf_app/src/experiments/text_owned_voice_loop.rs,
 crates/qsf_app/src/memory/fixtures.rs,
 docs/Experiments/Experiment.TextOwnedVoiceLoop.md
+
+## 2026-05-15 - Repeatable voice memory fixture
+
+Added a small file-backed voice memory fixture for repeatable retrieval tests.
+
+What changed:
+- Created `docs/Experiments/Fixtures/voice-memory.example.json` with five
+  project-grounded memory records and four associations.
+- Documented the fixture path in the text-owned voice-loop experiment note.
+
+Refs: docs/Experiments/Fixtures/voice-memory.example.json,
+docs/Experiments/Experiment.TextOwnedVoiceLoop.md

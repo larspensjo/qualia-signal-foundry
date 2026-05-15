@@ -29,6 +29,8 @@ QSF owns the transcript-to-context-to-model-to-output path.
 - Default memory source: `phase_four_fixture`.
 - Optional file memory source: `QSF_VOICE_MEMORY_SOURCE=file` with
   `QSF_VOICE_MEMORY_FILE` pointing at a JSON `MemoryFixture`.
+- Repeatable example file source:
+  `docs/Experiments/Fixtures/voice-memory.example.json`.
 
 Default flow:
 
@@ -120,6 +122,14 @@ $env:QSF_MODEL_PROVIDER="mock"
 $env:QSF_VOICE_MEMORY_SOURCE="phase_four_fixture"
 $env:QSF_SPEECH_OUTPUT_PROVIDER="simulated"
 $env:QSF_SPEECH_OUTPUT_MODE="metadata-only"
+cargo run -p qsf_app --features openai -- experiment text-owned-voice-loop
+```
+
+Example file-backed memory evaluation:
+
+```powershell
+$env:QSF_VOICE_MEMORY_SOURCE="file"
+$env:QSF_VOICE_MEMORY_FILE="docs\Experiments\Fixtures\voice-memory.example.json"
 cargo run -p qsf_app --features openai -- experiment text-owned-voice-loop
 ```
 
