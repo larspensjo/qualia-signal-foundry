@@ -266,7 +266,7 @@ fn association_paths_by_target(
 
 fn recency_scores(records: &[MemoryRecord]) -> HashMap<String, f64> {
     let mut sorted = records.iter().collect::<Vec<_>>();
-    sorted.sort_by(|left, right| right.created_at.cmp(&left.created_at));
+    sorted.sort_by_key(|record| std::cmp::Reverse(record.created_at));
     let total = sorted.len().max(1) as f64;
 
     sorted

@@ -209,14 +209,20 @@ impl TextOwnedVoiceLoopExperiment {
             latency_trace_id,
         )?;
 
+        let report_timing = VoiceLoopReportTiming::new(
+            &transcript_session,
+            &memory_retrieval,
+            &speech_session,
+            model_latency_ms,
+        );
         write_text_owned_voice_loop_report(
             context,
             &transcript_session,
             &context_assembly,
-            &memory_retrieval,
             &model_response,
+            &speech_request,
             &speech_session,
-            model_latency_ms,
+            report_timing,
         )?;
 
         Ok(ExperimentOutcome {
@@ -807,10 +813,10 @@ fn write_text_owned_voice_loop_report(
     context: &RunContext,
     transcript_session: &TranscriptProviderSession,
     context_assembly: &ContextAssembly,
-    memory_retrieval: &RetrievalResult,
     model_response: &ModelResponse,
+    speech_request: &SpeechOutputRequest,
     speech_session: &SpeechOutputSession,
-    model_latency_ms: u64,
+    timing: VoiceLoopReportTiming,
 ) -> anyhow::Result<()> {
     let mut markdown = String::new();
     markdown.push_str("# Text-Owned Voice Loop\n\n");
@@ -864,26 +870,34 @@ fn write_text_owned_voice_loop_report(
     ));
     markdown.push_str(&format!(
         "- Memory retrieval latency: {} ms\n",
-        memory_retrieval.latency_ms
+        timing.memory_retrieval_latency_ms
     ));
     markdown.push_str(&format!(
         "- Context assembly latency: {} ms\n",
-        VOICE_CONTEXT_ASSEMBLY_LATENCY_MS
+        timing.context_assembly_latency_ms
     ));
-    markdown.push_str(&format!("- Model role latency: {} ms\n", model_latency_ms));
+    markdown.push_str(&format!(
+        "- Model role latency: {} ms\n",
+        timing.model_role_latency_ms
+    ));
     markdown.push_str(&format!(
         "- Speech output latency: {} ms\n",
-        speech_session.total_latency_ms()
+        timing.speech_output_latency_ms
     ));
     markdown.push_str(&format!(
         "- Total observed turn latency: {} ms\n",
-        voice_loop_total_latency_ms(
-            transcript_session,
-            memory_retrieval,
-            model_latency_ms,
-            speech_session
-        )
+        timing.total_observed_turn_latency_ms
     ));
+    markdown.push('\n');
+
+    push_diagnostics_section(
+        &mut markdown,
+        context_assembly,
+        model_response,
+        speech_request,
+        speech_session,
+        timing,
+    );
 
     fs::write(context.run_dir().join("text-owned-voice-loop.md"), markdown).with_context(|| {
         format!(
@@ -891,6 +905,75 @@ fn write_text_owned_voice_loop_report(
             context.run_id()
         )
     })
+}
+
+fn push_diagnostics_section(
+    markdown: &mut String,
+    context_assembly: &ContextAssembly,
+    model_response: &ModelResponse,
+    speech_request: &SpeechOutputRequest,
+    speech_session: &SpeechOutputSession,
+    timing: VoiceLoopReportTiming,
+) {
+    markdown.push_str("## Diagnostics\n\n");
+    markdown.push_str("- Response owner: `qsf_model_role`\n");
+    markdown.push_str(&format!(
+        "- Selected memory context: `{}`\n",
+        selected_memory_context_ids(context_assembly).join(", ")
+    ));
+    markdown.push_str(&format!(
+        "- Model provider: `{}`\n",
+        model_response.provider_name
+    ));
+    markdown.push_str(&format!("- Model: `{}`\n", model_response.model_name));
+    markdown.push_str(&format!(
+        "- Model role latency: {} ms\n",
+        timing.model_role_latency_ms
+    ));
+    markdown.push_str(&format!(
+        "- Exact speech handoff: `{}`\n",
+        speech_request.text == model_response.output_text
+    ));
+    markdown.push_str(&format!(
+        "- Speech output provider: `{}`\n",
+        speech_session.provider_name
+    ));
+    markdown.push_str(&format!(
+        "- Total observed turn latency: {} ms\n",
+        timing.total_observed_turn_latency_ms
+    ));
+    markdown.push_str("- Raw audio logged: `false`\n");
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct VoiceLoopReportTiming {
+    memory_retrieval_latency_ms: u64,
+    context_assembly_latency_ms: u64,
+    model_role_latency_ms: u64,
+    speech_output_latency_ms: u64,
+    total_observed_turn_latency_ms: u64,
+}
+
+impl VoiceLoopReportTiming {
+    fn new(
+        transcript_session: &TranscriptProviderSession,
+        memory_retrieval: &RetrievalResult,
+        speech_session: &SpeechOutputSession,
+        model_latency_ms: u64,
+    ) -> Self {
+        Self {
+            memory_retrieval_latency_ms: memory_retrieval.latency_ms,
+            context_assembly_latency_ms: VOICE_CONTEXT_ASSEMBLY_LATENCY_MS,
+            model_role_latency_ms: model_latency_ms,
+            speech_output_latency_ms: speech_session.total_latency_ms(),
+            total_observed_turn_latency_ms: voice_loop_total_latency_ms(
+                transcript_session,
+                memory_retrieval,
+                model_latency_ms,
+                speech_session,
+            ),
+        }
+    }
 }
 
 fn elapsed_ms(started_at: Instant) -> u64 {
@@ -1110,6 +1193,10 @@ mod tests {
         assert!(report.contains("Selected memory context: `memory."));
         assert!(report.contains("Model role latency:"));
         assert!(report.contains("Total observed turn latency:"));
+        assert!(report.contains("## Diagnostics"));
+        assert!(report.contains("Response owner: `qsf_model_role`"));
+        assert!(report.contains("Exact speech handoff: `true`"));
+        assert!(report.contains("Raw audio logged: `false`"));
         assert!(context.run_dir().join("memory-fixture.json").exists());
 
         fs::remove_dir_all(base_dir).unwrap();

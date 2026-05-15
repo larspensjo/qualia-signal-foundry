@@ -649,3 +649,35 @@ What changed:
 Refs: crates/qsf_app/src/experiments/text_owned_voice_loop.rs,
 docs/Experiments/Experiment.TextOwnedVoiceLoop.md,
 docs/Experiments/Report.VoiceLoopComparison.2026-05-14.md
+
+## 2026-05-14 - Corrected voice-loop comparison baseline
+
+Updated the voice-loop comparison report to use the corrected memory-context
+text-owned run as the current QSF-owned baseline.
+
+What changed:
+- Replaced the current text-owned baseline with
+  `runs/2026-05-14-140617-text-owned-voice-loop`.
+- Kept the earlier same-prompt text-owned run as historical context for transcript
+  timing comparisons.
+- Documented selected memory context, corrected model latency, and total observed turn
+  latency from the live run.
+
+Refs: docs/Experiments/Report.VoiceLoopComparison.2026-05-14.md,
+runs/2026-05-14-140617-text-owned-voice-loop
+
+## 2026-05-15 - Text-owned voice loop report diagnostics
+
+Added a generated diagnostics section to each text-owned voice-loop run report.
+
+What changed:
+- `text-owned-voice-loop.md` now reports response owner, selected memory context,
+  model provider/model latency, exact speech handoff, total observed turn latency, and
+  raw-audio logging status.
+- Covered the diagnostics section in the deterministic voice-loop regression test.
+- Updated the experiment and comparison docs so the next step is moving beyond the
+  Phase 4 memory fixture.
+
+Refs: crates/qsf_app/src/experiments/text_owned_voice_loop.rs,
+docs/Experiments/Experiment.TextOwnedVoiceLoop.md,
+docs/Experiments/Report.VoiceLoopComparison.2026-05-14.md

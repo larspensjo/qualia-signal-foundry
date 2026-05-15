@@ -69,6 +69,9 @@ The experiment records:
   output stages
 - generated turn reports list final transcript, memory retrieval, context assembly,
   model role, speech output, and total observed turn latency separately
+- generated turn reports include a diagnostics section for response ownership,
+  selected memory context, exact speech handoff, model latency, total observed latency,
+  and raw-audio logging status
 
 Successful runs also print the QSF-owned response text to stdout so live microphone
 tests can be checked without opening the run artifact first. Run artifacts include
@@ -159,3 +162,10 @@ runtime.
 - The latency report was corrected after the first memory-context live run exposed that
   total turn latency did not include model-role runtime. New reports should show
   `Model role latency` and `Total observed turn latency`.
+
+2026-05-15:
+
+- Generated `text-owned-voice-loop.md` reports now include a `Diagnostics` section so
+  response ownership, selected memory context, exact speech handoff, model latency,
+  total observed latency, and raw-audio logging status are visible without manually
+  cross-checking events and traces.

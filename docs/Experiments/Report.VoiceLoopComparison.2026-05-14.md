@@ -2,63 +2,77 @@
 
 ## Compared Runs
 
-This report compares three concrete runs from 2026-05-14:
+This report compares the current voice-loop evidence from 2026-05-14:
 
 | Path | Role |
 |---|---|
 | `runs/2026-05-14-133230-streaming-transcription-mvp` | Live microphone transcript-only baseline |
 | `runs/2026-05-14-133853-realtime-voice-session` | Provider-owned realtime speech-to-speech baseline |
-| `runs/2026-05-14-113743-text-owned-voice-loop` | QSF-owned text turn with live microphone input and simulated speech output |
+| `runs/2026-05-14-140617-text-owned-voice-loop` | Corrected QSF-owned text turn with memory context and simulated speech output |
 
-All three primary comparison runs used the same spoken prompt:
+The streaming transcription and realtime voice-session baselines used this prompt:
 
 ```text
 Tell me something funny and unexpected about yourself.
 ```
 
-An earlier realtime voice-session run remains useful as historical context but is no
-longer the primary baseline because it used a different spoken input:
+The corrected text-owned run used a memory-oriented prompt to validate retrieval in the
+answer path:
 
 ```text
-runs/2026-05-14-075918-realtime-voice-session
+What should you remember about context budget and memory retrieval?
 ```
+
+Historical context:
+
+| Path | Role |
+|---|---|
+| `runs/2026-05-14-113743-text-owned-voice-loop` | Earlier same-prompt text-owned run before memory retrieval and corrected total latency |
+| `runs/2026-05-14-075918-realtime-voice-session` | Earlier realtime voice-session run with a different spoken input |
 
 ## Summary
 
-The text-owned voice loop now proves the intended architecture: live speech enters as
-`AudioFinalTranscript`, becomes `InputReceived`, goes through QSF context assembly and
-the `ConversationalResponder` model role, emits `OutputProduced`, and only then reaches
-the speech output provider. This gives stronger QSF ownership and inspectability than
-the provider-owned realtime voice session, at the cost of not yet producing real
-audible output.
+The corrected text-owned voice loop is now the strongest architecture baseline. Live
+speech enters as `AudioFinalTranscript`, becomes `InputReceived`, triggers memory
+retrieval, assembles QSF context, invokes `ConversationalResponder`, emits
+`OutputProduced`, and only then reaches the speech output provider.
 
-The realtime voice session remains the better speech-native baseline because it
-produces provider audio bytes and can begin a response before final input transcription
-arrives. It is weaker as a QSF architecture test because the provider owns the answer
-content.
+The run proves memory participation in a live spoken answer: association-weighted
+retrieval selected `memory.context-budget`, context assembly carried that fragment into
+the model request, and the answer reflected the selected memory and fixed voice-loop
+boundary context.
+
+The realtime voice session remains the speech-native baseline because it produces
+provider audio bytes and can overlap response generation with final input
+transcription. It is weaker as a QSF architecture test because the provider owns the
+answer content.
 
 The streaming transcription MVP remains the cleanest input-only baseline. It validates
-live transcript latency and partial/final transcript events without model response or
-speech output.
+live transcript latency and partial/final transcript events without model response,
+memory, context, or speech output.
 
 ## Comparison Table
 
 | Dimension | Streaming Transcription | Realtime Voice Session | Text-Owned Voice Loop |
 |---|---:|---:|---:|
-| Run | `2026-05-14-133230-streaming-transcription-mvp` | `2026-05-14-133853-realtime-voice-session` | `2026-05-14-113743-text-owned-voice-loop` |
+| Run | `2026-05-14-133230-streaming-transcription-mvp` | `2026-05-14-133853-realtime-voice-session` | `2026-05-14-140617-text-owned-voice-loop` |
+| Prompt class | Same-prompt baseline | Same-prompt baseline | Memory-context validation |
 | Input provider | `openai-realtime-transcript-provider` | `openai-realtime-session-provider` | `openai-realtime-transcript-provider` |
 | Response owner | None | Realtime provider | QSF model role |
 | Model role | None | Provider-owned realtime response | `conversational_responder` |
 | Model provider | None | `gpt-realtime-2` | OpenAI `gpt-5.4-nano-2026-03-17` |
 | Speech output | None | Provider audio bytes observed | Simulated metadata-only |
-| Final transcript | `Tell me something funny and unexpected about yourself.` | `Tell me something funny and unexpected about yourself.` | `Tell me something funny and unexpected about yourself.` |
-| Partial transcript revisions | 9 | Not recorded as partial transcript events | 9 |
-| First partial latency | 3334 ms | N/A | 3610 ms |
-| Final transcript latency | 4688 ms | 10283 ms final transcript timestamp | 4851 ms |
-| Model/response latency | N/A | 2518 ms response latency | 1937 ms model latency |
+| Final transcript | `Tell me something funny and unexpected about yourself.` | `Tell me something funny and unexpected about yourself.` | `Should you remember about context budget and memory retrieval.` |
+| Partial transcript revisions | 9 | Not recorded as partial transcript events | 10 |
+| First partial latency | 3334 ms | N/A | 4253 ms |
+| Final transcript latency | 4688 ms | 10283 ms final transcript timestamp | 5321 ms |
+| Memory retrieval latency | N/A | N/A | 1 ms |
+| Context assembly latency | N/A | No QSF context assembly | 6 ms |
+| Model/response latency | N/A | 2518 ms response latency | 2304 ms model-role latency |
 | First audio latency | N/A | 726 ms | Simulated: 14 ms after speech request |
-| Total run/turn latency | 4688 ms transcript latency | 12555 ms provider turn latency | 4997 ms text-owned loop latency |
-| Context assembly visible | No | No QSF context assembly | Yes, 3 fragments selected |
+| Total run/turn latency | 4688 ms transcript latency | 12555 ms provider turn latency | 7772 ms observed text-owned turn latency |
+| Context assembly visible | No | No QSF context assembly | Yes, 4 fragments selected |
+| Memory retrieval visible | No | No QSF memory retrieval | Yes, `memory.context-budget` selected |
 | Tool boundary visible | No tool path | Tool auto-execution disabled, 0 calls | Model role allowed tools empty |
 | Raw audio logged | false | false | false |
 
@@ -92,11 +106,13 @@ not produced by QSF context assembly or a QSF model role.
 
 ### Text-Owned Voice Loop
 
-The text-owned loop owns the response through QSF:
+The corrected text-owned loop owns the response through QSF:
 
 ```text
 AudioFinalTranscript
   -> InputReceived
+  -> MemoryRetrievalRequested
+  -> MemoryRetrieved
   -> ContextAssemblyRequested
   -> ContextAssembled
   -> ModelRoleRequested(conversational_responder)
@@ -109,32 +125,34 @@ The speech provider receives exactly the `OutputProduced` text.
 
 ## Latency Interpretation
 
-The text-owned voice loop and streaming transcription runs are comparable for transcript
-input because they used the same phrase and both used `gpt-realtime-whisper`:
+The original same-prompt text-owned run remains useful for comparing transcript timing
+against the streaming transcription baseline:
 
-| Metric | Streaming | Text-Owned |
+| Metric | Streaming | Earlier Same-Prompt Text-Owned |
 |---|---:|---:|
 | First partial transcript | 3334 ms | 3610 ms |
 | Final transcript | 4688 ms | 4851 ms |
 
-The text-owned loop adds the QSF response path:
+The corrected text-owned run should be used for current text-owned latency conclusions
+because it includes memory retrieval and model-role runtime in the total:
 
-| Stage | Text-Owned |
+| Stage | Corrected Text-Owned |
 |---|---:|
-| Context assembly trace | 6 ms |
-| OpenAI model role | 1937 ms |
+| Final transcript | 5321 ms |
+| Memory retrieval | 1 ms |
+| Context assembly | 6 ms |
+| OpenAI model role | 2304 ms |
 | Simulated speech output | 140 ms |
-| Total loop latency | 4997 ms |
+| Total observed turn latency | 7772 ms |
 
-The current total loop latency is not a full audible-response latency because speech
-output is still metadata-only simulation. It is useful for comparing transcript,
-context, and model timing, not final speaker playback.
+The current total is still not a full audible-response latency because speech output is
+metadata-only simulation. It is useful for comparing transcript, memory, context, and
+model timing, not final speaker playback.
 
-The same-prompt realtime voice session took longer end to end than the text-owned loop,
-but it produced real provider audio bytes and began response generation before final
-input transcription completed. Its response start offset from final transcript was
-`-246 ms`. That response overlap is a speech-native advantage the current text-owned
-loop does not try to match yet.
+The same-prompt realtime voice session took 12555 ms end to end, but it produced real
+provider audio bytes and began response generation before final input transcription
+completed. Its response start offset from final transcript was `-246 ms`. That overlap
+is a speech-native advantage the text-owned loop does not try to match yet.
 
 ## Context And Memory Participation
 
@@ -143,27 +161,24 @@ Streaming transcription does not assemble context.
 Realtime voice session records provider response lifecycle and maps provider tool-call
 requests to QSF events, but QSF context assembly is not in the answer path.
 
-Text-owned voice loop includes QSF context assembly in the answer path. In the compared
-run it selected three deterministic context fragments:
+The corrected text-owned voice loop selected four context fragments:
 
-- the final-transcript commit boundary
-- the output-before-speech boundary
-- the current finalized spoken input
+- `memory.context-budget`
+- `voice-loop-runtime-boundary`
+- `voice-loop-output-boundary`
+- `voice-loop-user-turn`
 
-This proves the architecture boundary, but it does not yet prove memory retrieval in a
-live spoken response. Memory/context participation should be deepened after the
-comparison baseline is stable.
+The answer used that context naturally:
 
-Follow-up implementation note: the text-owned loop now retrieves one
-association-weighted Phase 4 memory candidate after `InputReceived` and before context
-assembly. The next live comparison run should validate the new `MemoryRetrievalRequested`
-and `MemoryRetrieved` events, the selected memory id in `text-owned-voice-loop.md`, and
-whether the responder uses that memory naturally in the answer.
+```text
+Yes--remember to respect the context budget and use compact memory retrieval. Also,
+only finalized speech counts: AudioFinalTranscript is the commit point, and
+InputReceived happens then. Finally, ensure OutputProduced exists before any speech
+output providers receive the text.
+```
 
-Latency note: the live memory-context run exposed that the generated
-`text-owned-voice-loop.md` total undercounted model-role runtime. The experiment has
-been updated so future reports list memory retrieval, context assembly, model role,
-speech output, and total observed turn latency separately.
+This proves memory retrieval is now part of the live spoken response path, not only a
+standalone memory experiment.
 
 ## Tool Boundary
 
@@ -192,22 +207,19 @@ The architecture now supports three distinct voice research modes:
 - **Provider-owned voice:** a realtime speech provider can own the response for
   speech-native comparison.
 - **QSF-owned voice:** live speech can become a QSF-owned text turn, with response
-  ownership, context, model role, and exact speech handoff visible in events.
+  ownership, memory retrieval, context, model role, and exact speech handoff visible in
+  events.
 
-The strongest architectural result is the text-owned voice loop. It proves that voice
-can be an interface around QSF rather than a replacement for QSF.
+The strongest architectural result is the corrected text-owned voice loop. It proves
+that voice can be an interface around QSF rather than a replacement for QSF.
 
 ## Recommended Next Step
 
 Do not add OpenAI TTS yet.
 
-First, run the updated text-owned loop with a memory-oriented live prompt and compare
-latency plus answer quality against the prior text-owned run. The run should prove that
-memory retrieval is observable and that selected memory context reaches
-`ConversationalResponder`. Use the corrected generated latency fields for future
-comparisons rather than the older `Total deterministic turn latency` line.
+The generated `text-owned-voice-loop.md` report now includes a diagnostics section for
+response ownership, selected memory context, model provider and latency, exact speech
+handoff status, raw-audio logging status, and corrected total observed turn latency.
 
-After that, add a short comparison section to the generated
-`text-owned-voice-loop.md` report so future runs show response ownership and
-model/speech timing automatically. Only after the text/context path remains stable
-should the project add a render-only speech output provider such as OpenAI TTS.
+Next, replace the Phase 4 fixture with a less fixture-based memory source for the voice
+loop, such as approved sleep-phase memory candidates or a small session memory store.
