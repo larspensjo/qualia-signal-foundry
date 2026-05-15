@@ -25,6 +25,10 @@ QSF owns the transcript-to-context-to-model-to-output path.
 - Memory retrieval uses the existing Phase 4 fixture and association-weighted
   retrieval, selecting one memory candidate into the four-fragment voice context
   budget.
+- Voice memory source selection uses `QSF_VOICE_MEMORY_SOURCE`.
+- Default memory source: `phase_four_fixture`.
+- Optional file memory source: `QSF_VOICE_MEMORY_SOURCE=file` with
+  `QSF_VOICE_MEMORY_FILE` pointing at a JSON `MemoryFixture`.
 
 Default flow:
 
@@ -75,7 +79,8 @@ The experiment records:
 
 Successful runs also print the QSF-owned response text to stdout so live microphone
 tests can be checked without opening the run artifact first. Run artifacts include
-`memory-fixture.json` and the selected memory context id in `text-owned-voice-loop.md`.
+`voice-memory-source.json` and the selected memory context id in
+`text-owned-voice-loop.md`.
 
 Raw audio, API keys, and authorization headers are not written to events, traces, or
 reports.
@@ -112,6 +117,7 @@ $env:QSF_TRANSCRIPT_INPUT_SOURCE="mic"
 $env:QSF_TRANSCRIPT_MIC_DEVICE="default"
 $env:QSF_TRANSCRIPT_MIC_DURATION_MS="4000"
 $env:QSF_MODEL_PROVIDER="mock"
+$env:QSF_VOICE_MEMORY_SOURCE="phase_four_fixture"
 $env:QSF_SPEECH_OUTPUT_PROVIDER="simulated"
 $env:QSF_SPEECH_OUTPUT_MODE="metadata-only"
 cargo run -p qsf_app --features openai -- experiment text-owned-voice-loop
@@ -169,3 +175,6 @@ runtime.
   response ownership, selected memory context, exact speech handoff, model latency,
   total observed latency, and raw-audio logging status are visible without manually
   cross-checking events and traces.
+- The voice loop can now load memory from an opt-in JSON file source with
+  `QSF_VOICE_MEMORY_SOURCE=file` and `QSF_VOICE_MEMORY_FILE=<path>`. The deterministic
+  default remains `phase_four_fixture`.

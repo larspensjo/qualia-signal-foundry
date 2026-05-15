@@ -1,11 +1,11 @@
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use time::OffsetDateTime;
 use time::format_description::well_known::Rfc3339;
 
 use super::association::Association;
 use super::memory_record::{MemoryRecord, MemoryRecordKind};
 
-#[derive(Clone, Debug, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 pub struct MemoryFixture {
     pub records: Vec<MemoryRecord>,
     pub associations: Vec<Association>,

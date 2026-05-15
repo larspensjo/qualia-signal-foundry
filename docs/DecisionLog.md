@@ -193,3 +193,18 @@ reports should use those corrected fields.
 Refs: crates/qsf_app/src/experiments/text_owned_voice_loop.rs,
 docs/Experiments/Experiment.TextOwnedVoiceLoop.md,
 docs/Experiments/Report.VoiceLoopComparison.2026-05-14.md
+
+## 2026-05-15 - Voice memory source is explicit and opt-in
+Decision: The text-owned voice loop loads memory through a `VoiceLoopMemorySource`
+boundary. The deterministic Phase 4 fixture remains the default, and file-backed memory
+is selected explicitly with `QSF_VOICE_MEMORY_SOURCE=file` and `QSF_VOICE_MEMORY_FILE`.
+Context: Live voice turns proved that memory retrieval can participate in the answer
+path, but the toy fixture made retrieval quality arbitrary for real spoken prompts.
+The next step needed a more grounded source without making normal tests depend on
+ambient files or prior runs.
+Consequences: Deterministic tests and default runs stay stable. File-backed voice
+memory can be evaluated deliberately, and every run records the loaded source in
+`voice-memory-source.json` plus generated diagnostics.
+Refs: crates/qsf_app/src/experiments/text_owned_voice_loop.rs,
+crates/qsf_app/src/memory/fixtures.rs,
+docs/Experiments/Experiment.TextOwnedVoiceLoop.md

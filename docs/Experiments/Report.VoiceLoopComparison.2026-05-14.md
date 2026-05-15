@@ -218,8 +218,11 @@ that voice can be an interface around QSF rather than a replacement for QSF.
 Do not add OpenAI TTS yet.
 
 The generated `text-owned-voice-loop.md` report now includes a diagnostics section for
-response ownership, selected memory context, model provider and latency, exact speech
-handoff status, raw-audio logging status, and corrected total observed turn latency.
+response ownership, selected memory context, memory source, model provider and latency,
+exact speech handoff status, raw-audio logging status, and corrected total observed
+turn latency.
 
-Next, replace the Phase 4 fixture with a less fixture-based memory source for the voice
-loop, such as approved sleep-phase memory candidates or a small session memory store.
+The voice loop now has an opt-in file-backed memory source through
+`QSF_VOICE_MEMORY_SOURCE=file` and `QSF_VOICE_MEMORY_FILE=<path>`. Next, use that
+boundary with approved sleep-phase memory candidates or a small session memory store,
+then compare retrieval quality against the Phase 4 fixture.

@@ -1,7 +1,9 @@
 use std::fs;
+use std::path::PathBuf;
 use std::time::Instant;
 
 use anyhow::Context;
+use serde::Serialize;
 use serde_json::json;
 
 use crate::audio::{
@@ -16,8 +18,8 @@ use crate::context::{
     ContextAssembly, ContextBudget, ContextFragment, ContextSourceKind, assemble_context,
 };
 use crate::memory::{
-    MemoryFixture, RetrievalResult, RetrievalStrategy, RetrievedMemory, phase_four_fixture,
-    retrieve_memories,
+    Association, MemoryFixture, MemoryRecord, RetrievalResult, RetrievalStrategy, RetrievedMemory,
+    phase_four_fixture, retrieve_memories,
 };
 use crate::models::{
     ModelClient, ModelMessage, ModelRequest, ModelResponse, ModelRole, ModelRoleId, build_client,
@@ -32,6 +34,8 @@ use super::registry::{Experiment, ExperimentName, ExperimentOutcome};
 const VOICE_CONTEXT_ASSEMBLY_LATENCY_MS: u64 = 6;
 const VOICE_MEMORY_RETRIEVAL_LIMIT: usize = 1;
 const VOICE_MEMORY_RETRIEVAL_STRATEGY: RetrievalStrategy = RetrievalStrategy::AssociationWeighted;
+const VOICE_MEMORY_SOURCE_ENV_VAR: &str = "QSF_VOICE_MEMORY_SOURCE";
+const VOICE_MEMORY_FILE_ENV_VAR: &str = "QSF_VOICE_MEMORY_FILE";
 
 pub struct TextOwnedVoiceLoopExperiment;
 
@@ -50,23 +54,43 @@ impl Experiment for TextOwnedVoiceLoopExperiment {
         let model_client = build_client(requested_provider_from_env())?;
         let speech_provider =
             build_speech_output_provider(requested_speech_output_provider_from_env());
+        let memory_source = build_voice_memory_source_from_env()?;
 
-        self.run_with_components(
+        self.run_with_components_and_memory_source(
             context,
             transcript_provider.as_ref(),
             model_client.as_ref(),
             speech_provider.as_ref(),
+            memory_source.as_ref(),
         )
     }
 }
 
 impl TextOwnedVoiceLoopExperiment {
+    #[cfg(test)]
     fn run_with_components(
         &self,
         context: &mut RunContext,
         transcript_provider: &dyn TranscriptProvider,
         model_client: &dyn ModelClient,
         speech_provider: &dyn SpeechOutputProvider,
+    ) -> anyhow::Result<ExperimentOutcome> {
+        self.run_with_components_and_memory_source(
+            context,
+            transcript_provider,
+            model_client,
+            speech_provider,
+            &PhaseFourVoiceMemorySource,
+        )
+    }
+
+    fn run_with_components_and_memory_source(
+        &self,
+        context: &mut RunContext,
+        transcript_provider: &dyn TranscriptProvider,
+        model_client: &dyn ModelClient,
+        speech_provider: &dyn SpeechOutputProvider,
+        memory_source: &dyn VoiceLoopMemorySource,
     ) -> anyhow::Result<ExperimentOutcome> {
         let session_id = format!("{}-text-owned-voice-loop", context.run_id());
         let transcript_request = TranscriptProviderRequest::from_env(&session_id);
@@ -104,13 +128,13 @@ impl TextOwnedVoiceLoopExperiment {
             TranscriptEventEmission::new(transcript_to_input_boundary(), "transcription"),
         )?;
 
-        let memory_fixture = phase_four_fixture();
-        write_voice_memory_fixture_snapshot(context, &memory_fixture)?;
+        let memory_snapshot = memory_source.load()?;
+        write_voice_memory_source_snapshot(context, &memory_snapshot)?;
         let memory_retrieval = retrieve_voice_memories(
             context,
             &transcript_session.session_id,
             &transcript_session.final_transcript.transcript,
-            &memory_fixture,
+            &memory_snapshot,
         )?;
 
         let context_assembly = assemble_voice_context(
@@ -217,12 +241,15 @@ impl TextOwnedVoiceLoopExperiment {
         );
         write_text_owned_voice_loop_report(
             context,
-            &transcript_session,
-            &context_assembly,
-            &model_response,
-            &speech_request,
-            &speech_session,
-            report_timing,
+            VoiceLoopReport {
+                transcript_session: &transcript_session,
+                context_assembly: &context_assembly,
+                memory_snapshot: &memory_snapshot,
+                model_response: &model_response,
+                speech_request: &speech_request,
+                speech_session: &speech_session,
+                timing: report_timing,
+            },
         )?;
 
         Ok(ExperimentOutcome {
@@ -247,9 +274,112 @@ impl TextOwnedVoiceLoopExperiment {
             ],
             extra_artifacts: vec![
                 "text-owned-voice-loop.md".to_string(),
-                "memory-fixture.json".to_string(),
+                "voice-memory-source.json".to_string(),
             ],
         })
+    }
+}
+
+trait VoiceLoopMemorySource {
+    fn load(&self) -> anyhow::Result<VoiceMemorySourceSnapshot>;
+}
+
+struct PhaseFourVoiceMemorySource;
+
+impl VoiceLoopMemorySource for PhaseFourVoiceMemorySource {
+    fn load(&self) -> anyhow::Result<VoiceMemorySourceSnapshot> {
+        Ok(VoiceMemorySourceSnapshot::from_fixture(
+            "phase_four_fixture",
+            "crate::memory::phase_four_fixture",
+            phase_four_fixture(),
+        ))
+    }
+}
+
+struct FileVoiceMemorySource {
+    path: PathBuf,
+}
+
+impl FileVoiceMemorySource {
+    fn new(path: impl Into<PathBuf>) -> Self {
+        Self { path: path.into() }
+    }
+}
+
+impl VoiceLoopMemorySource for FileVoiceMemorySource {
+    fn load(&self) -> anyhow::Result<VoiceMemorySourceSnapshot> {
+        let contents = fs::read_to_string(&self.path).with_context(|| {
+            format!(
+                "failed to read voice memory source file `{}`",
+                self.path.display()
+            )
+        })?;
+        let fixture: MemoryFixture = serde_json::from_str(&contents).with_context(|| {
+            format!(
+                "failed to parse voice memory source file `{}`",
+                self.path.display()
+            )
+        })?;
+
+        Ok(VoiceMemorySourceSnapshot::from_fixture(
+            "file",
+            self.path.display().to_string(),
+            fixture,
+        ))
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize)]
+struct VoiceMemorySourceSnapshot {
+    source_name: String,
+    source_reference: String,
+    records: Vec<MemoryRecord>,
+    associations: Vec<Association>,
+}
+
+impl VoiceMemorySourceSnapshot {
+    fn from_fixture(
+        source_name: impl Into<String>,
+        source_reference: impl Into<String>,
+        fixture: MemoryFixture,
+    ) -> Self {
+        Self {
+            source_name: source_name.into(),
+            source_reference: source_reference.into(),
+            records: fixture.records,
+            associations: fixture.associations,
+        }
+    }
+
+    fn record_count(&self) -> usize {
+        self.records.len()
+    }
+
+    fn association_count(&self) -> usize {
+        self.associations.len()
+    }
+}
+
+fn build_voice_memory_source_from_env() -> anyhow::Result<Box<dyn VoiceLoopMemorySource>> {
+    match std::env::var(VOICE_MEMORY_SOURCE_ENV_VAR)
+        .unwrap_or_else(|_| "phase_four_fixture".to_string())
+        .trim()
+        .to_ascii_lowercase()
+        .as_str()
+    {
+        "" | "phase_four_fixture" | "fixture" => Ok(Box::new(PhaseFourVoiceMemorySource)),
+        "file" => {
+            let path = std::env::var(VOICE_MEMORY_FILE_ENV_VAR).with_context(|| {
+                format!(
+                    "`{VOICE_MEMORY_FILE_ENV_VAR}` must be set when `{VOICE_MEMORY_SOURCE_ENV_VAR}=file`"
+                )
+            })?;
+            Ok(Box::new(FileVoiceMemorySource::new(path)))
+        }
+        value => anyhow::bail!(
+            "unsupported voice memory source `{}`; expected `phase_four_fixture` or `file`",
+            value
+        ),
     }
 }
 
@@ -316,7 +446,7 @@ fn retrieve_voice_memories(
     context: &mut RunContext,
     session_id: &str,
     query: &str,
-    fixture: &MemoryFixture,
+    memory_snapshot: &VoiceMemorySourceSnapshot,
 ) -> anyhow::Result<RetrievalResult> {
     context.record_event(
         EventType::MemoryRetrievalRequested,
@@ -325,15 +455,17 @@ fn retrieve_voice_memories(
             "query": query,
             "strategy": VOICE_MEMORY_RETRIEVAL_STRATEGY,
             "retrieval_limit": VOICE_MEMORY_RETRIEVAL_LIMIT,
-            "memory_records": fixture.records.len(),
-            "associations": fixture.associations.len(),
+            "memory_source": &memory_snapshot.source_name,
+            "memory_source_reference": &memory_snapshot.source_reference,
+            "memory_records": memory_snapshot.record_count(),
+            "associations": memory_snapshot.association_count(),
         }),
         None,
     )?;
 
     let retrieval = retrieve_memories(
-        &fixture.records,
-        &fixture.associations,
+        &memory_snapshot.records,
+        &memory_snapshot.associations,
         query,
         VOICE_MEMORY_RETRIEVAL_STRATEGY,
         VOICE_MEMORY_RETRIEVAL_LIMIT,
@@ -350,6 +482,8 @@ fn retrieve_voice_memories(
     )
     .with_details(json!({
         "session_id": session_id,
+        "memory_source": &memory_snapshot.source_name,
+        "memory_source_reference": &memory_snapshot.source_reference,
         "query": &retrieval.query,
         "strategy": retrieval.strategy,
         "selected": &retrieval.selected,
@@ -364,6 +498,7 @@ fn retrieve_voice_memories(
         EventType::MemoryRetrieved,
         json!({
             "session_id": session_id,
+            "memory_source": &memory_snapshot.source_name,
             "strategy": retrieval.strategy,
             "selected": memory_ids(&retrieval.selected),
             "omitted": memory_ids(&retrieval.omitted),
@@ -809,95 +944,101 @@ fn speech_output_boundary() -> AudioRuntimeBoundary {
     }
 }
 
+struct VoiceLoopReport<'a> {
+    transcript_session: &'a TranscriptProviderSession,
+    context_assembly: &'a ContextAssembly,
+    memory_snapshot: &'a VoiceMemorySourceSnapshot,
+    model_response: &'a ModelResponse,
+    speech_request: &'a SpeechOutputRequest,
+    speech_session: &'a SpeechOutputSession,
+    timing: VoiceLoopReportTiming,
+}
+
 fn write_text_owned_voice_loop_report(
     context: &RunContext,
-    transcript_session: &TranscriptProviderSession,
-    context_assembly: &ContextAssembly,
-    model_response: &ModelResponse,
-    speech_request: &SpeechOutputRequest,
-    speech_session: &SpeechOutputSession,
-    timing: VoiceLoopReportTiming,
+    report: VoiceLoopReport<'_>,
 ) -> anyhow::Result<()> {
     let mut markdown = String::new();
     markdown.push_str("# Text-Owned Voice Loop\n\n");
     markdown.push_str("## Turn\n\n");
     markdown.push_str(&format!(
         "- Session id: `{}`\n",
-        transcript_session.session_id
+        report.transcript_session.session_id
     ));
     markdown.push_str(&format!(
         "- Transcript provider: `{}`\n",
-        transcript_session.provider_name
+        report.transcript_session.provider_name
     ));
     markdown.push_str(&format!(
         "- Final transcript: {}\n",
-        transcript_session.final_transcript.transcript
+        report.transcript_session.final_transcript.transcript
     ));
     markdown.push_str(&format!(
         "- Context fragments selected: `{}`\n",
-        context_assembly.selected.len()
+        report.context_assembly.selected.len()
     ));
     markdown.push_str(&format!(
         "- Selected context: `{}`\n",
-        selected_context_ids(context_assembly).join(", ")
+        selected_context_ids(report.context_assembly).join(", ")
     ));
     markdown.push_str(&format!(
         "- Selected memory context: `{}`\n",
-        selected_memory_context_ids(context_assembly).join(", ")
+        selected_memory_context_ids(report.context_assembly).join(", ")
+    ));
+    markdown.push_str(&format!(
+        "- Memory source: `{}`\n",
+        report.memory_snapshot.source_name
+    ));
+    markdown.push_str(&format!(
+        "- Memory source reference: `{}`\n",
+        report.memory_snapshot.source_reference
     ));
     markdown.push_str(&format!(
         "- Model role: `{}` via `{}`\n",
-        model_response.role_id, model_response.provider_name
+        report.model_response.role_id, report.model_response.provider_name
     ));
     markdown.push_str(&format!(
         "- OutputProduced text: {}\n",
-        model_response.output_text
+        report.model_response.output_text
     ));
     markdown.push_str(&format!(
         "- Speech output provider: `{}`\n",
-        speech_session.provider_name
+        report.speech_session.provider_name
     ));
     markdown.push_str(&format!(
         "- Speech output mode: `{}`\n",
-        speech_session.output_mode
+        report.speech_session.output_mode
     ));
     markdown.push_str("- Raw audio logged: `false`\n\n");
 
     markdown.push_str("## Latency\n\n");
     markdown.push_str(&format!(
         "- Final transcript latency: {} ms\n",
-        transcript_session.final_transcript_latency_ms()
+        report.transcript_session.final_transcript_latency_ms()
     ));
     markdown.push_str(&format!(
         "- Memory retrieval latency: {} ms\n",
-        timing.memory_retrieval_latency_ms
+        report.timing.memory_retrieval_latency_ms
     ));
     markdown.push_str(&format!(
         "- Context assembly latency: {} ms\n",
-        timing.context_assembly_latency_ms
+        report.timing.context_assembly_latency_ms
     ));
     markdown.push_str(&format!(
         "- Model role latency: {} ms\n",
-        timing.model_role_latency_ms
+        report.timing.model_role_latency_ms
     ));
     markdown.push_str(&format!(
         "- Speech output latency: {} ms\n",
-        timing.speech_output_latency_ms
+        report.timing.speech_output_latency_ms
     ));
     markdown.push_str(&format!(
         "- Total observed turn latency: {} ms\n",
-        timing.total_observed_turn_latency_ms
+        report.timing.total_observed_turn_latency_ms
     ));
     markdown.push('\n');
 
-    push_diagnostics_section(
-        &mut markdown,
-        context_assembly,
-        model_response,
-        speech_request,
-        speech_session,
-        timing,
-    );
+    push_diagnostics_section(&mut markdown, &report);
 
     fs::write(context.run_dir().join("text-owned-voice-loop.md"), markdown).with_context(|| {
         format!(
@@ -907,40 +1048,48 @@ fn write_text_owned_voice_loop_report(
     })
 }
 
-fn push_diagnostics_section(
-    markdown: &mut String,
-    context_assembly: &ContextAssembly,
-    model_response: &ModelResponse,
-    speech_request: &SpeechOutputRequest,
-    speech_session: &SpeechOutputSession,
-    timing: VoiceLoopReportTiming,
-) {
+fn push_diagnostics_section(markdown: &mut String, report: &VoiceLoopReport<'_>) {
     markdown.push_str("## Diagnostics\n\n");
     markdown.push_str("- Response owner: `qsf_model_role`\n");
     markdown.push_str(&format!(
         "- Selected memory context: `{}`\n",
-        selected_memory_context_ids(context_assembly).join(", ")
+        selected_memory_context_ids(report.context_assembly).join(", ")
+    ));
+    markdown.push_str(&format!(
+        "- Memory source: `{}`\n",
+        report.memory_snapshot.source_name
+    ));
+    markdown.push_str(&format!(
+        "- Memory records: `{}`\n",
+        report.memory_snapshot.record_count()
+    ));
+    markdown.push_str(&format!(
+        "- Retrieval strategy: `{}`\n",
+        VOICE_MEMORY_RETRIEVAL_STRATEGY
     ));
     markdown.push_str(&format!(
         "- Model provider: `{}`\n",
-        model_response.provider_name
+        report.model_response.provider_name
     ));
-    markdown.push_str(&format!("- Model: `{}`\n", model_response.model_name));
+    markdown.push_str(&format!(
+        "- Model: `{}`\n",
+        report.model_response.model_name
+    ));
     markdown.push_str(&format!(
         "- Model role latency: {} ms\n",
-        timing.model_role_latency_ms
+        report.timing.model_role_latency_ms
     ));
     markdown.push_str(&format!(
         "- Exact speech handoff: `{}`\n",
-        speech_request.text == model_response.output_text
+        report.speech_request.text == report.model_response.output_text
     ));
     markdown.push_str(&format!(
         "- Speech output provider: `{}`\n",
-        speech_session.provider_name
+        report.speech_session.provider_name
     ));
     markdown.push_str(&format!(
         "- Total observed turn latency: {} ms\n",
-        timing.total_observed_turn_latency_ms
+        report.timing.total_observed_turn_latency_ms
     ));
     markdown.push_str("- Raw audio logged: `false`\n");
 }
@@ -984,14 +1133,14 @@ fn elapsed_ms(started_at: Instant) -> u64 {
         .unwrap_or(u64::MAX)
 }
 
-fn write_voice_memory_fixture_snapshot(
+fn write_voice_memory_source_snapshot(
     context: &RunContext,
-    fixture: &MemoryFixture,
+    snapshot: &VoiceMemorySourceSnapshot,
 ) -> anyhow::Result<()> {
-    let contents = serde_json::to_string_pretty(fixture)?;
-    fs::write(context.run_dir().join("memory-fixture.json"), contents).with_context(|| {
+    let contents = serde_json::to_string_pretty(snapshot)?;
+    fs::write(context.run_dir().join("voice-memory-source.json"), contents).with_context(|| {
         format!(
-            "failed to write voice memory fixture snapshot for run {}",
+            "failed to write voice memory source snapshot for run {}",
             context.run_id()
         )
     })
@@ -1047,7 +1196,9 @@ mod tests {
     use std::fs;
     use std::time::Duration;
 
-    use super::{TextOwnedVoiceLoopExperiment, VOICE_CONTEXT_ASSEMBLY_LATENCY_MS};
+    use super::{
+        FileVoiceMemorySource, TextOwnedVoiceLoopExperiment, VOICE_CONTEXT_ASSEMBLY_LATENCY_MS,
+    };
     use crate::audio::test_support::{
         assert_events_have_safety_markers, assert_payloads_do_not_contain_raw_audio_fields,
         is_audio_or_speech_event, parse_event_records,
@@ -1059,10 +1210,13 @@ mod tests {
         TranscriptProviderSession,
     };
     use crate::experiments::registry::{Experiment, ExperimentName};
+    use crate::memory::{MemoryFixture, MemoryRecord, MemoryRecordKind};
     use crate::models::{MockModelClient, ModelClient, ModelRequest, ModelResponse};
     use crate::observability::event_log::{EventRecord, EventType};
     use crate::runtime::run_context::RunContext;
     use anyhow::anyhow;
+    use time::OffsetDateTime;
+    use time::format_description::well_known::Rfc3339;
     use uuid::Uuid;
 
     struct FailingModelClient;
@@ -1195,9 +1349,72 @@ mod tests {
         assert!(report.contains("Total observed turn latency:"));
         assert!(report.contains("## Diagnostics"));
         assert!(report.contains("Response owner: `qsf_model_role`"));
+        assert!(report.contains("Memory source: `phase_four_fixture`"));
+        assert!(report.contains("Memory records: `10`"));
+        assert!(report.contains("Retrieval strategy: `association-weighted`"));
         assert!(report.contains("Exact speech handoff: `true`"));
         assert!(report.contains("Raw audio logged: `false`"));
-        assert!(context.run_dir().join("memory-fixture.json").exists());
+        assert!(context.run_dir().join("voice-memory-source.json").exists());
+
+        fs::remove_dir_all(base_dir).unwrap();
+    }
+
+    #[test]
+    fn file_memory_source_drives_voice_retrieval_and_diagnostics() {
+        let base_dir =
+            std::env::temp_dir().join(format!("qsf-text-owned-memory-file-{}", Uuid::new_v4()));
+        fs::create_dir_all(&base_dir).unwrap();
+        let source_path = base_dir.join("voice-memory.json");
+        let fixture = MemoryFixture {
+            records: vec![MemoryRecord::new(
+                "memory.voice-session-input",
+                MemoryRecordKind::Observation,
+                "Voice session input",
+                "Streaming transcription enters QSF as finalized input events.",
+                vec!["streaming", "transcription", "events", "runtime"],
+                timestamp("2026-05-15T06:00:00Z"),
+                0.9,
+                1,
+                "tests/voice-memory.json",
+                28,
+            )],
+            associations: vec![],
+        };
+        fs::write(
+            &source_path,
+            serde_json::to_string_pretty(&fixture).unwrap(),
+        )
+        .unwrap();
+        let mut context = RunContext::create_in(&base_dir, "text-owned-voice-loop").unwrap();
+        let experiment = TextOwnedVoiceLoopExperiment;
+
+        experiment
+            .run_with_components_and_memory_source(
+                &mut context,
+                &SimulatedTranscriptProvider,
+                &MockModelClient::default(),
+                &SimulatedSpeechOutputProvider,
+                &FileVoiceMemorySource::new(&source_path),
+            )
+            .unwrap();
+
+        let events = fs::read_to_string(context.run_dir().join("events.jsonl")).unwrap();
+        let report =
+            fs::read_to_string(context.run_dir().join("text-owned-voice-loop.md")).unwrap();
+        let source_snapshot =
+            fs::read_to_string(context.run_dir().join("voice-memory-source.json")).unwrap();
+        let event_records = parse_event_records(&events);
+
+        assert!(report.contains("Selected memory context: `memory.voice-session-input`"));
+        assert!(report.contains("Memory source: `file`"));
+        assert!(report.contains("Memory records: `1`"));
+        assert!(source_snapshot.contains("memory.voice-session-input"));
+        assert!(source_snapshot.contains("voice-memory.json"));
+        assert!(event_records.iter().any(|record| {
+            record.event_type == EventType::MemoryRetrievalRequested
+                && record.payload["memory_source"] == "file"
+                && record.payload["memory_records"] == 1
+        }));
 
         fs::remove_dir_all(base_dir).unwrap();
     }
@@ -1485,5 +1702,9 @@ mod tests {
                     && record.payload["stage"] == "text-owned-voice-loop"
             })
             .unwrap()
+    }
+
+    fn timestamp(value: &str) -> OffsetDateTime {
+        OffsetDateTime::parse(value, &Rfc3339).unwrap()
     }
 }

@@ -681,3 +681,20 @@ What changed:
 Refs: crates/qsf_app/src/experiments/text_owned_voice_loop.rs,
 docs/Experiments/Experiment.TextOwnedVoiceLoop.md,
 docs/Experiments/Report.VoiceLoopComparison.2026-05-14.md
+
+## 2026-05-15 - File-backed voice memory source
+
+Added an opt-in file-backed memory source for the text-owned voice loop.
+
+What changed:
+- Introduced a `VoiceLoopMemorySource` boundary with deterministic
+  `phase_four_fixture` default behavior.
+- Added `QSF_VOICE_MEMORY_SOURCE=file` plus `QSF_VOICE_MEMORY_FILE=<path>` for loading
+  a JSON `MemoryFixture`.
+- Wrote the loaded memory source to `voice-memory-source.json` and added memory source,
+  record count, and retrieval strategy to generated diagnostics.
+- Added a regression test proving a file memory source can drive selected context.
+
+Refs: crates/qsf_app/src/experiments/text_owned_voice_loop.rs,
+crates/qsf_app/src/memory/fixtures.rs,
+docs/Experiments/Experiment.TextOwnedVoiceLoop.md
