@@ -13,22 +13,24 @@ use crate::audio::{
     TranscriptProviderRequest, TranscriptProviderSession, build_speech_output_provider,
     build_transcript_provider, record_transcript_runtime_events,
     requested_speech_output_provider_from_env, requested_transcript_provider_from_env,
+    transcript_provider_to_input_boundary,
 };
 use crate::context::{
     ContextAssembly, ContextBudget, ContextFragment, ContextSourceKind, assemble_context,
 };
 use crate::memory::{
     Association, MemoryFixture, MemoryRecord, RetrievalResult, RetrievalStrategy, RetrievedMemory,
-    phase_four_fixture, retrieve_memories,
+    phase_four_fixture, retrieve_memories, retrieved_memory_ids,
 };
 use crate::models::{
     ModelClient, ModelMessage, ModelRequest, ModelResponse, ModelRole, ModelRoleId, build_client,
     invoke_model_role, requested_provider_from_env,
 };
 use crate::observability::event_log::EventType;
-use crate::observability::trace::TraceRecord;
+use crate::observability::trace::{TraceRecord, elapsed_ms};
 use crate::runtime::run_context::RunContext;
 
+use super::failure::{SanitizedFailure, record_sanitized_failure};
 use super::registry::{Experiment, ExperimentName, ExperimentOutcome};
 
 const VOICE_CONTEXT_ASSEMBLY_LATENCY_MS: u64 = 6;
@@ -180,9 +182,11 @@ impl TextOwnedVoiceLoopExperiment {
             }),
             Some(model_trace_id),
         )?;
-        println!(
-            "QSF text-owned voice response: {}",
-            model_response.output_text
+        engine_logging::engine_info!(
+            "text-owned voice response produced: experiment_id={} run_id={} session_id={}",
+            context.experiment_id(),
+            context.run_id(),
+            transcript_session.session_id
         );
 
         let speech_request = SpeechOutputRequest::from_env(
@@ -500,8 +504,8 @@ fn retrieve_voice_memories(
             "session_id": session_id,
             "memory_source": &memory_snapshot.source_name,
             "strategy": retrieval.strategy,
-            "selected": memory_ids(&retrieval.selected),
-            "omitted": memory_ids(&retrieval.omitted),
+            "selected": retrieved_memory_ids(&retrieval.selected),
+            "omitted": retrieved_memory_ids(&retrieval.omitted),
             "latency_ms": retrieval.latency_ms,
             "latency_ns": retrieval.latency_ns,
         }),
@@ -813,6 +817,7 @@ fn record_voice_loop_latency(
         "speech_requested_ms": speech_requested_ms,
         "speech_started_ms": speech_started_ms,
         "speech_completed_ms": speech_completed_ms,
+        "timeline_source": "derived_from_provider_and_stage_latency_reports",
         "context_used_estimated_tokens": context_tokens,
         "transcript_measurements": transcript_session.latency_measurements(),
         "speech_measurements": speech_session.latency_measurements(),
@@ -867,28 +872,27 @@ fn record_transcript_failure(
     context: &mut RunContext,
     error: &TranscriptProviderError,
 ) -> anyhow::Result<()> {
-    let sanitized_message = error.sanitized_message();
-    let trace = TraceRecord::new(
+    engine_logging::engine_error!(
+        "transcript provider failed: experiment_id={} run_id={} provider={} error={}",
         context.experiment_id(),
-        "transcript-provider-session",
-        format!("provider={}", error.provider()),
-        "transcription failed before text-owned voice loop input",
+        context.run_id(),
+        error.provider(),
+        error.sanitized_message()
+    );
+    let sanitized_message = error.sanitized_message();
+    record_sanitized_failure(
+        context,
+        SanitizedFailure {
+            event_type: EventType::AudioTranscriptionFailed,
+            operation: "transcript-provider-session",
+            output_summary: "transcription failed before text-owned voice loop input",
+            latency_stage: "text-owned-voice-loop",
+            provider: error.provider(),
+            error_category: error.category(),
+            sanitized_error: &sanitized_message,
+            extra_payload: serde_json::Map::new(),
+        },
     )
-    .with_latency_context("audio", "text-owned-voice-loop")
-    .with_error(&sanitized_message);
-    let trace_id = trace.trace_id;
-    context.record_trace(trace)?;
-    context.record_event(
-        EventType::AudioTranscriptionFailed,
-        json!({
-            "provider": error.provider(),
-            "error_category": error.category(),
-            "sanitized_error": sanitized_message,
-            "safety": AudioSafetyMarkers::no_secret_or_raw_audio(),
-        }),
-        Some(trace_id),
-    )?;
-    Ok(())
 }
 
 fn record_speech_failure(
@@ -896,41 +900,38 @@ fn record_speech_failure(
     session_id: &str,
     error: &SpeechOutputProviderError,
 ) -> anyhow::Result<()> {
-    let sanitized_message = error.sanitized_message();
-    let trace = TraceRecord::new(
+    engine_logging::engine_error!(
+        "speech output provider failed: experiment_id={} run_id={} session_id={} provider={} error={}",
         context.experiment_id(),
-        "speech-output-provider",
-        format!("provider={}", error.provider()),
-        "speech output failed after OutputProduced",
+        context.run_id(),
+        session_id,
+        error.provider(),
+        error.sanitized_message()
+    );
+    let sanitized_message = error.sanitized_message();
+    let mut extra_payload = serde_json::Map::new();
+    extra_payload.insert("session_id".to_string(), json!(session_id));
+    extra_payload.insert("operation".to_string(), json!("speech-output-provider"));
+
+    record_sanitized_failure(
+        context,
+        SanitizedFailure {
+            event_type: EventType::ErrorOccurred,
+            operation: "speech-output-provider",
+            output_summary: "speech output failed after OutputProduced",
+            latency_stage: "speech-output-provider",
+            provider: error.provider(),
+            error_category: error.category(),
+            sanitized_error: &sanitized_message,
+            extra_payload,
+        },
     )
-    .with_latency_context("audio", "speech-output-provider")
-    .with_error(&sanitized_message);
-    let trace_id = trace.trace_id;
-    context.record_trace(trace)?;
-    context.record_event(
-        EventType::ErrorOccurred,
-        json!({
-            "session_id": session_id,
-            "operation": "speech-output-provider",
-            "provider": error.provider(),
-            "error_category": error.category(),
-            "sanitized_error": sanitized_message,
-            "safety": AudioSafetyMarkers::no_secret_or_raw_audio(),
-        }),
-        Some(trace_id),
-    )?;
-    Ok(())
 }
 
 fn transcript_to_input_boundary() -> AudioRuntimeBoundary {
-    AudioRuntimeBoundary {
-        entry_point: AudioRuntimeEntryPoint::TranscriptProvider,
-        producer_event: EventType::AudioFinalTranscript,
-        runtime_event: EventType::InputReceived,
-        description:
-            "Final transcript text becomes QSF-owned input only after AudioFinalTranscript."
-                .to_string(),
-    }
+    transcript_provider_to_input_boundary(
+        "Final transcript text becomes QSF-owned input only after AudioFinalTranscript.",
+    )
 }
 
 fn speech_output_boundary() -> AudioRuntimeBoundary {
@@ -1125,14 +1126,6 @@ impl VoiceLoopReportTiming {
     }
 }
 
-fn elapsed_ms(started_at: Instant) -> u64 {
-    started_at
-        .elapsed()
-        .as_millis()
-        .try_into()
-        .unwrap_or(u64::MAX)
-}
-
 fn write_voice_memory_source_snapshot(
     context: &RunContext,
     snapshot: &VoiceMemorySourceSnapshot,
@@ -1167,13 +1160,6 @@ fn selected_memory_context_ids(assembly: &ContextAssembly) -> Vec<String> {
     } else {
         ids
     }
-}
-
-fn memory_ids(memories: &[RetrievedMemory]) -> Vec<String> {
-    memories
-        .iter()
-        .map(|memory| memory.memory.id.clone())
-        .collect()
 }
 
 fn voice_loop_total_latency_ms(

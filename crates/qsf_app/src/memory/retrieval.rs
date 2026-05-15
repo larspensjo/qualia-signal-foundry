@@ -4,6 +4,8 @@ use std::time::Instant;
 
 use serde::Serialize;
 
+use crate::observability::trace::{duration_ms, duration_ns};
+
 use super::association::{Association, ensure_current_association_schema};
 use super::memory_record::{MemoryRecord, ensure_current_memory_schema};
 
@@ -125,9 +127,16 @@ pub fn retrieve_memories(
         strategy,
         selected,
         omitted,
-        latency_ms: elapsed.as_millis().try_into().unwrap_or(u64::MAX),
-        latency_ns: elapsed.as_nanos().try_into().unwrap_or(u64::MAX),
+        latency_ms: duration_ms(elapsed),
+        latency_ns: duration_ns(elapsed),
     })
+}
+
+pub fn retrieved_memory_ids(memories: &[RetrievedMemory]) -> Vec<String> {
+    memories
+        .iter()
+        .map(|memory| memory.memory.id.clone())
+        .collect()
 }
 
 fn score_record(

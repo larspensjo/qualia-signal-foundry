@@ -143,7 +143,7 @@ pub struct SimulatedAudioSession {
 impl Default for SimulatedAudioSession {
     fn default() -> Self {
         Self {
-            session_id: "audio-session-phase-8".to_string(),
+            session_id: "simulated-audio-session".to_string(),
             input_device: "simulated-microphone".to_string(),
             transcript_provider: "simulated-transcript-provider".to_string(),
             playback_adapter: "simulated-speech-playback".to_string(),
@@ -157,12 +157,9 @@ impl Default for SimulatedAudioSession {
 
 impl SimulatedAudioSession {
     pub fn transcription_boundary(&self) -> AudioRuntimeBoundary {
-        AudioRuntimeBoundary {
-            entry_point: AudioRuntimeEntryPoint::TranscriptProvider,
-            producer_event: EventType::AudioFinalTranscript,
-            runtime_event: EventType::InputReceived,
-            description: "Final transcript text becomes normal runtime input only after the provider emits AudioFinalTranscript.".to_string(),
-        }
+        transcript_provider_to_input_boundary(
+            "Final transcript text becomes normal runtime input only after the provider emits AudioFinalTranscript.",
+        )
     }
 
     pub fn playback_boundary(&self) -> AudioRuntimeBoundary {
@@ -292,7 +289,7 @@ impl SimulatedAudioSession {
             ),
             PreparedAudioEvent::new(
                 EventType::SpeechPlaybackRequested,
-                // Phase 8 uses this as a boundary marker only; later phases can route it to a
+                // This is a boundary marker only; later experiments can route it to a
                 // real playback adapter without changing the observable event shape.
                 json!({
                     "session_id": self.session_id,
@@ -338,6 +335,17 @@ impl SimulatedAudioSession {
 
     pub fn playback_total_latency_ms(&self) -> u64 {
         total_latency_ms(&self.playback_latency_measurements())
+    }
+}
+
+pub fn transcript_provider_to_input_boundary(
+    description: impl Into<String>,
+) -> AudioRuntimeBoundary {
+    AudioRuntimeBoundary {
+        entry_point: AudioRuntimeEntryPoint::TranscriptProvider,
+        producer_event: EventType::AudioFinalTranscript,
+        runtime_event: EventType::InputReceived,
+        description: description.into(),
     }
 }
 

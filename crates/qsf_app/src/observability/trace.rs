@@ -1,6 +1,7 @@
 use std::fs::{File, OpenOptions};
 use std::io::{BufWriter, Write};
 use std::path::Path;
+use std::time::{Duration, Instant};
 
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
@@ -82,6 +83,22 @@ impl TraceRecord {
 
 pub struct TraceLogWriter {
     writer: BufWriter<File>,
+}
+
+pub fn elapsed_ms(started_at: Instant) -> u64 {
+    duration_ms(started_at.elapsed())
+}
+
+pub fn elapsed_ns(started_at: Instant) -> u64 {
+    duration_ns(started_at.elapsed())
+}
+
+pub fn duration_ms(duration: Duration) -> u64 {
+    duration.as_millis().try_into().unwrap_or(u64::MAX)
+}
+
+pub fn duration_ns(duration: Duration) -> u64 {
+    duration.as_nanos().try_into().unwrap_or(u64::MAX)
 }
 
 impl TraceLogWriter {

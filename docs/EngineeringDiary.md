@@ -730,3 +730,19 @@ Refs: runs/2026-05-15-090612-text-owned-voice-loop,
 docs/Experiments/Fixtures/voice-memory.example.json,
 docs/Experiments/Experiment.TextOwnedVoiceLoop.md,
 docs/Experiments/Report.VoiceLoopComparison.2026-05-14.md
+
+## 2026-05-15 - Experiments review cleanup
+
+Applied the relevant experiments-module review findings.
+
+What changed:
+- Removed direct stdout logging from the text-owned voice loop.
+- Shared transcript runtime-boundary construction, sanitized failure recording,
+  retrieved-memory ID extraction, and saturating elapsed-time helpers.
+- Replaced phase-numbered generated prose with stable behavior names.
+- Made experiment registry dispatch exhaustive and softened brittle event-count tests.
+
+Refs: docs/Reviews/experiments-module-review-2026-05-15.md,
+crates/qsf_app/src/experiments,
+crates/qsf_app/src/audio/mod.rs,
+crates/qsf_app/src/observability/trace.rs

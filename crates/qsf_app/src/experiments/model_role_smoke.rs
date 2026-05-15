@@ -12,7 +12,8 @@ use crate::runtime::run_context::RunContext;
 
 use super::registry::{Experiment, ExperimentName, ExperimentOutcome};
 
-const SESSION_PROMPT: &str = "Summarize this short Phase 6 session into explicit JSON fields.";
+const SESSION_PROMPT: &str =
+    "Summarize this short model-role smoke session into explicit JSON fields.";
 const SESSION_TRANSCRIPT: &str = "We added a model role abstraction, kept reducers pure, and want traces to show provider, role, latency, and token usage without logging secrets.";
 
 pub struct ModelRoleSmokeExperiment;
@@ -51,7 +52,7 @@ impl ModelRoleSmokeExperiment {
         context.record_event(
             EventType::InputReceived,
             json!({
-                "phase": "6",
+                "experiment_kind": "model-role-smoke",
                 "requested_provider": requested_provider,
                 "role": &role,
                 "message_count": request.messages.len(),
@@ -76,7 +77,7 @@ impl ModelRoleSmokeExperiment {
 
         Ok(ExperimentOutcome {
             summary: format!(
-                "Phase 6 model role MVP invoked `{}` through the `{}` client, recorded model-role events and traces, and preserved structured output and usage metadata for later sleep or memory experiments.",
+                "The model role smoke experiment invoked `{}` through the `{}` client, recorded model-role events and traces, and preserved structured output and usage metadata for later sleep or memory experiments.",
                 request.role.role_id,
                 response.provider_name
             ),
@@ -90,7 +91,7 @@ impl ModelRoleSmokeExperiment {
                 "No cost estimation is emitted yet for OpenAI-backed calls because the provider kit does not currently expose pricing metadata.".to_string(),
             ],
             follow_up_questions: vec![
-                "Should sleep summarization and memory extraction stay separate roles once Phase 7 lands?".to_string(),
+                "Should sleep summarization and memory extraction stay separate roles?".to_string(),
                 "Should model traces eventually capture bounded prompt excerpts instead of the full message list?".to_string(),
             ],
             decision_candidates: vec![
@@ -109,7 +110,7 @@ fn write_model_invocation_report(
     response: &crate::models::ModelResponse,
 ) -> anyhow::Result<()> {
     let mut markdown = String::new();
-    markdown.push_str("# Phase 6 Model Invocation\n\n");
+    markdown.push_str("# Model Invocation\n\n");
     markdown.push_str(&format!("- Role: `{}`\n", request.role.role_id));
     markdown.push_str(&format!("- Requested provider: `{}`\n", requested_provider));
     markdown.push_str(&format!(
@@ -163,9 +164,8 @@ mod tests {
         let outcome = experiment.run_with_provider(&mut context, "mock").unwrap();
         let events = fs::read_to_string(context.run_dir().join("events.jsonl")).unwrap();
 
-        assert_eq!(context.event_count(), 4);
         assert_eq!(context.trace_count(), 1);
-        assert!(outcome.summary.contains("Phase 6"));
+        assert!(outcome.summary.contains("model role smoke experiment"));
         assert!(events.contains("ModelRoleRequested"));
         assert!(events.contains("ModelRoleCompleted"));
         assert!(

@@ -5,7 +5,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
 use crate::observability::event_log::EventType;
-use crate::observability::trace::TraceRecord;
+use crate::observability::trace::{TraceRecord, elapsed_ns};
 use crate::runtime::run_context::RunContext;
 
 use super::model_role::{ModelOutputExpectation, ModelRole, ModelRoleId};
@@ -230,11 +230,7 @@ pub fn invoke_model_role(
 
     match client.complete(request) {
         Ok(response) => {
-            let elapsed_ns = started_at
-                .elapsed()
-                .as_nanos()
-                .try_into()
-                .unwrap_or(u64::MAX);
+            let elapsed_ns = elapsed_ns(started_at);
             let trace = TraceRecord::new(
                 context.experiment_id(),
                 "model-role",
@@ -269,11 +265,7 @@ pub fn invoke_model_role(
             Ok(response)
         }
         Err(error) => {
-            let elapsed_ns = started_at
-                .elapsed()
-                .as_nanos()
-                .try_into()
-                .unwrap_or(u64::MAX);
+            let elapsed_ns = elapsed_ns(started_at);
             let error_message = error.to_string();
             let trace = TraceRecord::new(
                 context.experiment_id(),

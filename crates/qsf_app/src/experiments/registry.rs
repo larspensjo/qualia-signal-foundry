@@ -145,8 +145,9 @@ pub trait Experiment {
 }
 
 pub fn available_experiments() -> Vec<ExperimentInfo> {
-    experiment_names()
-        .into_iter()
+    ExperimentName::value_variants()
+        .iter()
+        .copied()
         .map(|experiment| ExperimentInfo {
             id: experiment.id(),
             description: experiment.description(),
@@ -278,23 +279,9 @@ pub fn run_experiment_in(
     })
 }
 
-fn experiment_names() -> [ExperimentName; 10] {
-    [
-        ExperimentName::FrameworkSkeletonMvp,
-        ExperimentName::AudioPreparationLayer,
-        ExperimentName::AssociativeMemoryToyModel,
-        ExperimentName::ContextBudgetRetrievalTest,
-        ExperimentName::ModelRoleSmokeTest,
-        ExperimentName::RealtimeVoiceSession,
-        ExperimentName::SleepPhaseSessionSummary,
-        ExperimentName::StreamingTranscriptionMvp,
-        ExperimentName::TextOwnedVoiceLoop,
-        ExperimentName::ToolAsPerceptionCalculator,
-    ]
-}
-
 fn experiment_for(name: ExperimentName) -> Box<dyn Experiment> {
     match name {
+        ExperimentName::FrameworkSkeletonMvp => Box::new(PlaceholderExperiment::new(name)),
         ExperimentName::AudioPreparationLayer => Box::new(AudioPreparationLayerExperiment),
         ExperimentName::AssociativeMemoryToyModel => Box::new(AssociativeMemoryToyModelExperiment),
         ExperimentName::ContextBudgetRetrievalTest => {
@@ -308,13 +295,12 @@ fn experiment_for(name: ExperimentName) -> Box<dyn Experiment> {
         ExperimentName::ToolAsPerceptionCalculator => {
             Box::new(ToolAsPerceptionCalculatorExperiment)
         }
-        _ => Box::new(PlaceholderExperiment::new(name)),
     }
 }
 
 fn report_configuration() -> Vec<String> {
     vec![
-        "Runner: first-class Phase 3 experiment runner".to_string(),
+        "Runner: first-class experiment runner".to_string(),
         "Event log: `events.jsonl`".to_string(),
         "Trace log: `traces.jsonl`".to_string(),
         "Developer log: `engine.log`".to_string(),
@@ -358,7 +344,6 @@ mod tests {
 
         assert_eq!(summary.experiment_id, "associative-memory-toy-model");
         assert_eq!(summary.status, "completed");
-        assert_eq!(summary.event_count, 15);
         assert_eq!(summary.trace_count, 6);
 
         let events = fs::read_to_string(summary.run_dir.join("events.jsonl")).unwrap();
@@ -372,7 +357,7 @@ mod tests {
         assert!(events.contains("ExperimentCompleted"));
         assert!(traces.contains("memory-retrieval"));
         assert!(traces.contains("context-assembly"));
-        assert!(report.contains("Phase 4 associative memory toy model"));
+        assert!(report.contains("associative memory toy model"));
         assert!(report.contains("Require memory retrieval traces"));
         assert!(report.contains("memory-fixture.json"));
         assert!(report.contains("retrieval-comparison.md"));

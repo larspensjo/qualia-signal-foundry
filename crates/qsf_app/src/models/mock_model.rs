@@ -65,7 +65,7 @@ impl Default for MockModelClient {
                         {
                             "summary": "Model roles now flow through the same event and trace artifacts as other subsystems.",
                             "importance": 0.88,
-                            "source_reference": "session-transcript:phase-6"
+                            "source_reference": "session-transcript:model-role-smoke"
                         }
                     ],
                     "open_questions": [

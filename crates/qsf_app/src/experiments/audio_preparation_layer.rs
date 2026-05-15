@@ -81,7 +81,7 @@ impl Experiment for AudioPreparationLayerExperiment {
         write_audio_preparation_report(context, &session)?;
 
         Ok(ExperimentOutcome {
-            summary: "Phase 8 audio preparation landed as a simulated transcript and playback boundary that emits typed audio events, records audio-specific latency metadata in traces, and shows exactly where future transcription and TTS adapters plug into the existing event flow.".to_string(),
+            summary: "Audio preparation landed as a simulated transcript and playback boundary that emits typed audio events, records audio-specific latency metadata in traces, and shows exactly where future transcription and TTS adapters plug into the existing event flow.".to_string(),
             observations: vec![
                 "Final transcript text re-enters the framework as the existing InputReceived event rather than a parallel audio-only input path.".to_string(),
                 "Runtime output remains observable as OutputProduced before any speech adapter receives a SpeechPlaybackRequested event.".to_string(),
@@ -109,7 +109,7 @@ fn write_audio_preparation_report(
     session: &SimulatedAudioSession,
 ) -> anyhow::Result<()> {
     let mut markdown = String::new();
-    markdown.push_str("# Phase 8 Audio Preparation\n\n");
+    markdown.push_str("# Audio Preparation\n\n");
     markdown.push_str("## Simulated session\n\n");
     markdown.push_str(&format!("- Session id: `{}`\n", session.session_id));
     markdown.push_str(&format!(
@@ -186,7 +186,7 @@ mod tests {
         assert!(traces.contains("\"latency_domain\":\"audio\""));
         assert!(traces.contains("\"latency_stage\":\"final-transcription\""));
         assert!(traces.contains("\"latency_stage\":\"speech-playback\""));
-        assert!(report.contains("Phase 8 Audio Preparation"));
+        assert!(report.contains("Audio Preparation"));
 
         fs::remove_dir_all(base_dir).unwrap();
     }

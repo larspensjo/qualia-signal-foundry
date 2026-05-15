@@ -7,11 +7,11 @@ use serde_json::json;
 
 use crate::context::{ContextBudget, ContextFragment, assemble_context};
 use crate::memory::{
-    MemoryFixture, RetrievalResult, RetrievalStrategy, RetrievedMemory, phase_four_fixture,
-    retrieve_memories,
+    MemoryFixture, RetrievalResult, RetrievalStrategy, phase_four_fixture, retrieve_memories,
+    retrieved_memory_ids,
 };
 use crate::observability::event_log::EventType;
-use crate::observability::trace::TraceRecord;
+use crate::observability::trace::{TraceRecord, duration_ms, duration_ns};
 use crate::runtime::run_context::RunContext;
 
 use super::registry::{Experiment, ExperimentName, ExperimentOutcome};
@@ -62,7 +62,7 @@ impl Experiment for AssociativeMemoryToyModelExperiment {
         write_comparison_report(context, "retrieval-comparison.md", &runs)?;
 
         Ok(ExperimentOutcome {
-            summary: "Phase 4 associative memory toy model compared recency-only, keyword/tag, and association-weighted retrieval, then applied the same context budget to each strategy.".to_string(),
+            summary: "The associative memory toy model compared recency-only, keyword/tag, and association-weighted retrieval, then applied the same context budget to each strategy.".to_string(),
             observations: vec![
                 "Association-weighted retrieval can surface linked context-budget and sleep-phase memories even when they are not the newest records.".to_string(),
                 "The retrieval trace exposes score components, matched terms, association paths, and omitted candidates for manual review.".to_string(),
@@ -129,7 +129,7 @@ impl Experiment for ContextBudgetRetrievalTestExperiment {
         write_comparison_report(context, "context-budget-comparison.md", &runs)?;
 
         Ok(ExperimentOutcome {
-            summary: "Phase 4 context budget retrieval test forced retrieved memory fragments through a two-fragment, seventy-token budget and logged what was selected and omitted.".to_string(),
+            summary: "The context budget retrieval test forced retrieved memory fragments through a two-fragment, seventy-token budget and logged what was selected and omitted.".to_string(),
             observations: vec![
                 "The smaller context budget creates visible tradeoffs between direct relevance, association strength, recency, and token cost.".to_string(),
                 "Omitted fragments include explicit reasons, making budget pressure inspectable in traces.".to_string(),
@@ -196,8 +196,8 @@ fn run_retrieval_and_context(
         EventType::MemoryRetrieved,
         json!({
             "strategy": strategy,
-            "selected": memory_ids(&retrieval.selected),
-            "omitted": memory_ids(&retrieval.omitted),
+            "selected": retrieved_memory_ids(&retrieval.selected),
+            "omitted": retrieved_memory_ids(&retrieval.omitted),
             "latency_ms": retrieval.latency_ms,
             "latency_ns": retrieval.latency_ns,
         }),
@@ -223,8 +223,8 @@ fn run_retrieval_and_context(
     let started_at = Instant::now();
     let assembly = assemble_context(fragments, budget);
     let elapsed = started_at.elapsed();
-    let elapsed_ms = elapsed.as_millis().try_into().unwrap_or(u64::MAX);
-    let elapsed_ns = elapsed.as_nanos().try_into().unwrap_or(u64::MAX);
+    let elapsed_ms = duration_ms(elapsed);
+    let elapsed_ns = duration_ns(elapsed);
     let context_trace = TraceRecord::new(
         context.experiment_id(),
         "context-assembly",
@@ -263,8 +263,8 @@ fn run_retrieval_and_context(
 
     Ok(StrategyRunSummary {
         strategy,
-        selected_memory_ids: memory_ids(&retrieval.selected),
-        omitted_memory_ids: memory_ids(&retrieval.omitted),
+        selected_memory_ids: retrieved_memory_ids(&retrieval.selected),
+        omitted_memory_ids: retrieved_memory_ids(&retrieval.omitted),
         selected_context_ids: assembly
             .selected
             .iter()
@@ -299,13 +299,6 @@ fn retrieval_trace(experiment_id: &str, retrieval: &RetrievalResult) -> TraceRec
     .with_latency_ns(retrieval.latency_ns)
 }
 
-fn memory_ids(memories: &[RetrievedMemory]) -> Vec<String> {
-    memories
-        .iter()
-        .map(|memory| memory.memory.id.clone())
-        .collect()
-}
-
 fn write_fixture_snapshot(context: &RunContext, fixture: &MemoryFixture) -> anyhow::Result<()> {
     let path = context.run_dir().join("memory-fixture.json");
     let contents = serde_json::to_string_pretty(fixture)?;
@@ -324,7 +317,7 @@ fn write_comparison_report(
     runs: &[StrategyRunSummary],
 ) -> anyhow::Result<()> {
     let mut markdown = String::new();
-    markdown.push_str("# Phase 4 Retrieval Comparison\n\n");
+    markdown.push_str("# Retrieval Comparison\n\n");
     markdown.push_str(
         "| Strategy | Selected memories | Selected context | Omitted context | Tokens |\n",
     );
@@ -368,7 +361,6 @@ mod tests {
         )
         .unwrap();
 
-        assert_eq!(context.event_count(), 4);
         assert_eq!(context.trace_count(), 2);
         assert!(!summary.selected_memory_ids.is_empty());
         assert!(!summary.omitted_context_ids.is_empty());

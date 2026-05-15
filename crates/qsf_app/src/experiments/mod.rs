@@ -1,6 +1,7 @@
 //! Experiment definitions, registration, and runner dispatch.
 
 mod audio_preparation_layer;
+mod failure;
 mod memory_and_context;
 mod model_role_smoke;
 mod placeholder;

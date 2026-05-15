@@ -4,15 +4,16 @@ use anyhow::Context;
 use serde_json::json;
 
 use crate::audio::{
-    AudioRuntimeBoundary, AudioRuntimeEntryPoint, AudioSafetyMarkers, TranscriptEventEmission,
-    TranscriptEventTraceIds, TranscriptProvider, TranscriptProviderError,
-    TranscriptProviderRequest, TranscriptProviderSession, build_transcript_provider,
-    record_transcript_runtime_events, requested_transcript_provider_from_env,
+    AudioSafetyMarkers, TranscriptEventEmission, TranscriptEventTraceIds, TranscriptProvider,
+    TranscriptProviderError, TranscriptProviderRequest, TranscriptProviderSession,
+    build_transcript_provider, record_transcript_runtime_events,
+    requested_transcript_provider_from_env, transcript_provider_to_input_boundary,
 };
 use crate::observability::event_log::EventType;
 use crate::observability::trace::TraceRecord;
 use crate::runtime::run_context::RunContext;
 
+use super::failure::{SanitizedFailure, record_sanitized_failure};
 use super::registry::{Experiment, ExperimentName, ExperimentOutcome};
 
 pub struct StreamingTranscriptionMvpExperiment;
@@ -126,7 +127,7 @@ impl StreamingTranscriptionMvpExperiment {
         write_streaming_transcription_report(context, &session)?;
 
         Ok(ExperimentOutcome {
-            summary: "Phase 9 streaming transcription now supports simulated, prerecorded WAV, and live microphone request paths behind the transcript provider boundary, then bridges finalized speech text back into the existing InputReceived runtime event.".to_string(),
+            summary: "Streaming transcription supports simulated, prerecorded WAV, and live microphone request paths behind the transcript provider boundary, then bridges finalized speech text back into the existing InputReceived runtime event.".to_string(),
             observations: vec![
                 "The transcript provider emits partial revisions before one final transcript.".to_string(),
                 "Partial transcripts are logged as AudioPartialTranscript events and do not create InputReceived events.".to_string(),
@@ -141,7 +142,7 @@ impl StreamingTranscriptionMvpExperiment {
                 "Should prerecorded WAV fixtures be added before live microphone testing?".to_string(),
                 "What latency target should first partial transcript events meet for presence experiments?".to_string(),
                 "Should provider errors fall back to typed input or only fail the audio experiment?".to_string(),
-                "Should the AudioFinalTranscript to InputReceived bridge move behind a dedicated reducer or dispatcher before Phase 10?".to_string(),
+                "Should the AudioFinalTranscript to InputReceived bridge move behind a dedicated reducer or dispatcher before full realtime voice sessions?".to_string(),
             ],
             decision_candidates: vec![
                 "Partial transcript events remain observability-only unless a later experiment explicitly allows live-state updates.".to_string(),
@@ -154,13 +155,10 @@ impl StreamingTranscriptionMvpExperiment {
     }
 }
 
-fn transcription_boundary() -> AudioRuntimeBoundary {
-    AudioRuntimeBoundary {
-        entry_point: AudioRuntimeEntryPoint::TranscriptProvider,
-        producer_event: EventType::AudioFinalTranscript,
-        runtime_event: EventType::InputReceived,
-        description: "Final transcript text becomes committed runtime input only after the provider emits AudioFinalTranscript.".to_string(),
-    }
+fn transcription_boundary() -> crate::audio::AudioRuntimeBoundary {
+    transcript_provider_to_input_boundary(
+        "Final transcript text becomes committed runtime input only after the provider emits AudioFinalTranscript.",
+    )
 }
 
 fn record_provider_failure(
@@ -175,28 +173,19 @@ fn record_provider_failure(
         error.sanitized_message()
     );
     let sanitized_message = error.sanitized_message();
-    let trace = TraceRecord::new(
-        context.experiment_id(),
-        "transcript-provider-session",
-        format!("provider={}", error.provider()),
-        "transcription failed before final transcript",
+    record_sanitized_failure(
+        context,
+        SanitizedFailure {
+            event_type: EventType::AudioTranscriptionFailed,
+            operation: "transcript-provider-session",
+            output_summary: "transcription failed before final transcript",
+            latency_stage: "streaming-transcription",
+            provider: error.provider(),
+            error_category: error.category(),
+            sanitized_error: &sanitized_message,
+            extra_payload: serde_json::Map::new(),
+        },
     )
-    .with_latency_context("audio", "streaming-transcription")
-    .with_error(&sanitized_message);
-    let trace_id = trace.trace_id;
-    context.record_trace(trace)?;
-    context.record_event(
-        EventType::AudioTranscriptionFailed,
-        json!({
-            "provider": error.provider(),
-            "error_category": error.category(),
-            "sanitized_error": sanitized_message,
-            "safety": AudioSafetyMarkers::no_secret_or_raw_audio(),
-        }),
-        Some(trace_id),
-    )?;
-
-    Ok(())
 }
 
 fn write_streaming_transcription_report(
@@ -204,7 +193,7 @@ fn write_streaming_transcription_report(
     session: &TranscriptProviderSession,
 ) -> anyhow::Result<()> {
     let mut markdown = String::new();
-    markdown.push_str("# Phase 9 Streaming Transcription MVP\n\n");
+    markdown.push_str("# Streaming Transcription MVP\n\n");
     markdown.push_str("## Provider\n\n");
     markdown.push_str(&format!("- Session id: `{}`\n", session.session_id));
     markdown.push_str(&format!("- Provider: `{}`\n", session.provider_name));
@@ -331,7 +320,7 @@ mod tests {
         assert!(traces.contains("transcript-runtime-bridge"));
         assert!(traces.contains("\"latency_domain\":\"audio\""));
         assert!(traces.contains("\"latency_ms\":86"));
-        assert!(report.contains("Phase 9 Streaming Transcription MVP"));
+        assert!(report.contains("Streaming Transcription MVP"));
 
         fs::remove_dir_all(base_dir).unwrap();
     }

@@ -10,5 +10,5 @@ pub use fixtures::{MemoryFixture, phase_four_fixture};
 pub use memory_record::{MEMORY_RECORD_SCHEMA_VERSION, MemoryRecord, MemoryRecordKind};
 pub use retrieval::{
     AssociationPath, RetrievalResult, RetrievalScore, RetrievalStrategy, RetrievedMemory,
-    retrieve_memories,
+    retrieve_memories, retrieved_memory_ids,
 };

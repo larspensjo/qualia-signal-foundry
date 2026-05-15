@@ -240,3 +240,17 @@ and explain how they affected behavior.
 Refs: docs/Plans/Idea.VolitionGoalSystem.md,
 docs/Plans/Idea.SelfReflectionProjectIntrospection.md,
 docs/ProjectFrame/NonGoals.md
+
+## 2026-05-15 - Experiment artifacts use stable behavior names
+Decision: Generated experiment summaries, report titles, and boundary descriptions use
+stable behavior names instead of temporary phase numbers.
+Context: A review of `crates/qsf_app/src/experiments/` found that milestone labels
+were leaking into runtime artifacts and tests, making reports more likely to rot as
+the roadmap evolves.
+Consequences: Reports and outcome summaries now describe the behavior under test.
+Shared constructors cover the transcript-provider runtime boundary, failure recorders
+emit consistent sanitized events and engine logs, and timing conversions use one
+saturating helper surface.
+Refs: crates/qsf_app/src/experiments,
+crates/qsf_app/src/audio/mod.rs,
+crates/qsf_app/src/observability/trace.rs

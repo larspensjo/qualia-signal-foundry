@@ -4,14 +4,16 @@ use anyhow::Context;
 use serde_json::json;
 
 use crate::audio::{
-    AudioRuntimeBoundary, AudioRuntimeEntryPoint, AudioSafetyMarkers, RealtimeSessionProvider,
+    AudioRuntimeEntryPoint, AudioSafetyMarkers, RealtimeSessionProvider,
     RealtimeSessionProviderError, RealtimeSessionRequest, VoiceProviderSession,
     build_realtime_session_provider, requested_realtime_session_provider_from_env,
+    transcript_provider_to_input_boundary,
 };
 use crate::observability::event_log::EventType;
 use crate::observability::trace::TraceRecord;
 use crate::runtime::run_context::RunContext;
 
+use super::failure::{SanitizedFailure, record_sanitized_failure};
 use super::registry::{Experiment, ExperimentName, ExperimentOutcome};
 
 pub struct RealtimeVoiceSessionExperiment;
@@ -132,7 +134,7 @@ impl RealtimeVoiceSessionExperiment {
         write_realtime_voice_report(context, &session)?;
 
         Ok(ExperimentOutcome {
-            summary: "Phase 10 realtime voice sessions now run behind a RealtimeSessionProvider boundary, map provider lifecycle data into QSF events and traces, and keep transcript, state, output, and tool handling on the framework side of the boundary.".to_string(),
+            summary: "Realtime voice sessions run behind a RealtimeSessionProvider boundary, map provider lifecycle data into QSF events and traces, and keep transcript, state, output, and tool handling on the framework side of the boundary.".to_string(),
             observations: vec![
                 "The default experiment path is deterministic simulation; OpenAI realtime voice is selected explicitly through QSF_REALTIME_SESSION_PROVIDER.".to_string(),
                 "Provider preambles, response lifecycle, speech playback lifecycle, interruptions, and latency are visible as structured records.".to_string(),
@@ -143,7 +145,7 @@ impl RealtimeVoiceSessionExperiment {
                 "The MVP records output audio metadata but does not yet play synthesized audio through a local speaker device.".to_string(),
             ],
             follow_up_questions: vec![
-                "Should Phase 10 add local speaker playback after the provider event boundary is stable?".to_string(),
+                "Should local speaker playback be added after the provider event boundary is stable?".to_string(),
                 "Which interruption timing target best predicts perceived presence?".to_string(),
                 "Should response preambles be promoted into a first-class runtime output category?".to_string(),
             ],
@@ -157,13 +159,10 @@ impl RealtimeVoiceSessionExperiment {
     }
 }
 
-fn voice_runtime_boundary() -> AudioRuntimeBoundary {
-    AudioRuntimeBoundary {
-        entry_point: AudioRuntimeEntryPoint::TranscriptProvider,
-        producer_event: EventType::AudioFinalTranscript,
-        runtime_event: EventType::InputReceived,
-        description: "Realtime session providers emit transcript and response lifecycle facts, but finalized user text still enters QSF as InputReceived.".to_string(),
-    }
+fn voice_runtime_boundary() -> crate::audio::AudioRuntimeBoundary {
+    transcript_provider_to_input_boundary(
+        "Realtime session providers emit transcript and response lifecycle facts, but finalized user text still enters QSF as InputReceived.",
+    )
 }
 
 fn record_voice_session_events(
@@ -420,28 +419,19 @@ fn record_provider_failure(
         error.sanitized_message()
     );
     let sanitized_message = error.sanitized_message();
-    let trace = TraceRecord::new(
-        context.experiment_id(),
-        "realtime-session-provider",
-        format!("provider={}", error.provider()),
-        "realtime voice session failed before completion",
+    record_sanitized_failure(
+        context,
+        SanitizedFailure {
+            event_type: EventType::RealtimeSessionFailed,
+            operation: "realtime-session-provider",
+            output_summary: "realtime voice session failed before completion",
+            latency_stage: "realtime-voice-session",
+            provider: error.provider(),
+            error_category: error.category(),
+            sanitized_error: &sanitized_message,
+            extra_payload: serde_json::Map::new(),
+        },
     )
-    .with_latency_context("audio", "realtime-voice-session")
-    .with_error(&sanitized_message);
-    let trace_id = trace.trace_id;
-    context.record_trace(trace)?;
-    context.record_event(
-        EventType::RealtimeSessionFailed,
-        json!({
-            "provider": error.provider(),
-            "error_category": error.category(),
-            "sanitized_error": sanitized_message,
-            "safety": AudioSafetyMarkers::no_secret_or_raw_audio(),
-        }),
-        Some(trace_id),
-    )?;
-
-    Ok(())
 }
 
 fn write_realtime_voice_report(
@@ -449,7 +439,7 @@ fn write_realtime_voice_report(
     session: &VoiceProviderSession,
 ) -> anyhow::Result<()> {
     let mut markdown = String::new();
-    markdown.push_str("# Phase 10 Realtime Voice Session MVP\n\n");
+    markdown.push_str("# Realtime Voice Session MVP\n\n");
     markdown.push_str("## Provider\n\n");
     markdown.push_str(&format!("- Session id: `{}`\n", session.session_id));
     markdown.push_str(&format!("- Provider: `{}`\n", session.provider_name));
@@ -607,7 +597,7 @@ mod tests {
         assert!(traces.contains("realtime-session-runtime-boundary"));
         assert!(traces.contains("realtime-session-latency"));
         assert!(traces.contains("\"latency_domain\":\"audio\""));
-        assert!(report.contains("Phase 10 Realtime Voice Session MVP"));
+        assert!(report.contains("Realtime Voice Session MVP"));
         assert!(report.contains("Provider tool calls auto-executed: `false`"));
 
         fs::remove_dir_all(base_dir).unwrap();

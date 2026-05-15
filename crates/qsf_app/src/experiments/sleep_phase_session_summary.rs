@@ -6,7 +6,7 @@ use serde_json::json;
 
 use crate::models::{build_client, requested_provider_from_env};
 use crate::observability::event_log::EventType;
-use crate::observability::trace::TraceRecord;
+use crate::observability::trace::{TraceRecord, elapsed_ns};
 use crate::runtime::run_context::RunContext;
 use crate::sleep::{SleepInputBundle, SleepReport, summarize_session};
 
@@ -37,7 +37,7 @@ impl SleepPhaseSessionSummaryExperiment {
         requested_provider: &str,
     ) -> anyhow::Result<ExperimentOutcome> {
         let input =
-            SleepInputBundle::new("session_transcript", "phase-7-sleep-session", SESSION_TEXT)
+            SleepInputBundle::new("session_transcript", "sleep-session-summary", SESSION_TEXT)
                 .with_review_notes(vec![
                 "All memory and decision outputs remain pending human review.".to_string(),
                 "Trace the sleep report back to the session transcript rather than hidden state."
@@ -70,11 +70,7 @@ impl SleepPhaseSessionSummaryExperiment {
         let client = build_client(requested_provider)?;
         let started_at = Instant::now();
         let summary = summarize_session(context, client.as_ref(), &input)?;
-        let elapsed_ns = started_at
-            .elapsed()
-            .as_nanos()
-            .try_into()
-            .unwrap_or(u64::MAX);
+        let elapsed_ns = elapsed_ns(started_at);
 
         let sleep_trace = TraceRecord::new(
             context.experiment_id(),
@@ -128,11 +124,11 @@ impl SleepPhaseSessionSummaryExperiment {
 
         Ok(ExperimentOutcome {
             summary: format!(
-                "Phase 7 sleep MVP summarized a short session through the `{}` provider, wrote a reviewable sleep report artifact, and recorded explicit sleep-phase events and traces without promoting any candidate into an accepted decision.",
+                "The sleep session summary experiment summarized a short session through the `{}` provider, wrote a reviewable sleep report artifact, and recorded explicit sleep-phase events and traces without promoting any candidate into an accepted decision.",
                 summary.response.provider_name
             ),
             observations: vec![
-                "The sleep phase now reuses the Phase 6 model-role path, so provider selection, latency, and usage stay observable without special-case plumbing.".to_string(),
+                "The sleep phase reuses the model-role path, so provider selection, latency, and usage stay observable without special-case plumbing.".to_string(),
                 "Sleep reports preserve separate fields for summary, memory candidates, open questions, decision candidates, and future context hints.".to_string(),
                 "Review notes are carried into the artifact so the output stays explicitly provisional.".to_string(),
             ],
@@ -170,7 +166,7 @@ fn write_sleep_artifacts(
     })?;
 
     let mut markdown = String::new();
-    markdown.push_str("# Phase 7 Sleep Report\n\n");
+    markdown.push_str("# Sleep Report\n\n");
     markdown.push_str(&format!(
         "- Source: `{}` ({})\n",
         input.source_label, input.source_kind
@@ -244,13 +240,12 @@ mod tests {
         let traces = fs::read_to_string(context.run_dir().join("traces.jsonl")).unwrap();
         let sleep_report = fs::read_to_string(context.run_dir().join("sleep-report.md")).unwrap();
 
-        assert_eq!(context.event_count(), 6);
         assert_eq!(context.trace_count(), 2);
-        assert!(outcome.summary.contains("Phase 7 sleep MVP"));
+        assert!(outcome.summary.contains("sleep session summary"));
         assert!(events.contains("SleepPhaseRequested"));
         assert!(events.contains("SleepPhaseCompleted"));
         assert!(traces.contains("sleep-phase-summary"));
-        assert!(sleep_report.contains("Phase 7 Sleep Report"));
+        assert!(sleep_report.contains("Sleep Report"));
         assert!(sleep_report.contains("manual review"));
 
         fs::remove_dir_all(base_dir).unwrap();
