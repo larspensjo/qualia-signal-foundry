@@ -224,3 +224,19 @@ observations with references, not raw repository dumps.
 Refs: docs/Plans/Idea.SelfReflectionProjectIntrospection.md,
 docs/Concepts/Concept.ToolsAsPerception.md,
 docs/Architecture/Architecture.ContextManagement.md
+
+## 2026-05-15 - Volition is an explicit research surface
+Decision: Explore a goal or volition system as inspectable simulation state that can
+create internal initiative, such as revisiting open questions, requesting reflection,
+or proposing experiments.
+Context: Existing docs mention goals, tensions, motivational models, and research
+planning, but they do not yet separate simulated initiative from uncontrolled external
+agency. Human biological drives such as survival and reproduction are not the right
+default for this project.
+Consequences: Early goal-system work should avoid specifying final goals and should
+start with read-only, observable fixtures that influence attention, reflection, and
+proposals only. The introspection mechanism should be able to inspect active goals
+and explain how they affected behavior.
+Refs: docs/Plans/Idea.VolitionGoalSystem.md,
+docs/Plans/Idea.SelfReflectionProjectIntrospection.md,
+docs/ProjectFrame/NonGoals.md
