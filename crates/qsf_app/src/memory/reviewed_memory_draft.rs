@@ -4,9 +4,11 @@ use std::path::{Path, PathBuf};
 use anyhow::Context;
 use time::OffsetDateTime;
 
-use crate::sleep::{SleepMemoryCandidate, SleepReport, parse_sleep_report};
+use crate::sleep::{
+    SleepAssociationCandidate, SleepMemoryCandidate, SleepReport, parse_sleep_report,
+};
 
-use super::association::ensure_current_association_schema;
+use super::association::{Association, ensure_current_association_schema};
 use super::fixtures::MemoryFixture;
 use super::memory_record::{
     MEMORY_RECORD_SCHEMA_VERSION, MemoryRecord, MemoryRecordKind, ensure_current_memory_schema,
@@ -15,18 +17,38 @@ use super::memory_record::{
 pub const REVIEWED_MEMORY_DRAFT_JSON: &str = "reviewed-memory-draft.json";
 pub const REVIEWED_MEMORY_DRAFT_MARKDOWN: &str = "reviewed-memory-draft.md";
 pub const DEFAULT_DRAFT_IMPORTANCE: f64 = 0.3;
+const MIN_DRAFT_ASSOCIATION_WEIGHT: f64 = 0.2;
+const MAX_DRAFT_ASSOCIATIONS: usize = 5;
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct ReviewedMemoryDraft {
     pub source_sleep_run_id: String,
     pub source_sleep_report_path: PathBuf,
     pub fixture: MemoryFixture,
+    pub association_reviews: Vec<AssociationDraftReview>,
 }
 
 impl ReviewedMemoryDraft {
     pub fn record_count(&self) -> usize {
         self.fixture.records.len()
     }
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct AssociationDraftReview {
+    pub from_candidate_index: usize,
+    pub to_candidate_index: usize,
+    pub from_memory_id: Option<String>,
+    pub to_memory_id: Option<String>,
+    pub weight: Option<f64>,
+    pub reason: Option<String>,
+    pub status: AssociationDraftStatus,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum AssociationDraftStatus {
+    Included,
+    Omitted(String),
 }
 
 pub fn load_reviewed_memory_draft(
@@ -68,7 +90,7 @@ pub fn convert_sleep_report_to_reviewed_memory_draft(
     let sleep_report_path = sleep_report_path.as_ref();
     let source_sleep_run_id = source_sleep_run_id_from_path(sleep_report_path);
     let sanitized_source_sleep_run_id = sanitize_memory_id_segment(&source_sleep_run_id);
-    let records = report
+    let records: Vec<MemoryRecord> = report
         .memory_candidates
         .iter()
         .enumerate()
@@ -82,14 +104,17 @@ pub fn convert_sleep_report_to_reviewed_memory_draft(
             )
         })
         .collect();
+    let (associations, association_reviews) =
+        convert_association_candidates(&report.association_candidates, &records, created_at);
 
     ReviewedMemoryDraft {
         source_sleep_run_id,
         source_sleep_report_path: sleep_report_path.to_path_buf(),
         fixture: MemoryFixture {
             records,
-            associations: vec![],
+            associations,
         },
+        association_reviews,
     }
 }
 
@@ -142,7 +167,11 @@ pub fn render_reviewed_memory_draft_markdown(
     markdown.push_str(
         "- Review policy: provisional until manually accepted; this file does not mutate durable memory\n",
     );
-    markdown.push_str("- Associations: none generated in this draft\n");
+    markdown.push_str(&format!(
+        "- Associations: `{}` included draft links, `{}` suggestions visible for review\n",
+        draft.fixture.associations.len(),
+        draft.association_reviews.len()
+    ));
 
     markdown.push_str("\n## Candidate Memory Records\n\n");
 
@@ -153,6 +182,8 @@ pub fn render_reviewed_memory_draft_markdown(
             push_memory_record_markdown(&mut markdown, index, record);
         }
     }
+
+    push_association_drafts_markdown(&mut markdown, draft);
 
     markdown.push_str("\n## File-Backed Voice Test\n\n");
     markdown.push_str(
@@ -169,6 +200,64 @@ pub fn render_reviewed_memory_draft_markdown(
     markdown.push_str("```\n");
 
     markdown
+}
+
+fn push_association_drafts_markdown(markdown: &mut String, draft: &ReviewedMemoryDraft) {
+    markdown.push_str("\n## Association Drafts\n\n");
+    markdown.push_str(
+        "Association suggestions are draft-only. Included links still require manual review before acceptance.\n\n",
+    );
+
+    if draft.association_reviews.is_empty() {
+        markdown.push_str("- None suggested.\n");
+        return;
+    }
+
+    for review in &draft.association_reviews {
+        markdown.push_str(&format!(
+            "### association_candidates[{} -> {}]\n\n",
+            association_candidate_index_label(review.from_candidate_index),
+            association_candidate_index_label(review.to_candidate_index)
+        ));
+        markdown.push_str("Review:\n");
+        markdown.push_str("- [ ] endpoints exist\n");
+        markdown.push_str("- [ ] reason is grounded\n");
+        markdown.push_str("- [ ] weight is appropriate\n");
+        markdown.push_str("- [ ] keep link?\n\n");
+        markdown.push_str(&format!(
+            "- From memory: {}\n",
+            markdown_optional_code(review.from_memory_id.as_deref())
+        ));
+        markdown.push_str(&format!(
+            "- To memory: {}\n",
+            markdown_optional_code(review.to_memory_id.as_deref())
+        ));
+        markdown.push_str(&format!(
+            "- Weight: {}\n",
+            review
+                .weight
+                .map(|weight| format!("`{weight:.2}`"))
+                .unwrap_or_else(|| "(missing)".to_string())
+        ));
+        markdown.push_str(&format!(
+            "- Reason: {}\n",
+            review
+                .reason
+                .as_deref()
+                .map(|reason| format!("`{reason}`"))
+                .unwrap_or_else(|| "(missing)".to_string())
+        ));
+        markdown.push_str(&format!(
+            "- Status: {}\n\n",
+            association_status_label(&review.status)
+        ));
+    }
+}
+
+fn markdown_optional_code(value: Option<&str>) -> String {
+    value
+        .map(|value| format!("`{value}`"))
+        .unwrap_or_else(|| "(missing)".to_string())
 }
 
 fn push_memory_record_markdown(markdown: &mut String, index: usize, record: &MemoryRecord) {
@@ -242,6 +331,13 @@ fn powershell_path(path: &Path) -> String {
     path.display().to_string().replace('/', "\\")
 }
 
+fn association_status_label(status: &AssociationDraftStatus) -> String {
+    match status {
+        AssociationDraftStatus::Included => "`included in draft fixture`".to_string(),
+        AssociationDraftStatus::Omitted(reason) => format!("`omitted: {reason}`"),
+    }
+}
+
 fn convert_memory_candidate(
     candidate: &SleepMemoryCandidate,
     source_sleep_run_id: &str,
@@ -278,6 +374,118 @@ fn convert_memory_candidate(
         reinforcement_count: 0,
         source_reference,
         estimated_tokens: estimated_tokens(&summary),
+    }
+}
+
+fn convert_association_candidates(
+    candidates: &[SleepAssociationCandidate],
+    records: &[MemoryRecord],
+    created_at: OffsetDateTime,
+) -> (Vec<Association>, Vec<AssociationDraftReview>) {
+    let mut associations = Vec::new();
+    let mut reviews = Vec::new();
+
+    for candidate in candidates {
+        let from_memory_id = candidate
+            .from_memory_candidate_index
+            .checked_sub(1)
+            .and_then(|index| records.get(index))
+            .map(|record| record.id.clone());
+        let to_memory_id = candidate
+            .to_memory_candidate_index
+            .checked_sub(1)
+            .and_then(|index| records.get(index))
+            .map(|record| record.id.clone());
+        let reason = candidate
+            .reason
+            .as_deref()
+            .map(str::trim)
+            .filter(|reason| !reason.is_empty())
+            .map(ToOwned::to_owned);
+        // Sleep report parsing already clamps model-provided weights; keep this
+        // defensive clamp for direct converter inputs and future compatibility readers.
+        let weight = candidate.weight.map(|weight| weight.clamp(0.0, 1.0));
+
+        let status = association_candidate_status(
+            from_memory_id.as_deref(),
+            to_memory_id.as_deref(),
+            weight,
+            reason.as_deref(),
+            associations.len(),
+        );
+
+        if let (
+            AssociationDraftStatus::Included,
+            Some(from_memory_id),
+            Some(to_memory_id),
+            Some(weight),
+            Some(reason),
+        ) = (
+            &status,
+            from_memory_id.as_ref(),
+            to_memory_id.as_ref(),
+            weight,
+            reason.as_ref(),
+        ) {
+            associations.push(Association::new(
+                from_memory_id.clone(),
+                to_memory_id.clone(),
+                weight,
+                reason.clone(),
+                created_at,
+            ));
+        }
+
+        reviews.push(AssociationDraftReview {
+            from_candidate_index: candidate.from_memory_candidate_index,
+            to_candidate_index: candidate.to_memory_candidate_index,
+            from_memory_id,
+            to_memory_id,
+            weight,
+            reason,
+            status,
+        });
+    }
+
+    (associations, reviews)
+}
+
+fn association_candidate_status(
+    from_memory_id: Option<&str>,
+    to_memory_id: Option<&str>,
+    weight: Option<f64>,
+    reason: Option<&str>,
+    included_count: usize,
+) -> AssociationDraftStatus {
+    // Short-circuits on first failure — a candidate with multiple problems
+    // only surfaces the first one in the review Markdown.
+    match (from_memory_id, to_memory_id, weight, reason) {
+        (None, _, _, _) => {
+            AssociationDraftStatus::Omitted("source memory candidate index not found".to_string())
+        }
+        (_, None, _, _) => {
+            AssociationDraftStatus::Omitted("target memory candidate index not found".to_string())
+        }
+        (Some(from_memory_id), Some(to_memory_id), _, _) if from_memory_id == to_memory_id => {
+            AssociationDraftStatus::Omitted("self-association is not useful".to_string())
+        }
+        (_, _, None, _) => {
+            AssociationDraftStatus::Omitted("association weight is required".to_string())
+        }
+        (_, _, Some(weight), _) if weight < MIN_DRAFT_ASSOCIATION_WEIGHT => {
+            AssociationDraftStatus::Omitted(format!(
+                "weak association weight below {MIN_DRAFT_ASSOCIATION_WEIGHT:.2}"
+            ))
+        }
+        (_, _, _, None) => {
+            AssociationDraftStatus::Omitted("association reason is required".to_string())
+        }
+        (_, _, _, _) if included_count >= MAX_DRAFT_ASSOCIATIONS => {
+            AssociationDraftStatus::Omitted(format!(
+                "draft association limit of {MAX_DRAFT_ASSOCIATIONS} reached"
+            ))
+        }
+        _ => AssociationDraftStatus::Included,
     }
 }
 
@@ -330,6 +538,10 @@ fn sanitize_memory_id_segment(value: &str) -> String {
 
 fn candidate_index_label(index: usize) -> String {
     format!("{:03}", index + 1)
+}
+
+fn association_candidate_index_label(index: usize) -> String {
+    format!("{index:03}")
 }
 
 fn title_from_summary(summary: &str, index: usize) -> String {
@@ -497,6 +709,168 @@ mod tests {
     }
 
     #[test]
+    fn converts_valid_association_candidate_into_draft_association() {
+        let report = parse_sleep_report(&json!({
+            "session_summary": "Short summary.",
+            "memory_candidates": [
+                "Reducers stay pure.",
+                "Runtime events feed state."
+            ],
+            "association_candidates": [
+                {
+                    "from_memory_candidate_index": 1,
+                    "to_memory_candidate_index": 2,
+                    "weight": 0.72,
+                    "reason": "Both describe the reducer event flow."
+                }
+            ],
+            "open_questions": [],
+            "decision_candidates": [],
+            "future_context_hints": [],
+            "review_notes": []
+        }))
+        .unwrap();
+
+        let draft = convert_sleep_report_to_reviewed_memory_draft(
+            &report,
+            Path::new("runs/source-sleep/sleep-report.json"),
+            timestamp(),
+        );
+
+        assert_eq!(draft.fixture.associations.len(), 1);
+        assert_eq!(
+            draft.fixture.associations[0].from_memory_id,
+            "memory.sleep.source-sleep.001"
+        );
+        assert_eq!(
+            draft.fixture.associations[0].to_memory_id,
+            "memory.sleep.source-sleep.002"
+        );
+        assert_eq!(draft.fixture.associations[0].weight, 0.72);
+        assert_eq!(
+            draft.fixture.associations[0].reason,
+            "Both describe the reducer event flow."
+        );
+        assert_eq!(
+            draft.fixture.associations[0].last_reinforced_at,
+            timestamp()
+        );
+        assert_eq!(
+            draft.association_reviews[0].status,
+            AssociationDraftStatus::Included
+        );
+        assert!(ensure_current_association_schema(&draft.fixture.associations).is_ok());
+        assert!(
+            draft
+                .fixture
+                .records
+                .iter()
+                .all(|record| record.reinforcement_count == 0)
+        );
+    }
+
+    #[test]
+    fn omits_invalid_or_weak_association_candidates_but_keeps_review_notes() {
+        let report = parse_sleep_report(&json!({
+            "session_summary": "Short summary.",
+            "memory_candidates": [
+                "Reducers stay pure.",
+                "Runtime events feed state."
+            ],
+            "association_candidates": [
+                {
+                    "from_memory_candidate_index": 1,
+                    "to_memory_candidate_index": 3,
+                    "weight": 0.72,
+                    "reason": "Target does not exist."
+                },
+                {
+                    "from_memory_candidate_index": 1,
+                    "to_memory_candidate_index": 2,
+                    "weight": 0.05,
+                    "reason": "Too weak to include."
+                },
+                {
+                    "from_memory_candidate_index": 1,
+                    "to_memory_candidate_index": 2,
+                    "weight": 0.72,
+                    "reason": "   "
+                },
+                {
+                    "from_memory_candidate_index": 1,
+                    "to_memory_candidate_index": 2,
+                    "reason": "Has reason but no weight"
+                }
+            ],
+            "open_questions": [],
+            "decision_candidates": [],
+            "future_context_hints": [],
+            "review_notes": []
+        }))
+        .unwrap();
+
+        let draft = convert_sleep_report_to_reviewed_memory_draft(
+            &report,
+            Path::new("runs/source-sleep/sleep-report.json"),
+            timestamp(),
+        );
+
+        assert!(draft.fixture.associations.is_empty());
+        assert_eq!(draft.association_reviews.len(), 4);
+        assert_eq!(
+            draft.association_reviews[0].status,
+            AssociationDraftStatus::Omitted("target memory candidate index not found".to_string())
+        );
+        assert_eq!(
+            draft.association_reviews[1].status,
+            AssociationDraftStatus::Omitted("weak association weight below 0.20".to_string())
+        );
+        assert_eq!(
+            draft.association_reviews[2].status,
+            AssociationDraftStatus::Omitted("association reason is required".to_string())
+        );
+        assert_eq!(
+            draft.association_reviews[3].status,
+            AssociationDraftStatus::Omitted("association weight is required".to_string())
+        );
+    }
+
+    #[test]
+    fn self_association_surfaces_before_missing_reason() {
+        let report = parse_sleep_report(&json!({
+            "session_summary": "Short summary.",
+            "memory_candidates": [
+                "Reducers stay pure.",
+                "Runtime events feed state."
+            ],
+            "association_candidates": [
+                {
+                    "from_memory_candidate_index": 1,
+                    "to_memory_candidate_index": 1,
+                    "weight": 0.72
+                }
+            ],
+            "open_questions": [],
+            "decision_candidates": [],
+            "future_context_hints": [],
+            "review_notes": []
+        }))
+        .unwrap();
+
+        let draft = convert_sleep_report_to_reviewed_memory_draft(
+            &report,
+            Path::new("runs/source-sleep/sleep-report.json"),
+            timestamp(),
+        );
+
+        assert_eq!(draft.association_reviews.len(), 1);
+        assert_eq!(
+            draft.association_reviews[0].status,
+            AssociationDraftStatus::Omitted("self-association is not useful".to_string())
+        );
+    }
+
+    #[test]
     fn candidate_importance_is_clamped_when_built_directly() {
         let high_importance = SleepMemoryCandidate {
             summary: "High importance should clamp.".to_string(),
@@ -568,6 +942,20 @@ mod tests {
                 },
                 "Second memory."
             ],
+            "association_candidates": [
+                {
+                    "from_memory_candidate_index": 1,
+                    "to_memory_candidate_index": 2,
+                    "weight": 0.64,
+                    "reason": "The second candidate elaborates the first."
+                },
+                {
+                    "from_memory_candidate_index": 1,
+                    "to_memory_candidate_index": 3,
+                    "weight": 0.64,
+                    "reason": "Target is absent."
+                }
+            ],
             "open_questions": [],
             "decision_candidates": [],
             "future_context_hints": [],
@@ -599,6 +987,7 @@ mod tests {
         );
         assert!(markdown.contains("Review policy: provisional until manually accepted"));
         assert!(markdown.contains("## Candidate Memory Records"));
+        assert!(markdown.contains("## Association Drafts"));
     }
 
     #[test]
@@ -619,6 +1008,21 @@ mod tests {
         assert!(markdown.contains("- [ ] kind"));
         assert!(markdown.contains("- [ ] tags"));
         assert!(markdown.contains("- [ ] reject?"));
+    }
+
+    #[test]
+    fn markdown_includes_association_drafts_and_omissions() {
+        let markdown = render_sample_review_markdown();
+
+        assert!(markdown.contains("Associations: `1` included draft links"));
+        assert!(markdown.contains("association_candidates[001 -> 002]"));
+        assert!(markdown.contains("From memory: `memory.sleep.source-sleep-run.001`"));
+        assert!(markdown.contains("To memory: `memory.sleep.source-sleep-run.002`"));
+        assert!(markdown.contains("Weight: `0.64`"));
+        assert!(markdown.contains("Reason: `The second candidate elaborates the first.`"));
+        assert!(markdown.contains("Status: `included in draft fixture`"));
+        assert!(markdown.contains("association_candidates[001 -> 003]"));
+        assert!(markdown.contains("Status: `omitted: target memory candidate index not found`"));
     }
 
     #[test]

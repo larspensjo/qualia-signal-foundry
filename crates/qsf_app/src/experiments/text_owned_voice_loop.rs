@@ -1196,7 +1196,7 @@ mod tests {
         TranscriptProviderSession,
     };
     use crate::experiments::registry::{Experiment, ExperimentName};
-    use crate::memory::{MemoryFixture, MemoryRecord, MemoryRecordKind};
+    use crate::memory::{Association, MemoryFixture, MemoryRecord, MemoryRecordKind};
     use crate::models::{MockModelClient, ModelClient, ModelRequest, ModelResponse, ModelUsage};
     use crate::observability::event_log::{EventRecord, EventType};
     use crate::runtime::run_context::RunContext;
@@ -1505,6 +1505,80 @@ mod tests {
                 .contains("reviewed draft memory")
         );
         assert_output_text_is_handed_exactly_to_speech_provider(&event_records);
+
+        fs::remove_dir_all(base_dir).unwrap();
+    }
+
+    #[test]
+    fn file_memory_source_retrieval_trace_exposes_association_path() {
+        let base_dir =
+            std::env::temp_dir().join(format!("qsf-text-owned-association-{}", Uuid::new_v4()));
+        fs::create_dir_all(&base_dir).unwrap();
+        let source_path = base_dir.join("reviewed-memory-draft.json");
+        let seed_id = "memory.sleep.reviewed-source.001";
+        let associated_id = "memory.sleep.reviewed-source.002";
+        let fixture = MemoryFixture {
+            records: vec![
+                MemoryRecord::new(
+                    seed_id,
+                    MemoryRecordKind::Observation,
+                    "Streaming seed",
+                    "Streaming.",
+                    vec![],
+                    timestamp("2026-05-16T07:00:00Z"),
+                    0.0,
+                    0,
+                    "sleep-run:reviewed-source#memory_candidates[001]",
+                    3,
+                ),
+                MemoryRecord::new(
+                    associated_id,
+                    MemoryRecordKind::Observation,
+                    "Associated draft memory",
+                    "A linked reviewed memory can surface through a draft association.",
+                    vec![],
+                    timestamp("2026-05-16T07:01:00Z"),
+                    1.0,
+                    0,
+                    "sleep-run:reviewed-source#memory_candidates[002]",
+                    15,
+                ),
+            ],
+            associations: vec![Association::new(
+                seed_id,
+                associated_id,
+                1.0,
+                "Streaming seed points to associated reviewed memory.",
+                timestamp("2026-05-16T07:02:00Z"),
+            )],
+        };
+        fs::write(
+            &source_path,
+            serde_json::to_string_pretty(&fixture).unwrap(),
+        )
+        .unwrap();
+        let mut context = RunContext::create_in(&base_dir, "text-owned-voice-loop").unwrap();
+        let experiment = TextOwnedVoiceLoopExperiment;
+
+        experiment
+            .run_with_components_and_memory_source(
+                &mut context,
+                &SimulatedTranscriptProvider,
+                &MockModelClient::default(),
+                &SimulatedSpeechOutputProvider,
+                &FileVoiceMemorySource::new(&source_path),
+            )
+            .unwrap();
+
+        let report =
+            fs::read_to_string(context.run_dir().join("text-owned-voice-loop.md")).unwrap();
+        let traces = fs::read_to_string(context.run_dir().join("traces.jsonl")).unwrap();
+
+        assert!(report.contains(&format!("Selected memory context: `{associated_id}`")));
+        assert!(traces.contains("\"association_paths\""));
+        assert!(traces.contains(seed_id));
+        assert!(traces.contains(associated_id));
+        assert!(traces.contains("Streaming seed points to associated reviewed memory."));
 
         fs::remove_dir_all(base_dir).unwrap();
     }

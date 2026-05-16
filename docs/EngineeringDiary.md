@@ -810,3 +810,26 @@ What changed:
   that memory, exact speech handoff, and no raw-audio logging.
 
 Refs: crates/qsf_app/src/experiments/text_owned_voice_loop.rs
+
+## 2026-05-16 - Reviewed memory association drafts
+
+Added provisional association suggestions to reviewed memory draft conversion.
+
+What changed:
+- Sleep reports now accept optional `association_candidates` with 1-based memory
+  candidate endpoints, weight, and reason.
+- Reviewed memory conversion includes only valid draft associations whose endpoints
+  exist, whose reason is non-empty, whose weight is strong enough, and whose inclusion
+  stays within a small draft graph limit.
+- Omitted or weak association suggestions are kept visible in the Markdown review
+  artifact with omission reasons instead of silently disappearing.
+- Sleep reports and reviewed draft Markdown now show association candidate sections.
+- Added a file-backed voice-loop test proving retrieval traces expose association paths
+  when a draft association influences selected memory.
+
+Refs: crates/qsf_app/src/sleep/sleep_report.rs,
+crates/qsf_app/src/sleep/session_summary.rs,
+crates/qsf_app/src/experiments/sleep_phase_session_summary.rs,
+crates/qsf_app/src/memory/reviewed_memory_draft.rs,
+crates/qsf_app/src/experiments/reviewed_memory_draft.rs,
+crates/qsf_app/src/experiments/text_owned_voice_loop.rs

@@ -8,7 +8,7 @@ use crate::runtime::run_context::RunContext;
 
 use super::sleep_report::{SleepInputBundle, SleepReport, parse_sleep_report};
 
-const SLEEP_PHASE_SYSTEM_PROMPT: &str = "You are the Qualia Signal Foundry sleep-phase summarizer. Return a single JSON object with these fields: session_summary, memory_candidates, open_questions, decision_candidates, future_context_hints, review_notes. Keep decision_candidates explicitly provisional and do not invent accepted decisions.";
+const SLEEP_PHASE_SYSTEM_PROMPT: &str = "You are the Qualia Signal Foundry sleep-phase summarizer. Return a single JSON object with these fields: session_summary, memory_candidates, open_questions, decision_candidates, future_context_hints, review_notes. You may include association_candidates with from_memory_candidate_index, to_memory_candidate_index, weight, and reason when a provisional link is clearly grounded. Keep decision_candidates and association_candidates explicitly provisional and do not invent accepted decisions.";
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct SleepSummaryResult {
@@ -64,7 +64,7 @@ fn build_sleep_user_prompt(input: &SleepInputBundle) -> String {
     }
 
     prompt.push_str(
-        "\nReturn concise reviewable sleep output. Memory candidates may be strings or objects with summary, importance, and source_reference.",
+        "\nReturn concise reviewable sleep output. Memory candidates may be strings or objects with summary, importance, and source_reference. Association candidates are optional and must include a specific reason.",
     );
     prompt
 }

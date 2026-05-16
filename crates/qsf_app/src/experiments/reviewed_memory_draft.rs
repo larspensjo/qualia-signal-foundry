@@ -75,8 +75,9 @@ impl ReviewedMemoryDraftExperiment {
                 draft.source_sleep_report_path.display()
             ),
             format!(
-                "wrote {} draft records and 0 associations",
-                draft.record_count()
+                "wrote {} draft records and {} draft associations",
+                draft.record_count(),
+                draft.fixture.associations.len()
             ),
         )
         .with_details(json!({
@@ -110,7 +111,7 @@ impl ReviewedMemoryDraftExperiment {
                 draft.source_sleep_run_id
             ),
             observations: vec![
-                "The conversion writes a MemoryFixture JSON with empty associations for explicit review.".to_string(),
+                "The conversion writes a MemoryFixture JSON with draft associations only when source suggestions pass endpoint and reason validation.".to_string(),
                 "The Markdown companion keeps the source sleep run and candidate indexes visible without requiring event-log inspection.".to_string(),
                 "The draft remains disconnected from the text-owned voice loop until selected explicitly as a file-backed memory source.".to_string(),
             ],

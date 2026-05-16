@@ -100,6 +100,7 @@ impl SleepPhaseSessionSummaryExperiment {
                 "provider_name": &summary.response.provider_name,
                 "model_name": &summary.response.model_name,
                 "memory_candidate_count": summary.report.memory_candidates.len(),
+                "association_candidate_count": summary.report.association_candidates.len(),
                 "open_question_count": summary.report.open_questions.len(),
                 "decision_candidate_count": summary.report.decision_candidates.len(),
                 "future_context_hint_count": summary.report.future_context_hints.len(),
@@ -188,6 +189,24 @@ fn write_sleep_artifacts(
             }
             if let Some(source_reference) = &candidate.source_reference {
                 markdown.push_str(&format!(" [{}]", source_reference));
+            }
+            markdown.push('\n');
+        }
+    }
+    markdown.push_str("\n## Association Candidates\n\n");
+    if report.association_candidates.is_empty() {
+        markdown.push_str("- None recorded.\n");
+    } else {
+        for candidate in &report.association_candidates {
+            markdown.push_str(&format!(
+                "- memory_candidates[{:03}] -> memory_candidates[{:03}]",
+                candidate.from_memory_candidate_index, candidate.to_memory_candidate_index
+            ));
+            if let Some(weight) = candidate.weight {
+                markdown.push_str(&format!(" (weight {:.2})", weight));
+            }
+            if let Some(reason) = &candidate.reason {
+                markdown.push_str(&format!(" [{reason}]"));
             }
             markdown.push('\n');
         }

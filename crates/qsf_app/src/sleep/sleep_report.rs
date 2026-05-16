@@ -42,9 +42,18 @@ pub struct SleepMemoryCandidate {
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+pub struct SleepAssociationCandidate {
+    pub from_memory_candidate_index: usize,
+    pub to_memory_candidate_index: usize,
+    pub weight: Option<f64>,
+    pub reason: Option<String>,
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 pub struct SleepReport {
     pub session_summary: String,
     pub memory_candidates: Vec<SleepMemoryCandidate>,
+    pub association_candidates: Vec<SleepAssociationCandidate>,
     pub open_questions: Vec<String>,
     pub decision_candidates: Vec<String>,
     pub future_context_hints: Vec<String>,
@@ -54,8 +63,9 @@ pub struct SleepReport {
 impl SleepReport {
     pub fn counts_summary(&self) -> String {
         format!(
-            "memory_candidates={} open_questions={} decision_candidates={} future_context_hints={}",
+            "memory_candidates={} association_candidates={} open_questions={} decision_candidates={} future_context_hints={}",
             self.memory_candidates.len(),
+            self.association_candidates.len(),
             self.open_questions.len(),
             self.decision_candidates.len(),
             self.future_context_hints.len()
@@ -67,6 +77,7 @@ pub fn parse_sleep_report(value: &Value) -> anyhow::Result<SleepReport> {
     Ok(SleepReport {
         session_summary: required_string(value, "session_summary")?,
         memory_candidates: parse_memory_candidates(value, "memory_candidates")?,
+        association_candidates: parse_association_candidates(value, "association_candidates")?,
         open_questions: parse_summary_list(value, "open_questions")?,
         decision_candidates: parse_summary_list(value, "decision_candidates")?,
         future_context_hints: parse_summary_list(value, "future_context_hints")?,
@@ -101,6 +112,44 @@ fn parse_memory_candidates(
         .collect()
 }
 
+fn parse_association_candidates(
+    value: &Value,
+    field_name: &'static str,
+) -> anyhow::Result<Vec<SleepAssociationCandidate>> {
+    let Some(entries) = optional_array(value, field_name)? else {
+        return Ok(vec![]);
+    };
+
+    entries
+        .iter()
+        .enumerate()
+        .map(|(index, entry)| match entry {
+            Value::Object(_) => Ok(SleepAssociationCandidate {
+                from_memory_candidate_index: required_positive_usize(
+                    entry,
+                    "from_memory_candidate_index",
+                )
+                .with_context(|| {
+                    format!("expected `{field_name}[{index}]` to contain a 1-based source index")
+                })?,
+                to_memory_candidate_index: required_positive_usize(
+                    entry,
+                    "to_memory_candidate_index",
+                )
+                .with_context(|| {
+                    format!("expected `{field_name}[{index}]` to contain a 1-based target index")
+                })?,
+                weight: optional_probability(entry, "weight")?,
+                reason: optional_string(entry, "reason"),
+            }),
+            _ => bail!(
+                "expected `{field_name}[{index}]` to be an object, got {}",
+                value_type_name(entry)
+            ),
+        })
+        .collect()
+}
+
 fn parse_summary_list(value: &Value, field_name: &'static str) -> anyhow::Result<Vec<String>> {
     let entries = required_array(value, field_name)?;
     entries
@@ -127,6 +176,18 @@ fn required_string(value: &Value, field_name: &'static str) -> anyhow::Result<St
         .ok_or_else(|| anyhow!("missing or non-string required field `{field_name}`"))
 }
 
+fn required_positive_usize(value: &Value, field_name: &'static str) -> anyhow::Result<usize> {
+    let number = value
+        .get(field_name)
+        .and_then(Value::as_u64)
+        .ok_or_else(|| anyhow!("missing or non-integer required field `{field_name}`"))?;
+    if number == 0 {
+        bail!("field `{field_name}` must be 1 or greater");
+    }
+
+    usize::try_from(number).with_context(|| format!("field `{field_name}` is too large"))
+}
+
 fn optional_string(value: &Value, field_name: &'static str) -> Option<String> {
     value
         .get(field_name)
@@ -148,6 +209,20 @@ fn required_array<'a>(value: &'a Value, field_name: &'static str) -> anyhow::Res
         .and_then(Value::as_array)
         .map(Vec::as_slice)
         .ok_or_else(|| anyhow!("missing or non-array required field `{field_name}`"))
+}
+
+fn optional_array<'a>(
+    value: &'a Value,
+    field_name: &'static str,
+) -> anyhow::Result<Option<&'a [Value]>> {
+    match value.get(field_name) {
+        Some(Value::Array(entries)) => Ok(Some(entries.as_slice())),
+        Some(other) => bail!(
+            "expected optional `{field_name}` to be an array when present, got {}",
+            value_type_name(other)
+        ),
+        None => Ok(None),
+    }
 }
 
 fn value_type_name(value: &Value) -> &'static str {
@@ -196,6 +271,7 @@ mod tests {
         .unwrap();
 
         assert_eq!(report.memory_candidates.len(), 1);
+        assert!(report.association_candidates.is_empty());
         assert_eq!(report.memory_candidates[0].importance, Some(1.0));
         assert_eq!(report.review_notes, vec!["Pending review."]);
     }
@@ -214,6 +290,42 @@ mod tests {
 
         assert_eq!(report.memory_candidates[0].summary, "Reducers stay pure.");
         assert_eq!(report.memory_candidates[0].importance, None);
+    }
+
+    #[test]
+    fn parse_sleep_report_accepts_optional_association_candidates() {
+        let report = parse_sleep_report(&json!({
+            "session_summary": "Short summary.",
+            "memory_candidates": ["Reducers stay pure.", "Events feed state."],
+            "association_candidates": [
+                {
+                    "from_memory_candidate_index": 1,
+                    "to_memory_candidate_index": 2,
+                    "weight": 1.4,
+                    "reason": "Both describe runtime flow."
+                }
+            ],
+            "open_questions": [],
+            "decision_candidates": [],
+            "future_context_hints": [],
+            "review_notes": []
+        }))
+        .unwrap();
+
+        assert_eq!(report.association_candidates.len(), 1);
+        assert_eq!(
+            report.association_candidates[0].from_memory_candidate_index,
+            1
+        );
+        assert_eq!(
+            report.association_candidates[0].to_memory_candidate_index,
+            2
+        );
+        assert_eq!(report.association_candidates[0].weight, Some(1.0));
+        assert_eq!(
+            report.association_candidates[0].reason.as_deref(),
+            Some("Both describe runtime flow.")
+        );
     }
 
     #[test]
