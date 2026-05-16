@@ -11,6 +11,7 @@ use crate::observability::event_log::EventType;
 use crate::reports::markdown_report::{ExperimentReport, write_report};
 use crate::runtime::run_context::RunContext;
 
+use super::accept_reviewed_memory::AcceptReviewedMemoryExperiment;
 use super::audio_preparation_layer::AudioPreparationLayerExperiment;
 use super::memory_and_context::{
     AssociativeMemoryToyModelExperiment, ContextBudgetRetrievalTestExperiment,
@@ -33,6 +34,7 @@ pub enum ExperimentName {
     ContextBudgetRetrievalTest,
     ModelRoleSmokeTest,
     RealtimeVoiceSession,
+    AcceptReviewedMemory,
     ReviewedMemoryDraft,
     SleepPhaseSessionSummary,
     StreamingTranscriptionMvp,
@@ -49,6 +51,7 @@ impl ExperimentName {
             Self::ContextBudgetRetrievalTest => "context-budget-retrieval-test",
             Self::ModelRoleSmokeTest => "model-role-smoke-test",
             Self::RealtimeVoiceSession => "realtime-voice-session",
+            Self::AcceptReviewedMemory => "accept-reviewed-memory",
             Self::ReviewedMemoryDraft => "reviewed-memory-draft",
             Self::SleepPhaseSessionSummary => "sleep-phase-session-summary",
             Self::StreamingTranscriptionMvp => "streaming-transcription-mvp",
@@ -74,6 +77,9 @@ impl ExperimentName {
             }
             Self::RealtimeVoiceSession => {
                 "Run a realtime voice-session provider and map session events back into QSF records"
+            }
+            Self::AcceptReviewedMemory => {
+                "Accept a reviewed memory draft and write it as the durable reviewed voice-memory fixture"
             }
             Self::ReviewedMemoryDraft => {
                 "Convert provisional sleep memory candidates into a reviewable file-backed memory draft"
@@ -295,6 +301,7 @@ fn experiment_for(name: ExperimentName) -> Box<dyn Experiment> {
         }
         ExperimentName::ModelRoleSmokeTest => Box::new(ModelRoleSmokeExperiment),
         ExperimentName::RealtimeVoiceSession => Box::new(RealtimeVoiceSessionExperiment),
+        ExperimentName::AcceptReviewedMemory => Box::new(AcceptReviewedMemoryExperiment),
         ExperimentName::ReviewedMemoryDraft => Box::new(ReviewedMemoryDraftExperiment),
         ExperimentName::SleepPhaseSessionSummary => Box::new(SleepPhaseSessionSummaryExperiment),
         ExperimentName::StreamingTranscriptionMvp => Box::new(StreamingTranscriptionMvpExperiment),

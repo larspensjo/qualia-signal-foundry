@@ -1,5 +1,6 @@
 //! Experiment definitions, registration, and runner dispatch.
 
+mod accept_reviewed_memory;
 mod audio_preparation_layer;
 mod failure;
 mod memory_and_context;

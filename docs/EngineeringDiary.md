@@ -833,3 +833,25 @@ crates/qsf_app/src/experiments/sleep_phase_session_summary.rs,
 crates/qsf_app/src/memory/reviewed_memory_draft.rs,
 crates/qsf_app/src/experiments/reviewed_memory_draft.rs,
 crates/qsf_app/src/experiments/text_owned_voice_loop.rs
+
+## 2026-05-16 - Acceptance workflow for reviewed memory drafts
+
+Implemented an explicit acceptance experiment that promotes a reviewed draft into the durable voice-memory fixture.
+
+What changed:
+- Added `AcceptReviewedMemory` experiment variant, registered as CLI experiment
+  `accept-reviewed-memory`.
+- The experiment reads a draft via `QSF_ACCEPT_MEMORY_DRAFT` env var, validates both
+  memory record and association schemas, and writes the accepted fixture to
+  `docs/Experiments/Fixtures/voice-memory.reviewed.json`.
+- Schema validation runs before the target file is written; malformed or
+  wrong-version drafts fail without touching the durable fixture.
+- Acceptance is an explicit, user-initiated step; sleep output never promotes
+  automatically.
+- Five unit tests cover: normal acceptance, empty drafts, associations,
+  malformed JSON rejection, and schema version rejection.
+
+Refs: crates/qsf_app/src/experiments/accept_reviewed_memory.rs,
+crates/qsf_app/src/experiments/registry.rs,
+crates/qsf_app/src/experiments/mod.rs;
+implements: Stage 5 of docs/Plans/Plan.ReviewedMemoryPromotion.md
