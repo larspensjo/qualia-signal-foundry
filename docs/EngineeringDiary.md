@@ -779,3 +779,20 @@ crates/qsf_app/src/experiments/reviewed_memory_draft.rs,
 crates/qsf_app/src/experiments/registry.rs,
 crates/qsf_app/src/memory/mod.rs,
 docs/DecisionLog.md; implements: 2026-05-16 - Sleep-to-memory conversion is explicit and separate
+
+## 2026-05-16 - Expanded reviewed memory artifact
+
+Expanded the reviewed memory draft Markdown so candidate records can be reviewed without
+opening the JSON fixture.
+
+What changed:
+- Added source report path, draft JSON path, explicit provisional review policy, and
+  file-backed voice test commands to `reviewed-memory-draft.md`.
+- Rendered each generated memory record with candidate index, compact per-candidate
+  review checkboxes, record id, kind, importance, source reference, generated tags,
+  estimated tokens, reinforcement count, and summary.
+- Extended tests so Stage 2 review policy, per-record content, and generated commands
+  are covered separately.
+
+Refs: crates/qsf_app/src/memory/reviewed_memory_draft.rs,
+crates/qsf_app/src/experiments/reviewed_memory_draft.rs

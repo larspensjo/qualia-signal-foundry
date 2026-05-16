@@ -208,7 +208,10 @@ mod tests {
         );
         assert_eq!(draft_json.records[0].source_reference, "events.jsonl#1");
         assert!(draft_markdown.contains("Source sleep run: `source-sleep-run`"));
+        assert!(draft_markdown.contains("Review policy: provisional until manually accepted"));
         assert!(draft_markdown.contains("memory_candidates[001]"));
+        assert!(draft_markdown.contains("Importance: `0.70`"));
+        assert!(draft_markdown.contains("$env:QSF_VOICE_MEMORY_FILE="));
         assert!(events.contains("OutputProduced"));
         assert!(!source_run_dir.join("reviewed-memory-draft.json").exists());
 

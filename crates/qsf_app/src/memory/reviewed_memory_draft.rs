@@ -109,7 +109,11 @@ pub fn write_reviewed_memory_draft(
             json_path.display()
         )
     })?;
-    fs::write(&markdown_path, render_reviewed_memory_draft_markdown(draft)).with_context(|| {
+    fs::write(
+        &markdown_path,
+        render_reviewed_memory_draft_markdown(draft, &json_path),
+    )
+    .with_context(|| {
         format!(
             "failed to write reviewed memory draft Markdown `{}`",
             markdown_path.display()
@@ -119,7 +123,11 @@ pub fn write_reviewed_memory_draft(
     Ok(())
 }
 
-pub fn render_reviewed_memory_draft_markdown(draft: &ReviewedMemoryDraft) -> String {
+pub fn render_reviewed_memory_draft_markdown(
+    draft: &ReviewedMemoryDraft,
+    draft_json_path: impl AsRef<Path>,
+) -> String {
+    let draft_json_path = draft_json_path.as_ref();
     let mut markdown = String::new();
     markdown.push_str("# Reviewed Memory Draft\n\n");
     markdown.push_str(&format!(
@@ -130,30 +138,107 @@ pub fn render_reviewed_memory_draft_markdown(draft: &ReviewedMemoryDraft) -> Str
         "- Source sleep report: `{}`\n",
         draft.source_sleep_report_path.display()
     ));
-    markdown.push_str("- Status: draft, provisional, not accepted durable memory\n");
-    markdown
-        .push_str("- Review boundary: inspect and edit before using as file-backed voice memory\n");
-    markdown.push_str("\n## Review Checklist\n\n");
-    markdown.push_str("- [ ] Confirm each candidate is grounded in the source sleep report.\n");
-    markdown.push_str("- [ ] Confirm summaries are compact and reusable.\n");
-    markdown.push_str("- [ ] Confirm source references are specific enough.\n");
-    markdown.push_str("- [ ] Reject candidates by removing them before acceptance.\n");
-    markdown.push_str("\n## Candidate Indexes\n\n");
+    markdown.push_str(&format!("- Draft JSON: `{}`\n", draft_json_path.display()));
+    markdown.push_str(
+        "- Review policy: provisional until manually accepted; this file does not mutate durable memory\n",
+    );
+    markdown.push_str("- Associations: none generated in this draft\n");
+
+    markdown.push_str("\n## Candidate Memory Records\n\n");
 
     if draft.fixture.records.is_empty() {
         markdown.push_str("- None recorded.\n");
     } else {
         for (index, record) in draft.fixture.records.iter().enumerate() {
-            markdown.push_str(&format!(
-                "- memory_candidates[{}] -> `{}`: {}\n",
-                candidate_index_label(index),
-                record.id,
-                record.title
-            ));
+            push_memory_record_markdown(&mut markdown, index, record);
         }
     }
 
+    markdown.push_str("\n## File-Backed Voice Test\n\n");
+    markdown.push_str(
+        "After manual review, test this draft explicitly as a file-backed voice memory source:\n\n",
+    );
+    markdown.push_str("```powershell\n");
+    markdown.push_str("$env:QSF_VOICE_MEMORY_SOURCE=\"file\"\n");
+    markdown.push_str(&format!(
+        "$env:QSF_VOICE_MEMORY_FILE=\"{}\"\n",
+        powershell_path(draft_json_path)
+    ));
+    markdown.push_str("cargo run -p qsf_app -- experiment text-owned-voice-loop\n");
+    markdown.push_str("```\n");
+
     markdown
+}
+
+fn push_memory_record_markdown(markdown: &mut String, index: usize, record: &MemoryRecord) {
+    markdown.push_str(&format!(
+        "### memory_candidates[{}] - {}\n\n",
+        candidate_index_label(index),
+        record.title
+    ));
+    markdown.push_str("Review:\n");
+    markdown.push_str("- [ ] grounded\n");
+    markdown.push_str("- [ ] summary\n");
+    markdown.push_str("- [ ] source ref\n");
+    markdown.push_str("- [ ] kind\n");
+    markdown.push_str("- [ ] tags\n");
+    markdown.push_str("- [ ] reject?\n\n");
+    markdown.push_str(&format!("- Record id: `{}`\n", record.id));
+    markdown.push_str(&format!("- Schema version: `{}`\n", record.schema_version));
+    markdown.push_str(&format!(
+        "- Kind: `{}`\n",
+        memory_record_kind_label(&record.kind)
+    ));
+    markdown.push_str(&format!("- Importance: `{:.2}`\n", record.importance));
+    markdown.push_str(&format!(
+        "- Source reference: `{}`\n",
+        record.source_reference
+    ));
+    markdown.push_str(&format!(
+        "- Generated tags: {}\n",
+        markdown_tag_list(&record.tags)
+    ));
+    markdown.push_str(&format!(
+        "- Estimated tokens: `{}`\n",
+        record.estimated_tokens
+    ));
+    markdown.push_str(&format!(
+        "- Reinforcement count: `{}`\n",
+        record.reinforcement_count
+    ));
+    markdown.push_str("\nSummary:\n\n");
+    markdown.push_str("```text\n");
+    markdown.push_str(&record.summary);
+    if !record.summary.ends_with('\n') {
+        markdown.push('\n');
+    }
+    markdown.push_str("```\n\n");
+}
+
+fn markdown_tag_list(tags: &[String]) -> String {
+    if tags.is_empty() {
+        "(none)".to_string()
+    } else {
+        tags.iter()
+            .map(|tag| format!("`{tag}`"))
+            .collect::<Vec<_>>()
+            .join(", ")
+    }
+}
+
+fn memory_record_kind_label(kind: &MemoryRecordKind) -> &'static str {
+    match kind {
+        MemoryRecordKind::Concept => "concept",
+        MemoryRecordKind::ArchitectureNote => "architecture_note",
+        MemoryRecordKind::Experiment => "experiment",
+        MemoryRecordKind::Decision => "decision",
+        MemoryRecordKind::Question => "question",
+        MemoryRecordKind::Observation => "observation",
+    }
+}
+
+fn powershell_path(path: &Path) -> String {
+    path.display().to_string().replace('/', "\\")
 }
 
 fn convert_memory_candidate(
@@ -471,28 +556,79 @@ mod tests {
         assert_eq!(first_ids, second_ids);
     }
 
-    #[test]
-    fn markdown_includes_source_run_and_candidate_indexes() {
+    fn sample_reviewed_memory_draft() -> ReviewedMemoryDraft {
         let report = parse_sleep_report(&json!({
             "session_summary": "Short summary.",
-            "memory_candidates": ["First memory.", "Second memory."],
+            "memory_candidates": [
+                {
+                    "summary": "First memory should be inspected before use.",
+                    "importance": 0.71,
+                    "source_reference": "events.jsonl#first"
+                },
+                "Second memory."
+            ],
             "open_questions": [],
             "decision_candidates": [],
             "future_context_hints": [],
             "review_notes": []
         }))
         .unwrap();
-        let draft = convert_sleep_report_to_reviewed_memory_draft(
+
+        convert_sleep_report_to_reviewed_memory_draft(
             &report,
             Path::new("runs/source-sleep-run/sleep-report.json"),
             timestamp(),
-        );
+        )
+    }
 
-        let markdown = render_reviewed_memory_draft_markdown(&draft);
+    fn render_sample_review_markdown() -> String {
+        render_reviewed_memory_draft_markdown(
+            &sample_reviewed_memory_draft(),
+            Path::new("runs/conversion-run/reviewed-memory-draft.json"),
+        )
+    }
+
+    #[test]
+    fn markdown_includes_review_policy_and_sources() {
+        let markdown = render_sample_review_markdown();
 
         assert!(markdown.contains("Source sleep run: `source-sleep-run`"));
+        assert!(
+            markdown.contains("Source sleep report: `runs/source-sleep-run/sleep-report.json`")
+        );
+        assert!(markdown.contains("Review policy: provisional until manually accepted"));
+        assert!(markdown.contains("## Candidate Memory Records"));
+    }
+
+    #[test]
+    fn markdown_includes_per_record_details_and_checklist() {
+        let markdown = render_sample_review_markdown();
+
         assert!(markdown.contains("memory_candidates[001]"));
         assert!(markdown.contains("memory_candidates[002]"));
+        assert!(markdown.contains("Record id: `memory.sleep.source-sleep-run.001`"));
+        assert!(markdown.contains("Kind: `observation`"));
+        assert!(markdown.contains("Importance: `0.71`"));
+        assert!(markdown.contains("Source reference: `events.jsonl#first`"));
+        assert!(markdown.contains("Generated tags: (none)"));
+        assert!(markdown.contains("First memory should be inspected before use."));
+        assert!(markdown.contains("- [ ] grounded"));
+        assert!(markdown.contains("- [ ] summary"));
+        assert!(markdown.contains("- [ ] source ref"));
+        assert!(markdown.contains("- [ ] kind"));
+        assert!(markdown.contains("- [ ] tags"));
+        assert!(markdown.contains("- [ ] reject?"));
+    }
+
+    #[test]
+    fn markdown_includes_voice_test_command() {
+        let markdown = render_sample_review_markdown();
+
+        assert!(markdown.contains("$env:QSF_VOICE_MEMORY_SOURCE=\"file\""));
+        assert!(markdown.contains(
+            "$env:QSF_VOICE_MEMORY_FILE=\"runs\\conversion-run\\reviewed-memory-draft.json\""
+        ));
+        assert!(markdown.contains("cargo run -p qsf_app -- experiment text-owned-voice-loop"));
     }
 
     #[test]
