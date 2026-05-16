@@ -787,7 +787,7 @@ opening the JSON fixture.
 
 What changed:
 - Added source report path, draft JSON path, explicit provisional review policy, and
-  file-backed voice test commands to `reviewed-memory-draft.md`.
+  the OpenAI-feature file-backed voice test command to `reviewed-memory-draft.md`.
 - Rendered each generated memory record with candidate index, compact per-candidate
   review checkboxes, record id, kind, importance, source reference, generated tags,
   estimated tokens, reinforcement count, and summary.
@@ -796,3 +796,17 @@ What changed:
 
 Refs: crates/qsf_app/src/memory/reviewed_memory_draft.rs,
 crates/qsf_app/src/experiments/reviewed_memory_draft.rs
+
+## 2026-05-16 - Reviewed draft file-backed voice validation
+
+Added a deterministic voice-loop regression test for using a reviewed memory draft as
+the explicit file-backed voice memory source.
+
+What changed:
+- Built a reviewed-draft-shaped `MemoryFixture` and loaded it through the existing
+  file-backed voice memory source.
+- Asserted the Stage 3 success criteria in generated voice-loop artifacts: file memory
+  source, expected record count, selected reviewed draft memory, answer text reflecting
+  that memory, exact speech handoff, and no raw-audio logging.
+
+Refs: crates/qsf_app/src/experiments/text_owned_voice_loop.rs

@@ -164,7 +164,8 @@ pub fn render_reviewed_memory_draft_markdown(
         "$env:QSF_VOICE_MEMORY_FILE=\"{}\"\n",
         powershell_path(draft_json_path)
     ));
-    markdown.push_str("cargo run -p qsf_app -- experiment text-owned-voice-loop\n");
+    markdown
+        .push_str("cargo run -p qsf_app --features openai -- experiment text-owned-voice-loop\n");
     markdown.push_str("```\n");
 
     markdown
@@ -628,7 +629,9 @@ mod tests {
         assert!(markdown.contains(
             "$env:QSF_VOICE_MEMORY_FILE=\"runs\\conversion-run\\reviewed-memory-draft.json\""
         ));
-        assert!(markdown.contains("cargo run -p qsf_app -- experiment text-owned-voice-loop"));
+        assert!(markdown.contains(
+            "cargo run -p qsf_app --features openai -- experiment text-owned-voice-loop"
+        ));
     }
 
     #[test]

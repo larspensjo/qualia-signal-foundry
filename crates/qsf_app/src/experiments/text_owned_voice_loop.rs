@@ -1197,7 +1197,7 @@ mod tests {
     };
     use crate::experiments::registry::{Experiment, ExperimentName};
     use crate::memory::{MemoryFixture, MemoryRecord, MemoryRecordKind};
-    use crate::models::{MockModelClient, ModelClient, ModelRequest, ModelResponse};
+    use crate::models::{MockModelClient, ModelClient, ModelRequest, ModelResponse, ModelUsage};
     use crate::observability::event_log::{EventRecord, EventType};
     use crate::runtime::run_context::RunContext;
     use anyhow::anyhow;
@@ -1221,6 +1221,8 @@ mod tests {
         delay: Duration,
     }
 
+    struct ReviewedDraftReflectingModelClient;
+
     impl ModelClient for SlowModelClient {
         fn client_name(&self) -> &str {
             "slow-mock-model"
@@ -1229,6 +1231,30 @@ mod tests {
         fn complete(&self, request: &ModelRequest) -> anyhow::Result<ModelResponse> {
             std::thread::sleep(self.delay);
             MockModelClient::default().complete(request)
+        }
+    }
+
+    impl ModelClient for ReviewedDraftReflectingModelClient {
+        fn client_name(&self) -> &str {
+            "reviewed-draft-reflecting-model"
+        }
+
+        fn complete(&self, request: &ModelRequest) -> anyhow::Result<ModelResponse> {
+            let selected_context = request.last_user_message().unwrap_or_default();
+            let reflected_memory = if selected_context.contains("reviewed and explicit") {
+                "The selected reviewed draft memory says file-backed voice tests stay reviewed and explicit."
+            } else {
+                "The selected context did not include the expected reviewed draft memory."
+            };
+
+            Ok(ModelResponse::from_text(
+                request,
+                self.client_name(),
+                request.model_name.clone(),
+                reflected_memory,
+            )
+            .with_usage(ModelUsage::new(42, 16))
+            .with_finish_reason("stop"))
         }
     }
 
@@ -1401,6 +1427,84 @@ mod tests {
                 && record.payload["memory_source"] == "file"
                 && record.payload["memory_records"] == 1
         }));
+
+        fs::remove_dir_all(base_dir).unwrap();
+    }
+
+    #[test]
+    fn reviewed_memory_draft_file_source_meets_voice_test_success_criteria() {
+        let base_dir =
+            std::env::temp_dir().join(format!("qsf-reviewed-draft-voice-{}", Uuid::new_v4()));
+        fs::create_dir_all(&base_dir).unwrap();
+        let draft_path = base_dir.join("reviewed-memory-draft.json");
+        let reviewed_memory_id = "memory.sleep.reviewed-source.001";
+        let reviewed_summary =
+            "Reviewed draft memory keeps file-backed voice tests reviewed and explicit.";
+        let fixture = MemoryFixture {
+            records: vec![MemoryRecord::new(
+                reviewed_memory_id,
+                MemoryRecordKind::Observation,
+                "Reviewed draft voice test",
+                reviewed_summary,
+                vec!["streaming", "transcription", "runtime", "events"],
+                timestamp("2026-05-16T07:00:00Z"),
+                0.95,
+                0,
+                "sleep-run:reviewed-source#memory_candidates[001]",
+                18,
+            )],
+            associations: vec![],
+        };
+        fs::write(&draft_path, serde_json::to_string_pretty(&fixture).unwrap()).unwrap();
+        let mut context = RunContext::create_in(&base_dir, "text-owned-voice-loop").unwrap();
+        let experiment = TextOwnedVoiceLoopExperiment;
+
+        experiment
+            .run_with_components_and_memory_source(
+                &mut context,
+                &SimulatedTranscriptProvider,
+                &ReviewedDraftReflectingModelClient,
+                &SimulatedSpeechOutputProvider,
+                &FileVoiceMemorySource::new(&draft_path),
+            )
+            .unwrap();
+
+        let events = fs::read_to_string(context.run_dir().join("events.jsonl")).unwrap();
+        let report =
+            fs::read_to_string(context.run_dir().join("text-owned-voice-loop.md")).unwrap();
+        let source_snapshot =
+            fs::read_to_string(context.run_dir().join("voice-memory-source.json")).unwrap();
+        let event_records = parse_event_records(&events);
+
+        assert!(report.contains("Memory source: `file`"));
+        assert!(report.contains("Memory records: `1`"));
+        assert!(report.contains(&format!("Selected memory context: `{reviewed_memory_id}`")));
+        assert!(report.contains(
+            "OutputProduced text: The selected reviewed draft memory says file-backed voice tests stay reviewed and explicit."
+        ));
+        assert!(report.contains("Exact speech handoff: `true`"));
+        assert!(report.contains("Raw audio logged: `false`"));
+        assert!(source_snapshot.contains(reviewed_memory_id));
+        assert!(source_snapshot.contains("reviewed-memory-draft.json"));
+
+        let retrieval = event_records
+            .iter()
+            .find(|record| record.event_type == EventType::MemoryRetrieved)
+            .unwrap();
+        assert_eq!(retrieval.payload["memory_source"], "file");
+        assert_eq!(retrieval.payload["selected"][0], reviewed_memory_id);
+
+        let output = event_records
+            .iter()
+            .find(|record| record.event_type == EventType::OutputProduced)
+            .unwrap();
+        assert!(
+            output.payload["message"]
+                .as_str()
+                .unwrap()
+                .contains("reviewed draft memory")
+        );
+        assert_output_text_is_handed_exactly_to_speech_provider(&event_records);
 
         fs::remove_dir_all(base_dir).unwrap();
     }
