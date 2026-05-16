@@ -7,6 +7,7 @@ mod model_role_smoke;
 mod placeholder;
 mod realtime_voice_session;
 mod registry;
+mod reviewed_memory_draft;
 mod sleep_phase_session_summary;
 mod streaming_transcription_mvp;
 mod text_owned_voice_loop;

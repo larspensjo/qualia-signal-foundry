@@ -18,6 +18,7 @@ use super::memory_and_context::{
 use super::model_role_smoke::ModelRoleSmokeExperiment;
 use super::placeholder::PlaceholderExperiment;
 use super::realtime_voice_session::RealtimeVoiceSessionExperiment;
+use super::reviewed_memory_draft::ReviewedMemoryDraftExperiment;
 use super::sleep_phase_session_summary::SleepPhaseSessionSummaryExperiment;
 use super::streaming_transcription_mvp::StreamingTranscriptionMvpExperiment;
 use super::text_owned_voice_loop::TextOwnedVoiceLoopExperiment;
@@ -32,6 +33,7 @@ pub enum ExperimentName {
     ContextBudgetRetrievalTest,
     ModelRoleSmokeTest,
     RealtimeVoiceSession,
+    ReviewedMemoryDraft,
     SleepPhaseSessionSummary,
     StreamingTranscriptionMvp,
     TextOwnedVoiceLoop,
@@ -47,6 +49,7 @@ impl ExperimentName {
             Self::ContextBudgetRetrievalTest => "context-budget-retrieval-test",
             Self::ModelRoleSmokeTest => "model-role-smoke-test",
             Self::RealtimeVoiceSession => "realtime-voice-session",
+            Self::ReviewedMemoryDraft => "reviewed-memory-draft",
             Self::SleepPhaseSessionSummary => "sleep-phase-session-summary",
             Self::StreamingTranscriptionMvp => "streaming-transcription-mvp",
             Self::TextOwnedVoiceLoop => "text-owned-voice-loop",
@@ -71,6 +74,9 @@ impl ExperimentName {
             }
             Self::RealtimeVoiceSession => {
                 "Run a realtime voice-session provider and map session events back into QSF records"
+            }
+            Self::ReviewedMemoryDraft => {
+                "Convert provisional sleep memory candidates into a reviewable file-backed memory draft"
             }
             Self::SleepPhaseSessionSummary => {
                 "Summarize a session into reviewable sleep-phase outputs and artifacts"
@@ -289,6 +295,7 @@ fn experiment_for(name: ExperimentName) -> Box<dyn Experiment> {
         }
         ExperimentName::ModelRoleSmokeTest => Box::new(ModelRoleSmokeExperiment),
         ExperimentName::RealtimeVoiceSession => Box::new(RealtimeVoiceSessionExperiment),
+        ExperimentName::ReviewedMemoryDraft => Box::new(ReviewedMemoryDraftExperiment),
         ExperimentName::SleepPhaseSessionSummary => Box::new(SleepPhaseSessionSummaryExperiment),
         ExperimentName::StreamingTranscriptionMvp => Box::new(StreamingTranscriptionMvpExperiment),
         ExperimentName::TextOwnedVoiceLoop => Box::new(TextOwnedVoiceLoopExperiment),

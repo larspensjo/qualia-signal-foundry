@@ -747,3 +747,35 @@ Refs: docs/Reviews/experiments-module-review-2026-05-15.md,
 crates/qsf_app/src/experiments,
 crates/qsf_app/src/audio/mod.rs,
 crates/qsf_app/src/observability/trace.rs
+
+## 2026-05-16 - Reviewed memory draft conversion
+
+Added an explicit conversion experiment that turns provisional sleep memory candidates
+into a separate reviewable `MemoryFixture` draft without connecting it to live voice
+memory.
+
+What changed:
+- Added deterministic sleep-candidate to memory-record conversion with fallback source
+  references, default provisional importance, token estimates, and empty associations.
+- Registered `reviewed-memory-draft`, selected by `QSF_REVIEWED_MEMORY_SLEEP_REPORT`,
+  and wrote `reviewed-memory-draft.json` plus `reviewed-memory-draft.md` into the
+  conversion run directory.
+- Covered structured candidates, string-only candidates, empty candidate lists,
+  deterministic ids, importance clamping, Markdown candidate indexes, and conversion-run
+  artifact placement.
+- Validated current memory and association schemas during draft writing and in tests.
+- Kept source-reference fallbacks tied to the original run directory name, documented
+  why they differ from sanitized memory id segments, and fixed title derivation for
+  newline-delimited summaries.
+- Moved `QSF_REVIEWED_MEMORY_SLEEP_REPORT` handling out of the memory module and into
+  the experiment boundary.
+
+Observed:
+- Experiment and registry descriptions still duplicate the same text; that is a
+  broader pre-existing registry pattern to clean up later.
+
+Refs: crates/qsf_app/src/memory/reviewed_memory_draft.rs,
+crates/qsf_app/src/experiments/reviewed_memory_draft.rs,
+crates/qsf_app/src/experiments/registry.rs,
+crates/qsf_app/src/memory/mod.rs,
+docs/DecisionLog.md; implements: 2026-05-16 - Sleep-to-memory conversion is explicit and separate

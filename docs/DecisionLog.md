@@ -254,3 +254,16 @@ saturating helper surface.
 Refs: crates/qsf_app/src/experiments,
 crates/qsf_app/src/audio/mod.rs,
 crates/qsf_app/src/observability/trace.rs
+
+## 2026-05-16 - Sleep-to-memory conversion is explicit and separate
+Decision: Sleep reports may be converted into file-backed memory drafts only through an
+explicit conversion command or experiment that writes a separate run directory; sleep
+summarization and live voice turns do not promote memory implicitly.
+Context: Reviewed memory promotion needs a bridge from provisional sleep output to
+voice-loop memory without weakening the manual review boundary.
+Consequences: Conversion artifacts remain inspectable before acceptance, source sleep
+runs are left unchanged, and the text-owned voice loop only uses converted memory when
+configured through the explicit file-backed memory source.
+Refs: crates/qsf_app/src/experiments/reviewed_memory_draft.rs,
+crates/qsf_app/src/memory/reviewed_memory_draft.rs,
+docs/Plans/Plan.ReviewedMemoryPromotion.md

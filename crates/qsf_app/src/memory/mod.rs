@@ -4,6 +4,7 @@ pub mod association;
 pub mod fixtures;
 pub mod memory_record;
 pub mod retrieval;
+pub mod reviewed_memory_draft;
 
 pub use association::{ASSOCIATION_SCHEMA_VERSION, Association};
 pub use fixtures::{MemoryFixture, phase_four_fixture};
@@ -11,4 +12,9 @@ pub use memory_record::{MEMORY_RECORD_SCHEMA_VERSION, MemoryRecord, MemoryRecord
 pub use retrieval::{
     AssociationPath, RetrievalResult, RetrievalScore, RetrievalStrategy, RetrievedMemory,
     retrieve_memories, retrieved_memory_ids,
+};
+pub use reviewed_memory_draft::{
+    DEFAULT_DRAFT_IMPORTANCE, REVIEWED_MEMORY_DRAFT_JSON, REVIEWED_MEMORY_DRAFT_MARKDOWN,
+    ReviewedMemoryDraft, convert_sleep_report_to_reviewed_memory_draft, load_reviewed_memory_draft,
+    render_reviewed_memory_draft_markdown, write_reviewed_memory_draft,
 };
