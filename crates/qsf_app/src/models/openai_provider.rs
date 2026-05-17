@@ -41,6 +41,9 @@ mod enabled {
         }
 
         fn complete(&self, request: &ModelRequest) -> anyhow::Result<ModelResponse> {
+            // TODO: plumb `request.tools` and provider tool-call responses through
+            // openai_provider_kit before using Stage 3 recall with live OpenAI runs.
+            // Until then, the mock client is the only executable function-calling path.
             let provider_request = LlmRequest::new(
                 ModelId::new(ProviderKind::OpenAi, request.model_name.clone()),
                 request
@@ -100,6 +103,9 @@ mod enabled {
             ModelMessageRole::System => ChatRole::System,
             ModelMessageRole::User => ChatRole::User,
             ModelMessageRole::Assistant => ChatRole::Assistant,
+            // TODO: replace this lossy fallback with provider-native tool messages
+            // when openai_provider_kit exposes function-calling message parts.
+            ModelMessageRole::Tool => ChatRole::User,
         }
     }
 
@@ -123,6 +129,11 @@ mod enabled {
             assert_eq!(
                 format!("{:?}", map_message_role(ModelMessageRole::Assistant)),
                 "Assistant"
+            );
+            // Documents the current stub until provider-native tool messages exist.
+            assert_eq!(
+                format!("{:?}", map_message_role(ModelMessageRole::Tool)),
+                "User"
             );
         }
 

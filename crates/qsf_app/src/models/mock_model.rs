@@ -3,7 +3,7 @@ use std::collections::HashMap;
 use anyhow::bail;
 use serde_json::json;
 
-use super::model_client::{ModelClient, ModelRequest, ModelResponse, ModelUsage};
+use super::model_client::{ModelClient, ModelRequest, ModelResponse, ModelToolCall, ModelUsage};
 use super::model_role::ModelRoleId;
 
 #[derive(Clone, Debug)]
@@ -160,14 +160,33 @@ impl ModelClient for MockModelClient {
             .with_cached_input_tokens(fixture.input_tokens / 3)
             .with_estimated_cost_usd(0.0);
 
-        Ok(ModelResponse::from_text(
+        let mut response = ModelResponse::from_text(
             request,
             self.client_name(),
             request.model_name.clone(),
             fixture.output_text.clone(),
         )
-        .with_usage(usage)
-        .with_finish_reason("stop"))
+        .with_usage(usage);
+
+        if request.role.role_id == ModelRoleId::ConversationalResponder
+            && request.tools.iter().any(|tool| tool.name == "recall_turn")
+            && request
+                .last_user_message()
+                .map(|message| message.to_ascii_lowercase().contains("recall turn"))
+                .unwrap_or(false)
+        {
+            response = response
+                .with_tool_calls(vec![ModelToolCall::new(
+                    "mock-recall-0",
+                    "recall_turn",
+                    json!({ "turn_id": 0 }),
+                )])
+                .with_finish_reason("tool_calls");
+        } else {
+            response = response.with_finish_reason("stop");
+        }
+
+        Ok(response)
     }
 }
 

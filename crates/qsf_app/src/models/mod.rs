@@ -6,7 +6,7 @@ mod openai_provider;
 pub use mock_model::MockModelClient;
 pub use model_client::{
     ModelClient, ModelMessage, ModelMessageRole, ModelRequest, ModelResponse, ModelResponseFormat,
-    ModelUsage, invoke_model_role,
+    ModelToolCall, ModelToolDefinition, ModelUsage, invoke_model_role,
 };
 pub use model_role::{ModelOutputExpectation, ModelRole, ModelRoleId};
 pub use openai_provider::{

@@ -282,3 +282,15 @@ assembly. Summary model changes should happen through role defaults or a deliber
 summary-model configuration variable, not by inheriting the responder model implicitly.
 Refs: crates/qsf_app/src/experiments/multi_turn_text_loop.rs,
 crates/qsf_app/src/models/model_role.rs
+
+## 2026-05-17 - Multi-turn recall is scoped to summarized turns
+Decision: The multi-turn text loop's `recall_turn` tool may return verbatim text only
+for turns that have aged into warm summaries.
+Context: Active verbatim turns are already present in the prompt. The recall tool exists
+to recover older detail without permanently inflating every request, so allowing active
+turn recall would add token cost without extending continuity.
+Consequences: Recall execution validates that the requested `turn_id` is summarized
+before returning verbatim text. Future wider recall behavior should be introduced as a
+deliberate policy change, not as an implicit side effect of tool plumbing.
+Refs: crates/qsf_app/src/experiments/multi_turn_text_loop.rs,
+docs/Plans/Plan.MultiTurnTextLoop.md

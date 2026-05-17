@@ -8,15 +8,15 @@ use serde::{Deserialize, Serialize};
 use serde_json::json;
 
 use crate::context::{ContextAssembly, ContextFragment, assemble_context};
-use crate::conversation::prompt::{self, PromptTurn};
+use crate::conversation::prompt::{self, PromptToolMessage, PromptTurn};
 use crate::conversation::{ContentHash, PromptAssembly, PromptTurnSummary};
 use crate::memory::{
     Association, MemoryFixture, MemoryRecord, RetrievalResult, RetrievalStrategy,
     phase_four_fixture, retrieve_memories, retrieved_memory_ids,
 };
 use crate::models::{
-    ModelClient, ModelMessage, ModelRequest, ModelRole, ModelRoleId, build_client,
-    invoke_model_role, requested_provider_from_env,
+    ModelClient, ModelMessage, ModelRequest, ModelRole, ModelRoleId, ModelToolCall,
+    ModelToolDefinition, build_client, invoke_model_role, requested_provider_from_env,
 };
 use crate::observability::event_log::EventType;
 use crate::observability::trace::{TraceRecord, elapsed_ms};
@@ -35,6 +35,7 @@ const SESSION_ALLOW_OVER_LIMIT_ENV_VAR: &str = "QSF_SESSION_ALLOW_OVER_LIMIT";
 const SESSION_WARM_THRESHOLD_ENV_VAR: &str = "QSF_SESSION_WARM_THRESHOLD";
 const SESSION_RETRIEVAL_LIMIT: usize = 8;
 const SESSION_RETRIEVAL_STRATEGY: RetrievalStrategy = RetrievalStrategy::AssociationWeighted;
+const RECALL_TURN_TOOL_NAME: &str = "recall_turn";
 
 pub struct MultiTurnTextLoopExperiment;
 
@@ -161,6 +162,7 @@ pub struct Turn {
     pub context_assembly: ContextAssembly,
     pub retrieved_memory_block: String,
     pub assistant_response: String,
+    pub recalled_turns: Vec<RecallRecord>,
     pub model_id: String,
     pub model_latency_ms: u64,
     pub input_tokens: u32,
@@ -168,6 +170,15 @@ pub struct Turn {
     pub output_tokens: u32,
     pub full_request_hash: ContentHash,
     pub message_count: usize,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct RecallRecord {
+    pub call_id: String,
+    pub turn_id: usize,
+    pub tool_name: String,
+    pub verbatim_text: String,
+    pub latency_ms: u64,
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
@@ -221,6 +232,7 @@ pub enum SessionEvent {
     },
     TurnCompleted(Turn),
     TurnSummarized(TurnSummary),
+    ToolExecuted(RecallRecord),
     SessionLimitReached {
         current: usize,
         max: usize,
@@ -266,6 +278,7 @@ fn reduce_session_in_place(state: &mut SessionState, event: SessionEvent) {
             state.summarized_turns.push(summary);
             state.prefix_invalidated_since_last_prompt = true;
         }
+        SessionEvent::ToolExecuted(_) => {}
         SessionEvent::SessionLimitReached {
             current,
             max,
@@ -382,13 +395,15 @@ fn run_with_io_and_components(
 
     Ok(ExperimentOutcome {
         summary: format!(
-            "The multi-turn text loop completed with {} appended turns, {} warm summaries, and cache-stable prompt hashes recorded per turn.",
+            "The multi-turn text loop completed with {} appended turns, {} warm summaries, {} recall tool executions, and cache-stable prompt hashes recorded per turn.",
             completed_turn_count(&state),
-            state.summarized_turns.len()
+            state.summarized_turns.len(),
+            state.turns.iter().map(|turn| turn.recalled_turns.len()).sum::<usize>()
         ),
         observations: vec![
             "Session turns are append-only; older turns can age into stable warm summaries while completed turn records remain available for reporting.".to_string(),
             "Each turn retrieves memory from the latest user input only, then assembles selected fragments under the existing context budget.".to_string(),
+            "The recall_turn tool can expand summarized turns into verbatim tool messages that are frozen into future prompt prefixes.".to_string(),
         ],
         failure_modes: vec![
             "Warm summarization invalidates the prompt cache prefix once per ageing event.".to_string(),
@@ -446,33 +461,99 @@ fn run_one_turn(
     )?;
 
     let retrieved_memory_block = prompt::retrieved_memory_block(&assembly);
-    let prompt_assembly = assemble_session_prompt(state, user_input, &retrieved_memory_block);
-    verify_prompt_prefix(state, &prompt_assembly)?;
+    let base_prompt = assemble_session_prompt(state, user_input, &retrieved_memory_block);
+    verify_prompt_prefix(state, &base_prompt)?;
     apply_session_event(
         context,
         state,
         SessionEvent::PromptAssembled {
-            full_request_hash: prompt_assembly.full_request_hash,
-            message_count: prompt_assembly.message_count,
-            total_bytes: prompt_assembly.total_bytes,
+            full_request_hash: base_prompt.full_request_hash,
+            message_count: base_prompt.message_count,
+            total_bytes: base_prompt.total_bytes,
         },
     )?;
 
     let request = ModelRequest::new(
-        ModelRole::predefined(ModelRoleId::ConversationalResponder),
-        prompt_assembly.messages.clone(),
+        conversational_responder_role_with_recall_tool(),
+        base_prompt.messages.clone(),
     )
     .with_session_id(context.run_id())
     .with_model_name(&state.config.model_id)
     .with_temperature(0.0)
-    .with_max_output_tokens(240);
+    .with_max_output_tokens(240)
+    .with_tools(vec![recall_turn_tool_definition()]);
     let model_started_at = Instant::now();
-    let response = invoke_model_role(context, model_client, &request)?;
-    let model_latency_ms = elapsed_ms(model_started_at);
-    let usage = response.usage.as_ref();
-    let input_tokens = usage.map(|usage| usage.input_tokens).unwrap_or(0);
-    let cached_input_tokens = usage.map(|usage| usage.cached_input_tokens).unwrap_or(0);
-    let output_tokens = usage.map(|usage| usage.output_tokens).unwrap_or(0);
+    let mut response = invoke_model_role(context, model_client, &request)?;
+    let mut model_latency_ms = elapsed_ms(model_started_at);
+    let mut input_tokens = response
+        .usage
+        .as_ref()
+        .map(|usage| usage.input_tokens)
+        .unwrap_or(0);
+    let mut cached_input_tokens = response
+        .usage
+        .as_ref()
+        .map(|usage| usage.cached_input_tokens)
+        .unwrap_or(0);
+    let mut output_tokens = response
+        .usage
+        .as_ref()
+        .map(|usage| usage.output_tokens)
+        .unwrap_or(0);
+    let mut recalled_turns = vec![];
+    let mut final_messages = base_prompt.messages.clone();
+
+    if !response.tool_calls.is_empty() {
+        recalled_turns = execute_recall_tool_calls(context, state, &response.tool_calls)?;
+        for recall in &recalled_turns {
+            final_messages.push(ModelMessage::tool(format_recall_tool_message(recall)));
+        }
+        let augmented_prompt = prompt::prompt_assembly_from_messages(final_messages.clone());
+        apply_session_event(
+            context,
+            state,
+            SessionEvent::PromptAssembled {
+                full_request_hash: augmented_prompt.full_request_hash,
+                message_count: augmented_prompt.message_count,
+                total_bytes: augmented_prompt.total_bytes,
+            },
+        )?;
+
+        let follow_up_request = ModelRequest::new(
+            conversational_responder_role_with_recall_tool(),
+            final_messages.clone(),
+        )
+        .with_session_id(context.run_id())
+        .with_model_name(&state.config.model_id)
+        .with_temperature(0.0)
+        .with_max_output_tokens(240);
+        let follow_up_started_at = Instant::now();
+        response = invoke_model_role(context, model_client, &follow_up_request)?;
+        model_latency_ms = model_latency_ms.saturating_add(elapsed_ms(follow_up_started_at));
+        if let Some(usage) = response.usage.as_ref() {
+            input_tokens = input_tokens.saturating_add(usage.input_tokens);
+            cached_input_tokens = cached_input_tokens.saturating_add(usage.cached_input_tokens);
+            output_tokens = output_tokens.saturating_add(usage.output_tokens);
+        }
+        if !response.tool_calls.is_empty() {
+            context.record_event(
+                EventType::ErrorOccurred,
+                json!({
+                    "session_id": context.run_id(),
+                    "stage": "recall-tool-follow-up",
+                    "error": "recall follow-up returned additional tool calls; multi-round tool calls are not supported",
+                    "tool_call_count": response.tool_calls.len(),
+                    "tool_calls": &response.tool_calls,
+                }),
+                None,
+            )?;
+            anyhow::bail!(
+                "recall follow-up returned additional tool calls; multi-round tool calls are not supported"
+            );
+        }
+    }
+
+    let final_prompt_assembly = prompt::prompt_assembly_from_messages(final_messages);
     apply_session_event(
         context,
         state,
@@ -493,13 +574,14 @@ fn run_one_turn(
         context_assembly: assembly,
         retrieved_memory_block,
         assistant_response: response.output_text.clone(),
+        recalled_turns,
         model_id: response.model_name.clone(),
         model_latency_ms,
         input_tokens,
         cached_input_tokens,
         output_tokens,
-        full_request_hash: prompt_assembly.full_request_hash,
-        message_count: prompt_assembly.message_count,
+        full_request_hash: final_prompt_assembly.full_request_hash,
+        message_count: final_prompt_assembly.message_count,
     };
     let output_text = response.output_text;
     apply_session_event(context, state, SessionEvent::TurnCompleted(turn))?;
@@ -510,6 +592,152 @@ fn run_one_turn(
 
 fn completed_turn_count(state: &SessionState) -> usize {
     state.turns.len()
+}
+
+fn conversational_responder_role_with_recall_tool() -> ModelRole {
+    let mut role = ModelRole::predefined(ModelRoleId::ConversationalResponder);
+    role.allowed_tools = vec![RECALL_TURN_TOOL_NAME.to_string()];
+    role
+}
+
+fn recall_turn_tool_definition() -> ModelToolDefinition {
+    ModelToolDefinition::new(
+        RECALL_TURN_TOOL_NAME,
+        "Recall verbatim text for a summarized conversation turn by turn_id.",
+        json!({
+            "type": "object",
+            "properties": {
+                "turn_id": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "description": "The summarized turn index to recall."
+                }
+            },
+            "required": ["turn_id"],
+            "additionalProperties": false
+        }),
+    )
+}
+
+fn execute_recall_tool_calls(
+    context: &mut RunContext,
+    state: &SessionState,
+    tool_calls: &[ModelToolCall],
+) -> anyhow::Result<Vec<RecallRecord>> {
+    let mut recalls = Vec::with_capacity(tool_calls.len());
+
+    for tool_call in tool_calls {
+        context.record_event(
+            EventType::ToolRequested,
+            json!({
+                "session_id": context.run_id(),
+                "tool_name": &tool_call.name,
+                "call_id": &tool_call.call_id,
+                "arguments": &tool_call.arguments,
+                "scope": "multi_turn_text_loop",
+            }),
+            None,
+        )?;
+
+        let started_at = Instant::now();
+        match execute_recall_turn(state, tool_call) {
+            Ok(mut recall) => {
+                recall.latency_ms = elapsed_ms(started_at);
+                apply_tool_executed_event(context, state, recall.clone())?;
+                recalls.push(recall);
+            }
+            Err(error) => {
+                context.record_event(
+                    EventType::ToolFailed,
+                    json!({
+                        "session_id": context.run_id(),
+                        "tool_name": &tool_call.name,
+                        "call_id": &tool_call.call_id,
+                        "error": sanitize_error(&error.to_string()),
+                        "latency_ms": elapsed_ms(started_at),
+                    }),
+                    None,
+                )?;
+                return Err(error);
+            }
+        }
+    }
+
+    Ok(recalls)
+}
+
+fn execute_recall_turn(
+    state: &SessionState,
+    tool_call: &ModelToolCall,
+) -> anyhow::Result<RecallRecord> {
+    anyhow::ensure!(
+        tool_call.name == RECALL_TURN_TOOL_NAME,
+        "unknown multi-turn tool `{}`",
+        tool_call.name
+    );
+    let turn_id = tool_call
+        .arguments
+        .get("turn_id")
+        .and_then(|value| value.as_u64())
+        .context("recall_turn requires integer argument `turn_id`")? as usize;
+    let turn = state
+        .turns
+        .get(turn_id)
+        .with_context(|| format!("turn {turn_id} does not exist"))?;
+    anyhow::ensure!(
+        is_turn_summarized(state, turn_id),
+        "turn {turn_id} is not summarized and cannot be recalled"
+    );
+
+    Ok(RecallRecord {
+        call_id: tool_call.call_id.clone(),
+        turn_id,
+        tool_name: tool_call.name.clone(),
+        verbatim_text: format!(
+            "[Turn {turn_id}]\n[User]\n{}\n\n[Assistant]\n{}",
+            turn.user_input, turn.assistant_response
+        ),
+        latency_ms: 0,
+    })
+}
+
+fn apply_tool_executed_event(
+    context: &mut RunContext,
+    state: &SessionState,
+    recall: RecallRecord,
+) -> anyhow::Result<()> {
+    record_session_event(context, &SessionEvent::ToolExecuted(recall.clone()))?;
+    let trace = TraceRecord::new(
+        context.experiment_id(),
+        "session-recall-tool",
+        format!("recall_turn turn_id={}", recall.turn_id),
+        format!("recalled summarized turn {}", recall.turn_id),
+    )
+    .with_details(json!({
+        "session_id": context.run_id(),
+        "completed_turn_count": completed_turn_count(state),
+        "recall": &recall,
+    }))
+    .with_latency_context("runtime", "recall-turn-tool")
+    .with_latency_ms(recall.latency_ms);
+    context.record_trace(trace)?;
+    Ok(())
+}
+
+fn format_recall_tool_message(recall: &RecallRecord) -> String {
+    format!(
+        "[recall_turn]\nturn_id: {}\n{}",
+        recall.turn_id,
+        recall.verbatim_text.trim()
+    )
+}
+
+fn prompt_tool_message_from_recall(recall: &RecallRecord) -> PromptToolMessage {
+    PromptToolMessage {
+        tool_name: recall.tool_name.clone(),
+        call_id: recall.call_id.clone(),
+        content: format_recall_tool_message(recall),
+    }
 }
 
 fn age_out_warm_turns(
@@ -632,6 +860,11 @@ fn assemble_session_prompt(
         .map(|turn| PromptTurn {
             user_input: &turn.user_input,
             retrieved_memory_block: &turn.retrieved_memory_block,
+            recalled_tool_messages: turn
+                .recalled_turns
+                .iter()
+                .map(prompt_tool_message_from_recall)
+                .collect(),
             assistant_response: &turn.assistant_response,
         })
         .collect::<Vec<_>>();
@@ -745,6 +978,20 @@ fn record_session_event(context: &mut RunContext, event: &SessionEvent) -> anyho
                     "session_id": context.run_id(),
                     "turn_index": summary.turn_index,
                     "summary": summary,
+                }),
+                None,
+            )?;
+        }
+        SessionEvent::ToolExecuted(recall) => {
+            context.record_event(
+                EventType::ToolExecuted,
+                json!({
+                    "session_id": context.run_id(),
+                    "tool_name": &recall.tool_name,
+                    "call_id": &recall.call_id,
+                    "turn_id": recall.turn_id,
+                    "latency_ms": recall.latency_ms,
+                    "scope": "multi_turn_text_loop",
                 }),
                 None,
             )?;
@@ -1085,6 +1332,12 @@ fn write_multi_turn_report(
         "- Warm summaries produced: `{}`\n",
         state.summarized_turns.len()
     ));
+    let recall_count = state
+        .turns
+        .iter()
+        .map(|turn| turn.recalled_turns.len())
+        .sum::<usize>();
+    markdown.push_str(&format!("- Recall tool executions: `{recall_count}`\n"));
     markdown.push_str("- Session state persistence: `in_memory_only`\n\n");
     markdown.push_str("## Warm Summaries\n\n");
     if state.summarized_turns.is_empty() {
@@ -1104,6 +1357,22 @@ fn write_multi_turn_report(
                 summary.output_tokens,
                 summary.summary.replace('|', "\\|")
             ));
+        }
+        markdown.push('\n');
+    }
+    markdown.push_str("## Recall Tool\n\n");
+    if recall_count == 0 {
+        markdown.push_str("- None\n\n");
+    } else {
+        markdown.push_str("| Turn | Recalled turn | Call id | Latency ms |\n");
+        markdown.push_str("|---:|---:|---|---:|\n");
+        for turn in &state.turns {
+            for recall in &turn.recalled_turns {
+                markdown.push_str(&format!(
+                    "| {} | {} | `{}` | {} |\n",
+                    turn.index, recall.turn_id, recall.call_id, recall.latency_ms
+                ));
+            }
         }
         markdown.push('\n');
     }
@@ -1172,8 +1441,8 @@ mod tests {
     use uuid::Uuid;
 
     use super::{
-        DEFAULT_SESSION_MODEL, MemorySourceConfig, SessionConfig, SessionEndReason, SessionEvent,
-        SessionMemorySource, SessionState, Turn, TurnSummary, age_out_warm_turns,
+        DEFAULT_SESSION_MODEL, MemorySourceConfig, RecallRecord, SessionConfig, SessionEndReason,
+        SessionEvent, SessionMemorySource, SessionState, Turn, TurnSummary, age_out_warm_turns,
         prompt_prefix_status_for_report, reduce_session, run_with_io_and_components,
     };
     use crate::context::{ContextAssembly, ContextBudget};
@@ -1183,7 +1452,10 @@ mod tests {
         prior_request_prefix_hash,
     };
     use crate::memory::phase_four_fixture;
-    use crate::models::MockModelClient;
+    use crate::models::{
+        MockModelClient, ModelClient, ModelRequest, ModelResponse, ModelRoleId, ModelToolCall,
+        ModelUsage,
+    };
     use crate::observability::event_log::{EventRecord, EventType};
     use crate::runtime::run_context::RunContext;
 
@@ -1301,6 +1573,24 @@ mod tests {
     }
 
     #[test]
+    fn reducer_tool_executed_is_non_mutating() {
+        let state = SessionState::new(test_config(2));
+
+        let next = reduce_session(
+            state.clone(),
+            SessionEvent::ToolExecuted(RecallRecord {
+                call_id: "call-0".to_string(),
+                turn_id: 0,
+                tool_name: "recall_turn".to_string(),
+                verbatim_text: "verbatim".to_string(),
+                latency_ms: 0,
+            }),
+        );
+
+        assert_eq!(next, state);
+    }
+
+    #[test]
     fn mock_model_session_records_turns_events_and_report() {
         let base_dir = std::env::temp_dir().join(format!("qsf-multi-turn-{}", Uuid::new_v4()));
         let mut context = RunContext::create_in(&base_dir, "multi-turn-text-loop").unwrap();
@@ -1333,6 +1623,11 @@ mod tests {
         );
         assert!(events.contains("ContextAssembled"));
         assert!(events.contains("PromptAssembled"));
+        assert_event_order(
+            &records,
+            EventType::PromptAssembled,
+            EventType::ModelRoleRequested,
+        );
         assert!(report.contains("Hash prefix status"));
         assert!(report.contains("Cache misses at or above 1024 input tokens"));
         assert!(
@@ -1409,6 +1704,120 @@ mod tests {
     }
 
     #[test]
+    fn recall_tool_expands_summarized_turn_and_freezes_tool_message() {
+        let base_dir = std::env::temp_dir().join(format!("qsf-recall-tool-{}", Uuid::new_v4()));
+        let mut context = RunContext::create_in(&base_dir, "multi-turn-text-loop").unwrap();
+        let input = Cursor::new("one\ntwo\nthree\nplease recall turn 0\n:quit\n");
+        let mut output = Vec::new();
+        let memory_source = TestMemorySource;
+
+        run_with_io_and_components(
+            &mut context,
+            input,
+            &mut output,
+            &MockModelClient::default(),
+            &memory_source,
+            test_config_with_warm_threshold(10, 2),
+        )
+        .unwrap();
+
+        let events = fs::read_to_string(context.run_dir().join("events.jsonl")).unwrap();
+        let report = fs::read_to_string(context.run_dir().join("multi-turn-text-loop.md")).unwrap();
+        let records = parse_event_records(&events);
+        let turn_records = records
+            .iter()
+            .filter(|record| record.event_type == EventType::TurnCompleted)
+            .collect::<Vec<_>>();
+        let recalled_turn =
+            serde_json::from_value::<Turn>(turn_records[3].payload["turn"].clone()).unwrap();
+
+        assert!(events.contains("ToolRequested"));
+        assert!(events.contains("ToolExecuted"));
+        assert_eq!(recalled_turn.recalled_turns.len(), 1);
+        assert_eq!(recalled_turn.recalled_turns[0].turn_id, 0);
+        assert!(
+            recalled_turn.recalled_turns[0]
+                .verbatim_text
+                .contains("[Turn 0]")
+        );
+        assert!(report.contains("Recall tool executions: `1`"));
+        assert!(report.contains("| 3 | 0 | `mock-recall-0`"));
+
+        assert_turn_prefix_hashes_are_stable(&turn_records);
+
+        fs::remove_dir_all(base_dir).unwrap();
+    }
+
+    #[test]
+    fn recall_tool_failure_does_not_append_turn() {
+        let base_dir =
+            std::env::temp_dir().join(format!("qsf-recall-tool-fail-{}", Uuid::new_v4()));
+        let mut context = RunContext::create_in(&base_dir, "multi-turn-text-loop").unwrap();
+        let input = Cursor::new("one\nplease recall turn 0\n:quit\n");
+        let mut output = Vec::new();
+        let memory_source = TestMemorySource;
+
+        run_with_io_and_components(
+            &mut context,
+            input,
+            &mut output,
+            &MockModelClient::default(),
+            &memory_source,
+            test_config_with_warm_threshold(10, 10),
+        )
+        .unwrap();
+
+        let events = fs::read_to_string(context.run_dir().join("events.jsonl")).unwrap();
+        let records = parse_event_records(&events);
+
+        assert_eq!(
+            records
+                .iter()
+                .filter(|record| record.event_type == EventType::TurnCompleted)
+                .count(),
+            1
+        );
+        assert!(events.contains("ToolFailed"));
+        assert!(events.contains("not summarized"));
+
+        fs::remove_dir_all(base_dir).unwrap();
+    }
+
+    #[test]
+    fn follow_up_tool_calls_fail_without_appending_turn() {
+        let base_dir =
+            std::env::temp_dir().join(format!("qsf-recall-tool-loop-{}", Uuid::new_v4()));
+        let mut context = RunContext::create_in(&base_dir, "multi-turn-text-loop").unwrap();
+        let input = Cursor::new("one\ntwo\nthree\nplease recall turn 0\n:quit\n");
+        let mut output = Vec::new();
+        let memory_source = TestMemorySource;
+
+        run_with_io_and_components(
+            &mut context,
+            input,
+            &mut output,
+            &RepeatingToolCallClient,
+            &memory_source,
+            test_config_with_warm_threshold(10, 2),
+        )
+        .unwrap();
+
+        let events = fs::read_to_string(context.run_dir().join("events.jsonl")).unwrap();
+        let records = parse_event_records(&events);
+
+        assert_eq!(
+            records
+                .iter()
+                .filter(|record| record.event_type == EventType::TurnCompleted)
+                .count(),
+            3
+        );
+        assert!(events.contains("multi-round tool calls are not supported"));
+
+        fs::remove_dir_all(base_dir).unwrap();
+    }
+
+    #[test]
     fn report_marks_warm_invalidation_then_stable_prefix_resume() {
         let config = test_config_with_warm_threshold(5, 2);
         let summary = TurnSummary {
@@ -1448,6 +1857,7 @@ mod tests {
             &[PromptTurn {
                 user_input: &turn1.user_input,
                 retrieved_memory_block: &turn1.retrieved_memory_block,
+                recalled_tool_messages: vec![],
                 assistant_response: &turn1.assistant_response,
             }],
             "input 2",
@@ -1528,6 +1938,57 @@ mod tests {
         }
     }
 
+    struct RepeatingToolCallClient;
+
+    impl ModelClient for RepeatingToolCallClient {
+        fn client_name(&self) -> &str {
+            "repeating-tool-call"
+        }
+
+        fn complete(&self, request: &ModelRequest) -> anyhow::Result<ModelResponse> {
+            let usage = ModelUsage::new(12, 4).with_estimated_cost_usd(0.0);
+            let mut response = ModelResponse::from_text(
+                request,
+                self.client_name(),
+                request.model_name.clone(),
+                "tool loop",
+            )
+            .with_usage(usage)
+            .with_finish_reason("tool_calls");
+
+            if request.role.role_id == ModelRoleId::SessionTurnSummarizer {
+                response = ModelResponse::from_text(
+                    request,
+                    self.client_name(),
+                    request.model_name.clone(),
+                    "The user and assistant discussed QSF session continuity in one aged-out turn.",
+                )
+                .with_usage(ModelUsage::new(12, 4))
+                .with_finish_reason("stop");
+            } else if request
+                .last_user_message()
+                .map(|message| message.to_ascii_lowercase().contains("recall turn"))
+                .unwrap_or(false)
+                || request.messages.iter().any(|message| {
+                    message
+                        .content
+                        .to_ascii_lowercase()
+                        .contains("[recall_turn]")
+                })
+            {
+                response = response.with_tool_calls(vec![ModelToolCall::new(
+                    "loop-recall-0",
+                    "recall_turn",
+                    serde_json::json!({ "turn_id": 0 }),
+                )]);
+            } else {
+                response = response.with_finish_reason("stop");
+            }
+
+            Ok(response)
+        }
+    }
+
     fn test_config(max_turns: usize) -> SessionConfig {
         test_config_with_warm_threshold(max_turns, max_turns)
     }
@@ -1567,6 +2028,7 @@ mod tests {
             },
             retrieved_memory_block: String::new(),
             assistant_response: format!("answer {index}"),
+            recalled_turns: vec![],
             model_id: DEFAULT_SESSION_MODEL.to_string(),
             model_latency_ms: 0,
             input_tokens: 0,
@@ -1585,6 +2047,19 @@ mod tests {
             .collect()
     }
 
+    fn assert_event_order(records: &[EventRecord], first: EventType, second: EventType) {
+        let first_index = records
+            .iter()
+            .position(|record| record.event_type == first)
+            .unwrap();
+        let second_index = records
+            .iter()
+            .position(|record| record.event_type == second)
+            .unwrap();
+
+        assert!(first_index < second_index);
+    }
+
     fn assert_turn_prefix_hashes_are_stable(turn_records: &[&EventRecord]) {
         let turns = turn_records
             .iter()
@@ -1599,6 +2074,11 @@ mod tests {
                 .map(|turn| PromptTurn {
                     user_input: &turn.user_input,
                     retrieved_memory_block: &turn.retrieved_memory_block,
+                    recalled_tool_messages: turn
+                        .recalled_turns
+                        .iter()
+                        .map(super::prompt_tool_message_from_recall)
+                        .collect(),
                     assistant_response: &turn.assistant_response,
                 })
                 .collect::<Vec<_>>();

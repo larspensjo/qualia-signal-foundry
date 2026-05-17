@@ -935,3 +935,35 @@ Observed:
   prefix invalidation after the first ageing event.
 
 Refs: runs/2026-05-17-053037-multi-turn-text-loop
+
+## 2026-05-17 - Multi-turn recall tool
+
+Implemented the recall-tool stage for the multi-turn text loop so summarized turns can
+be expanded back into verbatim session text on demand.
+
+What changed:
+- Extended the model boundary with declared tool definitions, tool-call responses, and
+  tool messages in prompt assembly.
+- Added a scoped `recall_turn` tool to the multi-turn text loop; it records
+  `ToolRequested`, `ToolExecuted`, and `ToolFailed` events and freezes successful
+  recalls into completed turn records.
+- Updated the generated report with recall-tool execution counts and per-call
+  diagnostics.
+- Restored `PromptAssembled` event ordering before model requests, moved prompt byte
+  accounting next to canonical hashing, and made multi-round tool-call follow-ups fail
+  without appending a turn.
+- Expanded model-role failure logging to preserve the provider error chain in events
+  and traces.
+- Added deterministic mock-model coverage for summarized-turn recall, active-turn
+  recall failure, follow-up tool-call failure, reducer non-mutation, and prompt-prefix
+  stability with recalled tool messages.
+
+Observed:
+- The current OpenAI provider wrapper only exposes plain chat messages, so real
+  provider-native function calling still needs adapter support before live tool-use
+  evaluation.
+
+Refs: crates/qsf_app/src/models, crates/qsf_app/src/conversation/prompt.rs,
+crates/qsf_app/src/experiments/multi_turn_text_loop.rs,
+crates/qsf_app/src/observability/event_log.rs;
+implements: 2026-05-17 - Multi-turn recall is scoped to summarized turns

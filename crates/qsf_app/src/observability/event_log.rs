@@ -28,6 +28,7 @@ pub enum EventType {
     ContextAssembled,
     ToolRequested,
     ToolCompleted,
+    ToolExecuted,
     ToolFailed,
     ModelRoleRequested,
     ModelRoleCompleted,

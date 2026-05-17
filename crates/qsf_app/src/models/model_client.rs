@@ -16,6 +16,7 @@ pub enum ModelMessageRole {
     System,
     User,
     Assistant,
+    Tool,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -42,6 +43,44 @@ impl ModelMessage {
 
     pub fn assistant(content: impl Into<String>) -> Self {
         Self::new(ModelMessageRole::Assistant, content)
+    }
+
+    pub fn tool(content: impl Into<String>) -> Self {
+        Self::new(ModelMessageRole::Tool, content)
+    }
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+pub struct ModelToolDefinition {
+    pub name: String,
+    pub description: String,
+    pub parameters: Value,
+}
+
+impl ModelToolDefinition {
+    pub fn new(name: impl Into<String>, description: impl Into<String>, parameters: Value) -> Self {
+        Self {
+            name: name.into(),
+            description: description.into(),
+            parameters,
+        }
+    }
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+pub struct ModelToolCall {
+    pub call_id: String,
+    pub name: String,
+    pub arguments: Value,
+}
+
+impl ModelToolCall {
+    pub fn new(call_id: impl Into<String>, name: impl Into<String>, arguments: Value) -> Self {
+        Self {
+            call_id: call_id.into(),
+            name: name.into(),
+            arguments,
+        }
     }
 }
 
@@ -70,6 +109,7 @@ pub struct ModelRequest {
     pub temperature: Option<f32>,
     pub max_output_tokens: Option<u32>,
     pub response_format: ModelResponseFormat,
+    pub tools: Vec<ModelToolDefinition>,
 }
 
 impl ModelRequest {
@@ -85,6 +125,7 @@ impl ModelRequest {
             temperature: None,
             max_output_tokens: None,
             response_format,
+            tools: vec![],
         }
     }
 
@@ -105,6 +146,11 @@ impl ModelRequest {
 
     pub fn with_max_output_tokens(mut self, max_output_tokens: u32) -> Self {
         self.max_output_tokens = Some(max_output_tokens);
+        self
+    }
+
+    pub fn with_tools(mut self, tools: Vec<ModelToolDefinition>) -> Self {
+        self.tools = tools;
         self
     }
 
@@ -161,6 +207,7 @@ pub struct ModelResponse {
     pub structured_output: Option<Value>,
     pub usage: Option<ModelUsage>,
     pub finish_reason: Option<String>,
+    pub tool_calls: Vec<ModelToolCall>,
 }
 
 impl ModelResponse {
@@ -184,6 +231,7 @@ impl ModelResponse {
             structured_output,
             usage: None,
             finish_reason: None,
+            tool_calls: vec![],
         }
     }
 
@@ -194,6 +242,11 @@ impl ModelResponse {
 
     pub fn with_finish_reason(mut self, finish_reason: impl Into<String>) -> Self {
         self.finish_reason = Some(finish_reason.into());
+        self
+    }
+
+    pub fn with_tool_calls(mut self, tool_calls: Vec<ModelToolCall>) -> Self {
+        self.tool_calls = tool_calls;
         self
     }
 
@@ -222,6 +275,7 @@ pub fn invoke_model_role(
             "model_name": request.model_name,
             "message_count": request.messages.len(),
             "response_format": request.response_format,
+            "tools": &request.tools,
         }),
         None,
     )?;
@@ -254,6 +308,8 @@ pub fn invoke_model_role(
                     "provider_name": &response.provider_name,
                     "model_name": &response.model_name,
                     "has_structured_output": response.structured_output.is_some(),
+                    "tool_call_count": response.tool_calls.len(),
+                    "tool_calls": &response.tool_calls,
                     "usage": &response.usage,
                     "finish_reason": &response.finish_reason,
                     "latency_ns": elapsed_ns,
@@ -266,7 +322,7 @@ pub fn invoke_model_role(
         }
         Err(error) => {
             let elapsed_ns = elapsed_ns(started_at);
-            let error_message = error.to_string();
+            let error_message = error_chain_summary(&error);
             let trace = TraceRecord::new(
                 context.experiment_id(),
                 "model-role",
@@ -326,6 +382,14 @@ fn summarize_text(text: &str, max_chars: usize) -> String {
 
     let head: String = text.chars().take(max_chars).collect();
     format!("{head}...")
+}
+
+fn error_chain_summary(error: &anyhow::Error) -> String {
+    error
+        .chain()
+        .map(ToString::to_string)
+        .collect::<Vec<_>>()
+        .join(": ")
 }
 
 #[cfg(test)]

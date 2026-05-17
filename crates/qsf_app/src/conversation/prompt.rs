@@ -8,7 +8,7 @@ use crate::context::ContextAssembly;
 use crate::models::{ModelMessage, ModelMessageRole};
 
 /// Constant system-prompt prefix; warm-tier summaries are appended at assembly time.
-pub const SESSION_SYSTEM_PROMPT: &str = "You are a concise conversational responder. Treat this as one continuous human-driven text session. Use retrieved memory as context, keep prior turns stable, and never initiate a turn without user input.";
+pub const SESSION_SYSTEM_PROMPT: &str = "You are a concise conversational responder. Treat this as one continuous human-driven text session. Use retrieved memory as context, keep prior turns stable, and never initiate a turn without user input. If an older summarized turn needs exact details, request recall_turn with its turn_id; only summarized turns can be recalled.";
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct ContentHash(pub [u8; 32]);
@@ -33,7 +33,15 @@ impl fmt::Display for ContentHash {
 pub struct PromptTurn<'a> {
     pub user_input: &'a str,
     pub retrieved_memory_block: &'a str,
+    pub recalled_tool_messages: Vec<PromptToolMessage>,
     pub assistant_response: &'a str,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct PromptToolMessage {
+    pub tool_name: String,
+    pub call_id: String,
+    pub content: String,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -71,10 +79,17 @@ pub fn assemble_prompt_with_summaries(
             turn.user_input,
             turn.retrieved_memory_block,
         )));
+        for tool_message in &turn.recalled_tool_messages {
+            messages.push(ModelMessage::tool(format_tool_message(tool_message)));
+        }
         messages.push(ModelMessage::assistant(turn.assistant_response));
     }
 
     messages.push(ModelMessage::user(format_new_turn(input, retrieved)));
+    prompt_assembly_from_messages(messages)
+}
+
+pub fn prompt_assembly_from_messages(messages: Vec<ModelMessage>) -> PromptAssembly {
     let full_request_hash = canonical_hash(&messages);
     let message_count = messages.len();
     let total_bytes = messages
@@ -131,6 +146,15 @@ pub fn format_new_turn(user_input: &str, retrieved_memory_block: &str) -> String
     }
 }
 
+pub fn format_tool_message(tool_message: &PromptToolMessage) -> String {
+    format!(
+        "[Tool]\nname: {}\ncall_id: {}\n{}",
+        tool_message.tool_name,
+        tool_message.call_id,
+        tool_message.content.trim()
+    )
+}
+
 pub fn retrieved_memory_block(assembly: &ContextAssembly) -> String {
     assembly
         .selected
@@ -171,6 +195,7 @@ fn message_role_name(role: ModelMessageRole) -> &'static str {
         ModelMessageRole::System => "system",
         ModelMessageRole::User => "user",
         ModelMessageRole::Assistant => "assistant",
+        ModelMessageRole::Tool => "tool",
     }
 }
 
@@ -192,6 +217,7 @@ mod tests {
         let turn = PromptTurn {
             user_input: "first input",
             retrieved_memory_block: "- memory.a: First memory",
+            recalled_tool_messages: vec![],
             assistant_response: "first answer",
         };
         let second = assemble_prompt(&[turn], "second input", "- memory.b: Different memory");
