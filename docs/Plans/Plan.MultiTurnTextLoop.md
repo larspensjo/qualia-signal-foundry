@@ -206,7 +206,7 @@ Known limitation:
 
 ### Status
 
-Not started. Phase 0 pending.
+Phase 0 complete. Phase 1 ready to start.
 
 Goal: make the live OpenAI-backed multi-turn loop exercise the same recall path as the
 deterministic mock model by forwarding `recall_turn` as a provider-native tool,
@@ -215,11 +215,16 @@ real recall behavior.
 
 ### Open Questions To Surface Before Implementation
 
-- Should provider-native tool support be added to `openai_provider_kit` directly, or
-  should `qsf_app` temporarily bypass the kit for tool-capable OpenAI requests?
-- Should the provider boundary stay chat-completions based for Stage 3.1, or migrate
-  to a responses-style API if that is the current best-supported OpenAI function
-  calling surface?
+- **Resolved (Phase 0):** Should provider-native tool support be added to
+  `openai_provider_kit` directly, or should `qsf_app` temporarily bypass the kit?
+  → **Bypass.** The kit has no tool support at any layer; modifying 4 of 5 source
+  files in a pinned external crate is more overhead than writing OpenAI-specific
+  serialization directly in `qsf_app`. See Decision Log 2026-05-17.
+- **Resolved (Phase 0):** Should the provider boundary stay chat-completions based
+  or migrate to a responses-style API?
+  → **Chat Completions.** It is not deprecated, is fully supported, and the existing
+  non-tool path already uses it. Migrating both paths to Responses is out of scope
+  for Stage 3.1. See Decision Log 2026-05-17.
 - What is the canonical provider-agnostic representation of a tool-result message?
   This splits into two sub-questions:
   - Does `ModelMessage` need a new `tool_call_id` field, a sibling type, or does the
@@ -229,11 +234,13 @@ real recall behavior.
 - Should unsupported providers reject requests containing tools, or silently degrade
   to text-only behavior? The current recommendation is to fail loudly for explicit
   tool requests.
-- Should `allowed_tools` on `ModelRole` become enforced at `invoke_model_role` time
-  before provider dispatch? Today `allowed_tools` is set on the role but never
-  enforced — the runtime passes the tool list via `with_tools(...)` instead. Answer
-  in Phase 0 or Phase 1 and promote to `docs/DecisionLog.md`. If the answer is "no
-  enforcement," the field should be removed or documented as advisory.
+- **Resolved (Phase 0):** Should `allowed_tools` on `ModelRole` become enforced at
+  `invoke_model_role` time before provider dispatch?
+  → **Removed.** The field was set but never read anywhere in the dispatch path.
+  An unenforced declaration is misleading. Tool authorization is expressed solely
+  through `ModelRequest::with_tools()`. If per-role enforcement is needed later, it
+  belongs at the provider dispatch boundary with a clear error on mismatch. See
+  Decision Log 2026-05-17.
 
 ### Phase 0: Provider Surface Check
 

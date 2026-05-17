@@ -294,3 +294,58 @@ before returning verbatim text. Future wider recall behavior should be introduce
 deliberate policy change, not as an implicit side effect of tool plumbing.
 Refs: crates/qsf_app/src/experiments/multi_turn_text_loop.rs,
 docs/Plans/Plan.MultiTurnTextLoop.md
+
+## 2026-05-17 - Stage 3.1 bypasses openai_provider_kit for tool-capable requests
+Decision: Stage 3.1 of the multi-turn text loop writes OpenAI-specific tool-capable
+HTTP request/response handling directly in `qsf_app` rather than extending
+`openai_provider_kit`.
+Context: The kit (pinned at `ca28629`) has no tool support at any layer — `LlmRequest`
+lacks a `tools` field, `ChatMessage` and `ChatRole` have no `Tool` variant or
+`tool_call_id`, the wire-format structs omit `tools`/`tool_choice`, and response parsing
+ignores `tool_calls` entirely. Adding tool support would touch 4 of 5 source files in
+the crate. The kit itself is a thin reqwest wrapper (~200 lines of meaningful code).
+Forking, modifying most of the crate, and maintaining a fork is more overhead than
+writing the OpenAI-specific serialization directly in `qsf_app`.
+Consequences: `qsf_app` gains a new module (e.g., `models/openai_tool_client.rs`) that
+handles tool-capable Chat Completions requests. Existing non-tool OpenAI requests
+continue through the kit path unchanged. Auth, error mapping, and usage parsing are
+duplicated in the new module for the tool path. Future kit upgrades or a migration to
+the Responses API can replace the bypass module without affecting the provider-agnostic
+model boundary.
+Refs: crates/qsf_app/src/models/openai_provider.rs,
+crates/qsf_app/Cargo.toml,
+docs/Plans/Plan.MultiTurnTextLoop.md,
+docs/Reviews/Review.Plan.MultiTurnTextLoop.Stage3.1.2026-05-17.md
+
+## 2026-05-17 - Stage 3.1 uses Chat Completions, not Responses API
+Decision: Stage 3.1 sends tool definitions and tool results through the Chat
+Completions API (`/v1/chat/completions`), not the newer Responses API.
+Context: OpenAI's Responses API is recommended for new projects but Chat Completions
+is explicitly not deprecated and continues to be fully supported. The existing
+`openai_provider_kit` and the non-tool OpenAI path already use Chat Completions.
+Migrating to Responses would require changing both the tool and non-tool paths for
+consistency, which is out of scope for Stage 3.1.
+Consequences: Tool definitions use the `{"type":"function","function":{...}}` wrapper
+shape. Tool results use `{"role":"tool","tool_call_id":"...","content":"..."}`.
+`finish_reason: "tool_calls"` signals a tool call. A future migration to the Responses
+API should be a separate phase that changes both paths together.
+Refs: https://developers.openai.com/docs/guides/function-calling,
+https://developers.openai.com/docs/guides/migrate-to-responses,
+docs/Plans/Plan.MultiTurnTextLoop.md
+
+## 2026-05-17 - allowed_tools on ModelRole is removed as unenforced
+Decision: The `allowed_tools` field is removed from `ModelRole`. Tool authorization
+is expressed solely through the tool list passed to `ModelRequest::with_tools()`.
+Context: `allowed_tools` was set on the role in
+`conversational_responder_role_with_recall_tool()` but never read or enforced anywhere
+in the dispatch path. The actual tool list is always passed via
+`ModelRequest.with_tools()`. An unenforced declaration is misleading and is technical
+debt. If per-role tool authorization is needed later, it should be enforced at the
+provider dispatch boundary with a clear error on mismatch.
+Consequences: `ModelRole::allowed_tools` is deleted. The
+`conversational_responder_role_with_recall_tool()` helper no longer sets it. No
+behavior change — no code ever read the field. If enforcement is added later, it
+belongs in `invoke_model_role` or the provider adapter, not as a passive annotation.
+Refs: crates/qsf_app/src/models/model_role.rs,
+crates/qsf_app/src/experiments/multi_turn_text_loop.rs:597-601,
+docs/Plans/Plan.MultiTurnTextLoop.md
