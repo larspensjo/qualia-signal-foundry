@@ -2,6 +2,7 @@ use anyhow::{Result, bail};
 use serde::{Deserialize, Serialize};
 
 use crate::models::ModelToolDefinition;
+use crate::session::SessionState;
 
 use super::calculator_tool::CalculatorTool;
 use super::tool_request::{ToolCategory, ToolRequest, ToolSideEffectLevel};
@@ -18,29 +19,51 @@ pub struct ToolMetadata {
 pub trait Tool {
     fn metadata(&self) -> ToolMetadata;
 
-    fn execute(&self, request: &ToolRequest) -> Result<ToolResult>;
+    fn execute(&self, request: &ToolRequest, ctx: &dyn ToolContext) -> Result<ToolResult>;
 
     fn model_tool_definition(&self) -> Option<ModelToolDefinition> {
         None
     }
 }
 
+pub trait ToolContext {
+    fn session_state(&self) -> Option<&SessionState> {
+        None
+    }
+}
+
 #[derive(Default)]
+pub struct EmptyToolContext;
+
+impl ToolContext for EmptyToolContext {}
+
 pub struct ToolRegistry {
     calculator: CalculatorTool,
+    recall_turn: super::RecallTurnTool,
+}
+
+impl Default for ToolRegistry {
+    fn default() -> Self {
+        Self {
+            calculator: CalculatorTool,
+            recall_turn: super::RecallTurnTool,
+        }
+    }
 }
 
 impl ToolRegistry {
     pub fn metadata_for(&self, tool_name: &str) -> Option<ToolMetadata> {
         match tool_name {
             super::CALCULATOR_TOOL_NAME => Some(self.calculator.metadata()),
+            super::RECALL_TURN_TOOL_NAME => Some(self.recall_turn.metadata()),
             _ => None,
         }
     }
 
-    fn dispatch(&self, request: &ToolRequest) -> Result<ToolResult> {
+    fn dispatch(&self, request: &ToolRequest, ctx: &dyn ToolContext) -> Result<ToolResult> {
         match request.tool_name.as_str() {
-            super::CALCULATOR_TOOL_NAME => self.calculator.execute(request),
+            super::CALCULATOR_TOOL_NAME => self.calculator.execute(request, ctx),
+            super::RECALL_TURN_TOOL_NAME => self.recall_turn.execute(request, ctx),
             _ => bail!("unknown tool `{}`", request.tool_name),
         }
     }
@@ -70,14 +93,15 @@ impl ToolRegistry {
     pub fn validate_and_execute(
         &self,
         request: &ToolRequest,
+        ctx: &dyn ToolContext,
     ) -> Result<(ToolMetadata, ToolResult)> {
         let metadata = self.validate_request(request)?;
-        let result = self.dispatch(request)?;
+        let result = self.dispatch(request, ctx)?;
         Ok((metadata, result))
     }
 
-    pub fn execute(&self, request: &ToolRequest) -> Result<ToolResult> {
-        let (_, result) = self.validate_and_execute(request)?;
+    pub fn execute(&self, request: &ToolRequest, ctx: &dyn ToolContext) -> Result<ToolResult> {
+        let (_, result) = self.validate_and_execute(request, ctx)?;
         Ok(result)
     }
 
@@ -86,6 +110,7 @@ impl ToolRegistry {
             .iter()
             .filter_map(|name| match *name {
                 super::CALCULATOR_TOOL_NAME => self.calculator.model_tool_definition(),
+                super::RECALL_TURN_TOOL_NAME => self.recall_turn.model_tool_definition(),
                 _ => None,
             })
             .collect()
@@ -108,11 +133,26 @@ mod tests {
     }
 
     #[test]
+    fn recall_turn_exposes_model_tool_definition() {
+        let registry = ToolRegistry::default();
+        let definitions =
+            registry.model_tool_definitions_for(&[crate::tools::RECALL_TURN_TOOL_NAME]);
+        assert_eq!(definitions.len(), 1);
+        assert_eq!(definitions[0].name, crate::tools::RECALL_TURN_TOOL_NAME);
+        assert!(
+            definitions[0].parameters["properties"]
+                .get("turn_id")
+                .is_some()
+        );
+    }
+
+    #[test]
     fn registry_rejects_requests_without_matching_permission() {
         let registry = ToolRegistry::default();
         let request = ToolRequest {
             tool_name: super::super::CALCULATOR_TOOL_NAME.to_string(),
             input: "1 + 2".to_string(),
+            structured: None,
             permission: ToolPermission {
                 allowed_categories: vec![ToolCategory::ReadOnly],
                 max_side_effect_level: ToolSideEffectLevel::ReadOnly,

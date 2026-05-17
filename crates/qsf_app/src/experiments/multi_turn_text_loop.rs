@@ -4,23 +4,30 @@ use std::path::PathBuf;
 use std::time::{Instant, SystemTime};
 
 use anyhow::Context;
-use serde::{Deserialize, Serialize};
+use serde::Serialize;
 use serde_json::json;
 
 use crate::context::{ContextAssembly, ContextFragment, assemble_context};
 use crate::conversation::prompt::{self, PromptToolMessage, PromptTurn};
-use crate::conversation::{ContentHash, PromptAssembly, PromptTurnSummary};
+use crate::conversation::{PromptAssembly, PromptTurnSummary};
 use crate::memory::{
     Association, MemoryFixture, MemoryRecord, RetrievalResult, RetrievalStrategy,
     phase_four_fixture, retrieve_memories, retrieved_memory_ids,
 };
 use crate::models::{
-    ModelClient, ModelMessage, ModelRequest, ModelRole, ModelRoleId, ModelToolCall,
-    ModelToolDefinition, build_client, invoke_model_role, requested_provider_from_env,
+    ModelClient, ModelMessage, ModelRequest, ModelRole, ModelRoleId, ModelToolCall, build_client,
+    invoke_model_role, requested_provider_from_env,
 };
 use crate::observability::event_log::EventType;
 use crate::observability::trace::{TraceRecord, elapsed_ms};
 use crate::runtime::run_context::RunContext;
+use crate::session::{
+    MemorySourceConfig, RecallRecord, SessionConfig, SessionEndReason, SessionEvent, SessionLimit,
+    SessionState, Turn, TurnSummary, is_turn_summarized,
+};
+use crate::tools::{
+    RECALL_TURN_TOOL_NAME, SessionToolContext, ToolRegistry, ToolRequest, ToolResult,
+};
 
 use super::registry::{Experiment, ExperimentName, ExperimentOutcome};
 
@@ -35,7 +42,6 @@ const SESSION_ALLOW_OVER_LIMIT_ENV_VAR: &str = "QSF_SESSION_ALLOW_OVER_LIMIT";
 const SESSION_WARM_THRESHOLD_ENV_VAR: &str = "QSF_SESSION_WARM_THRESHOLD";
 const SESSION_RETRIEVAL_LIMIT: usize = 8;
 const SESSION_RETRIEVAL_STRATEGY: RetrievalStrategy = RetrievalStrategy::AssociationWeighted;
-const RECALL_TURN_TOOL_NAME: &str = "recall_turn";
 
 pub struct MultiTurnTextLoopExperiment;
 
@@ -64,46 +70,6 @@ impl Experiment for MultiTurnTextLoopExperiment {
             config,
         )
     }
-}
-
-#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
-pub struct SessionState {
-    pub started_at: SystemTime,
-    pub config: SessionConfig,
-    pub turns: Vec<Turn>,
-    pub summarized_turns: Vec<TurnSummary>,
-    pub ended_reason: Option<SessionEndReason>,
-    pub last_input: Option<String>,
-    pub last_prompt_hash: Option<ContentHash>,
-    pub prefix_invalidated_since_last_prompt: bool,
-    pub last_model_error: Option<String>,
-    pub limit_reached: Option<SessionLimit>,
-}
-
-impl SessionState {
-    pub fn new(config: SessionConfig) -> Self {
-        Self {
-            started_at: SystemTime::now(),
-            config,
-            turns: vec![],
-            summarized_turns: vec![],
-            ended_reason: None,
-            last_input: None,
-            last_prompt_hash: None,
-            prefix_invalidated_since_last_prompt: false,
-            last_model_error: None,
-            limit_reached: None,
-        }
-    }
-}
-
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
-pub struct SessionConfig {
-    pub model_id: String,
-    pub max_turns: usize,
-    pub warm_threshold: usize,
-    pub allow_over_limit: bool,
-    pub memory_source: MemorySourceConfig,
 }
 
 impl SessionConfig {
@@ -135,12 +101,6 @@ impl SessionConfig {
     }
 }
 
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
-pub struct MemorySourceConfig {
-    pub source: String,
-    pub file: Option<PathBuf>,
-}
-
 impl MemorySourceConfig {
     fn from_env() -> Self {
         let source = std::env::var(SESSION_MEMORY_SOURCE_ENV_VAR)
@@ -151,96 +111,6 @@ impl MemorySourceConfig {
 
         Self { source, file }
     }
-}
-
-#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
-pub struct Turn {
-    pub index: usize,
-    pub started_at: SystemTime,
-    pub completed_at: SystemTime,
-    pub user_input: String,
-    pub context_assembly: ContextAssembly,
-    pub retrieved_memory_block: String,
-    pub assistant_response: String,
-    pub recalled_turns: Vec<RecallRecord>,
-    pub model_id: String,
-    pub model_latency_ms: u64,
-    pub input_tokens: u32,
-    pub cached_input_tokens: u32,
-    pub output_tokens: u32,
-    pub full_request_hash: ContentHash,
-    pub message_count: usize,
-}
-
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
-pub struct RecallRecord {
-    pub call_id: String,
-    pub turn_id: usize,
-    pub tool_name: String,
-    pub verbatim_text: String,
-    pub latency_ms: u64,
-}
-
-#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
-pub struct TurnSummary {
-    pub turn_index: usize,
-    pub summarized_after_turn_index: usize,
-    pub summary: String,
-    pub model_id: String,
-    pub model_latency_ms: u64,
-    pub input_tokens: u32,
-    pub output_tokens: u32,
-}
-
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
-pub struct SessionLimit {
-    pub current: usize,
-    pub max: usize,
-    pub override_active: bool,
-}
-
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
-#[serde(rename_all = "snake_case")]
-pub enum SessionEndReason {
-    Eof,
-    QuitCommand,
-    Error,
-}
-
-#[derive(Clone, Debug, PartialEq)]
-pub enum SessionEvent {
-    SessionStarted(SessionConfig),
-    InputReceived {
-        input: String,
-    },
-    MemoryRetrieved,
-    ContextAssembled(ContextAssembly),
-    PromptAssembled {
-        full_request_hash: ContentHash,
-        message_count: usize,
-        total_bytes: usize,
-    },
-    ModelRoleCompleted {
-        response: String,
-        latency_ms: u64,
-        input_tokens: u32,
-        cached_input_tokens: u32,
-        output_tokens: u32,
-    },
-    ModelRoleFailed {
-        error_summary: String,
-    },
-    TurnCompleted(Turn),
-    TurnSummarized(TurnSummary),
-    ToolCompleted(RecallRecord),
-    SessionLimitReached {
-        current: usize,
-        max: usize,
-        override_active: bool,
-    },
-    SessionEnded {
-        reason: SessionEndReason,
-    },
 }
 
 #[cfg_attr(not(test), allow(dead_code))]
@@ -473,15 +343,19 @@ fn run_one_turn(
         },
     )?;
 
-    let request = ModelRequest::new(
-        conversational_responder_role_with_recall_tool(),
-        base_prompt.messages.clone(),
-    )
-    .with_session_id(context.run_id())
-    .with_model_name(&state.config.model_id)
-    .with_temperature(0.0)
-    .with_max_output_tokens(240)
-    .with_tools(vec![recall_turn_tool_definition()]);
+    let registry = ToolRegistry::default();
+    let responder_role = conversational_responder_role_with_recall_tool();
+    let allowed_tools = responder_role
+        .allowed_tools
+        .iter()
+        .map(String::as_str)
+        .collect::<Vec<_>>();
+    let request = ModelRequest::new(responder_role.clone(), base_prompt.messages.clone())
+        .with_session_id(context.run_id())
+        .with_model_name(&state.config.model_id)
+        .with_temperature(0.0)
+        .with_max_output_tokens(240)
+        .with_tools(registry.model_tool_definitions_for(&allowed_tools));
     let model_started_at = Instant::now();
     let mut response = invoke_model_role(context, model_client, &request)?;
     let mut model_latency_ms = elapsed_ms(model_started_at);
@@ -504,7 +378,8 @@ fn run_one_turn(
     let mut final_messages = base_prompt.messages.clone();
 
     if !response.tool_calls.is_empty() {
-        recalled_turns = execute_recall_tool_calls(context, state, &response.tool_calls)?;
+        recalled_turns =
+            execute_recall_tool_calls(context, state, &registry, &response.tool_calls)?;
         for recall in &recalled_turns {
             final_messages.push(ModelMessage::tool(format_recall_tool_message(recall)));
         }
@@ -600,49 +475,42 @@ fn conversational_responder_role_with_recall_tool() -> ModelRole {
     role
 }
 
-fn recall_turn_tool_definition() -> ModelToolDefinition {
-    ModelToolDefinition::new(
-        RECALL_TURN_TOOL_NAME,
-        "Recall verbatim text for a summarized conversation turn by turn_id.",
-        json!({
-            "type": "object",
-            "properties": {
-                "turn_id": {
-                    "type": "integer",
-                    "minimum": 0,
-                    "description": "The summarized turn index to recall."
-                }
-            },
-            "required": ["turn_id"],
-            "additionalProperties": false
-        }),
-    )
-}
-
 fn execute_recall_tool_calls(
     context: &mut RunContext,
     state: &SessionState,
+    registry: &ToolRegistry,
     tool_calls: &[ModelToolCall],
 ) -> anyhow::Result<Vec<RecallRecord>> {
     let mut recalls = Vec::with_capacity(tool_calls.len());
+    let tool_ctx = SessionToolContext { state };
 
     for tool_call in tool_calls {
+        let request = recall_request_from_model_tool_call(tool_call, context.experiment_id())?;
+        let metadata = registry
+            .metadata_for(&request.tool_name)
+            .with_context(|| format!("unknown tool `{}`", request.tool_name))?;
         context.record_event(
             EventType::ToolRequested,
             json!({
                 "session_id": context.run_id(),
-                "tool_name": &tool_call.name,
+                "tool_name": &request.tool_name,
                 "call_id": &tool_call.call_id,
                 "arguments": &tool_call.arguments,
+                "input": &request.input,
+                "permission": &request.permission,
+                "requested_by": &request.requested_by,
+                "category": metadata.category,
+                "side_effect_level": metadata.side_effect_level,
                 "scope": "multi_turn_text_loop",
             }),
             None,
         )?;
 
         let started_at = Instant::now();
-        match execute_recall_turn(state, tool_call) {
-            Ok(mut recall) => {
-                recall.latency_ms = elapsed_ms(started_at);
+        match registry.validate_and_execute(&request, &tool_ctx) {
+            Ok((_metadata, result)) => {
+                let recall =
+                    recall_record_from_tool_result(tool_call, result, elapsed_ms(started_at))?;
                 apply_tool_completed_event(context, state, recall.clone())?;
                 recalls.push(recall);
             }
@@ -651,7 +519,7 @@ fn execute_recall_tool_calls(
                     EventType::ToolFailed,
                     json!({
                         "session_id": context.run_id(),
-                        "tool_name": &tool_call.name,
+                        "tool_name": &request.tool_name,
                         "call_id": &tool_call.call_id,
                         "error": sanitize_error(&error.to_string()),
                         "latency_ms": elapsed_ms(started_at),
@@ -666,10 +534,10 @@ fn execute_recall_tool_calls(
     Ok(recalls)
 }
 
-fn execute_recall_turn(
-    state: &SessionState,
+fn recall_request_from_model_tool_call(
     tool_call: &ModelToolCall,
-) -> anyhow::Result<RecallRecord> {
+    requested_by: &str,
+) -> anyhow::Result<ToolRequest> {
     anyhow::ensure!(
         tool_call.name == RECALL_TURN_TOOL_NAME,
         "unknown multi-turn tool `{}`",
@@ -680,24 +548,32 @@ fn execute_recall_turn(
         .get("turn_id")
         .and_then(|value| value.as_u64())
         .context("recall_turn requires integer argument `turn_id`")? as usize;
-    let turn = state
-        .turns
-        .get(turn_id)
-        .with_context(|| format!("turn {turn_id} does not exist"))?;
-    anyhow::ensure!(
-        is_turn_summarized(state, turn_id),
-        "turn {turn_id} is not summarized and cannot be recalled"
-    );
 
+    Ok(ToolRequest::recall_turn(
+        tool_call.call_id.clone(),
+        turn_id,
+        requested_by,
+    ))
+}
+
+fn recall_record_from_tool_result(
+    tool_call: &ModelToolCall,
+    result: ToolResult,
+    latency_ms: u64,
+) -> anyhow::Result<RecallRecord> {
+    let turn_id = tool_call
+        .arguments
+        .get("turn_id")
+        .and_then(|value| value.as_u64())
+        .context("recall_turn requires integer argument `turn_id`")? as usize;
     Ok(RecallRecord {
         call_id: tool_call.call_id.clone(),
         turn_id,
-        tool_name: tool_call.name.clone(),
-        verbatim_text: format!(
-            "[Turn {turn_id}]\n[User]\n{}\n\n[Assistant]\n{}",
-            turn.user_input, turn.assistant_response
-        ),
-        latency_ms: 0,
+        tool_name: result.tool_name,
+        category: result.category,
+        side_effect_level: result.side_effect_level,
+        verbatim_text: result.output_text,
+        latency_ms,
     })
 }
 
@@ -787,12 +663,6 @@ fn active_turn_count(state: &SessionState) -> usize {
 
 fn oldest_unsummarized_turn(state: &SessionState) -> Option<&Turn> {
     state.turns.get(state.summarized_turns.len())
-}
-
-fn is_turn_summarized(state: &SessionState, turn_index: usize) -> bool {
-    // Summaries are append-only and always cover the oldest unsummarized turns.
-    // Completed Turn records stay in `turns`; prompt assembly skips this prefix.
-    turn_index < state.summarized_turns.len()
 }
 
 fn summarize_turn(
@@ -990,6 +860,8 @@ fn record_session_event(context: &mut RunContext, event: &SessionEvent) -> anyho
                     "tool_name": &recall.tool_name,
                     "call_id": &recall.call_id,
                     "turn_id": recall.turn_id,
+                    "category": recall.category,
+                    "side_effect_level": recall.side_effect_level,
                     "latency_ms": recall.latency_ms,
                     "scope": "multi_turn_text_loop",
                 }),
@@ -1441,8 +1313,7 @@ mod tests {
     use uuid::Uuid;
 
     use super::{
-        DEFAULT_SESSION_MODEL, MemorySourceConfig, RecallRecord, SessionConfig, SessionEndReason,
-        SessionEvent, SessionMemorySource, SessionState, Turn, TurnSummary, age_out_warm_turns,
+        DEFAULT_SESSION_MODEL, SessionMemorySource, age_out_warm_turns,
         prompt_prefix_status_for_report, reduce_session, run_with_io_and_components,
     };
     use crate::context::{ContextAssembly, ContextBudget};
@@ -1458,6 +1329,10 @@ mod tests {
     };
     use crate::observability::event_log::{EventRecord, EventType};
     use crate::runtime::run_context::RunContext;
+    use crate::session::{
+        MemorySourceConfig, RecallRecord, SessionConfig, SessionEndReason, SessionEvent,
+        SessionState, Turn, TurnSummary,
+    };
 
     #[test]
     fn reducer_appends_turns_in_order() {
@@ -1582,6 +1457,8 @@ mod tests {
                 call_id: "call-0".to_string(),
                 turn_id: 0,
                 tool_name: "recall_turn".to_string(),
+                category: crate::tools::ToolCategory::ComputeOnly,
+                side_effect_level: crate::tools::ToolSideEffectLevel::None,
                 verbatim_text: "verbatim".to_string(),
                 latency_ms: 0,
             }),
@@ -1730,9 +1607,21 @@ mod tests {
             .collect::<Vec<_>>();
         let recalled_turn =
             serde_json::from_value::<Turn>(turn_records[3].payload["turn"].clone()).unwrap();
+        let tool_requested = records
+            .iter()
+            .find(|record| record.event_type == EventType::ToolRequested)
+            .unwrap();
+        let tool_completed = records
+            .iter()
+            .find(|record| record.event_type == EventType::ToolCompleted)
+            .unwrap();
 
         assert!(events.contains("ToolRequested"));
         assert!(events.contains("ToolCompleted"));
+        assert_eq!(tool_requested.payload["category"], "compute_only");
+        assert_eq!(tool_requested.payload["side_effect_level"], "none");
+        assert_eq!(tool_completed.payload["category"], "compute_only");
+        assert_eq!(tool_completed.payload["side_effect_level"], "none");
         assert_eq!(recalled_turn.recalled_turns.len(), 1);
         assert_eq!(recalled_turn.recalled_turns[0].turn_id, 0);
         assert!(

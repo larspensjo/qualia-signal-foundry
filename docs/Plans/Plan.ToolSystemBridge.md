@@ -2,10 +2,10 @@
 
 ## Status
 
-Draft. **OQ1 resolved: Option A (single `Tool` trait with `ToolContext`
-parameter)**. All phases are now actionable. Phases 1 and 2 are independently
-landable; Phase 3 implements the trait change locked in here; Phases 4 and 5
-follow.
+Draft. **OQ1 resolved: single `Tool` trait with typed `ToolContext`
+accessors for borrowed runtime state**. All phases are now actionable. Phases 1
+and 2 are independently landable; Phase 3 implements the trait change locked in
+here; Phases 4 and 5 follow.
 
 ### Supersedes prior decision on `allowed_tools`
 
@@ -115,21 +115,26 @@ need to be exposed to any real role yet.
 
 ## Open Design Questions
 
-### 1. Tool trait shape for tools that need session state (RESOLVED — Option A)
+### 1. Tool trait shape for tools that need session state (RESOLVED — single trait with typed context accessors)
 
-**Decision: Option A.** Single `Tool` trait with a `ctx: &dyn ToolContext`
-parameter on `execute`. Stateful tools downcast `ctx` to the concrete context
-they need; stateless tools ignore it. Decided 2026-05-17.
+**Decision:** Single `Tool` trait with a `ctx: &dyn ToolContext` parameter on
+`execute`. Stateful tools read borrowed runtime state through typed accessors on
+`ToolContext` (currently `session_state()`); stateless tools ignore it. Decided
+2026-05-17; amended during Phase 3 review after `std::any::Any` downcasting
+proved incompatible with borrowed session contexts because `Any` requires
+`'static`.
 
 `CalculatorTool::execute(&self, request: &ToolRequest)` is stateless.
 `recall_turn` reads `SessionState` to look up a summarized turn. The options
 below remain in the plan as a record of the alternatives considered.
 
-**Option A — Context parameter on `Tool`, downcast inside the tool.**
+**Option A — Context parameter on `Tool`, typed accessors for borrowed state.**
 
 ```rust
 pub trait ToolContext {
-    fn as_any(&self) -> &dyn std::any::Any;
+    fn session_state(&self) -> Option<&SessionState> {
+        None
+    }
 }
 
 pub trait Tool {
@@ -139,14 +144,16 @@ pub trait Tool {
 }
 ```
 
-Stateless tools accept any `ctx` and ignore it. Stateful tools downcast to
-the concrete context they expect (`SessionState`, future `MemoryStore`,
-etc.) and bail with a typed error if the cast fails.
+Stateless tools accept any `ctx` and ignore it. Stateful tools use the accessor
+for the state they need and bail with a typed error if the context does not
+provide it.
 
 - ✅ One trait, one registry, one dispatch path.
 - ✅ Stateless tools cost nothing (ignore the parameter).
-- ❌ Runtime downcast moves a type error from compile to runtime.
+- ✅ Borrowed runtime state can pass through the context without forcing
+      `Arc`/`RwLock` ownership changes.
 - ❌ Every call site must construct a `ToolContext`, even when nothing needs it.
+- ❌ New runtime state kinds require deliberate `ToolContext` accessor additions.
 
 **Option B — Two traits, two dispatch paths on the registry.**
 
@@ -195,10 +202,11 @@ WithSessionState { input: String, state: &SessionState } }` or similar).
 - ❌ Couples the request type to every future state shape.
 - ❌ Mixes "what the model asked for" with "what the runtime has to offer".
 
-**Chosen:** Option A. The runtime downcast cost is small, the boundary stays
-single, and "extend `ToolContext` with new accessors" is the honest shape of
-"more subsystems will eventually need tool access" (memory store, goal
-system, introspection adapter).
+**Chosen:** Option A as amended. The boundary stays single, and extending
+`ToolContext` with explicit borrowed-state accessors is the honest shape of
+"more subsystems will eventually need tool access" (memory store, goal system,
+introspection adapter). The original downcast sketch is rejected for borrowed
+contexts because `Any` requires `'static`.
 
 ### 2. Where is `allowed_tools` enforced?
 
@@ -373,12 +381,13 @@ implementation in `multi_turn_text_loop.rs` with a `Tool` impl that lives in
 dispatched through `validate_and_execute`, and exposing its `ModelToolDefinition`
 via the Phase 2 hook.
 
-Implements Option A from OQ1 (single trait + `ToolContext` downcast).
+Implements Option A as amended from OQ1 (single trait + typed `ToolContext`
+accessors).
 
 **Files:**
 
-- Modify `crates/qsf_app/src/tools/tool_registry.rs`: add `ToolContext` trait
-  with `as_any`, change `Tool::execute` signature to take
+- Modify `crates/qsf_app/src/tools/tool_registry.rs`: add `ToolContext` trait,
+  change `Tool::execute` signature to take
   `ctx: &dyn ToolContext`, update `ToolRegistry::dispatch`,
   `validate_and_execute`, and `execute` to thread the context through. Define
   `EmptyToolContext` in this file as the canonical no-state context for
@@ -388,10 +397,10 @@ Implements Option A from OQ1 (single trait + `ToolContext` downcast).
 - Create `crates/qsf_app/src/tools/recall_turn_tool.rs`: new `RecallTurnTool`
   with metadata (`category: ComputeOnly`, `side_effect_level: None`), a
   `ModelToolDefinition` mirroring the current schema, and an `execute` that
-  downcasts `ctx` to a `SessionToolContext { state: &SessionState }`.
+  reads `SessionState` from `ctx.session_state()`.
 - Define `SessionToolContext` in `crates/qsf_app/src/tools/recall_turn_tool.rs`
   (alongside `RecallTurnTool`), not in `multi_turn_text_loop.rs`. The
-  experiment imports it; the tool downcasts to it. Keeping the type in the
+  experiment imports it; the tool reads session state from it. Keeping the type in the
   tools module avoids a `tools -> experiments` back-dependency. Using a
   shared `SessionToolContext` (rather than a per-tool `RecallTurnContext`)
   means future session-aware tools reuse the same context type instead of
@@ -636,6 +645,16 @@ reversal pointing back to it.
 
 These belong in later plans, not here:
 
+- OpenAI tool-capable provider path. Phase 3's deterministic mock verification
+  proves registry-backed `recall_turn` execution, but live OpenAI runs
+  `runs/2026-05-17-113835-multi-turn-text-loop` and
+  `runs/2026-05-17-114152-multi-turn-text-loop` show the current OpenAI adapter
+  does not forward `ModelRequest.tools` to the provider or parse provider tool
+  calls. QSF records the requested tools in `ModelRoleRequested`, but
+  `openai_provider.rs` builds an `openai_provider_kit::LlmRequest` that has no
+  tool field, maps `ModelMessageRole::Tool` back to `User`, and always returns
+  text-only `ModelResponse`s. This needs its own implementation slice before
+  live OpenAI recall execution can be verified.
 - Realtime voice (2026-05-14 entry) growing a real execution path through the
   bridge. Currently `realtime_voice_session.rs:281–296` only records
   `ToolRequested` with `auto_executed: false`. Once this plan lands, that
@@ -647,10 +666,137 @@ These belong in later plans, not here:
 - A `ToolContext` extension for memory-store access, once a memory-reading
   tool exists.
 
+### Follow-up Plan: OpenAI tool-capable requests and responses
+
+**Goal:** Make the OpenAI-backed `ModelClient` exercise the same
+`ModelToolDefinition` → `ModelToolCall` → `ToolRegistry` → tool-result-message
+path that the mock model already exercises.
+
+**Recommended placement:** create a dedicated OpenAI tool-capable client module
+inside `crates/qsf_app/src/models/` (for example
+`openai_tool_client.rs`) and have `OpenAiProviderModelClient::complete()` route
+requests with non-empty `request.tools` through it. Keep the existing
+`openai_provider_kit` path for text-only requests until the kit grows native
+tool support. This follows the existing DecisionLog entries that chose a
+temporary Chat Completions bypass for tool-capable requests.
+
+**Files likely touched:**
+
+- `crates/qsf_app/src/models/openai_provider.rs`
+- `crates/qsf_app/src/models/model_client.rs`
+- `crates/qsf_app/src/models/mod.rs`
+- `crates/qsf_app/src/experiments/multi_turn_text_loop.rs`
+- `docs/EngineeringDiary.md`
+- A new unit-testable module such as
+  `crates/qsf_app/src/models/openai_tool_client.rs`
+
+**Implementation steps:**
+
+1. Add provider-native tool-result linkage to the provider-agnostic model
+   types. `ModelMessage::tool(...)` currently carries content only; OpenAI
+   Chat Completions also requires `tool_call_id`. Add the smallest field or
+   sibling constructor needed so QSF can preserve the call id returned by the
+   provider and send the tool result back with the correct id.
+2. Serialize tool-capable Chat Completions requests directly in `qsf_app`:
+   `messages`, `model`, `temperature`, max output token setting, response
+   format, and a `tools` array where each `ModelToolDefinition` becomes an
+   OpenAI function tool:
+   `{"type":"function","function":{"name","description","parameters"}}`.
+   Omit the `tools` field for text-only requests.
+3. Parse OpenAI tool-call responses into `ModelToolCall`. Preserve
+   `finish_reason`, usage telemetry, provider/model names, and text output for
+   normal text responses. Malformed function-call arguments should produce a
+   sanitized provider-response error instead of silently falling back to text.
+4. Serialize follow-up tool messages with provider-native shape:
+   `{"role":"tool","tool_call_id":"...","content":"..."}`. Remove the current
+   lossy fallback that maps `ModelMessageRole::Tool` to `ChatRole::User` for
+   tool-capable requests. The text-only kit path may keep its existing role
+   mapping until it is replaced.
+5. Keep the registry boundary unchanged. Provider parsing should only create
+   `ModelToolCall`s; execution still belongs to the Phase 3/4 dispatch path
+   through `ToolRegistry`.
+6. Update the multi-turn recall follow-up request to include provider-native
+   tool-result messages with the original call id and to avoid advertising
+   tools again on the follow-up unless multi-round tool calls are deliberately
+   supported.
+7. Document the change in `EngineeringDiary.md`. Add or update DecisionLog only
+   if the implementation makes a durable new provider-boundary rule.
+
+**Tests to add before live testing:**
+
+1. Request serialization unit tests:
+   - text-only OpenAI requests omit `tools`
+   - `recall_turn` requests emit the expected function-tool schema
+   - tool-result messages include `tool_call_id`
+   - existing temperature, max-token, and response-format behavior stays intact
+2. Response parsing unit tests with mocked OpenAI JSON:
+   - normal text response
+   - one `recall_turn` tool call
+   - multiple tool calls, even if the experiment later rejects multi-round use
+   - malformed JSON arguments fail with a useful sanitized error
+   - missing tool-call id fails
+   - usage and cached-token fields still parse
+3. Multi-turn integration tests using a mocked OpenAI tool response:
+   - first model response returns `finish_reason=tool_calls`
+   - QSF dispatches through `ToolRegistry`
+   - `ToolRequested` and `ToolCompleted` include `category=compute_only` and
+     `side_effect_level=none`
+   - second `PromptAssembled` happens after the tool message is appended
+   - follow-up request sends a provider-native tool message with the same
+     `tool_call_id`
+
+**Verification commands:**
+
+```powershell
+cargo test -p qsf_app models::
+cargo test -p qsf_app multi_turn_text_loop
+cargo build -p qsf_app --features openai
+cargo clippy --all-targets -- -D warnings
+cargo fmt
+```
+
+**Live smoke test after implementation:**
+
+```powershell
+$env:OPENAI_API_KEY = "<key>"
+$env:QSF_MODEL_PROVIDER = "openai"
+$env:QSF_CONVERSATION_MODEL = "gpt-5.4-mini"
+$env:QSF_SESSION_WARM_THRESHOLD = "2"
+cargo run -p qsf_app --features openai -- experiment multi-turn-text-loop
+```
+
+Suggested prompts:
+
+```text
+one
+two
+three
+Use the recall_turn tool with turn_id 0. I need the exact verbatim original user and assistant text, not the summary.
+:quit
+```
+
+Live success criteria:
+
+- `ModelRoleRequested` records the `recall_turn` tool definition.
+- OpenAI returns `finish_reason=tool_calls` and a non-empty `tool_calls` array.
+- `ToolRequested` and `ToolCompleted` appear for `recall_turn`.
+- Both tool events include `category=compute_only` and
+  `side_effect_level=none`.
+- A second `PromptAssembled` appears after the tool result message is added.
+- The final `TurnCompleted` includes a non-empty `recalled_turns` list with
+  verbatim `[Turn 0]` text.
+- The generated report records `Recall tool executions: 1`.
+
+If OpenAI still returns plain text with no tool call after the provider path is
+implemented, record that as model behavior, not as proof that the provider path
+is broken. In that case inspect the raw request/response trace first, then
+consider stronger tool descriptions, a tool-choice setting, or a different
+model.
+
 ## Open Questions Snapshot
 
-- **OQ1 — Tool trait shape.** Resolved 2026-05-17: Option A (single `Tool`
-  trait with `ToolContext` parameter).
+- **OQ1 — Tool trait shape.** Resolved 2026-05-17: single `Tool` trait with
+  typed `ToolContext` accessors for borrowed runtime state.
 - **OQ2 — Allow-list enforcement site.** Resolved 2026-05-17: model-call site
   (`tool_dispatch`). Registry stays role-agnostic. Phase 4 implements this.
 - **OQ3 — Event survivor.** Resolved 2026-05-17: `ToolCompleted`. Phase 1

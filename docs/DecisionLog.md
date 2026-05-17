@@ -349,3 +349,18 @@ belongs in `invoke_model_role` or the provider adapter, not as a passive annotat
 Refs: crates/qsf_app/src/models/model_role.rs,
 crates/qsf_app/src/experiments/multi_turn_text_loop.rs:597-601,
 docs/Plans/Plan.MultiTurnTextLoop.md
+
+## 2026-05-17 - ToolContext uses typed borrowed-state accessors
+Decision: Tool execution keeps a single `Tool` trait, and tools receive runtime
+state through typed accessors on `ToolContext` such as `session_state()`, not through
+`std::any::Any` downcasts.
+Context: Migrating `recall_turn` into `ToolRegistry` showed that borrowed session
+state cannot be downcast through `Any` because `Any` requires `'static`. A fake
+`as_any` marker would make failed downcasts silent and misleading.
+Consequences: New runtime state exposed to tools must be added deliberately to
+`ToolContext` instead of being hidden behind untyped downcasts. Shared state types
+needed by tools live outside experiment driver modules.
+Refs: crates/qsf_app/src/tools/tool_registry.rs,
+crates/qsf_app/src/tools/recall_turn_tool.rs,
+crates/qsf_app/src/session/mod.rs,
+docs/Reviews/Review.ToolSystemBridge.Phase3.md

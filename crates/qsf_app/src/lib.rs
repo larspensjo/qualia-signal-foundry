@@ -8,6 +8,7 @@ pub mod models;
 pub mod observability;
 pub mod reports;
 pub mod runtime;
+pub mod session;
 pub mod sleep;
 pub mod tools;
 

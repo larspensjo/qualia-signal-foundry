@@ -967,3 +967,30 @@ Refs: crates/qsf_app/src/models, crates/qsf_app/src/conversation/prompt.rs,
 crates/qsf_app/src/experiments/multi_turn_text_loop.rs,
 crates/qsf_app/src/observability/event_log.rs;
 implements: 2026-05-17 - Multi-turn recall is scoped to summarized turns
+
+## 2026-05-17 - Recall tool registry migration
+
+Moved the multi-turn `recall_turn` capability behind the shared tool registry while
+preserving the existing session reducer and prompt-freezing behavior.
+
+What changed:
+- Added a typed tool execution context hook plus a session-aware `RecallTurnTool`
+  registered beside the calculator.
+- Extended `ToolRequest` with structured arguments so model tool-call JSON can be
+  marshalled into registry requests without changing calculator callers.
+- Replaced inline multi-turn recall execution with `ToolRegistry::validate_and_execute`
+  and recorded registry category and side-effect metadata on recall tool events.
+- Moved multi-turn session state records into a shared `session` module so tools do not
+  depend on the experiment driver.
+- Reused one `is_turn_summarized` predicate and avoided double validation before recall
+  tool execution.
+
+Observed:
+- `cargo test -p qsf_app` passed after the migration.
+- Borrowed session state cannot be downcast through `std::any::Any` because `Any`
+  requires `'static`; the context trait now exposes a narrow session-state accessor
+  instead of an `as_any` downcast hook.
+
+Refs: crates/qsf_app/src/session,
+crates/qsf_app/src/tools,
+crates/qsf_app/src/experiments/multi_turn_text_loop.rs

@@ -8,7 +8,7 @@ use crate::context::{ContextBudget, ContextSelection, assemble_context};
 use crate::observability::event_log::EventType;
 use crate::observability::trace::{TraceRecord, elapsed_ns};
 use crate::runtime::run_context::RunContext;
-use crate::tools::{ToolMetadata, ToolRegistry, ToolRequest, ToolResult};
+use crate::tools::{EmptyToolContext, ToolMetadata, ToolRegistry, ToolRequest, ToolResult};
 
 use super::registry::{Experiment, ExperimentName, ExperimentOutcome};
 
@@ -168,7 +168,7 @@ fn execute_tool_request(
 ) -> anyhow::Result<(ToolMetadata, ToolResult, u64)> {
     let started_at = Instant::now();
 
-    match registry.validate_and_execute(request) {
+    match registry.validate_and_execute(request, &EmptyToolContext) {
         Ok((metadata, result)) => {
             let elapsed_ns = elapsed_ns(started_at);
             Ok((metadata, result, elapsed_ns))

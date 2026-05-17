@@ -2,7 +2,7 @@ use anyhow::{Result, bail};
 
 use crate::models::ModelToolDefinition;
 
-use super::tool_registry::{Tool, ToolMetadata};
+use super::tool_registry::{Tool, ToolContext, ToolMetadata};
 use super::tool_request::{ToolCategory, ToolRequest, ToolSideEffectLevel};
 use super::tool_result::ToolResult;
 
@@ -21,7 +21,7 @@ impl Tool for CalculatorTool {
         }
     }
 
-    fn execute(&self, request: &ToolRequest) -> Result<ToolResult> {
+    fn execute(&self, request: &ToolRequest, _ctx: &dyn ToolContext) -> Result<ToolResult> {
         let value = evaluate_expression(&request.input)?;
         let output_text = format_number(value);
 
@@ -225,14 +225,14 @@ impl<'a> ExpressionParser<'a> {
 #[cfg(test)]
 mod tests {
     use super::CalculatorTool;
-    use crate::tools::{Tool, ToolRequest};
+    use crate::tools::{EmptyToolContext, Tool, ToolRequest};
 
     #[test]
     fn calculator_respects_operator_precedence() {
         let tool = CalculatorTool;
         let request = ToolRequest::calculator("2 + 3 * 4", "test");
 
-        let result = tool.execute(&request).unwrap();
+        let result = tool.execute(&request, &EmptyToolContext).unwrap();
 
         assert_eq!(result.output_text, "14");
         assert_eq!(result.numeric_value, Some(14.0));
@@ -243,7 +243,7 @@ mod tests {
         let tool = CalculatorTool;
         let request = ToolRequest::calculator("2 + (3 *", "test");
 
-        let error = tool.execute(&request).unwrap_err();
+        let error = tool.execute(&request, &EmptyToolContext).unwrap_err();
 
         assert!(
             error.to_string().contains("expected number")

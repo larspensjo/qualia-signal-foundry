@@ -40,6 +40,7 @@ impl ToolPermission {
 pub struct ToolRequest {
     pub tool_name: String,
     pub input: String,
+    pub structured: Option<serde_json::Value>,
     pub permission: ToolPermission,
     pub requested_by: String,
 }
@@ -49,6 +50,25 @@ impl ToolRequest {
         Self {
             tool_name: super::CALCULATOR_TOOL_NAME.to_string(),
             input: expression.into(),
+            structured: None,
+            permission: ToolPermission::compute_only(),
+            requested_by: requested_by.into(),
+        }
+    }
+
+    pub fn recall_turn(
+        call_id: impl Into<String>,
+        turn_id: usize,
+        requested_by: impl Into<String>,
+    ) -> Self {
+        let call_id = call_id.into();
+        Self {
+            tool_name: super::RECALL_TURN_TOOL_NAME.to_string(),
+            input: format!("recall_turn call_id={call_id} turn_id={turn_id}"),
+            structured: Some(serde_json::json!({
+                "call_id": call_id,
+                "turn_id": turn_id,
+            })),
             permission: ToolPermission::compute_only(),
             requested_by: requested_by.into(),
         }
