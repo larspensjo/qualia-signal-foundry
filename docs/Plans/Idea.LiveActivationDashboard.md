@@ -156,7 +156,18 @@ Possible visualization:
 - memory nodes glow when retrieved
 - association links pulse when traversal paths are available
 - stronger retrieval scores produce brighter or longer-lived activation
+- repeated access reinforces visible activation for a short window
 - omitted memories remain dim or appear as peripheral candidates
+
+Memory activation should have persistence rather than behaving as an instant flash.
+When a node or edge is accessed, it should enter an activated visual state that remains
+visible for a short time and then decays. If the same node or edge is accessed again
+within a reinforcement window, the visible intensity should increase further before
+decaying again.
+
+This should be interpreted as recent access intensity, not durable memory importance.
+The decay curve belongs to the dashboard signal projection layer unless the runtime
+explicitly emits separate memory-strength, salience, or reinforcement data.
 
 ### Context And Attention
 
@@ -251,6 +262,10 @@ Activation sources:
 
 - `LatencyMeasurementRecorded`
 - trace latency fields
+- model role token usage, if emitted
+- model role cost estimates, if emitted
+- tool or provider cost estimates, if emitted
+- session or experiment cost summaries, if emitted
 - `ErrorOccurred`
 - failure event variants
 
@@ -259,7 +274,30 @@ Possible visualization:
 - latency pressure appears as heat, tension, or ring thickness
 - slow stages leave longer trails
 - errors flare without being confused with normal activation
-- cost could be shown only in an optional technical overlay
+- inference cost appears as an optional technical overlay or dedicated cost view
+- cost over time appears as a cumulative line, stacked area, or per-role bar timeline
+- cost spikes are linked back to the model role, trace, prompt/context size, and output
+  that caused them
+
+The dashboard should help assess inference cost, not merely latency. A researcher
+should be able to see whether cost is dominated by live response, memory extraction,
+sleep-phase consolidation, self-review, tool interpretation, or oversized context
+assembly.
+
+Useful cost views:
+
+- cumulative estimated session cost over time
+- per-turn cost
+- per-model-role cost
+- input token, output token, and total token trends
+- cost per successful output or experiment run
+- comparison between model providers, model roles, memory strategies, or context
+  budgets
+
+Cost graphs should remain estimates unless the underlying provider reports exact
+billing data. When only token counts and configured prices are available, the dashboard
+should label the result as estimated and preserve the pricing assumptions used for the
+calculation.
 
 ### Goals, Tensions, And Volition
 
@@ -340,6 +378,38 @@ Possible visualization:
 
 The dashboard should be understandable without becoming a literal brain diagram.
 
+## Visual Identity
+
+The dashboard should have a deliberate visual identity, not merely a functional debug
+layout. It should be pleasing to keep open during long sessions while still looking
+professional, modern, and research-oriented.
+
+The visual language should balance three qualities:
+
+- ambient enough to support peripheral awareness
+- precise enough to remain credible as an observability tool
+- restrained enough to avoid looking like decorative fiction
+
+Candidate identity traits:
+
+- clean modern interface with strong alignment, spacing, and readable hierarchy
+- dark or low-glare operating mode for long-running observation
+- limited, meaningful color system where colors map to channels or states
+- subtle motion, glow, and persistence effects that communicate activity without
+  visual clutter
+- clear typography for overlays, labels, timelines, and inspection panels
+- professional instrument-panel polish rather than playful or toy-like styling
+
+The identity should make the dashboard feel like part of the research environment:
+expressive, but still grounded in evidence. It can be beautiful, but beauty should help
+users notice state, rhythm, cost, latency, and memory activity rather than distract from
+them.
+
+The first prototype does not need a complete brand system, but it should establish
+early design rules for palette, type scale, spacing, iconography, graph styling,
+animation speed, and inspection-panel density. Later dashboard views should reuse those
+rules instead of inventing a new style for each visualization.
+
 Possible directions:
 
 ### Activation Map
@@ -356,6 +426,32 @@ This view does not need to keep the graph visually tidy at all times. If goals,
 memories, associations, and external tools eventually form a large graph, the dormant
 structure may be complex or chaotic. The useful signal is the temporary lighting of
 activation paths, not the ability to read the full graph as a static diagram.
+
+The layout should still use a real dynamic graph-layout algorithm rather than fixed
+random positions. A good starting assumption is a force-directed or stress-minimizing
+layout where connected nodes attract each other, unrelated nodes repel each other, and
+the optimizer runs continuously or incrementally as the graph changes.
+
+Design goals for the layout:
+
+- minimize distance between strongly connected nodes
+- preserve temporal stability so nodes do not jump abruptly between frames
+- allow slow motion while the optimizer settles
+- support new nodes and edges without relaying out the entire graph from scratch
+- use edge weights, retrieval scores, or association strengths when available
+- keep recently accessed nodes and edges easier to see than dormant structure
+
+This view should treat motion as acceptable and possibly useful. A slowly moving
+network can reveal live reorganization, but the motion should be damped enough that
+access paths remain trackable.
+
+Candidate algorithms or libraries to investigate later:
+
+- force-directed layout, such as Fruchterman-Reingold or force simulation
+- stress majorization for more stable graph drawing
+- incremental layout with position reuse between frames and between replay timestamps
+- hierarchical or clustered layout for large memory regions
+- WebWorker-backed layout for browser prototypes so rendering remains responsive
 
 ### Timeline Plus Ambient View
 
@@ -396,6 +492,13 @@ neurobiological metaphors.
 Two runs are shown side by side using the same activation channels. This could support
 A/B experiments, such as different memory retrieval strategies, context budgets, or
 role configurations.
+
+### Cost Trend View
+
+Estimated inference cost is shown over session time, turn number, or replay time. This
+view can show cumulative cost, per-turn cost, model-role breakdowns, and token trends.
+It should make expensive phases visible without implying that lower cost is always
+better than continuity, quality, or responsiveness.
 
 ## Detail Philosophy
 
@@ -480,6 +583,28 @@ DashboardSignal
   metadata
 ```
 
+Some visual effects need accumulated display state in addition to individual signals.
+For example, a memory node may receive several access signals, increase activation, and
+then decay gradually. This state should be derived deterministically from the signal
+stream and projector parameters rather than stored as runtime truth.
+
+Candidate derived state:
+
+```text
+ActivationState
+  target_id
+  channel
+  current_intensity
+  last_accessed_at
+  decay_half_life_ms
+  reinforcement_window_ms
+  source_signal_ids
+```
+
+For memory graph displays, the visual target may be a memory node, association edge,
+cluster, or abstract region. Repeated access inside the reinforcement window can add to
+`current_intensity`, while time decay reduces it between signals.
+
 Candidate channels:
 
 ```text
@@ -492,6 +617,7 @@ tool
 sleep
 attention
 latency
+cost
 error
 ```
 
@@ -608,6 +734,19 @@ Test:
 
 - compare Phase 4 memory/context runs with text-owned voice-loop memory retrieval
 - verify that retrieved and omitted memories are visually distinct
+- verify that repeated access reinforces node and edge activation before decay
+- verify that dynamic layout motion stays slow enough to follow activation paths
+
+### Phase 4B: Cost Trend View
+
+Add inference-cost graphs derived from model role traces, token usage, and configured
+pricing assumptions.
+
+Test:
+
+- compare estimated cost by model role across several completed runs
+- verify that cost spikes can be traced back to source events and traces
+- verify that missing or estimated pricing data is labeled clearly
 
 ### Phase 5: Research Review
 
@@ -638,10 +777,21 @@ Test:
 - Should the dashboard show only current activation, or also short-term history?
 - How should it distinguish factual runtime events from interpreted visual effects?
 - How should memory association paths be visualized without overwhelming the screen?
+- What decay curve and reinforcement window make repeated memory access legible
+  without implying durable memory strength?
+- Which dynamic graph-layout algorithm gives useful memory topology while preserving
+  enough visual stability during live changes?
 - Should the first prototype replay completed runs or stream live runs?
 - What visual language best fits this project: technical instrument, abstract mind map,
   oscilloscope-like signal view, or cinematic ambient display?
-- Should latency and cost be always visible or optional overlays?
+- What visual identity should make the dashboard feel modern, professional, and
+  pleasant during long observation sessions?
+- Which palette, typography, spacing, and motion rules should be shared across all
+  dashboard views?
+- Should latency and cost be always visible, optional overlays, or separate dedicated
+  views?
+- What cost estimate fields are needed in model, tool, and sleep traces to support
+  useful graphs over time?
 - How should privacy-sensitive event payloads be handled in a dashboard?
 - Could the dashboard eventually feed user-visible introspection, or should it remain a
   researcher-only tool?
