@@ -29,6 +29,7 @@ log.workspace = true
 openai_provider_kit = { git = "https://github.com/larspensjo/web_page_filet_mignon", package = "openai_provider_kit", rev = "ca28629d42fb350a7935df6907573e2f972b3ba9", optional = true }
 serde.workspace = true
 serde_json.workspace = true
+sha2.workspace = true
 time.workspace = true
 tokio = { workspace = true, optional = true }
 tokio-tungstenite = { workspace = true, optional = true }

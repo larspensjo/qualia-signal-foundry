@@ -1,0 +1,1241 @@
+use std::fs;
+use std::io::{BufRead, Write};
+use std::path::PathBuf;
+use std::time::{Instant, SystemTime};
+
+use anyhow::Context;
+use serde::{Deserialize, Serialize};
+use serde_json::json;
+
+use crate::context::{ContextAssembly, ContextFragment, assemble_context};
+use crate::conversation::prompt::{self, PromptTurn};
+use crate::conversation::{ContentHash, PromptAssembly};
+use crate::memory::{
+    Association, MemoryFixture, MemoryRecord, RetrievalResult, RetrievalStrategy,
+    phase_four_fixture, retrieve_memories, retrieved_memory_ids,
+};
+use crate::models::{
+    ModelClient, ModelRequest, ModelRole, ModelRoleId, build_client, invoke_model_role,
+    requested_provider_from_env,
+};
+use crate::observability::event_log::EventType;
+use crate::observability::trace::{TraceRecord, elapsed_ms};
+use crate::runtime::run_context::RunContext;
+
+use super::registry::{Experiment, ExperimentName, ExperimentOutcome};
+
+const DEFAULT_SESSION_MODEL: &str = "gpt-5.4-mini";
+const DEFAULT_MAX_TURNS: usize = 10;
+const SESSION_MEMORY_SOURCE_ENV_VAR: &str = "QSF_SESSION_MEMORY_SOURCE";
+const SESSION_MEMORY_FILE_ENV_VAR: &str = "QSF_SESSION_MEMORY_FILE";
+const SESSION_MODEL_ENV_VAR: &str = "QSF_CONVERSATION_MODEL";
+const SESSION_MAX_TURNS_ENV_VAR: &str = "QSF_SESSION_MAX_TURNS";
+const SESSION_ALLOW_OVER_LIMIT_ENV_VAR: &str = "QSF_SESSION_ALLOW_OVER_LIMIT";
+const SESSION_RETRIEVAL_LIMIT: usize = 8;
+const SESSION_RETRIEVAL_STRATEGY: RetrievalStrategy = RetrievalStrategy::AssociationWeighted;
+
+pub struct MultiTurnTextLoopExperiment;
+
+impl Experiment for MultiTurnTextLoopExperiment {
+    fn name(&self) -> ExperimentName {
+        ExperimentName::MultiTurnTextLoop
+    }
+
+    fn description(&self) -> &'static str {
+        "Run a human-driven text conversation with append-only session state and cache-stable prompt assembly"
+    }
+
+    fn run(&self, context: &mut RunContext) -> anyhow::Result<ExperimentOutcome> {
+        let config = SessionConfig::from_env();
+        let model_client = build_client(requested_provider_from_env())?;
+        let memory_source = build_session_memory_source_from_env();
+        let stdin = std::io::stdin();
+        let mut stdout = std::io::stdout();
+
+        run_with_io_and_components(
+            context,
+            stdin.lock(),
+            &mut stdout,
+            model_client.as_ref(),
+            memory_source.as_ref(),
+            config,
+        )
+    }
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+pub struct SessionState {
+    pub started_at: SystemTime,
+    pub config: SessionConfig,
+    pub turns: Vec<Turn>,
+    pub ended_reason: Option<SessionEndReason>,
+    pub last_input: Option<String>,
+    pub last_prompt_hash: Option<ContentHash>,
+    pub last_model_error: Option<String>,
+    pub limit_reached: Option<SessionLimit>,
+}
+
+impl SessionState {
+    pub fn new(config: SessionConfig) -> Self {
+        Self {
+            started_at: SystemTime::now(),
+            config,
+            turns: vec![],
+            ended_reason: None,
+            last_input: None,
+            last_prompt_hash: None,
+            last_model_error: None,
+            limit_reached: None,
+        }
+    }
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct SessionConfig {
+    pub model_id: String,
+    pub max_turns: usize,
+    pub allow_over_limit: bool,
+    pub memory_source: MemorySourceConfig,
+}
+
+impl SessionConfig {
+    fn from_env() -> Self {
+        let model_id = std::env::var(SESSION_MODEL_ENV_VAR)
+            .unwrap_or_else(|_| DEFAULT_SESSION_MODEL.to_string());
+        let max_turns = std::env::var(SESSION_MAX_TURNS_ENV_VAR)
+            .ok()
+            .and_then(|value| value.parse::<usize>().ok())
+            .filter(|value| *value > 0)
+            .unwrap_or(DEFAULT_MAX_TURNS);
+        let allow_over_limit = std::env::var(SESSION_ALLOW_OVER_LIMIT_ENV_VAR)
+            .map(|value| value.eq_ignore_ascii_case("true"))
+            .unwrap_or(false);
+        let memory_source = MemorySourceConfig::from_env();
+
+        Self {
+            model_id,
+            max_turns,
+            allow_over_limit,
+            memory_source,
+        }
+    }
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct MemorySourceConfig {
+    pub source: String,
+    pub file: Option<PathBuf>,
+}
+
+impl MemorySourceConfig {
+    fn from_env() -> Self {
+        let source = std::env::var(SESSION_MEMORY_SOURCE_ENV_VAR)
+            .unwrap_or_else(|_| "phase_four_fixture".to_string());
+        let file = std::env::var(SESSION_MEMORY_FILE_ENV_VAR)
+            .ok()
+            .map(PathBuf::from);
+
+        Self { source, file }
+    }
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+pub struct Turn {
+    pub index: usize,
+    pub started_at: SystemTime,
+    pub completed_at: SystemTime,
+    pub user_input: String,
+    pub context_assembly: ContextAssembly,
+    pub retrieved_memory_block: String,
+    pub assistant_response: String,
+    pub model_id: String,
+    pub model_latency_ms: u64,
+    pub input_tokens: u32,
+    pub cached_input_tokens: u32,
+    pub output_tokens: u32,
+    pub full_request_hash: ContentHash,
+    pub message_count: usize,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct SessionLimit {
+    pub current: usize,
+    pub max: usize,
+    pub override_active: bool,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SessionEndReason {
+    Eof,
+    QuitCommand,
+    Error,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub enum SessionEvent {
+    SessionStarted(SessionConfig),
+    InputReceived {
+        input: String,
+    },
+    MemoryRetrieved,
+    ContextAssembled(ContextAssembly),
+    PromptAssembled {
+        full_request_hash: ContentHash,
+        message_count: usize,
+        total_bytes: usize,
+    },
+    ModelRoleCompleted {
+        response: String,
+        latency_ms: u64,
+        input_tokens: u32,
+        cached_input_tokens: u32,
+        output_tokens: u32,
+    },
+    ModelRoleFailed {
+        error_summary: String,
+    },
+    TurnCompleted(Turn),
+    SessionLimitReached {
+        current: usize,
+        max: usize,
+        override_active: bool,
+    },
+    SessionEnded {
+        reason: SessionEndReason,
+    },
+}
+
+#[cfg_attr(not(test), allow(dead_code))]
+pub fn reduce_session(mut state: SessionState, event: SessionEvent) -> SessionState {
+    reduce_session_in_place(&mut state, event);
+    state
+}
+
+fn reduce_session_in_place(state: &mut SessionState, event: SessionEvent) {
+    match event {
+        SessionEvent::SessionStarted(config) => {
+            state.config = config;
+        }
+        SessionEvent::InputReceived { input } => {
+            state.last_input = Some(input);
+            state.last_model_error = None;
+        }
+        SessionEvent::MemoryRetrieved | SessionEvent::ContextAssembled(_) => {}
+        SessionEvent::PromptAssembled {
+            full_request_hash, ..
+        } => {
+            state.last_prompt_hash = Some(full_request_hash);
+        }
+        SessionEvent::ModelRoleCompleted { .. } => {
+            state.last_model_error = None;
+        }
+        SessionEvent::ModelRoleFailed { error_summary } => {
+            state.last_model_error = Some(error_summary);
+        }
+        SessionEvent::TurnCompleted(turn) => {
+            state.turns.push(turn);
+        }
+        SessionEvent::SessionLimitReached {
+            current,
+            max,
+            override_active,
+        } => {
+            state.limit_reached = Some(SessionLimit {
+                current,
+                max,
+                override_active,
+            });
+        }
+        SessionEvent::SessionEnded { reason } => {
+            state.ended_reason = Some(reason);
+        }
+    }
+}
+
+fn run_with_io_and_components(
+    context: &mut RunContext,
+    mut input: impl BufRead,
+    output: &mut impl Write,
+    model_client: &dyn ModelClient,
+    memory_source: &dyn SessionMemorySource,
+    config: SessionConfig,
+) -> anyhow::Result<ExperimentOutcome> {
+    let mut state = SessionState::new(config.clone());
+    apply_session_event(
+        context,
+        &mut state,
+        SessionEvent::SessionStarted(config.clone()),
+    )?;
+    let memory_snapshot = memory_source.load(context)?;
+    write_memory_source_snapshot(context, &memory_snapshot)?;
+    writeln!(output, "multi-turn-text-loop ready; type :quit to exit")?;
+
+    let mut line = String::new();
+    loop {
+        line.clear();
+        let bytes_read = input.read_line(&mut line)?;
+        if bytes_read == 0 {
+            end_session(context, &mut state, SessionEndReason::Eof)?;
+            break;
+        }
+
+        let user_input = line.trim_end_matches(['\r', '\n']).to_string();
+        if user_input.trim() == ":quit" {
+            end_session(context, &mut state, SessionEndReason::QuitCommand)?;
+            break;
+        }
+        if user_input.trim().is_empty() {
+            continue;
+        }
+
+        apply_session_event(
+            context,
+            &mut state,
+            SessionEvent::InputReceived {
+                input: user_input.clone(),
+            },
+        )?;
+
+        if state.turns.len() >= state.config.max_turns {
+            let current = state.turns.len();
+            let max = state.config.max_turns;
+            let override_active = state.config.allow_over_limit;
+            apply_session_event(
+                context,
+                &mut state,
+                SessionEvent::SessionLimitReached {
+                    current,
+                    max,
+                    override_active,
+                },
+            )?;
+            if !override_active {
+                writeln!(
+                    output,
+                    "session limit reached; type :quit or restart with QSF_SESSION_ALLOW_OVER_LIMIT=true"
+                )?;
+                continue;
+            }
+        }
+
+        match run_one_turn(
+            context,
+            &mut state,
+            &memory_snapshot,
+            model_client,
+            &user_input,
+        ) {
+            Ok(response) => {
+                writeln!(output, "{response}")?;
+            }
+            Err(error) => {
+                let error_summary = sanitize_error(&error.to_string());
+                apply_session_event(
+                    context,
+                    &mut state,
+                    SessionEvent::ModelRoleFailed {
+                        error_summary: error_summary.clone(),
+                    },
+                )?;
+                writeln!(output, "model unavailable, try again or :quit")?;
+                engine_logging::engine_error!(
+                    "multi-turn model call failed: run_id={} error={}",
+                    context.run_id(),
+                    error_summary
+                );
+            }
+        }
+    }
+
+    write_multi_turn_report(context, &state, &memory_snapshot)?;
+
+    Ok(ExperimentOutcome {
+        summary: format!(
+            "The multi-turn text loop completed with {} appended turns and cache-stable prompt hashes recorded per turn.",
+            state.turns.len()
+        ),
+        observations: vec![
+            "Session turns are append-only and prior prompt bytes are verified before each later turn.".to_string(),
+            "Each turn retrieves memory from the latest user input only, then assembles selected fragments under the existing context budget.".to_string(),
+        ],
+        failure_modes: vec![
+            "Stage 1 does not summarize older turns or persist session state across runs.".to_string(),
+            "OpenAI prompt caching reports zero cached tokens below the 1024 input-token floor.".to_string(),
+        ],
+        follow_up_questions: vec![
+            "Should the warm tier summarize by turn count, token pressure, or both?".to_string(),
+            "Should later retrieval include recent session turns as query context?".to_string(),
+        ],
+        decision_candidates: vec![
+            "Keep multi-turn prompts cache-stable by freezing prior user and assistant messages after turn append.".to_string(),
+        ],
+        extra_artifacts: vec![
+            "multi-turn-text-loop.md".to_string(),
+            "session-memory-source.json".to_string(),
+        ],
+    })
+}
+
+fn run_one_turn(
+    context: &mut RunContext,
+    state: &mut SessionState,
+    memory_snapshot: &SessionMemorySourceSnapshot,
+    model_client: &dyn ModelClient,
+    user_input: &str,
+) -> anyhow::Result<String> {
+    let turn_started_at = SystemTime::now();
+    let retrieval = retrieve_session_memories(context, state, memory_snapshot, user_input)?;
+    let fragments = retrieval
+        .selected
+        .iter()
+        .map(ContextFragment::from)
+        .collect::<Vec<_>>();
+    apply_session_event(context, state, SessionEvent::MemoryRetrieved)?;
+
+    let assembly = assemble_context(
+        fragments,
+        ModelRole::predefined(ModelRoleId::ConversationalResponder).context_budget,
+    );
+    let context_trace_id = record_context_assembly(context, state, &assembly)?;
+    context.record_event(
+        EventType::ContextAssemblyRequested,
+        json!({
+            "session_id": context.run_id(),
+            "turn_index": state.turns.len(),
+            "source_event": EventType::InputReceived,
+            "budget": &assembly.budget,
+        }),
+        Some(context_trace_id),
+    )?;
+    apply_session_event(
+        context,
+        state,
+        SessionEvent::ContextAssembled(assembly.clone()),
+    )?;
+
+    let retrieved_memory_block = prompt::retrieved_memory_block(&assembly);
+    let prompt_assembly = assemble_session_prompt(state, user_input, &retrieved_memory_block);
+    verify_prompt_prefix(state, &prompt_assembly)?;
+    apply_session_event(
+        context,
+        state,
+        SessionEvent::PromptAssembled {
+            full_request_hash: prompt_assembly.full_request_hash,
+            message_count: prompt_assembly.message_count,
+            total_bytes: prompt_assembly.total_bytes,
+        },
+    )?;
+
+    let request = ModelRequest::new(
+        ModelRole::predefined(ModelRoleId::ConversationalResponder),
+        prompt_assembly.messages.clone(),
+    )
+    .with_session_id(context.run_id())
+    .with_model_name(&state.config.model_id)
+    .with_temperature(0.0)
+    .with_max_output_tokens(240);
+    let model_started_at = Instant::now();
+    let response = invoke_model_role(context, model_client, &request)?;
+    let model_latency_ms = elapsed_ms(model_started_at);
+    let usage = response.usage.as_ref();
+    let input_tokens = usage.map(|usage| usage.input_tokens).unwrap_or(0);
+    let cached_input_tokens = usage.map(|usage| usage.cached_input_tokens).unwrap_or(0);
+    let output_tokens = usage.map(|usage| usage.output_tokens).unwrap_or(0);
+    apply_session_event(
+        context,
+        state,
+        SessionEvent::ModelRoleCompleted {
+            response: response.output_text.clone(),
+            latency_ms: model_latency_ms,
+            input_tokens,
+            cached_input_tokens,
+            output_tokens,
+        },
+    )?;
+
+    let turn = Turn {
+        index: state.turns.len(),
+        started_at: turn_started_at,
+        completed_at: SystemTime::now(),
+        user_input: user_input.to_string(),
+        context_assembly: assembly,
+        retrieved_memory_block,
+        assistant_response: response.output_text.clone(),
+        model_id: response.model_name.clone(),
+        model_latency_ms,
+        input_tokens,
+        cached_input_tokens,
+        output_tokens,
+        full_request_hash: prompt_assembly.full_request_hash,
+        message_count: prompt_assembly.message_count,
+    };
+    let output_text = response.output_text;
+    apply_session_event(context, state, SessionEvent::TurnCompleted(turn))?;
+
+    Ok(output_text)
+}
+
+fn assemble_session_prompt(
+    state: &SessionState,
+    user_input: &str,
+    retrieved_memory_block: &str,
+) -> PromptAssembly {
+    let prior_turns = state
+        .turns
+        .iter()
+        .map(|turn| PromptTurn {
+            user_input: &turn.user_input,
+            retrieved_memory_block: &turn.retrieved_memory_block,
+            assistant_response: &turn.assistant_response,
+        })
+        .collect::<Vec<_>>();
+
+    prompt::assemble_prompt(&prior_turns, user_input, retrieved_memory_block)
+}
+
+fn verify_prompt_prefix(
+    state: &SessionState,
+    prompt_assembly: &PromptAssembly,
+) -> anyhow::Result<()> {
+    if let Some(previous_turn) = state.turns.last() {
+        let prefix_hash = prompt::prior_request_prefix_hash(
+            &prompt_assembly.messages,
+            previous_turn.message_count,
+        )
+        .context("new prompt did not contain the previous request prefix")?;
+        anyhow::ensure!(
+            prefix_hash == previous_turn.full_request_hash,
+            "prompt prefix hash mismatch before turn {}",
+            state.turns.len()
+        );
+    }
+
+    Ok(())
+}
+
+fn apply_session_event(
+    context: &mut RunContext,
+    state: &mut SessionState,
+    event: SessionEvent,
+) -> anyhow::Result<()> {
+    reduce_session_in_place(state, event.clone());
+    record_session_event(context, &event)?;
+    Ok(())
+}
+
+fn record_session_event(context: &mut RunContext, event: &SessionEvent) -> anyhow::Result<()> {
+    match event {
+        SessionEvent::SessionStarted(config) => {
+            context.record_event(EventType::SessionStarted, json!({ "config": config }), None)?;
+        }
+        SessionEvent::InputReceived { input } => {
+            context.record_event(
+                EventType::InputReceived,
+                json!({
+                    "session_id": context.run_id(),
+                    "input": input,
+                    "input_chars": input.chars().count(),
+                }),
+                None,
+            )?;
+        }
+        SessionEvent::MemoryRetrieved => {}
+        SessionEvent::ContextAssembled(assembly) => {
+            context.record_event(
+                EventType::ContextAssembled,
+                json!({
+                    "session_id": context.run_id(),
+                    "selected_count": assembly.selected.len(),
+                    "omitted_count": assembly.omitted.len(),
+                    "used_estimated_tokens": assembly.used_estimated_tokens,
+                    "selected": &assembly.selected,
+                    "omitted": &assembly.omitted,
+                }),
+                None,
+            )?;
+        }
+        SessionEvent::PromptAssembled {
+            full_request_hash,
+            message_count,
+            total_bytes,
+        } => {
+            context.record_event(
+                EventType::PromptAssembled,
+                json!({
+                    "session_id": context.run_id(),
+                    "full_request_hash": full_request_hash.hex(),
+                    "message_count": message_count,
+                    "total_bytes": total_bytes,
+                }),
+                None,
+            )?;
+        }
+        SessionEvent::ModelRoleCompleted { .. } => {}
+        SessionEvent::ModelRoleFailed { .. } => {}
+        SessionEvent::TurnCompleted(turn) => {
+            context.record_event(
+                EventType::TurnCompleted,
+                json!({
+                    "session_id": context.run_id(),
+                    "turn": turn,
+                    "full_request_hash": turn.full_request_hash.hex(),
+                }),
+                None,
+            )?;
+        }
+        SessionEvent::SessionLimitReached {
+            current,
+            max,
+            override_active,
+        } => {
+            context.record_event(
+                EventType::SessionLimitReached,
+                json!({
+                    "session_id": context.run_id(),
+                    "current": current,
+                    "max": max,
+                    "override_active": override_active,
+                }),
+                None,
+            )?;
+        }
+        SessionEvent::SessionEnded { reason } => {
+            context.record_event(
+                EventType::SessionEnded,
+                json!({
+                    "session_id": context.run_id(),
+                    "reason": reason,
+                }),
+                None,
+            )?;
+        }
+    }
+
+    Ok(())
+}
+
+fn end_session(
+    context: &mut RunContext,
+    state: &mut SessionState,
+    reason: SessionEndReason,
+) -> anyhow::Result<()> {
+    apply_session_event(context, state, SessionEvent::SessionEnded { reason })
+}
+
+trait SessionMemorySource {
+    fn load(&self, context: &mut RunContext) -> anyhow::Result<SessionMemorySourceSnapshot>;
+}
+
+struct PhaseFourSessionMemorySource;
+
+impl SessionMemorySource for PhaseFourSessionMemorySource {
+    fn load(&self, _context: &mut RunContext) -> anyhow::Result<SessionMemorySourceSnapshot> {
+        Ok(SessionMemorySourceSnapshot::from_fixture(
+            "phase_four_fixture",
+            "crate::memory::phase_four_fixture",
+            phase_four_fixture(),
+        ))
+    }
+}
+
+struct FileSessionMemorySource {
+    path: PathBuf,
+}
+
+impl SessionMemorySource for FileSessionMemorySource {
+    fn load(&self, context: &mut RunContext) -> anyhow::Result<SessionMemorySourceSnapshot> {
+        match fs::read_to_string(&self.path)
+            .with_context(|| {
+                format!(
+                    "failed to read session memory file `{}`",
+                    self.path.display()
+                )
+            })
+            .and_then(|contents| {
+                serde_json::from_str::<MemoryFixture>(&contents).with_context(|| {
+                    format!(
+                        "failed to parse session memory file `{}`",
+                        self.path.display()
+                    )
+                })
+            }) {
+            Ok(fixture) => Ok(SessionMemorySourceSnapshot::from_fixture(
+                "file",
+                self.path.display().to_string(),
+                fixture,
+            )),
+            Err(error) => {
+                let error_summary = sanitize_error(&error.to_string());
+                context.record_event(
+                    EventType::ErrorOccurred,
+                    json!({
+                        "stage": "session-memory-source",
+                        "source": "file",
+                        "path": self.path.display().to_string(),
+                        "fallback": "phase_four_fixture",
+                        "error": error_summary,
+                    }),
+                    None,
+                )?;
+                Ok(SessionMemorySourceSnapshot::from_fixture(
+                    "phase_four_fixture",
+                    "fallback_after_file_error",
+                    phase_four_fixture(),
+                ))
+            }
+        }
+    }
+}
+
+struct MissingFileSessionMemorySource;
+
+impl SessionMemorySource for MissingFileSessionMemorySource {
+    fn load(&self, context: &mut RunContext) -> anyhow::Result<SessionMemorySourceSnapshot> {
+        context.record_event(
+            EventType::ErrorOccurred,
+            json!({
+                "stage": "session-memory-source",
+                "source": "file",
+                "missing_env_var": SESSION_MEMORY_FILE_ENV_VAR,
+                "fallback": "phase_four_fixture",
+                "error": format!("`{SESSION_MEMORY_FILE_ENV_VAR}` must be set when `{SESSION_MEMORY_SOURCE_ENV_VAR}=file`"),
+            }),
+            None,
+        )?;
+        Ok(SessionMemorySourceSnapshot::from_fixture(
+            "phase_four_fixture",
+            "fallback_after_missing_file_env",
+            phase_four_fixture(),
+        ))
+    }
+}
+
+fn build_session_memory_source_from_env() -> Box<dyn SessionMemorySource> {
+    let requested = std::env::var(SESSION_MEMORY_SOURCE_ENV_VAR)
+        .unwrap_or_else(|_| "phase_four_fixture".to_string());
+    match requested.trim().to_ascii_lowercase().as_str() {
+        "file" => std::env::var(SESSION_MEMORY_FILE_ENV_VAR)
+            .map(|path| {
+                Box::new(FileSessionMemorySource { path: path.into() })
+                    as Box<dyn SessionMemorySource>
+            })
+            .unwrap_or_else(|_| Box::new(MissingFileSessionMemorySource)),
+        _ => Box::new(PhaseFourSessionMemorySource),
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize)]
+struct SessionMemorySourceSnapshot {
+    source_name: String,
+    source_reference: String,
+    records: Vec<MemoryRecord>,
+    associations: Vec<Association>,
+}
+
+impl SessionMemorySourceSnapshot {
+    fn from_fixture(
+        source_name: impl Into<String>,
+        source_reference: impl Into<String>,
+        fixture: MemoryFixture,
+    ) -> Self {
+        Self {
+            source_name: source_name.into(),
+            source_reference: source_reference.into(),
+            records: fixture.records,
+            associations: fixture.associations,
+        }
+    }
+}
+
+fn write_memory_source_snapshot(
+    context: &RunContext,
+    snapshot: &SessionMemorySourceSnapshot,
+) -> anyhow::Result<()> {
+    fs::write(
+        context.run_dir().join("session-memory-source.json"),
+        serde_json::to_string_pretty(snapshot)?,
+    )
+    .context("failed to write session memory source snapshot")
+}
+
+fn retrieve_session_memories(
+    context: &mut RunContext,
+    state: &SessionState,
+    memory_snapshot: &SessionMemorySourceSnapshot,
+    query: &str,
+) -> anyhow::Result<RetrievalResult> {
+    context.record_event(
+        EventType::MemoryRetrievalRequested,
+        json!({
+            "session_id": context.run_id(),
+            "turn_index": state.turns.len(),
+            "query": query,
+            "strategy": SESSION_RETRIEVAL_STRATEGY,
+            "retrieval_limit": SESSION_RETRIEVAL_LIMIT,
+            "memory_source": &memory_snapshot.source_name,
+            "memory_source_reference": &memory_snapshot.source_reference,
+        }),
+        None,
+    )?;
+    let retrieval = retrieve_memories(
+        &memory_snapshot.records,
+        &memory_snapshot.associations,
+        query,
+        SESSION_RETRIEVAL_STRATEGY,
+        SESSION_RETRIEVAL_LIMIT,
+    )?;
+    let trace = TraceRecord::new(
+        context.experiment_id(),
+        "session-memory-retrieval",
+        format!("turn={} query={}", state.turns.len(), query),
+        format!(
+            "selected {} and omitted {} memory candidates",
+            retrieval.selected.len(),
+            retrieval.omitted.len()
+        ),
+    )
+    .with_details(json!({
+        "session_id": context.run_id(),
+        "turn_index": state.turns.len(),
+        "retrieval": &retrieval,
+        "memory_source": &memory_snapshot.source_name,
+    }))
+    .with_latency_context("runtime", "session-memory-retrieval")
+    .with_latency_ns(retrieval.latency_ns);
+    let trace_id = trace.trace_id;
+    context.record_trace(trace)?;
+    context.record_event(
+        EventType::MemoryRetrieved,
+        json!({
+            "session_id": context.run_id(),
+            "turn_index": state.turns.len(),
+            "memory_source": &memory_snapshot.source_name,
+            "strategy": retrieval.strategy,
+            "selected": retrieved_memory_ids(&retrieval.selected),
+            "omitted": retrieved_memory_ids(&retrieval.omitted),
+            "latency_ms": retrieval.latency_ms,
+            "latency_ns": retrieval.latency_ns,
+        }),
+        Some(trace_id),
+    )?;
+
+    Ok(retrieval)
+}
+
+fn record_context_assembly(
+    context: &mut RunContext,
+    state: &SessionState,
+    assembly: &ContextAssembly,
+) -> anyhow::Result<uuid::Uuid> {
+    let trace = TraceRecord::new(
+        context.experiment_id(),
+        "session-context-assembly",
+        format!("turn={} retrieved memory fragments", state.turns.len()),
+        format!(
+            "selected {} fragments and omitted {}",
+            assembly.selected.len(),
+            assembly.omitted.len()
+        ),
+    )
+    .with_details(json!({
+        "session_id": context.run_id(),
+        "turn_index": state.turns.len(),
+        "assembly": assembly,
+    }))
+    .with_latency_context("runtime", "session-context-assembly")
+    .with_latency_ms(0);
+    let trace_id = trace.trace_id;
+    context.record_trace(trace)?;
+    Ok(trace_id)
+}
+
+fn write_multi_turn_report(
+    context: &RunContext,
+    state: &SessionState,
+    memory_snapshot: &SessionMemorySourceSnapshot,
+) -> anyhow::Result<()> {
+    let mut markdown = String::new();
+    markdown.push_str("# Multi-Turn Text Loop\n\n");
+    markdown.push_str("## Configuration\n\n");
+    markdown.push_str(&format!("- Model: `{}`\n", state.config.model_id));
+    markdown.push_str(&format!("- Max turns: `{}`\n", state.config.max_turns));
+    markdown.push_str(&format!(
+        "- Allow over limit: `{}`\n",
+        state.config.allow_over_limit
+    ));
+    markdown.push_str(&format!(
+        "- Requested memory source: `{}`\n",
+        state.config.memory_source.source
+    ));
+    markdown.push_str(&format!(
+        "- Loaded memory source: `{}`\n",
+        memory_snapshot.source_name
+    ));
+    markdown.push_str(&format!(
+        "- Loaded memory source reference: `{}`\n\n",
+        memory_snapshot.source_reference
+    ));
+    markdown.push_str("## Turns\n\n");
+    markdown.push_str("| Turn | Input tokens | Cached input tokens | Cache ratio | Output tokens | Latency ms | Hash prefix ok |\n");
+    markdown.push_str("|---:|---:|---:|---:|---:|---:|---|\n");
+
+    for (index, turn) in state.turns.iter().enumerate() {
+        let ratio = if turn.input_tokens == 0 {
+            0.0
+        } else {
+            f64::from(turn.cached_input_tokens) / f64::from(turn.input_tokens)
+        };
+        let prefix_ok = if index == 0 {
+            "n/a".to_string()
+        } else {
+            let previous = &state.turns[index - 1];
+            let prompt_assembly = assemble_session_prompt(
+                &SessionState {
+                    turns: state.turns[..index].to_vec(),
+                    ..state.clone()
+                },
+                &turn.user_input,
+                &turn.retrieved_memory_block,
+            );
+            (prompt::prior_request_prefix_hash(&prompt_assembly.messages, previous.message_count)
+                == Some(previous.full_request_hash))
+            .to_string()
+        };
+        markdown.push_str(&format!(
+            "| {} | {} | {} | {:.2} | {} | {} | {} |\n",
+            turn.index,
+            turn.input_tokens,
+            turn.cached_input_tokens,
+            ratio,
+            turn.output_tokens,
+            turn.model_latency_ms,
+            prefix_ok
+        ));
+    }
+
+    markdown.push_str("\n## Cache Diagnostics\n\n");
+    let cache_misses_above_floor = state
+        .turns
+        .iter()
+        .filter(|turn| turn.input_tokens >= 1024 && turn.cached_input_tokens == 0)
+        .count();
+    markdown.push_str(&format!(
+        "- Cache misses at or above 1024 input tokens: `{cache_misses_above_floor}`\n"
+    ));
+    markdown.push_str("- Prompt cache floor: `1024` input tokens\n");
+    markdown.push_str("- Session state persistence: `in_memory_only`\n\n");
+    markdown.push_str("## Hashes\n\n");
+    for turn in &state.turns {
+        markdown.push_str(&format!(
+            "- Turn {}: `{}` messages=`{}`\n",
+            turn.index, turn.full_request_hash, turn.message_count
+        ));
+    }
+
+    fs::write(context.run_dir().join("multi-turn-text-loop.md"), markdown)
+        .context("failed to write multi-turn text loop report")
+}
+
+fn sanitize_error(error: &str) -> String {
+    if error.contains("sk-") || error.to_ascii_lowercase().contains("authorization") {
+        "provider error redacted because it may contain credential-like content".to_string()
+    } else {
+        error.to_string()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::fs;
+    use std::io::Cursor;
+
+    use serde_json::Value;
+    use uuid::Uuid;
+
+    use super::{
+        DEFAULT_SESSION_MODEL, MemorySourceConfig, SessionConfig, SessionEndReason, SessionEvent,
+        SessionMemorySource, SessionState, Turn, reduce_session, run_with_io_and_components,
+    };
+    use crate::context::{ContextAssembly, ContextBudget};
+    use crate::conversation::ContentHash;
+    use crate::conversation::prompt::{PromptTurn, assemble_prompt, prior_request_prefix_hash};
+    use crate::memory::phase_four_fixture;
+    use crate::models::MockModelClient;
+    use crate::observability::event_log::{EventRecord, EventType};
+    use crate::runtime::run_context::RunContext;
+
+    #[test]
+    fn reducer_appends_turns_in_order() {
+        let config = test_config(3);
+        let state = SessionState::new(config);
+        let first = test_turn(0);
+        let second = test_turn(1);
+
+        let state = reduce_session(state, SessionEvent::TurnCompleted(first.clone()));
+        let state = reduce_session(state, SessionEvent::TurnCompleted(second.clone()));
+
+        assert_eq!(state.turns, vec![first, second]);
+    }
+
+    #[test]
+    fn reducer_records_model_failure_without_appending_turn() {
+        let state = SessionState::new(test_config(3));
+
+        let state = reduce_session(
+            state,
+            SessionEvent::ModelRoleFailed {
+                error_summary: "boom".to_string(),
+            },
+        );
+
+        assert!(state.turns.is_empty());
+        assert_eq!(state.last_model_error.as_deref(), Some("boom"));
+    }
+
+    #[test]
+    fn reducer_records_limit_without_appending_turn() {
+        let state = SessionState::new(test_config(1));
+
+        let state = reduce_session(
+            state,
+            SessionEvent::SessionLimitReached {
+                current: 1,
+                max: 1,
+                override_active: false,
+            },
+        );
+
+        assert!(state.turns.is_empty());
+        assert_eq!(state.limit_reached.unwrap().current, 1);
+    }
+
+    #[test]
+    fn reducer_covers_session_lifecycle_events() {
+        let config = test_config(2);
+        let state = SessionState::new(config.clone());
+
+        let state = reduce_session(state, SessionEvent::SessionStarted(config));
+        let state = reduce_session(
+            state,
+            SessionEvent::InputReceived {
+                input: "hello".to_string(),
+            },
+        );
+        let state = reduce_session(
+            state,
+            SessionEvent::PromptAssembled {
+                full_request_hash: ContentHash([1; 32]),
+                message_count: 2,
+                total_bytes: 10,
+            },
+        );
+        let state = reduce_session(
+            state,
+            SessionEvent::ModelRoleCompleted {
+                response: "hi".to_string(),
+                latency_ms: 3,
+                input_tokens: 4,
+                cached_input_tokens: 1,
+                output_tokens: 2,
+            },
+        );
+        let state = reduce_session(
+            state,
+            SessionEvent::SessionEnded {
+                reason: SessionEndReason::QuitCommand,
+            },
+        );
+
+        assert_eq!(state.last_input.as_deref(), Some("hello"));
+        assert_eq!(state.last_prompt_hash, Some(ContentHash([1; 32])));
+        assert_eq!(state.ended_reason, Some(SessionEndReason::QuitCommand));
+    }
+
+    #[test]
+    fn reducer_memory_retrieved_is_non_mutating() {
+        let state = SessionState::new(test_config(2));
+
+        let next = reduce_session(state.clone(), SessionEvent::MemoryRetrieved);
+
+        assert_eq!(next, state);
+    }
+
+    #[test]
+    fn reducer_context_assembled_is_non_mutating() {
+        let state = SessionState::new(test_config(2));
+
+        let next = reduce_session(
+            state.clone(),
+            SessionEvent::ContextAssembled(ContextAssembly {
+                budget: ContextBudget::new(4, 600),
+                selected: vec![],
+                omitted: vec![],
+                used_estimated_tokens: 0,
+            }),
+        );
+
+        assert_eq!(next, state);
+    }
+
+    #[test]
+    fn mock_model_session_records_turns_events_and_report() {
+        let base_dir = std::env::temp_dir().join(format!("qsf-multi-turn-{}", Uuid::new_v4()));
+        let mut context = RunContext::create_in(&base_dir, "multi-turn-text-loop").unwrap();
+        let input = Cursor::new(
+            "What do you remember about context budgets?\nContinue that thought.\nWhat changed about model roles?\n:quit\n",
+        );
+        let mut output = Vec::new();
+        let memory_source = TestMemorySource;
+
+        run_with_io_and_components(
+            &mut context,
+            input,
+            &mut output,
+            &MockModelClient::default(),
+            &memory_source,
+            test_config(5),
+        )
+        .unwrap();
+
+        let events = fs::read_to_string(context.run_dir().join("events.jsonl")).unwrap();
+        let report = fs::read_to_string(context.run_dir().join("multi-turn-text-loop.md")).unwrap();
+        let records = parse_event_records(&events);
+
+        assert_eq!(
+            records
+                .iter()
+                .filter(|record| record.event_type == EventType::TurnCompleted)
+                .count(),
+            3
+        );
+        assert!(events.contains("ContextAssembled"));
+        assert!(events.contains("PromptAssembled"));
+        assert!(report.contains("Hash prefix ok"));
+        assert!(report.contains("Cache misses at or above 1024 input tokens"));
+        assert!(
+            String::from_utf8(output)
+                .unwrap()
+                .contains("QSF runtime voice loop")
+        );
+
+        let turns = records
+            .iter()
+            .filter(|record| record.event_type == EventType::TurnCompleted)
+            .collect::<Vec<_>>();
+        assert_eq!(turns[0].payload["turn"]["index"], 0);
+        assert_eq!(turns[1].payload["turn"]["index"], 1);
+        assert_eq!(turns[2].payload["turn"]["index"], 2);
+        assert_turn_prefix_hashes_are_stable(&turns);
+
+        fs::remove_dir_all(base_dir).unwrap();
+    }
+
+    #[test]
+    fn missing_file_memory_source_logs_fallback_event() {
+        let base_dir =
+            std::env::temp_dir().join(format!("qsf-missing-session-memory-{}", Uuid::new_v4()));
+        let mut context = RunContext::create_in(&base_dir, "multi-turn-text-loop").unwrap();
+
+        let snapshot = super::MissingFileSessionMemorySource
+            .load(&mut context)
+            .unwrap();
+
+        let events = fs::read_to_string(context.run_dir().join("events.jsonl")).unwrap();
+        assert_eq!(snapshot.source_name, "phase_four_fixture");
+        assert!(events.contains("ErrorOccurred"));
+        assert!(events.contains("QSF_SESSION_MEMORY_FILE"));
+        assert!(events.contains("phase_four_fixture"));
+
+        fs::remove_dir_all(base_dir).unwrap();
+    }
+
+    struct TestMemorySource;
+
+    impl super::SessionMemorySource for TestMemorySource {
+        fn load(
+            &self,
+            _context: &mut RunContext,
+        ) -> anyhow::Result<super::SessionMemorySourceSnapshot> {
+            Ok(super::SessionMemorySourceSnapshot::from_fixture(
+                "phase_four_fixture",
+                "test",
+                phase_four_fixture(),
+            ))
+        }
+    }
+
+    fn test_config(max_turns: usize) -> SessionConfig {
+        SessionConfig {
+            model_id: DEFAULT_SESSION_MODEL.to_string(),
+            max_turns,
+            allow_over_limit: false,
+            memory_source: MemorySourceConfig {
+                source: "phase_four_fixture".to_string(),
+                file: None,
+            },
+        }
+    }
+
+    fn test_turn(index: usize) -> Turn {
+        Turn {
+            index,
+            started_at: std::time::SystemTime::UNIX_EPOCH,
+            completed_at: std::time::SystemTime::UNIX_EPOCH,
+            user_input: format!("input {index}"),
+            context_assembly: ContextAssembly {
+                budget: ContextBudget::new(4, 600),
+                selected: vec![],
+                omitted: vec![],
+                used_estimated_tokens: 0,
+            },
+            retrieved_memory_block: String::new(),
+            assistant_response: format!("answer {index}"),
+            model_id: DEFAULT_SESSION_MODEL.to_string(),
+            model_latency_ms: 0,
+            input_tokens: 0,
+            cached_input_tokens: 0,
+            output_tokens: 0,
+            full_request_hash: ContentHash([index as u8; 32]),
+            message_count: 2,
+        }
+    }
+
+    fn parse_event_records(events: &str) -> Vec<EventRecord> {
+        events
+            .lines()
+            .map(|line| serde_json::from_str::<Value>(line).unwrap())
+            .map(|value| serde_json::from_value::<EventRecord>(value).unwrap())
+            .collect()
+    }
+
+    fn assert_turn_prefix_hashes_are_stable(turn_records: &[&EventRecord]) {
+        let turns = turn_records
+            .iter()
+            .map(|record| serde_json::from_value::<Turn>(record.payload["turn"].clone()).unwrap())
+            .collect::<Vec<_>>();
+
+        for index in 1..turns.len() {
+            let previous = &turns[index - 1];
+            let current = &turns[index];
+            let prior_turns = turns[..index]
+                .iter()
+                .map(|turn| PromptTurn {
+                    user_input: &turn.user_input,
+                    retrieved_memory_block: &turn.retrieved_memory_block,
+                    assistant_response: &turn.assistant_response,
+                })
+                .collect::<Vec<_>>();
+            let prompt = assemble_prompt(
+                &prior_turns,
+                &current.user_input,
+                &current.retrieved_memory_block,
+            );
+
+            assert_eq!(
+                prior_request_prefix_hash(&prompt.messages, previous.message_count),
+                Some(previous.full_request_hash)
+            );
+        }
+    }
+}

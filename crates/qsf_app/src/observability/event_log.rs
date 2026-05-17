@@ -34,6 +34,11 @@ pub enum EventType {
     ModelRoleFailed,
     SleepPhaseRequested,
     SleepPhaseCompleted,
+    SessionStarted,
+    PromptAssembled,
+    TurnCompleted,
+    SessionLimitReached,
+    SessionEnded,
     OutputProduced,
     /// Used as an explicit runtime-to-adapter boundary marker before routing exists.
     SpeechPlaybackRequested,

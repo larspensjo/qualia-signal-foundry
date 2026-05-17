@@ -855,3 +855,36 @@ Refs: crates/qsf_app/src/experiments/accept_reviewed_memory.rs,
 crates/qsf_app/src/experiments/registry.rs,
 crates/qsf_app/src/experiments/mod.rs;
 implements: Stage 5 of docs/Plans/Plan.ReviewedMemoryPromotion.md
+
+## 2026-05-17 - Multi-turn text loop stage 1
+
+Added the first human-driven multi-turn text experiment with append-only session state,
+cache-stable prompt assembly, per-turn memory retrieval, and deterministic mock-model
+coverage. The final implementation also tightens fallback observability, reducer tests,
+and prompt-prefix assertions to match the experiment contract directly.
+
+What changed:
+- Registered `multi-turn-text-loop` and added `SessionState`, `Turn`, `SessionEvent`,
+  and a pure `reduce_session` path for session lifecycle events.
+- Added `conversation::prompt` with a stable session system prompt, length-prefixed
+  SHA-256 request hashing, and prior-request prefix verification.
+- Wired the turn loop through association-weighted memory retrieval, context assembly,
+  `ConversationalResponder`, session events, token/latency capture, and a generated
+  multi-turn report.
+- Missing `QSF_SESSION_MEMORY_FILE` now records an `ErrorOccurred` fallback event before
+  loading the deterministic fixture, and the report distinguishes requested from loaded
+  memory source.
+- Removed duplicate model-latency observability and rely on the shared
+  `ModelRoleCompleted` emission for usage and latency.
+- Avoided per-event `SessionState` clones in orchestration and cleaned up prompt hash
+  rendering and usage extraction.
+- Covered prompt stability, reducer behavior, and a three-turn mock-model integration
+  run with event/report assertions, including direct turn-to-turn prompt prefix hash
+  checks and non-mutating memory/context reducer events.
+
+Observed:
+- The existing model, memory, context, event, and trace boundaries were sufficient for
+  the stage-1 text loop without changing provider selection semantics.
+
+Refs: crates/qsf_app/src/conversation, crates/qsf_app/src/experiments/multi_turn_text_loop.rs,
+crates/qsf_app/src/experiments/registry.rs, crates/qsf_app/src/observability/event_log.rs

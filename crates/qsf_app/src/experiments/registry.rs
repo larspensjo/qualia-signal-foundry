@@ -17,6 +17,7 @@ use super::memory_and_context::{
     AssociativeMemoryToyModelExperiment, ContextBudgetRetrievalTestExperiment,
 };
 use super::model_role_smoke::ModelRoleSmokeExperiment;
+use super::multi_turn_text_loop::MultiTurnTextLoopExperiment;
 use super::placeholder::PlaceholderExperiment;
 use super::realtime_voice_session::RealtimeVoiceSessionExperiment;
 use super::reviewed_memory_draft::ReviewedMemoryDraftExperiment;
@@ -33,6 +34,7 @@ pub enum ExperimentName {
     AssociativeMemoryToyModel,
     ContextBudgetRetrievalTest,
     ModelRoleSmokeTest,
+    MultiTurnTextLoop,
     RealtimeVoiceSession,
     AcceptReviewedMemory,
     ReviewedMemoryDraft,
@@ -50,6 +52,7 @@ impl ExperimentName {
             Self::AssociativeMemoryToyModel => "associative-memory-toy-model",
             Self::ContextBudgetRetrievalTest => "context-budget-retrieval-test",
             Self::ModelRoleSmokeTest => "model-role-smoke-test",
+            Self::MultiTurnTextLoop => "multi-turn-text-loop",
             Self::RealtimeVoiceSession => "realtime-voice-session",
             Self::AcceptReviewedMemory => "accept-reviewed-memory",
             Self::ReviewedMemoryDraft => "reviewed-memory-draft",
@@ -74,6 +77,9 @@ impl ExperimentName {
             }
             Self::ModelRoleSmokeTest => {
                 "Invoke a model role through a deterministic mock client or the optional OpenAI adapter"
+            }
+            Self::MultiTurnTextLoop => {
+                "Run a human-driven text conversation with append-only session state and cache-stable prompt assembly"
             }
             Self::RealtimeVoiceSession => {
                 "Run a realtime voice-session provider and map session events back into QSF records"
@@ -300,6 +306,7 @@ fn experiment_for(name: ExperimentName) -> Box<dyn Experiment> {
             Box::new(ContextBudgetRetrievalTestExperiment)
         }
         ExperimentName::ModelRoleSmokeTest => Box::new(ModelRoleSmokeExperiment),
+        ExperimentName::MultiTurnTextLoop => Box::new(MultiTurnTextLoopExperiment),
         ExperimentName::RealtimeVoiceSession => Box::new(RealtimeVoiceSessionExperiment),
         ExperimentName::AcceptReviewedMemory => Box::new(AcceptReviewedMemoryExperiment),
         ExperimentName::ReviewedMemoryDraft => Box::new(ReviewedMemoryDraftExperiment),

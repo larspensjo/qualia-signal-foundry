@@ -1,6 +1,7 @@
 pub mod audio;
 pub mod cli;
 pub mod context;
+pub mod conversation;
 pub mod experiments;
 pub mod memory;
 pub mod models;

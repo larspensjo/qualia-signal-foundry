@@ -5,6 +5,7 @@ mod audio_preparation_layer;
 mod failure;
 mod memory_and_context;
 mod model_role_smoke;
+mod multi_turn_text_loop;
 mod placeholder;
 mod realtime_voice_session;
 mod registry;
