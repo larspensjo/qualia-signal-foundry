@@ -267,3 +267,18 @@ configured through the explicit file-backed memory source.
 Refs: crates/qsf_app/src/experiments/reviewed_memory_draft.rs,
 crates/qsf_app/src/memory/reviewed_memory_draft.rs,
 docs/Plans/Plan.ReviewedMemoryPromotion.md
+
+## 2026-05-17 - Multi-turn warm tier ages by active turn count
+Decision: The multi-turn text loop warm tier ages the oldest active verbatim turns by
+turn count, keeps completed `Turn` records append-only, stores session-local summaries
+as an append-only prefix, and uses the summarizer role's default model unless a future
+configuration point explicitly changes it.
+Context: Stage 2 needed a concrete summarization trigger before token-pressure
+heuristics exist, and review found that silently reusing the conversational model made
+the summarizer role default meaningless.
+Consequences: `QSF_SESSION_WARM_THRESHOLD` controls active verbatim turns only; aged
+turns remain available in session records and reports but are skipped during prompt
+assembly. Summary model changes should happen through role defaults or a deliberate
+summary-model configuration variable, not by inheriting the responder model implicitly.
+Refs: crates/qsf_app/src/experiments/multi_turn_text_loop.rs,
+crates/qsf_app/src/models/model_role.rs

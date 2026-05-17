@@ -87,6 +87,16 @@ impl Default for MockModelClient {
             },
         );
         fixtures.insert(
+            ModelRoleId::SessionTurnSummarizer,
+            MockFixture {
+                output_text:
+                    "The user and assistant discussed QSF session continuity in one aged-out turn."
+                        .to_string(),
+                input_tokens: 36,
+                output_tokens: 14,
+            },
+        );
+        fixtures.insert(
             ModelRoleId::ResearchPlanner,
             MockFixture {
                 output_text: "Mock research planner proposes a focused experiment before widening model orchestration scope."

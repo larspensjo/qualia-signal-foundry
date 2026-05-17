@@ -7,6 +7,7 @@ use sha2::{Digest, Sha256};
 use crate::context::ContextAssembly;
 use crate::models::{ModelMessage, ModelMessageRole};
 
+/// Constant system-prompt prefix; warm-tier summaries are appended at assembly time.
 pub const SESSION_SYSTEM_PROMPT: &str = "You are a concise conversational responder. Treat this as one continuous human-driven text session. Use retrieved memory as context, keep prior turns stable, and never initiate a turn without user input.";
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -36,6 +37,12 @@ pub struct PromptTurn<'a> {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
+pub struct PromptTurnSummary<'a> {
+    pub turn_index: usize,
+    pub summary: &'a str,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct PromptAssembly {
     pub messages: Vec<ModelMessage>,
     pub full_request_hash: ContentHash,
@@ -48,7 +55,16 @@ pub fn assemble_prompt(
     input: &str,
     retrieved: &str,
 ) -> PromptAssembly {
-    let mut messages = vec![ModelMessage::system(SESSION_SYSTEM_PROMPT)];
+    assemble_prompt_with_summaries(&[], prior_turns, input, retrieved)
+}
+
+pub fn assemble_prompt_with_summaries(
+    summarized_turns: &[PromptTurnSummary<'_>],
+    prior_turns: &[PromptTurn<'_>],
+    input: &str,
+    retrieved: &str,
+) -> PromptAssembly {
+    let mut messages = vec![ModelMessage::system(format_system_prompt(summarized_turns))];
 
     for turn in prior_turns {
         messages.push(ModelMessage::user(format_new_turn(
@@ -72,6 +88,25 @@ pub fn assemble_prompt(
         message_count,
         total_bytes,
     }
+}
+
+fn format_system_prompt(summarized_turns: &[PromptTurnSummary<'_>]) -> String {
+    if summarized_turns.is_empty() {
+        return SESSION_SYSTEM_PROMPT.to_string();
+    }
+
+    let mut prompt = SESSION_SYSTEM_PROMPT.to_string();
+    prompt.push_str("\n\n[Earlier in this session]\n");
+    for summary in summarized_turns {
+        prompt.push_str(&format!(
+            "- Turn {}: {}\n",
+            summary.turn_index,
+            summary.summary.trim()
+        ));
+    }
+    let trimmed_len = prompt.trim_end().len();
+    prompt.truncate(trimmed_len);
+    prompt
 }
 
 pub fn prior_request_prefix_hash(
@@ -146,8 +181,9 @@ mod tests {
     };
 
     use super::{
-        PromptTurn, SESSION_SYSTEM_PROMPT, assemble_prompt, format_new_turn,
-        prior_request_prefix_hash, retrieved_memory_block,
+        PromptTurn, PromptTurnSummary, SESSION_SYSTEM_PROMPT, assemble_prompt,
+        assemble_prompt_with_summaries, format_new_turn, prior_request_prefix_hash,
+        retrieved_memory_block,
     };
 
     #[test]
@@ -205,5 +241,27 @@ mod tests {
             retrieved_memory_block(&assembly),
             "- memory.a: A remembered fact."
         );
+    }
+
+    #[test]
+    fn summaries_render_inside_system_message() {
+        let prompt = assemble_prompt_with_summaries(
+            &[PromptTurnSummary {
+                turn_index: 0,
+                summary: "The opening turn established continuity.",
+            }],
+            &[],
+            "next",
+            "",
+        );
+
+        assert!(
+            prompt.messages[0]
+                .content
+                .starts_with(SESSION_SYSTEM_PROMPT)
+        );
+        assert!(prompt.messages[0].content.contains(
+            "[Earlier in this session]\n- Turn 0: The opening turn established continuity."
+        ));
     }
 }

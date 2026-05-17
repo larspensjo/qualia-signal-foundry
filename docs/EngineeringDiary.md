@@ -888,3 +888,50 @@ Observed:
 
 Refs: crates/qsf_app/src/conversation, crates/qsf_app/src/experiments/multi_turn_text_loop.rs,
 crates/qsf_app/src/experiments/registry.rs, crates/qsf_app/src/observability/event_log.rs
+
+## 2026-05-17 - Multi-turn text loop warm summaries
+
+Added the warm tier for long multi-turn text sessions so older completed turns can be
+summarized into a stable in-session system-prompt block while completed turn records
+remain append-only. The final implementation includes the Stage 2 review fixes for
+default ageing, report diagnostics, summary model selection, and warm-tier bookkeeping.
+
+What changed:
+- Added `QSF_SESSION_WARM_THRESHOLD` with a default of six active verbatim turns so
+  default runs exercise summarization before the ten-turn session limit.
+- Added session-local `TurnSummary` records, a `session_turn_summarizer` model role,
+  mock summarizer output, and `TurnSummarized` observability.
+- `SessionTurnSummarizer` uses its role default model instead of inheriting the
+  conversational responder model.
+- Prompt assembly now renders warm summaries as an "earlier in this session" block
+  and skips the prefix-hash assertion for the first prompt after an ageing event.
+- Summary bookkeeping uses the append-only prefix invariant directly, while completed
+  `TurnCompleted` records remain available for reporting.
+- Extended the generated multi-turn report with warm-threshold configuration and
+  summary diagnostics, including intentional warm-summary cache-prefix invalidations.
+
+Observed:
+- Focused mock-session tests cover ageing the oldest turn while retaining completed
+  `TurnCompleted` records, `TurnSummarized` payload shape, multiple aged-out summaries,
+  and prefix stability resuming after an intentional warm-summary invalidation.
+
+Refs: crates/qsf_app/src/conversation, crates/qsf_app/src/experiments/multi_turn_text_loop.rs,
+crates/qsf_app/src/models, crates/qsf_app/src/observability/event_log.rs,
+docs/DecisionLog.md;
+implements: 2026-05-17 - Multi-turn warm tier ages by active turn count
+
+## 2026-05-17 - Multi-turn warm tier verification
+
+Verified Stage 2 before starting recall-tool work with automated checks and a deterministic
+eight-turn CLI run that crossed the default warm threshold.
+
+Observed:
+- `cargo test multi_turn_text_loop --lib`, `cargo build`,
+  `cargo clippy --all-targets -- -D warnings`, and `cargo fmt` completed successfully.
+- Run `runs/2026-05-17-053037-multi-turn-text-loop` completed with eight appended
+  turns, two `TurnSummarized` events, no `SessionLimitReached` event, and warm summaries
+  produced by `gpt-5.4-nano`.
+- The generated report recorded `invalidated_by_warm_summary` for the intentional cache
+  prefix invalidation after the first ageing event.
+
+Refs: runs/2026-05-17-053037-multi-turn-text-loop

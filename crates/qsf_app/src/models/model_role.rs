@@ -11,6 +11,7 @@ pub enum ModelRoleId {
     ConversationalResponder,
     MemoryExtractor,
     SleepSummarizer,
+    SessionTurnSummarizer,
     ResearchPlanner,
     Critic,
 }
@@ -22,6 +23,7 @@ impl ModelRoleId {
             Self::ConversationalResponder => "conversational_responder",
             Self::MemoryExtractor => "memory_extractor",
             Self::SleepSummarizer => "sleep_summarizer",
+            Self::SessionTurnSummarizer => "session_turn_summarizer",
             Self::ResearchPlanner => "research_planner",
             Self::Critic => "critic",
         }
@@ -90,6 +92,15 @@ impl ModelRole {
                 context_budget: ContextBudget::new(8, 2_000),
                 default_model: "gpt-5.4".to_string(),
                 output_expectation: ModelOutputExpectation::JsonObject,
+            },
+            ModelRoleId::SessionTurnSummarizer => Self {
+                role_id,
+                purpose: "Summarize one aged-out human/assistant turn for continued in-session continuity."
+                    .to_string(),
+                allowed_tools: vec![],
+                context_budget: ContextBudget::new(2, 500),
+                default_model: "gpt-5.4-nano".to_string(),
+                output_expectation: ModelOutputExpectation::Text,
             },
             ModelRoleId::ResearchPlanner => Self {
                 role_id,

@@ -8,6 +8,9 @@
 
 ## Planning & Documentation
 - When creating or saving plan documents, always save them to the `docs/plans/` folder unless explicitly told otherwise.
+- When implementing a plan, surface its open questions or ambiguities before silently resolving them.
+- When adding a feature behind a config flag or threshold, the default values must exercise the new code path.
+- When creating a plan, make it clear how to verify each step. Point out where external human testing is recommended.
 
 ## Architecture
 - Preserve the unidirectional data flow: input -> action -> reducer -> state -> render, with side effects isolated and fed back as actions.

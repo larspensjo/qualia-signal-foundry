@@ -9,14 +9,14 @@ use serde_json::json;
 
 use crate::context::{ContextAssembly, ContextFragment, assemble_context};
 use crate::conversation::prompt::{self, PromptTurn};
-use crate::conversation::{ContentHash, PromptAssembly};
+use crate::conversation::{ContentHash, PromptAssembly, PromptTurnSummary};
 use crate::memory::{
     Association, MemoryFixture, MemoryRecord, RetrievalResult, RetrievalStrategy,
     phase_four_fixture, retrieve_memories, retrieved_memory_ids,
 };
 use crate::models::{
-    ModelClient, ModelRequest, ModelRole, ModelRoleId, build_client, invoke_model_role,
-    requested_provider_from_env,
+    ModelClient, ModelMessage, ModelRequest, ModelRole, ModelRoleId, build_client,
+    invoke_model_role, requested_provider_from_env,
 };
 use crate::observability::event_log::EventType;
 use crate::observability::trace::{TraceRecord, elapsed_ms};
@@ -26,11 +26,13 @@ use super::registry::{Experiment, ExperimentName, ExperimentOutcome};
 
 const DEFAULT_SESSION_MODEL: &str = "gpt-5.4-mini";
 const DEFAULT_MAX_TURNS: usize = 10;
+const DEFAULT_WARM_THRESHOLD: usize = 6;
 const SESSION_MEMORY_SOURCE_ENV_VAR: &str = "QSF_SESSION_MEMORY_SOURCE";
 const SESSION_MEMORY_FILE_ENV_VAR: &str = "QSF_SESSION_MEMORY_FILE";
 const SESSION_MODEL_ENV_VAR: &str = "QSF_CONVERSATION_MODEL";
 const SESSION_MAX_TURNS_ENV_VAR: &str = "QSF_SESSION_MAX_TURNS";
 const SESSION_ALLOW_OVER_LIMIT_ENV_VAR: &str = "QSF_SESSION_ALLOW_OVER_LIMIT";
+const SESSION_WARM_THRESHOLD_ENV_VAR: &str = "QSF_SESSION_WARM_THRESHOLD";
 const SESSION_RETRIEVAL_LIMIT: usize = 8;
 const SESSION_RETRIEVAL_STRATEGY: RetrievalStrategy = RetrievalStrategy::AssociationWeighted;
 
@@ -68,9 +70,11 @@ pub struct SessionState {
     pub started_at: SystemTime,
     pub config: SessionConfig,
     pub turns: Vec<Turn>,
+    pub summarized_turns: Vec<TurnSummary>,
     pub ended_reason: Option<SessionEndReason>,
     pub last_input: Option<String>,
     pub last_prompt_hash: Option<ContentHash>,
+    pub prefix_invalidated_since_last_prompt: bool,
     pub last_model_error: Option<String>,
     pub limit_reached: Option<SessionLimit>,
 }
@@ -81,9 +85,11 @@ impl SessionState {
             started_at: SystemTime::now(),
             config,
             turns: vec![],
+            summarized_turns: vec![],
             ended_reason: None,
             last_input: None,
             last_prompt_hash: None,
+            prefix_invalidated_since_last_prompt: false,
             last_model_error: None,
             limit_reached: None,
         }
@@ -94,6 +100,7 @@ impl SessionState {
 pub struct SessionConfig {
     pub model_id: String,
     pub max_turns: usize,
+    pub warm_threshold: usize,
     pub allow_over_limit: bool,
     pub memory_source: MemorySourceConfig,
 }
@@ -107,6 +114,11 @@ impl SessionConfig {
             .and_then(|value| value.parse::<usize>().ok())
             .filter(|value| *value > 0)
             .unwrap_or(DEFAULT_MAX_TURNS);
+        let warm_threshold = std::env::var(SESSION_WARM_THRESHOLD_ENV_VAR)
+            .ok()
+            .and_then(|value| value.parse::<usize>().ok())
+            .filter(|value| *value > 0)
+            .unwrap_or(DEFAULT_WARM_THRESHOLD);
         let allow_over_limit = std::env::var(SESSION_ALLOW_OVER_LIMIT_ENV_VAR)
             .map(|value| value.eq_ignore_ascii_case("true"))
             .unwrap_or(false);
@@ -115,6 +127,7 @@ impl SessionConfig {
         Self {
             model_id,
             max_turns,
+            warm_threshold,
             allow_over_limit,
             memory_source,
         }
@@ -157,6 +170,17 @@ pub struct Turn {
     pub message_count: usize,
 }
 
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+pub struct TurnSummary {
+    pub turn_index: usize,
+    pub summarized_after_turn_index: usize,
+    pub summary: String,
+    pub model_id: String,
+    pub model_latency_ms: u64,
+    pub input_tokens: u32,
+    pub output_tokens: u32,
+}
+
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct SessionLimit {
     pub current: usize,
@@ -196,6 +220,7 @@ pub enum SessionEvent {
         error_summary: String,
     },
     TurnCompleted(Turn),
+    TurnSummarized(TurnSummary),
     SessionLimitReached {
         current: usize,
         max: usize,
@@ -226,6 +251,7 @@ fn reduce_session_in_place(state: &mut SessionState, event: SessionEvent) {
             full_request_hash, ..
         } => {
             state.last_prompt_hash = Some(full_request_hash);
+            state.prefix_invalidated_since_last_prompt = false;
         }
         SessionEvent::ModelRoleCompleted { .. } => {
             state.last_model_error = None;
@@ -235,6 +261,10 @@ fn reduce_session_in_place(state: &mut SessionState, event: SessionEvent) {
         }
         SessionEvent::TurnCompleted(turn) => {
             state.turns.push(turn);
+        }
+        SessionEvent::TurnSummarized(summary) => {
+            state.summarized_turns.push(summary);
+            state.prefix_invalidated_since_last_prompt = true;
         }
         SessionEvent::SessionLimitReached {
             current,
@@ -297,8 +327,8 @@ fn run_with_io_and_components(
             },
         )?;
 
-        if state.turns.len() >= state.config.max_turns {
-            let current = state.turns.len();
+        if completed_turn_count(&state) >= state.config.max_turns {
+            let current = completed_turn_count(&state);
             let max = state.config.max_turns;
             let override_active = state.config.allow_over_limit;
             apply_session_event(
@@ -352,23 +382,24 @@ fn run_with_io_and_components(
 
     Ok(ExperimentOutcome {
         summary: format!(
-            "The multi-turn text loop completed with {} appended turns and cache-stable prompt hashes recorded per turn.",
-            state.turns.len()
+            "The multi-turn text loop completed with {} appended turns, {} warm summaries, and cache-stable prompt hashes recorded per turn.",
+            completed_turn_count(&state),
+            state.summarized_turns.len()
         ),
         observations: vec![
-            "Session turns are append-only and prior prompt bytes are verified before each later turn.".to_string(),
+            "Session turns are append-only; older turns can age into stable warm summaries while completed turn records remain available for reporting.".to_string(),
             "Each turn retrieves memory from the latest user input only, then assembles selected fragments under the existing context budget.".to_string(),
         ],
         failure_modes: vec![
-            "Stage 1 does not summarize older turns or persist session state across runs.".to_string(),
+            "Warm summarization invalidates the prompt cache prefix once per ageing event.".to_string(),
             "OpenAI prompt caching reports zero cached tokens below the 1024 input-token floor.".to_string(),
         ],
         follow_up_questions: vec![
-            "Should the warm tier summarize by turn count, token pressure, or both?".to_string(),
+            "Should the warm tier summarize by token pressure in addition to turn count?".to_string(),
             "Should later retrieval include recent session turns as query context?".to_string(),
         ],
         decision_candidates: vec![
-            "Keep multi-turn prompts cache-stable by freezing prior user and assistant messages after turn append.".to_string(),
+            "Keep warm-tier summaries session-local and append-only unless explicitly promoted through the reviewed-memory pipeline.".to_string(),
         ],
         extra_artifacts: vec![
             "multi-turn-text-loop.md".to_string(),
@@ -402,7 +433,7 @@ fn run_one_turn(
         EventType::ContextAssemblyRequested,
         json!({
             "session_id": context.run_id(),
-            "turn_index": state.turns.len(),
+            "turn_index": completed_turn_count(state),
             "source_event": EventType::InputReceived,
             "budget": &assembly.budget,
         }),
@@ -455,7 +486,7 @@ fn run_one_turn(
     )?;
 
     let turn = Turn {
-        index: state.turns.len(),
+        index: completed_turn_count(state),
         started_at: turn_started_at,
         completed_at: SystemTime::now(),
         user_input: user_input.to_string(),
@@ -472,8 +503,113 @@ fn run_one_turn(
     };
     let output_text = response.output_text;
     apply_session_event(context, state, SessionEvent::TurnCompleted(turn))?;
+    age_out_warm_turns(context, state, model_client)?;
 
     Ok(output_text)
+}
+
+fn completed_turn_count(state: &SessionState) -> usize {
+    state.turns.len()
+}
+
+fn age_out_warm_turns(
+    context: &mut RunContext,
+    state: &mut SessionState,
+    model_client: &dyn ModelClient,
+) -> anyhow::Result<()> {
+    while active_turn_count(state) > state.config.warm_threshold {
+        let Some(turn) = oldest_unsummarized_turn(state).cloned() else {
+            break;
+        };
+        let summary = match summarize_turn(context, state, model_client, &turn) {
+            Ok(summary) => summary,
+            Err(error) => {
+                let error_summary = sanitize_error(&error.to_string());
+                context.record_event(
+                    EventType::ErrorOccurred,
+                    json!({
+                        "stage": "session-turn-summarization",
+                        "turn_index": turn.index,
+                        "error": error_summary,
+                    }),
+                    None,
+                )?;
+                engine_logging::engine_error!(
+                    "multi-turn summarization failed: run_id={} turn_index={} error={}",
+                    context.run_id(),
+                    turn.index,
+                    error_summary
+                );
+                break;
+            }
+        };
+
+        apply_session_event(context, state, SessionEvent::TurnSummarized(summary))?;
+    }
+
+    Ok(())
+}
+
+fn active_turn_count(state: &SessionState) -> usize {
+    state
+        .turns
+        .len()
+        .saturating_sub(state.summarized_turns.len())
+}
+
+fn oldest_unsummarized_turn(state: &SessionState) -> Option<&Turn> {
+    state.turns.get(state.summarized_turns.len())
+}
+
+fn is_turn_summarized(state: &SessionState, turn_index: usize) -> bool {
+    // Summaries are append-only and always cover the oldest unsummarized turns.
+    // Completed Turn records stay in `turns`; prompt assembly skips this prefix.
+    turn_index < state.summarized_turns.len()
+}
+
+fn summarize_turn(
+    context: &mut RunContext,
+    state: &SessionState,
+    model_client: &dyn ModelClient,
+    turn: &Turn,
+) -> anyhow::Result<TurnSummary> {
+    let request = ModelRequest::new(
+        ModelRole::predefined(ModelRoleId::SessionTurnSummarizer),
+        vec![
+            ModelMessage::system(
+                "Summarize exactly one aged-out conversation turn in one sentence. Preserve concrete user intent, assistant commitments, and project-specific facts. Do not add new facts.",
+            ),
+            ModelMessage::user(format!(
+                "[Turn {}]\n[User]\n{}\n\n[Assistant]\n{}",
+                turn.index, turn.user_input, turn.assistant_response
+            )),
+        ],
+    )
+    .with_session_id(context.run_id())
+    .with_temperature(0.0)
+    .with_max_output_tokens(80);
+    let started_at = Instant::now();
+    let response = invoke_model_role(context, model_client, &request)?;
+    let usage = response.usage.as_ref();
+
+    Ok(TurnSummary {
+        turn_index: turn.index,
+        summarized_after_turn_index: completed_turn_count(state) - 1,
+        summary: normalize_summary(&response.output_text),
+        model_id: response.model_name,
+        model_latency_ms: elapsed_ms(started_at),
+        input_tokens: usage.map(|usage| usage.input_tokens).unwrap_or(0),
+        output_tokens: usage.map(|usage| usage.output_tokens).unwrap_or(0),
+    })
+}
+
+fn normalize_summary(summary: &str) -> String {
+    summary
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+        .trim()
+        .to_string()
 }
 
 fn assemble_session_prompt(
@@ -481,9 +617,18 @@ fn assemble_session_prompt(
     user_input: &str,
     retrieved_memory_block: &str,
 ) -> PromptAssembly {
+    let summarized_turns = state
+        .summarized_turns
+        .iter()
+        .map(|summary| PromptTurnSummary {
+            turn_index: summary.turn_index,
+            summary: &summary.summary,
+        })
+        .collect::<Vec<_>>();
     let prior_turns = state
         .turns
         .iter()
+        .filter(|turn| !is_turn_summarized(state, turn.index))
         .map(|turn| PromptTurn {
             user_input: &turn.user_input,
             retrieved_memory_block: &turn.retrieved_memory_block,
@@ -491,13 +636,22 @@ fn assemble_session_prompt(
         })
         .collect::<Vec<_>>();
 
-    prompt::assemble_prompt(&prior_turns, user_input, retrieved_memory_block)
+    prompt::assemble_prompt_with_summaries(
+        &summarized_turns,
+        &prior_turns,
+        user_input,
+        retrieved_memory_block,
+    )
 }
 
 fn verify_prompt_prefix(
     state: &SessionState,
     prompt_assembly: &PromptAssembly,
 ) -> anyhow::Result<()> {
+    if state.prefix_invalidated_since_last_prompt {
+        return Ok(());
+    }
+
     if let Some(previous_turn) = state.turns.last() {
         let prefix_hash = prompt::prior_request_prefix_hash(
             &prompt_assembly.messages,
@@ -507,7 +661,7 @@ fn verify_prompt_prefix(
         anyhow::ensure!(
             prefix_hash == previous_turn.full_request_hash,
             "prompt prefix hash mismatch before turn {}",
-            state.turns.len()
+            completed_turn_count(state)
         );
     }
 
@@ -580,6 +734,17 @@ fn record_session_event(context: &mut RunContext, event: &SessionEvent) -> anyho
                     "session_id": context.run_id(),
                     "turn": turn,
                     "full_request_hash": turn.full_request_hash.hex(),
+                }),
+                None,
+            )?;
+        }
+        SessionEvent::TurnSummarized(summary) => {
+            context.record_event(
+                EventType::TurnSummarized,
+                json!({
+                    "session_id": context.run_id(),
+                    "turn_index": summary.turn_index,
+                    "summary": summary,
                 }),
                 None,
             )?;
@@ -769,7 +934,7 @@ fn retrieve_session_memories(
         EventType::MemoryRetrievalRequested,
         json!({
             "session_id": context.run_id(),
-            "turn_index": state.turns.len(),
+            "turn_index": completed_turn_count(state),
             "query": query,
             "strategy": SESSION_RETRIEVAL_STRATEGY,
             "retrieval_limit": SESSION_RETRIEVAL_LIMIT,
@@ -788,7 +953,7 @@ fn retrieve_session_memories(
     let trace = TraceRecord::new(
         context.experiment_id(),
         "session-memory-retrieval",
-        format!("turn={} query={}", state.turns.len(), query),
+        format!("turn={} query={}", completed_turn_count(state), query),
         format!(
             "selected {} and omitted {} memory candidates",
             retrieval.selected.len(),
@@ -797,7 +962,7 @@ fn retrieve_session_memories(
     )
     .with_details(json!({
         "session_id": context.run_id(),
-        "turn_index": state.turns.len(),
+        "turn_index": completed_turn_count(state),
         "retrieval": &retrieval,
         "memory_source": &memory_snapshot.source_name,
     }))
@@ -809,7 +974,7 @@ fn retrieve_session_memories(
         EventType::MemoryRetrieved,
         json!({
             "session_id": context.run_id(),
-            "turn_index": state.turns.len(),
+            "turn_index": completed_turn_count(state),
             "memory_source": &memory_snapshot.source_name,
             "strategy": retrieval.strategy,
             "selected": retrieved_memory_ids(&retrieval.selected),
@@ -831,7 +996,10 @@ fn record_context_assembly(
     let trace = TraceRecord::new(
         context.experiment_id(),
         "session-context-assembly",
-        format!("turn={} retrieved memory fragments", state.turns.len()),
+        format!(
+            "turn={} retrieved memory fragments",
+            completed_turn_count(state)
+        ),
         format!(
             "selected {} fragments and omitted {}",
             assembly.selected.len(),
@@ -840,7 +1008,7 @@ fn record_context_assembly(
     )
     .with_details(json!({
         "session_id": context.run_id(),
-        "turn_index": state.turns.len(),
+        "turn_index": completed_turn_count(state),
         "assembly": assembly,
     }))
     .with_latency_context("runtime", "session-context-assembly")
@@ -861,6 +1029,10 @@ fn write_multi_turn_report(
     markdown.push_str(&format!("- Model: `{}`\n", state.config.model_id));
     markdown.push_str(&format!("- Max turns: `{}`\n", state.config.max_turns));
     markdown.push_str(&format!(
+        "- Warm threshold: `{}` active verbatim turns\n",
+        state.config.warm_threshold
+    ));
+    markdown.push_str(&format!(
         "- Allow over limit: `{}`\n",
         state.config.allow_over_limit
     ));
@@ -877,7 +1049,7 @@ fn write_multi_turn_report(
         memory_snapshot.source_reference
     ));
     markdown.push_str("## Turns\n\n");
-    markdown.push_str("| Turn | Input tokens | Cached input tokens | Cache ratio | Output tokens | Latency ms | Hash prefix ok |\n");
+    markdown.push_str("| Turn | Input tokens | Cached input tokens | Cache ratio | Output tokens | Latency ms | Hash prefix status |\n");
     markdown.push_str("|---:|---:|---:|---:|---:|---:|---|\n");
 
     for (index, turn) in state.turns.iter().enumerate() {
@@ -886,22 +1058,7 @@ fn write_multi_turn_report(
         } else {
             f64::from(turn.cached_input_tokens) / f64::from(turn.input_tokens)
         };
-        let prefix_ok = if index == 0 {
-            "n/a".to_string()
-        } else {
-            let previous = &state.turns[index - 1];
-            let prompt_assembly = assemble_session_prompt(
-                &SessionState {
-                    turns: state.turns[..index].to_vec(),
-                    ..state.clone()
-                },
-                &turn.user_input,
-                &turn.retrieved_memory_block,
-            );
-            (prompt::prior_request_prefix_hash(&prompt_assembly.messages, previous.message_count)
-                == Some(previous.full_request_hash))
-            .to_string()
-        };
+        let prefix_status = prompt_prefix_status_for_report(state, index);
         markdown.push_str(&format!(
             "| {} | {} | {} | {:.2} | {} | {} | {} |\n",
             turn.index,
@@ -910,7 +1067,7 @@ fn write_multi_turn_report(
             ratio,
             turn.output_tokens,
             turn.model_latency_ms,
-            prefix_ok
+            prefix_status
         ));
     }
 
@@ -924,7 +1081,32 @@ fn write_multi_turn_report(
         "- Cache misses at or above 1024 input tokens: `{cache_misses_above_floor}`\n"
     ));
     markdown.push_str("- Prompt cache floor: `1024` input tokens\n");
+    markdown.push_str(&format!(
+        "- Warm summaries produced: `{}`\n",
+        state.summarized_turns.len()
+    ));
     markdown.push_str("- Session state persistence: `in_memory_only`\n\n");
+    markdown.push_str("## Warm Summaries\n\n");
+    if state.summarized_turns.is_empty() {
+        markdown.push_str("- None\n\n");
+    } else {
+        markdown.push_str(
+            "| Turn | Summary model | Latency ms | Input tokens | Output tokens | Summary |\n",
+        );
+        markdown.push_str("|---:|---|---:|---:|---:|---|\n");
+        for summary in &state.summarized_turns {
+            markdown.push_str(&format!(
+                "| {} | `{}` | {} | {} | {} | {} |\n",
+                summary.turn_index,
+                summary.model_id,
+                summary.model_latency_ms,
+                summary.input_tokens,
+                summary.output_tokens,
+                summary.summary.replace('|', "\\|")
+            ));
+        }
+        markdown.push('\n');
+    }
     markdown.push_str("## Hashes\n\n");
     for turn in &state.turns {
         markdown.push_str(&format!(
@@ -935,6 +1117,42 @@ fn write_multi_turn_report(
 
     fs::write(context.run_dir().join("multi-turn-text-loop.md"), markdown)
         .context("failed to write multi-turn text loop report")
+}
+
+fn prompt_prefix_status_for_report(state: &SessionState, turn_position: usize) -> String {
+    if turn_position == 0 {
+        return "n/a".to_string();
+    }
+
+    let previous = &state.turns[turn_position - 1];
+    if state
+        .summarized_turns
+        .iter()
+        .any(|summary| summary.summarized_after_turn_index == previous.index)
+    {
+        return "invalidated_by_warm_summary".to_string();
+    }
+
+    let prompt_state = SessionState {
+        turns: state.turns[..turn_position].to_vec(),
+        summarized_turns: state
+            .summarized_turns
+            .iter()
+            .filter(|summary| summary.summarized_after_turn_index < turn_position)
+            .cloned()
+            .collect(),
+        ..state.clone()
+    };
+    let turn = &state.turns[turn_position];
+    let prompt_assembly = assemble_session_prompt(
+        &prompt_state,
+        &turn.user_input,
+        &turn.retrieved_memory_block,
+    );
+
+    (prompt::prior_request_prefix_hash(&prompt_assembly.messages, previous.message_count)
+        == Some(previous.full_request_hash))
+    .to_string()
 }
 
 fn sanitize_error(error: &str) -> String {
@@ -955,11 +1173,15 @@ mod tests {
 
     use super::{
         DEFAULT_SESSION_MODEL, MemorySourceConfig, SessionConfig, SessionEndReason, SessionEvent,
-        SessionMemorySource, SessionState, Turn, reduce_session, run_with_io_and_components,
+        SessionMemorySource, SessionState, Turn, TurnSummary, age_out_warm_turns,
+        prompt_prefix_status_for_report, reduce_session, run_with_io_and_components,
     };
     use crate::context::{ContextAssembly, ContextBudget};
     use crate::conversation::ContentHash;
-    use crate::conversation::prompt::{PromptTurn, assemble_prompt, prior_request_prefix_hash};
+    use crate::conversation::prompt::{
+        PromptTurn, PromptTurnSummary, assemble_prompt, assemble_prompt_with_summaries,
+        prior_request_prefix_hash,
+    };
     use crate::memory::phase_four_fixture;
     use crate::models::MockModelClient;
     use crate::observability::event_log::{EventRecord, EventType};
@@ -1111,7 +1333,7 @@ mod tests {
         );
         assert!(events.contains("ContextAssembled"));
         assert!(events.contains("PromptAssembled"));
-        assert!(report.contains("Hash prefix ok"));
+        assert!(report.contains("Hash prefix status"));
         assert!(report.contains("Cache misses at or above 1024 input tokens"));
         assert!(
             String::from_utf8(output)
@@ -1127,6 +1349,147 @@ mod tests {
         assert_eq!(turns[1].payload["turn"]["index"], 1);
         assert_eq!(turns[2].payload["turn"]["index"], 2);
         assert_turn_prefix_hashes_are_stable(&turns);
+
+        fs::remove_dir_all(base_dir).unwrap();
+    }
+
+    #[test]
+    fn warm_threshold_summarizes_oldest_turns_without_dropping_turn_records() {
+        let base_dir = std::env::temp_dir().join(format!("qsf-warm-tier-{}", Uuid::new_v4()));
+        let mut context = RunContext::create_in(&base_dir, "multi-turn-text-loop").unwrap();
+        let input = Cursor::new("one\ntwo\nthree\n:quit\n");
+        let mut output = Vec::new();
+        let memory_source = TestMemorySource;
+
+        run_with_io_and_components(
+            &mut context,
+            input,
+            &mut output,
+            &MockModelClient::default(),
+            &memory_source,
+            test_config_with_warm_threshold(10, 2),
+        )
+        .unwrap();
+
+        let events = fs::read_to_string(context.run_dir().join("events.jsonl")).unwrap();
+        let report = fs::read_to_string(context.run_dir().join("multi-turn-text-loop.md")).unwrap();
+        let records = parse_event_records(&events);
+
+        assert_eq!(
+            records
+                .iter()
+                .filter(|record| record.event_type == EventType::TurnCompleted)
+                .count(),
+            3
+        );
+        assert_eq!(
+            records
+                .iter()
+                .filter(|record| record.event_type == EventType::TurnSummarized)
+                .count(),
+            1
+        );
+        assert!(events.contains("session_turn_summarizer"));
+        assert!(report.contains("Warm summaries produced: `1`"));
+        assert!(report.contains("The user and assistant discussed QSF session continuity"));
+        let summary_event = records
+            .iter()
+            .find(|record| record.event_type == EventType::TurnSummarized)
+            .unwrap();
+        assert_eq!(summary_event.payload["turn_index"], 0);
+        assert_eq!(summary_event.payload["summary"]["turn_index"], 0);
+        assert_eq!(
+            summary_event.payload["summary"]["summarized_after_turn_index"],
+            2
+        );
+        assert_eq!(summary_event.payload["summary"]["model_id"], "gpt-5.4-nano");
+        assert!(summary_event.payload["summary"]["summary"].is_string());
+
+        fs::remove_dir_all(base_dir).unwrap();
+    }
+
+    #[test]
+    fn report_marks_warm_invalidation_then_stable_prefix_resume() {
+        let config = test_config_with_warm_threshold(5, 2);
+        let summary = TurnSummary {
+            turn_index: 0,
+            summarized_after_turn_index: 0,
+            summary: "The first turn was summarized.".to_string(),
+            model_id: "gpt-5.4-nano".to_string(),
+            model_latency_ms: 0,
+            input_tokens: 0,
+            output_tokens: 0,
+        };
+        let turn0_prompt = assemble_prompt(&[], "input 0", "");
+        let turn0 = test_turn_with_hash(
+            0,
+            turn0_prompt.full_request_hash,
+            turn0_prompt.message_count,
+        );
+        let turn1_prompt = assemble_prompt_with_summaries(
+            &[PromptTurnSummary {
+                turn_index: 0,
+                summary: &summary.summary,
+            }],
+            &[],
+            "input 1",
+            "",
+        );
+        let turn1 = test_turn_with_hash(
+            1,
+            turn1_prompt.full_request_hash,
+            turn1_prompt.message_count,
+        );
+        let turn2_prompt = assemble_prompt_with_summaries(
+            &[PromptTurnSummary {
+                turn_index: 0,
+                summary: &summary.summary,
+            }],
+            &[PromptTurn {
+                user_input: &turn1.user_input,
+                retrieved_memory_block: &turn1.retrieved_memory_block,
+                assistant_response: &turn1.assistant_response,
+            }],
+            "input 2",
+            "",
+        );
+        let turn2 = test_turn_with_hash(
+            2,
+            turn2_prompt.full_request_hash,
+            turn2_prompt.message_count,
+        );
+        let state = SessionState {
+            turns: vec![turn0, turn1, turn2],
+            summarized_turns: vec![summary],
+            ..SessionState::new(config)
+        };
+
+        assert_eq!(
+            prompt_prefix_status_for_report(&state, 1),
+            "invalidated_by_warm_summary"
+        );
+        assert_eq!(prompt_prefix_status_for_report(&state, 2), "true");
+    }
+
+    #[test]
+    fn warm_age_out_can_summarize_multiple_oldest_turns() {
+        let base_dir =
+            std::env::temp_dir().join(format!("qsf-warm-multi-summary-{}", Uuid::new_v4()));
+        let mut context = RunContext::create_in(&base_dir, "multi-turn-text-loop").unwrap();
+        let mut state = SessionState::new(test_config_with_warm_threshold(10, 2));
+        state.turns = (0..5).map(test_turn).collect();
+
+        age_out_warm_turns(&mut context, &mut state, &MockModelClient::default()).unwrap();
+
+        assert_eq!(
+            state
+                .summarized_turns
+                .iter()
+                .map(|summary| summary.turn_index)
+                .collect::<Vec<_>>(),
+            vec![0, 1, 2]
+        );
+        assert_eq!(state.turns.len(), 5);
 
         fs::remove_dir_all(base_dir).unwrap();
     }
@@ -1166,9 +1529,14 @@ mod tests {
     }
 
     fn test_config(max_turns: usize) -> SessionConfig {
+        test_config_with_warm_threshold(max_turns, max_turns)
+    }
+
+    fn test_config_with_warm_threshold(max_turns: usize, warm_threshold: usize) -> SessionConfig {
         SessionConfig {
             model_id: DEFAULT_SESSION_MODEL.to_string(),
             max_turns,
+            warm_threshold,
             allow_over_limit: false,
             memory_source: MemorySourceConfig {
                 source: "phase_four_fixture".to_string(),
@@ -1178,6 +1546,14 @@ mod tests {
     }
 
     fn test_turn(index: usize) -> Turn {
+        test_turn_with_hash(index, ContentHash([index as u8; 32]), 2)
+    }
+
+    fn test_turn_with_hash(
+        index: usize,
+        full_request_hash: ContentHash,
+        message_count: usize,
+    ) -> Turn {
         Turn {
             index,
             started_at: std::time::SystemTime::UNIX_EPOCH,
@@ -1196,8 +1572,8 @@ mod tests {
             input_tokens: 0,
             cached_input_tokens: 0,
             output_tokens: 0,
-            full_request_hash: ContentHash([index as u8; 32]),
-            message_count: 2,
+            full_request_hash,
+            message_count,
         }
     }
 

@@ -37,6 +37,7 @@ pub enum EventType {
     SessionStarted,
     PromptAssembled,
     TurnCompleted,
+    TurnSummarized,
     SessionLimitReached,
     SessionEnded,
     OutputProduced,
