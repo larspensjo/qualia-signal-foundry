@@ -1,5 +1,7 @@
 use anyhow::{Result, bail};
 
+use crate::models::ModelToolDefinition;
+
 use super::tool_registry::{Tool, ToolMetadata};
 use super::tool_request::{ToolCategory, ToolRequest, ToolSideEffectLevel};
 use super::tool_result::ToolResult;
@@ -35,6 +37,24 @@ impl Tool for CalculatorTool {
                 request.input, output_text
             ),
         })
+    }
+
+    fn model_tool_definition(&self) -> Option<ModelToolDefinition> {
+        Some(ModelToolDefinition::new(
+            CALCULATOR_TOOL_NAME,
+            "Evaluate a deterministic arithmetic expression and return the numeric result.",
+            serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "expression": {
+                        "type": "string",
+                        "description": "Arithmetic expression with +, -, *, /, parentheses, and decimal numbers."
+                    }
+                },
+                "required": ["expression"],
+                "additionalProperties": false
+            }),
+        ))
     }
 }
 

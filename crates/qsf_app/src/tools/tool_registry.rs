@@ -1,6 +1,8 @@
 use anyhow::{Result, bail};
 use serde::{Deserialize, Serialize};
 
+use crate::models::ModelToolDefinition;
+
 use super::calculator_tool::CalculatorTool;
 use super::tool_request::{ToolCategory, ToolRequest, ToolSideEffectLevel};
 use super::tool_result::ToolResult;
@@ -17,6 +19,10 @@ pub trait Tool {
     fn metadata(&self) -> ToolMetadata;
 
     fn execute(&self, request: &ToolRequest) -> Result<ToolResult>;
+
+    fn model_tool_definition(&self) -> Option<ModelToolDefinition> {
+        None
+    }
 }
 
 #[derive(Default)]
@@ -74,12 +80,32 @@ impl ToolRegistry {
         let (_, result) = self.validate_and_execute(request)?;
         Ok(result)
     }
+
+    pub fn model_tool_definitions_for(&self, names: &[&str]) -> Vec<ModelToolDefinition> {
+        names
+            .iter()
+            .filter_map(|name| match *name {
+                super::CALCULATOR_TOOL_NAME => self.calculator.model_tool_definition(),
+                _ => None,
+            })
+            .collect()
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::ToolRegistry;
     use crate::tools::{ToolCategory, ToolPermission, ToolRequest, ToolSideEffectLevel};
+
+    #[test]
+    fn calculator_exposes_model_tool_definition() {
+        let registry = ToolRegistry::default();
+        let definitions =
+            registry.model_tool_definitions_for(&[crate::tools::CALCULATOR_TOOL_NAME]);
+        assert_eq!(definitions.len(), 1);
+        assert_eq!(definitions[0].name, crate::tools::CALCULATOR_TOOL_NAME);
+        assert!(definitions[0].parameters.get("properties").is_some());
+    }
 
     #[test]
     fn registry_rejects_requests_without_matching_permission() {
