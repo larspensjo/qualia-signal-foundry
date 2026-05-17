@@ -232,7 +232,7 @@ pub enum SessionEvent {
     },
     TurnCompleted(Turn),
     TurnSummarized(TurnSummary),
-    ToolExecuted(RecallRecord),
+    ToolCompleted(RecallRecord),
     SessionLimitReached {
         current: usize,
         max: usize,
@@ -278,7 +278,7 @@ fn reduce_session_in_place(state: &mut SessionState, event: SessionEvent) {
             state.summarized_turns.push(summary);
             state.prefix_invalidated_since_last_prompt = true;
         }
-        SessionEvent::ToolExecuted(_) => {}
+        SessionEvent::ToolCompleted(_) => {}
         SessionEvent::SessionLimitReached {
             current,
             max,
@@ -643,7 +643,7 @@ fn execute_recall_tool_calls(
         match execute_recall_turn(state, tool_call) {
             Ok(mut recall) => {
                 recall.latency_ms = elapsed_ms(started_at);
-                apply_tool_executed_event(context, state, recall.clone())?;
+                apply_tool_completed_event(context, state, recall.clone())?;
                 recalls.push(recall);
             }
             Err(error) => {
@@ -701,12 +701,12 @@ fn execute_recall_turn(
     })
 }
 
-fn apply_tool_executed_event(
+fn apply_tool_completed_event(
     context: &mut RunContext,
     state: &SessionState,
     recall: RecallRecord,
 ) -> anyhow::Result<()> {
-    record_session_event(context, &SessionEvent::ToolExecuted(recall.clone()))?;
+    record_session_event(context, &SessionEvent::ToolCompleted(recall.clone()))?;
     let trace = TraceRecord::new(
         context.experiment_id(),
         "session-recall-tool",
@@ -982,9 +982,9 @@ fn record_session_event(context: &mut RunContext, event: &SessionEvent) -> anyho
                 None,
             )?;
         }
-        SessionEvent::ToolExecuted(recall) => {
+        SessionEvent::ToolCompleted(recall) => {
             context.record_event(
-                EventType::ToolExecuted,
+                EventType::ToolCompleted,
                 json!({
                     "session_id": context.run_id(),
                     "tool_name": &recall.tool_name,
@@ -1573,12 +1573,12 @@ mod tests {
     }
 
     #[test]
-    fn reducer_tool_executed_is_non_mutating() {
+    fn reducer_tool_completed_is_non_mutating() {
         let state = SessionState::new(test_config(2));
 
         let next = reduce_session(
             state.clone(),
-            SessionEvent::ToolExecuted(RecallRecord {
+            SessionEvent::ToolCompleted(RecallRecord {
                 call_id: "call-0".to_string(),
                 turn_id: 0,
                 tool_name: "recall_turn".to_string(),
@@ -1732,7 +1732,7 @@ mod tests {
             serde_json::from_value::<Turn>(turn_records[3].payload["turn"].clone()).unwrap();
 
         assert!(events.contains("ToolRequested"));
-        assert!(events.contains("ToolExecuted"));
+        assert!(events.contains("ToolCompleted"));
         assert_eq!(recalled_turn.recalled_turns.len(), 1);
         assert_eq!(recalled_turn.recalled_turns[0].turn_id, 0);
         assert!(
