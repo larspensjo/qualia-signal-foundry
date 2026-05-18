@@ -94,7 +94,15 @@ pub fn prompt_assembly_from_messages(messages: Vec<ModelMessage>) -> PromptAssem
     let message_count = messages.len();
     let total_bytes = messages
         .iter()
-        .map(|message| message_role_name(message.role).len() + message.content.len())
+        .map(|message| {
+            message_role_name(message.role).len()
+                + message.content.len()
+                + message
+                    .tool_call_id
+                    .as_ref()
+                    .map(|id| id.len())
+                    .unwrap_or(0)
+        })
         .sum();
 
     PromptAssembly {
@@ -181,10 +189,13 @@ pub fn canonical_hash(messages: &[ModelMessage]) -> ContentHash {
     for message in messages {
         let role = message_role_name(message.role).as_bytes();
         let content = message.content.as_bytes();
+        let tool_call_id = message.tool_call_id.as_deref().unwrap_or("").as_bytes();
         hasher.update((role.len() as u32).to_le_bytes());
         hasher.update(role);
         hasher.update((content.len() as u32).to_le_bytes());
         hasher.update(content);
+        hasher.update((tool_call_id.len() as u32).to_le_bytes());
+        hasher.update(tool_call_id);
     }
 
     ContentHash(hasher.finalize().into())
@@ -207,9 +218,10 @@ mod tests {
 
     use super::{
         PromptTurn, PromptTurnSummary, SESSION_SYSTEM_PROMPT, assemble_prompt,
-        assemble_prompt_with_summaries, format_new_turn, prior_request_prefix_hash,
+        assemble_prompt_with_summaries, canonical_hash, format_new_turn, prior_request_prefix_hash,
         retrieved_memory_block,
     };
+    use crate::models::{ModelMessage, ModelMessageRole};
 
     #[test]
     fn prior_request_hash_is_stable_when_new_retrieval_changes() {
@@ -289,5 +301,22 @@ mod tests {
         assert!(prompt.messages[0].content.contains(
             "[Earlier in this session]\n- Turn 0: The opening turn established continuity."
         ));
+    }
+
+    #[test]
+    fn canonical_hash_changes_when_tool_call_id_changes() {
+        let without_call_id = vec![ModelMessage::tool("tool output")];
+        let with_call_id = vec![ModelMessage::tool_result("call-1", "tool output")];
+        let other_call_id = vec![ModelMessage::tool_result("call-2", "tool output")];
+
+        assert_eq!(without_call_id[0].role, ModelMessageRole::Tool);
+        assert_ne!(
+            canonical_hash(&with_call_id),
+            canonical_hash(&other_call_id)
+        );
+        assert_ne!(
+            canonical_hash(&without_call_id),
+            canonical_hash(&with_call_id)
+        );
     }
 }

@@ -16,9 +16,12 @@ mod enabled {
         ModelClient, ModelMessageRole, ModelRequest, ModelResponse, ModelResponseFormat, ModelUsage,
     };
 
+    use crate::models::openai_tool_client::OpenAiToolClient;
+
     pub struct OpenAiProviderModelClient {
         provider: OpenAiProvider,
         runtime: tokio::runtime::Runtime,
+        tool_client: OpenAiToolClient,
     }
 
     impl OpenAiProviderModelClient {
@@ -30,8 +33,13 @@ mod enabled {
                 .enable_all()
                 .build()
                 .context("failed to build Tokio runtime for OpenAI provider")?;
+            let tool_client = OpenAiToolClient::from_env()?;
 
-            Ok(Self { provider, runtime })
+            Ok(Self {
+                provider,
+                runtime,
+                tool_client,
+            })
         }
     }
 
@@ -41,9 +49,13 @@ mod enabled {
         }
 
         fn complete(&self, request: &ModelRequest) -> anyhow::Result<ModelResponse> {
-            // TODO: plumb `request.tools` and provider tool-call responses through
-            // openai_provider_kit before using Stage 3 recall with live OpenAI runs.
-            // Until then, the mock client is the only executable function-calling path.
+            if request_uses_tool_capable_serialization(request) {
+                return self
+                    .tool_client
+                    .complete(request)
+                    .context("OpenAI tool-capable request failed");
+            }
+
             let provider_request = LlmRequest::new(
                 ModelId::new(ProviderKind::OpenAi, request.model_name.clone()),
                 request
@@ -98,6 +110,14 @@ mod enabled {
         }
     }
 
+    fn request_uses_tool_capable_serialization(request: &ModelRequest) -> bool {
+        !request.tools.is_empty()
+            || request
+                .messages
+                .iter()
+                .any(|message| matches!(message.role, ModelMessageRole::Tool))
+    }
+
     fn map_message_role(role: ModelMessageRole) -> ChatRole {
         match role {
             ModelMessageRole::System => ChatRole::System,
@@ -111,9 +131,12 @@ mod enabled {
 
     #[cfg(test)]
     mod tests {
-        use super::{OpenAiProviderModelClient, map_message_role};
+        use super::{
+            OpenAiProviderModelClient, map_message_role, request_uses_tool_capable_serialization,
+        };
         use crate::models::{
             ModelClient, ModelMessage, ModelMessageRole, ModelRequest, ModelRole, ModelRoleId,
+            ModelToolDefinition,
         };
 
         #[test]
@@ -135,6 +158,36 @@ mod enabled {
                 format!("{:?}", map_message_role(ModelMessageRole::Tool)),
                 "User"
             );
+        }
+
+        #[test]
+        fn tool_capable_serialization_is_selected_for_tool_messages_or_definitions() {
+            let text_only_request = ModelRequest::new(
+                ModelRole::predefined(ModelRoleId::MockResponder),
+                vec![ModelMessage::user("hello")],
+            );
+            let tool_request = ModelRequest::new(
+                ModelRole::predefined(ModelRoleId::MockResponder),
+                vec![ModelMessage::tool_result("call-1", "tool output")],
+            );
+            let definition_request = ModelRequest::new(
+                ModelRole::predefined(ModelRoleId::MockResponder),
+                vec![ModelMessage::user("hello")],
+            )
+            .with_tools(vec![ModelToolDefinition::new(
+                "recall_turn",
+                "Recall verbatim text for a summarized conversation turn by turn_id.",
+                serde_json::json!({
+                    "type": "object",
+                    "properties": {
+                        "turn_id": { "type": "integer" }
+                    }
+                }),
+            )]);
+
+            assert!(!request_uses_tool_capable_serialization(&text_only_request));
+            assert!(request_uses_tool_capable_serialization(&tool_request));
+            assert!(request_uses_tool_capable_serialization(&definition_request));
         }
 
         #[test]

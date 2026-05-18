@@ -2,6 +2,8 @@ mod mock_model;
 mod model_client;
 mod model_role;
 mod openai_provider;
+#[cfg(feature = "openai")]
+mod openai_tool_client;
 mod tool_dispatch;
 
 pub use mock_model::MockModelClient;

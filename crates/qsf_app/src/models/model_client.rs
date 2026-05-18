@@ -23,6 +23,8 @@ pub enum ModelMessageRole {
 pub struct ModelMessage {
     pub role: ModelMessageRole,
     pub content: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tool_call_id: Option<String>,
 }
 
 impl ModelMessage {
@@ -30,6 +32,7 @@ impl ModelMessage {
         Self {
             role,
             content: content.into(),
+            tool_call_id: None,
         }
     }
 
@@ -47,6 +50,14 @@ impl ModelMessage {
 
     pub fn tool(content: impl Into<String>) -> Self {
         Self::new(ModelMessageRole::Tool, content)
+    }
+
+    pub fn tool_result(tool_call_id: impl Into<String>, content: impl Into<String>) -> Self {
+        Self {
+            role: ModelMessageRole::Tool,
+            content: content.into(),
+            tool_call_id: Some(tool_call_id.into()),
+        }
     }
 }
 
@@ -399,8 +410,8 @@ mod tests {
     use anyhow::anyhow;
 
     use super::{
-        ModelClient, ModelMessage, ModelRequest, ModelResponse, ModelRole, ModelRoleId, ModelUsage,
-        invoke_model_role,
+        ModelClient, ModelMessage, ModelMessageRole, ModelRequest, ModelResponse, ModelRole,
+        ModelRoleId, ModelUsage, invoke_model_role,
     };
     use crate::runtime::run_context::RunContext;
 
@@ -440,6 +451,38 @@ mod tests {
         let usage = ModelUsage::new(10, 4).with_cached_input_tokens(10);
 
         assert_eq!(usage.cached_input_tokens, 10);
+    }
+
+    #[test]
+    fn tool_message_defaults_to_no_tool_call_id() {
+        let message = ModelMessage::tool("tool output");
+
+        assert_eq!(message.role, ModelMessageRole::Tool);
+        assert_eq!(message.content, "tool output");
+        assert_eq!(message.tool_call_id, None);
+    }
+
+    #[test]
+    fn tool_result_message_preserves_tool_call_id() {
+        let message = ModelMessage::tool_result("call-123", "tool output");
+
+        assert_eq!(message.role, ModelMessageRole::Tool);
+        assert_eq!(message.content, "tool output");
+        assert_eq!(message.tool_call_id.as_deref(), Some("call-123"));
+    }
+
+    #[test]
+    fn tool_message_serialization_skips_absent_call_id() {
+        let message = ModelMessage::tool("tool output");
+        let value = serde_json::to_value(&message).unwrap();
+
+        assert_eq!(
+            value,
+            serde_json::json!({
+                "role": "tool",
+                "content": "tool output"
+            })
+        );
     }
 
     #[cfg(debug_assertions)]

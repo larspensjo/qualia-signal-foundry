@@ -379,7 +379,10 @@ fn run_one_turn(
         recalled_turns =
             execute_recall_tool_calls(context, state, &request, &registry, &response.tool_calls)?;
         for recall in &recalled_turns {
-            final_messages.push(ModelMessage::tool(format_recall_tool_message(recall)));
+            final_messages.push(ModelMessage::tool_result(
+                &recall.call_id,
+                format_recall_tool_message(recall),
+            ));
         }
         let augmented_prompt = prompt::prompt_assembly_from_messages(final_messages.clone());
         apply_session_event(
@@ -1264,8 +1267,8 @@ mod tests {
     };
     use crate::memory::phase_four_fixture;
     use crate::models::{
-        MockModelClient, ModelClient, ModelRequest, ModelResponse, ModelRoleId, ModelToolCall,
-        ModelUsage,
+        MockModelClient, ModelClient, ModelMessage, ModelRequest, ModelResponse, ModelRoleId,
+        ModelToolCall, ModelUsage,
     };
     use crate::observability::event_log::{EventRecord, EventType};
     use crate::runtime::run_context::RunContext;
@@ -1273,6 +1276,7 @@ mod tests {
         MemorySourceConfig, RecallRecord, SessionConfig, SessionEndReason, SessionEvent,
         SessionState, Turn, TurnSummary,
     };
+    use crate::tools::RECALL_TURN_TOOL_NAME;
 
     #[test]
     fn reducer_appends_turns_in_order() {
@@ -1578,6 +1582,86 @@ mod tests {
     }
 
     #[test]
+    fn openai_recall_path_preserves_tool_call_id_and_hides_tools_on_follow_up() {
+        let base_dir =
+            std::env::temp_dir().join(format!("qsf-openai-recall-path-{}", Uuid::new_v4()));
+        let mut context = RunContext::create_in(&base_dir, "multi-turn-text-loop").unwrap();
+        let input = Cursor::new("one\ntwo\nthree\nplease recall turn 0\n:quit\n");
+        let mut output = Vec::new();
+        let memory_source = TestMemorySource;
+        let client = CapturingOpenAiRecallClient::default();
+
+        run_with_io_and_components(
+            &mut context,
+            input,
+            &mut output,
+            &client,
+            &memory_source,
+            test_config_with_warm_threshold(10, 2),
+        )
+        .unwrap();
+
+        let calls = client.calls.lock().unwrap().clone();
+        let tool_call_index = calls
+            .iter()
+            .position(|call| {
+                call.role_id == ModelRoleId::ConversationalResponder
+                    && call
+                        .messages
+                        .iter()
+                        .rev()
+                        .find(|message| message.role == crate::models::ModelMessageRole::User)
+                        .map(|message| message.content.to_ascii_lowercase().contains("recall turn"))
+                        .unwrap_or(false)
+            })
+            .expect("expected one conversational request to ask for recall");
+        assert!(tool_call_index + 1 < calls.len());
+
+        let first_call = &calls[tool_call_index];
+        assert_eq!(first_call.role_id, ModelRoleId::ConversationalResponder);
+        assert_eq!(first_call.tools, vec![RECALL_TURN_TOOL_NAME.to_string()]);
+        assert!(first_call.messages.iter().any(|message| message.role
+            == crate::models::ModelMessageRole::User
+            && message.content.to_ascii_lowercase().contains("recall turn")));
+
+        let second_call = &calls[tool_call_index + 1];
+        assert_eq!(second_call.role_id, ModelRoleId::ConversationalResponder);
+        assert!(second_call.tools.is_empty());
+        assert_eq!(
+            second_call
+                .messages
+                .iter()
+                .filter(|message| message.role == crate::models::ModelMessageRole::Tool)
+                .count(),
+            1
+        );
+        let tool_message = second_call
+            .messages
+            .iter()
+            .find(|message| message.role == crate::models::ModelMessageRole::Tool)
+            .unwrap();
+        assert_eq!(
+            tool_message.tool_call_id.as_deref(),
+            Some("openai-recall-0")
+        );
+        assert!(tool_message.content.contains("[recall_turn]"));
+
+        let events = fs::read_to_string(context.run_dir().join("events.jsonl")).unwrap();
+        let records = parse_event_records(&events);
+        assert!(events.contains("ToolRequested"));
+        assert!(events.contains("ToolCompleted"));
+        assert_eq!(
+            records
+                .iter()
+                .filter(|record| record.event_type == EventType::PromptAssembled)
+                .count(),
+            5
+        );
+
+        fs::remove_dir_all(base_dir).unwrap();
+    }
+
+    #[test]
     fn recall_tool_failure_does_not_append_turn() {
         let base_dir =
             std::env::temp_dir().join(format!("qsf-recall-tool-fail-{}", Uuid::new_v4()));
@@ -1812,6 +1896,62 @@ mod tests {
                 )]);
             } else {
                 response = response.with_finish_reason("stop");
+            }
+
+            Ok(response)
+        }
+    }
+
+    #[derive(Default)]
+    struct CapturingOpenAiRecallClient {
+        calls: std::sync::Mutex<Vec<CapturedRequest>>,
+    }
+
+    #[derive(Clone, Debug)]
+    struct CapturedRequest {
+        role_id: ModelRoleId,
+        tools: Vec<String>,
+        messages: Vec<ModelMessage>,
+    }
+
+    impl ModelClient for CapturingOpenAiRecallClient {
+        fn client_name(&self) -> &str {
+            "openai"
+        }
+
+        fn complete(&self, request: &ModelRequest) -> anyhow::Result<ModelResponse> {
+            self.calls.lock().unwrap().push(CapturedRequest {
+                role_id: request.role.role_id,
+                tools: request.tools.iter().map(|tool| tool.name.clone()).collect(),
+                messages: request.messages.clone(),
+            });
+
+            let mut response = ModelResponse::from_text(
+                request,
+                self.client_name(),
+                request.model_name.clone(),
+                "openai tool response",
+            )
+            .with_usage(ModelUsage::new(10, 5))
+            .with_finish_reason("stop");
+
+            if request.role.role_id == ModelRoleId::ConversationalResponder
+                && request
+                    .tools
+                    .iter()
+                    .any(|tool| tool.name == RECALL_TURN_TOOL_NAME)
+                && request
+                    .last_user_message()
+                    .map(|message| message.to_ascii_lowercase().contains("recall turn"))
+                    .unwrap_or(false)
+            {
+                response = response
+                    .with_tool_calls(vec![ModelToolCall::new(
+                        "openai-recall-0",
+                        "recall_turn",
+                        serde_json::json!({ "turn_id": 0 }),
+                    )])
+                    .with_finish_reason("tool_calls");
             }
 
             Ok(response)
