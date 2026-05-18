@@ -16,7 +16,7 @@ use crate::memory::{
 };
 use crate::models::{
     ModelClient, ModelMessage, ModelRequest, ModelRole, ModelRoleId, ModelToolCall, build_client,
-    invoke_model_role, requested_provider_from_env,
+    dispatch_model_tool_calls, invoke_model_role, requested_provider_from_env,
 };
 use crate::observability::event_log::EventType;
 use crate::observability::trace::{TraceRecord, elapsed_ms};
@@ -25,9 +25,7 @@ use crate::session::{
     MemorySourceConfig, RecallRecord, SessionConfig, SessionEndReason, SessionEvent, SessionLimit,
     SessionState, Turn, TurnSummary, is_turn_summarized,
 };
-use crate::tools::{
-    RECALL_TURN_TOOL_NAME, SessionToolContext, ToolRegistry, ToolRequest, ToolResult,
-};
+use crate::tools::{RECALL_TURN_TOOL_NAME, SessionToolContext, ToolRegistry, ToolResult};
 
 use super::registry::{Experiment, ExperimentName, ExperimentOutcome};
 
@@ -379,7 +377,7 @@ fn run_one_turn(
 
     if !response.tool_calls.is_empty() {
         recalled_turns =
-            execute_recall_tool_calls(context, state, &registry, &response.tool_calls)?;
+            execute_recall_tool_calls(context, state, &request, &registry, &response.tool_calls)?;
         for recall in &recalled_turns {
             final_messages.push(ModelMessage::tool(format_recall_tool_message(recall)));
         }
@@ -395,7 +393,7 @@ fn run_one_turn(
         )?;
 
         let follow_up_request = ModelRequest::new(
-            conversational_responder_role_with_recall_tool(),
+            ModelRole::predefined(ModelRoleId::ConversationalResponder),
             final_messages.clone(),
         )
         .with_session_id(context.run_id())
@@ -478,82 +476,25 @@ fn conversational_responder_role_with_recall_tool() -> ModelRole {
 fn execute_recall_tool_calls(
     context: &mut RunContext,
     state: &SessionState,
+    request: &ModelRequest,
     registry: &ToolRegistry,
     tool_calls: &[ModelToolCall],
 ) -> anyhow::Result<Vec<RecallRecord>> {
-    let mut recalls = Vec::with_capacity(tool_calls.len());
     let tool_ctx = SessionToolContext { state };
+    let dispatch_started_at = Instant::now();
+    let tool_results =
+        dispatch_model_tool_calls(context, request, registry, &tool_ctx, tool_calls)?;
+    let dispatch_latency_ms = elapsed_ms(dispatch_started_at);
+    let mut recalls = Vec::with_capacity(tool_results.len());
+    let recall_latency_ms = dispatch_latency_ms / tool_results.len().max(1) as u64;
 
-    for tool_call in tool_calls {
-        let request = recall_request_from_model_tool_call(tool_call, context.experiment_id())?;
-        let metadata = registry
-            .metadata_for(&request.tool_name)
-            .with_context(|| format!("unknown tool `{}`", request.tool_name))?;
-        context.record_event(
-            EventType::ToolRequested,
-            json!({
-                "session_id": context.run_id(),
-                "tool_name": &request.tool_name,
-                "call_id": &tool_call.call_id,
-                "arguments": &tool_call.arguments,
-                "input": &request.input,
-                "permission": &request.permission,
-                "requested_by": &request.requested_by,
-                "category": metadata.category,
-                "side_effect_level": metadata.side_effect_level,
-                "scope": "multi_turn_text_loop",
-            }),
-            None,
-        )?;
-
-        let started_at = Instant::now();
-        match registry.validate_and_execute(&request, &tool_ctx) {
-            Ok((_metadata, result)) => {
-                let recall =
-                    recall_record_from_tool_result(tool_call, result, elapsed_ms(started_at))?;
-                apply_tool_completed_event(context, state, recall.clone())?;
-                recalls.push(recall);
-            }
-            Err(error) => {
-                context.record_event(
-                    EventType::ToolFailed,
-                    json!({
-                        "session_id": context.run_id(),
-                        "tool_name": &request.tool_name,
-                        "call_id": &tool_call.call_id,
-                        "error": sanitize_error(&error.to_string()),
-                        "latency_ms": elapsed_ms(started_at),
-                    }),
-                    None,
-                )?;
-                return Err(error);
-            }
-        }
+    for (tool_call, result) in tool_calls.iter().zip(tool_results) {
+        let recall = recall_record_from_tool_result(tool_call, result, recall_latency_ms)?;
+        record_recall_tool_trace(context, state, &recall)?;
+        recalls.push(recall);
     }
 
     Ok(recalls)
-}
-
-fn recall_request_from_model_tool_call(
-    tool_call: &ModelToolCall,
-    requested_by: &str,
-) -> anyhow::Result<ToolRequest> {
-    anyhow::ensure!(
-        tool_call.name == RECALL_TURN_TOOL_NAME,
-        "unknown multi-turn tool `{}`",
-        tool_call.name
-    );
-    let turn_id = tool_call
-        .arguments
-        .get("turn_id")
-        .and_then(|value| value.as_u64())
-        .context("recall_turn requires integer argument `turn_id`")? as usize;
-
-    Ok(ToolRequest::recall_turn(
-        tool_call.call_id.clone(),
-        turn_id,
-        requested_by,
-    ))
 }
 
 fn recall_record_from_tool_result(
@@ -577,12 +518,11 @@ fn recall_record_from_tool_result(
     })
 }
 
-fn apply_tool_completed_event(
+fn record_recall_tool_trace(
     context: &mut RunContext,
     state: &SessionState,
-    recall: RecallRecord,
+    recall: &RecallRecord,
 ) -> anyhow::Result<()> {
-    record_session_event(context, &SessionEvent::ToolCompleted(recall.clone()))?;
     let trace = TraceRecord::new(
         context.experiment_id(),
         "session-recall-tool",
@@ -592,7 +532,7 @@ fn apply_tool_completed_event(
     .with_details(json!({
         "session_id": context.run_id(),
         "completed_turn_count": completed_turn_count(state),
-        "recall": &recall,
+        "recall": recall,
     }))
     .with_latency_context("runtime", "recall-turn-tool")
     .with_latency_ms(recall.latency_ms);

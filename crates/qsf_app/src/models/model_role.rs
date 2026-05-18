@@ -47,6 +47,11 @@ pub enum ModelOutputExpectation {
 pub struct ModelRole {
     pub role_id: ModelRoleId,
     pub purpose: String,
+    /// Authoritative role-level allow-list for model-callable tools.
+    ///
+    /// Production requests derive `ModelRequest.tools` from this list, and
+    /// `dispatch_model_tool_calls` rejects model tool calls whose names are not
+    /// listed here before registry execution.
     pub allowed_tools: Vec<String>,
     pub context_budget: ContextBudget,
     pub default_model: String,

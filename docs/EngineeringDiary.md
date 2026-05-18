@@ -994,3 +994,20 @@ Observed:
 Refs: crates/qsf_app/src/session,
 crates/qsf_app/src/tools,
 crates/qsf_app/src/experiments/multi_turn_text_loop.rs
+
+## 2026-05-18 - Model tool allow-list enforcement
+
+Made `ModelRole.allowed_tools` load-bearing at the model tool-call boundary.
+
+What changed:
+- Added a model-side tool dispatcher that rejects tool calls not listed by the role,
+  routes permitted calls through `ToolRegistry`, and records tool lifecycle events.
+- Switched multi-turn recall execution to use the shared dispatcher while keeping
+  recall-specific session records and traces in the experiment.
+- Documented `ModelRole.allowed_tools` as the authoritative role-level allow-list.
+
+Observed:
+- `cargo test -p qsf_app` passed after the dispatch boundary change.
+
+Refs: crates/qsf_app/src/models,
+crates/qsf_app/src/experiments/multi_turn_text_loop.rs
