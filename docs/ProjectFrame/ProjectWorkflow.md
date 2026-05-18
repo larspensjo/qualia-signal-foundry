@@ -296,15 +296,17 @@ Good times to update architecture:
 - a boundary between subsystems becomes clearer
 - a risk or failure mode needs to be documented
 - a concept is ready to become a candidate structure
+- the implementation has drifted from what the document describes
 
-Architecture maturity labels may be useful:
+Architecture documents carry a maturity tag near the top. The accepted tag set and
+how a reader should weight each tag live in `docs/ProjectFrame/DocumentStatus.md`.
 
-```text
-Sketch
-Candidate
-Accepted
-Deprecated
-```
+Architecture documents that describe a real subsystem should include an
+*Implementation Status* section near the top with three bands — implemented today
+(with code-module refs), partial, and not yet implemented — plus a
+`Last reviewed:` date. This section is what scopes the rest of the document to
+reality and is what introspection or future readers will rely on when judging
+whether a feature exists.
 
 Architecture should not be treated as final unless the decision log says so.
 
@@ -399,6 +401,21 @@ Project boundaries.
 
 Should explain what the project is intentionally not trying to become.
 
+### `docs/ProjectFrame/ProjectWorkflow.md`
+
+This document.
+
+Should explain how ideas, questions, experiments, architecture notes, and decisions
+move through the project.
+
+### `docs/ProjectFrame/DocumentStatus.md`
+
+Reading guide for the documentation set.
+
+Should define the document kinds, the maturity tag taxonomy, and the authority
+ranking a reader should use when documents disagree. Authoritative for how any
+other document should be weighted.
+
 ### `docs/EngineeringDiary.md`
 
 Chronological activity log and observations.
@@ -428,7 +445,17 @@ Should turn uncertainty into runnable investigations.
 
 Candidate system structure.
 
-Should describe how the system may be built, with maturity labels where useful.
+Should describe how the system may be built, with maturity labels per
+`DocumentStatus.md`. Documents describing a real subsystem should include an
+*Implementation Status* section with code-module refs and a last-reviewed date.
+
+### `docs/Reviews/`
+
+Plan and code review notes captured at a specific point in time.
+
+Should preserve the context of a review without re-litigating accepted decisions.
+Where a review produces a durable rule, the rule belongs in the decision log, not
+the review document.
 
 ### `docs/DecisionLog.md`
 
@@ -439,35 +466,36 @@ postmortems do not belong here — those go in the diary.
 
 ### `docs/Plans/`
 
-Implementation plans.
+Implementation-oriented documents at three maturity levels, distinguished by
+filename prefix:
 
-Should describe concrete work needed to build framework pieces or run experiments.
+- `Plan.*.md` — concrete work needed to build a framework piece or run an
+  experiment. Active or recently completed plans live here.
+- `Idea.*.md` — brainstorm-stage proposal. Not a commitment; verify before treating
+  any content as planned work.
+- `Design.*.md` — focused design decision in support of a plan. Authoritative for
+  that decision; cross-reference the decision log.
 
-## Recommended First Build Loop
+## Build Loop For Adding A Framework Piece
 
-For the first implementation phase, use this loop:
+The framework MVP has already shipped. The following loop is the recommended
+pattern for adding a new framework capability or running a new experiment:
 
 ```text
-1. Create Plan.FrameworkMVP.md.
-2. Select Experiment.FrameworkSkeletonMVP or Experiment.AssociativeMemoryToyModel.
-3. Implement only the minimum framework needed for that experiment.
-4. Log events and traces from the experiment.
-5. Update the experiment document with results.
-6. Update architecture only where the result clarifies design.
+1. Write or update a Plan.*.md describing the work in stages with verifiable steps.
+2. Identify or write an Experiment that exercises the new capability end-to-end.
+3. Implement only the minimum framework change needed for that experiment.
+4. Run the experiment; logs and traces land under runs/<run-id>/.
+5. Update the experiment document with results and a Report if useful.
+6. Update architecture only where the result clarifies design — include or refresh
+   the Implementation Status section of any affected architecture document.
 7. Add decisions only if something should now be treated as settled.
+8. Add a diary entry for the logical change.
 ```
 
-Recommended first experiment:
-
-```text
-Experiment.AssociativeMemoryToyModel
-```
-
-Recommended first framework-support experiment:
-
-```text
-Experiment.FrameworkSkeletonMVP
-```
+Keep stages small enough that each one is independently verifiable. Prefer the
+smallest viable end-to-end slice over building infrastructure that no experiment
+uses yet.
 
 ## Promotion Rules
 
@@ -562,14 +590,17 @@ Avoid:
 - hiding open questions inside architecture text
 - treating candidate designs as final
 - allowing architecture to drift away from experiment results
+- leaving Implementation Status sections stale after large code changes
 
 Prefer:
 
-- maturity labels
+- maturity labels (see `DocumentStatus.md`)
 - explicit assumptions
 - links to related experiments
 - clear risks and failure modes
 - decision references when something is accepted
+- *Implementation Status* sections that name code modules and carry a
+  `Last reviewed:` date
 
 ## Research Discipline
 
@@ -632,14 +663,23 @@ Accepted risk or tradeoff:
 
 Contradictions are expected in an exploratory project.
 
+The authority ranking for resolving disagreements between documents is defined in
+`docs/ProjectFrame/DocumentStatus.md`. The short version: code is authoritative
+for behavior, the decision log is authoritative for committed rules, and Plan or
+Idea documents never override either.
+
 When documents disagree:
 
-1. Check whether one is a concept and the other is architecture.
-2. Check whether a decision log entry exists.
+1. Check whether the question is about current *behavior* or current *intent*.
+   Behavior is settled by source code; intent by the decision log.
+2. Check whether one document is a concept or plan and the other is architecture or
+   a decision-log entry.
 3. Prefer the decision log for accepted commitments.
-4. Prefer newer experiment results for evidence.
-5. Update or annotate stale documents.
-6. Record important resolution in the decision log.
+4. Prefer the *Implementation Status* section of an architecture document over its
+   broader candidate content.
+5. Prefer newer experiment results for evidence about behavior.
+6. Update or annotate stale documents.
+7. Record important resolution in the decision log.
 
 ## Lightweight Review Checklist
 

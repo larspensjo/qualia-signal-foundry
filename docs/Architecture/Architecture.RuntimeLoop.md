@@ -4,6 +4,51 @@ Status: Draft
 Maturity: Sketch  
 Area: Core Architecture
 
+## Implementation Status
+
+The candidate loop described below is implemented as a pure reducer pattern. Most
+loop stages exist, but several are aspirational placeholders. Treat the rest of this
+document as a candidate design that real experiments incrementally fill in.
+
+**Implemented today:**
+
+- Unidirectional `(State, Event) → State` reducer discipline, enforced across
+  experiment runtimes ([runtime/](../../crates/qsf_app/src/runtime/))
+- Structured event log with the event types used in production
+  ([observability/event_log.rs](../../crates/qsf_app/src/observability/event_log.rs))
+- Input normalization for audio (`TranscriptProvider` → `AudioFinalTranscript` →
+  `InputReceived`) and for typed text turns
+  ([audio/transcript_provider.rs](../../crates/qsf_app/src/audio/transcript_provider.rs),
+  [experiments/multi_turn_text_loop.rs](../../crates/qsf_app/src/experiments/multi_turn_text_loop.rs))
+- Voice-turn event sequence matching the shape documented under *Runtime Loop and
+  Voice Turns* below
+  ([experiments/text_owned_voice_loop.rs](../../crates/qsf_app/src/experiments/text_owned_voice_loop.rs))
+- Memory retrieval before context assembly, then model invocation, then output and
+  trace emission
+- `session_id` propagation through transcript, runtime input, model role, output,
+  and speech playback for voice turns
+
+**Partial:**
+
+- "Update Attention and Focus" exists in concept only; there is no `AttentionState`
+  structure today
+- "Update Live State" is implemented per-experiment rather than as a shared runtime
+  state module; `SessionState` is the most developed example
+  ([session/mod.rs](../../crates/qsf_app/src/session/mod.rs))
+- Output planning is collapsed into model-role output today; there is no separate
+  `OutputPlan` step
+
+**Not yet implemented:**
+
+- Cross-session `SessionState` persistence
+- Scheduled / internal timer events
+- The candidate state categories `AttentionState`, `ToolState` aggregator, and
+  `AudioState` as a unified module — equivalents are scattered across audio and
+  experiment code
+- Interruption and turn-taking handling in the live loop
+
+Last reviewed: 2026-05-18 against the code on `main`.
+
 ## Purpose
 
 This document describes a candidate runtime loop for Qualia Signal Foundry.

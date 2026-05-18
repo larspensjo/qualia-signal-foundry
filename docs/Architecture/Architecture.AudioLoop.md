@@ -6,6 +6,50 @@ Maturity: Sketch
 
 This document captures an early candidate architecture for real-time audio interaction in Qualia Signal Foundry. It is not a finalized design. The purpose is to preserve the implementation investigation, identify unresolved questions, and provide a starting point for prototypes.
 
+## Implementation Status
+
+The transcript-first pipeline and the text-owned voice loop described later in this
+document are implemented. Full-duplex realtime audio and most interruption
+handling are not yet built.
+
+**Implemented today (all under the optional `openai` Cargo feature):**
+
+- `TranscriptProvider` trait with a simulated provider for deterministic tests and
+  a `gpt-realtime-whisper` adapter for live streaming transcription
+  ([audio/transcript_provider.rs](../../crates/qsf_app/src/audio/transcript_provider.rs))
+- Microphone capture and prerecorded WAV evaluation paths, both opt-in via
+  `QSF_TRANSCRIPT_INPUT_SOURCE`
+- `TranscriptEventEmitter` producing partial and final transcript events into the
+  runtime
+  ([audio/transcript_event_emitter.rs](../../crates/qsf_app/src/audio/transcript_event_emitter.rs))
+- `SpeechOutputProvider` (metadata-only by default), preserving the invariant that
+  `SpeechPlaybackRequested.text` equals `OutputProduced.message`
+  ([audio/speech_output_provider.rs](../../crates/qsf_app/src/audio/speech_output_provider.rs))
+- `VoiceSessionProvider` for `gpt-realtime-2` speech-to-speech sessions, with tool
+  requests routed into QSF events rather than executed directly
+  ([audio/voice_session_provider.rs](../../crates/qsf_app/src/audio/voice_session_provider.rs))
+- Text-owned voice loop where QSF owns interpretation, memory retrieval, context
+  assembly, model-role invocation, and `OutputProduced` text
+  ([experiments/text_owned_voice_loop.rs](../../crates/qsf_app/src/experiments/text_owned_voice_loop.rs))
+- Latency reporting across transcript dispatch, memory retrieval, context assembly,
+  model runtime, and speech output
+- `session_id` propagation across the voice turn
+
+**Partial:**
+
+- Voice Activity Detection is at the provider boundary; no separate VAD module
+- Operating modes: turn-based is implemented; push-to-talk and full-duplex are not
+
+**Not yet implemented:**
+
+- Render-only TTS for live spoken answers (current speech output is metadata-only)
+- Interruption / barge-in handling in either direction
+- Always-listening or full-duplex realtime mode
+- Translation provider (`gpt-realtime-translate`) integration
+- A live debug UI for audio state
+
+Last reviewed: 2026-05-18 against the code on `main`.
+
 ## Summary
 
 The audio loop is the part of the system that allows the simulation to listen, interpret speech, respond with voice, and handle timing-sensitive interaction.

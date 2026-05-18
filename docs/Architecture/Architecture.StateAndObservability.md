@@ -4,6 +4,51 @@
 
 Candidate
 
+## Implementation Status
+
+Per-run observability — event log, trace log, engine log, markdown report — is
+implemented and is the backbone of every experiment. State categories are partial:
+session and runtime state exist where experiments need them, but several
+candidate categories listed below have no module yet.
+
+**Implemented today:**
+
+- `RunContext` owning the per-run output directory and structured JSONL writers
+  ([runtime/run_context.rs](../../crates/qsf_app/src/runtime/run_context.rs))
+- `EventType` covering the event-log catalogue actually used in production
+  (input, transcript, context, model role, tool, memory, sleep, error)
+  ([observability/event_log.rs](../../crates/qsf_app/src/observability/event_log.rs))
+- Trace records for context assembly, model-role invocation, tool calls, and recall
+  ([observability/trace.rs](../../crates/qsf_app/src/observability/trace.rs))
+- Markdown experiment reports per run
+  ([reports/markdown_report.rs](../../crates/qsf_app/src/reports/markdown_report.rs))
+- `session_id`, model-role timing, prompt-hash, and tool-call lifecycle metadata on
+  events
+- `engine.log` initialization redirected to `runs/<run-id>/engine.log` per run
+
+**Partial:**
+
+- **Runtime State** lives in experiments rather than a shared module
+- **Session State** is implemented for the multi-turn text loop
+  ([session/mod.rs](../../crates/qsf_app/src/session/mod.rs)) but not reused by
+  the voice loop
+- **Memory State** is partial — records and associations exist; reinforcement,
+  decay, retrieval-history fields are not maintained
+- **Tool State** is exposed through registry metadata on `ToolRequested` /
+  `ToolCompleted` / `ToolFailed`; there is no separate `ToolState` summary
+
+**Not yet implemented:**
+
+- **Identity / Self-Model State** — no module exists
+- **Research State** as a structured surface — experiment metadata lives in the
+  report but not as an inspectable runtime category
+- `StateSnapshot` / cross-session persistence
+- Observability views beyond the per-run markdown report (no timeline UI, no
+  memory-graph view, no cost dashboard)
+- `experiment_id` and `memory_update_id` correlation across runs
+
+Last reviewed: 2026-05-18 against the code on `main`.
+
 ## Summary
 
 State and observability define how Qualia Signal Foundry represents internal system state and how researchers can inspect, trace, and understand what the system is doing.

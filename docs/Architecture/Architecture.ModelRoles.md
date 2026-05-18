@@ -4,6 +4,53 @@
 
 Candidate
 
+## Implementation Status
+
+The role catalogue below is a candidate map. Only a small subset is implemented as
+distinct model invocations today; most of the listed roles are still aspirational
+or are handled by non-model code paths (provider adapters, registry, deterministic
+policy).
+
+**Implemented today:**
+
+- `ModelRole` struct with `allowed_tools` enforced at dispatch
+  ([models/model_role.rs](../../crates/qsf_app/src/models/model_role.rs),
+  [models/tool_dispatch.rs](../../crates/qsf_app/src/models/tool_dispatch.rs))
+- Synchronous `ModelClient` boundary with deterministic mock and optional OpenAI
+  Chat Completions adapter (tool-capable)
+  ([models/model_client.rs](../../crates/qsf_app/src/models/model_client.rs),
+  [models/mock_model.rs](../../crates/qsf_app/src/models/mock_model.rs),
+  [models/openai_provider.rs](../../crates/qsf_app/src/models/openai_provider.rs),
+  [models/openai_tool_client.rs](../../crates/qsf_app/src/models/openai_tool_client.rs))
+- Conversational Responder role — the production "Realtime Interaction" / "Live
+  Presence" equivalent, used by multi-turn text and text-owned voice loops
+- Summarizer role — used by the warm-tier ageing path in the multi-turn loop
+- `ModelRoleRequested` / `ModelRoleCompleted` events with role, model id, latency,
+  and token telemetry
+
+**Partial:**
+
+- Memory retrieval exists but as structural code, not a model-call role
+- Sleep Consolidation work runs through `sleep_phase_session_summary` but uses the
+  same conversational/summarizer roles, not a dedicated `SleepConsolidationRole`
+
+**Not yet implemented (named in the catalogue below but not a distinct model role
+in code):**
+
+- Audio Transcription Role — handled by provider adapters, not as a `ModelRole`
+- Speech Synthesis Role — speech output is metadata-only today
+- Context Assembly Role — deterministic code, no model call
+- Memory Extraction Role
+- Association Builder Role
+- Tool Selection Role — collapsed into the conversational responder via
+  `allowed_tools`
+- Safety and Permission Role — handled by deterministic policy and the registry
+- Research Planner Role
+- Critic or Reviewer Role
+- Role Router — there is no central router; experiments select roles directly
+
+Last reviewed: 2026-05-18 against the code on `main`.
+
 ## Summary
 
 Model roles define how Qualia Signal Foundry may use multiple AI functions as parts of a larger simulated mind.

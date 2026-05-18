@@ -4,6 +4,44 @@
 
 Candidate
 
+## Implementation Status
+
+A context-assembly pipeline exists with explicit fragment selection under a
+fragment-count budget, but ranking and role-specific assembly are still simple.
+
+**Implemented today:**
+
+- `ContextAssembler` that selects fragments and emits `ContextAssemblyRequested` /
+  `ContextAssembled` events
+  ([context/context_assembler.rs](../../crates/qsf_app/src/context/context_assembler.rs))
+- `ContextBudget` for per-turn retrieved-memory fragment selection
+  ([context/context_budget.rs](../../crates/qsf_app/src/context/context_budget.rs))
+- `ContextFragment` carrying source and selection metadata
+  ([context/context_fragment.rs](../../crates/qsf_app/src/context/context_fragment.rs))
+- Memory retrieval before context assembly in both voice and text loops
+- Prompt assembly with cache-stable byte-identical prefixes across turns, including
+  warm-summary ageing and tool-recall paths
+  ([conversation/prompt.rs](../../crates/qsf_app/src/conversation/prompt.rs))
+
+**Partial:**
+
+- Ranking is dominated by retrieval order and fixture scores; multi-signal ranking
+  (recency, reinforcement, diversity) is not implemented
+- The fragment budget is count-based; token and cost budgets are tracked for
+  reporting but not enforced at assembly time
+- The same assembly shape is used across roles today — there is no per-role
+  context-pack mechanism
+
+**Not yet implemented:**
+
+- Context packs as a reusable structure
+- Role-specific assembly strategies (Live / Memory Extraction / Sleep / Critic)
+- Compression beyond warm-summary ageing
+- Attention-driven context selection (no `AttentionState` exists)
+- Inspectable omitted-fragment lists beyond the existing reports
+
+Last reviewed: 2026-05-18 against the code on `main`.
+
 ## Summary
 
 Context management defines how Qualia Signal Foundry decides what information is available to the live simulation at any given moment.
