@@ -1192,3 +1192,33 @@ crates/qsf_app/src/models/model_role.rs,
 crates/qsf_app/src/models/openai_tool_client.rs,
 crates/qsf_app/src/conversation/prompt.rs,
 docs/DecisionLog.md
+
+## 2026-05-18 - Conversational calculator tool access
+
+Enabled the multi-turn conversational responder to call the existing calculator
+tool through the model tool-dispatch boundary.
+
+What changed:
+- Added `calculator` to the conversational responder's model-callable tool
+  allow-list beside `recall_turn`.
+- Generalized the multi-turn tool follow-up path so non-recall tool results are
+  returned to the model as ordered tool messages.
+- Updated the session prompt and mock model behavior so arithmetic requests can
+  select the calculator path during deterministic tests.
+- Refreshed the tool-system architecture status for calculator availability in
+  the multi-turn loop.
+
+Observed:
+- `cargo test -p qsf_app calculator_tool_answers_arithmetic_turn_through_follow_up`
+- `cargo test -p qsf_app openai_recall_path_preserves_tool_call_id_and_hides_tools_on_follow_up`
+- `cargo test -p qsf_app dispatcher_executes_allowed_recall_turn_tool`
+- `cargo build`
+- `cargo test -p qsf_app`
+- `cargo clippy --all-targets -- -D warnings`
+- `cargo fmt`
+- `cargo test -p qsf_app`
+
+Refs: crates/qsf_app/src/experiments/multi_turn_text_loop.rs,
+crates/qsf_app/src/conversation/prompt.rs,
+crates/qsf_app/src/models/mock_model.rs,
+docs/Architecture/Architecture.ToolSystem.md

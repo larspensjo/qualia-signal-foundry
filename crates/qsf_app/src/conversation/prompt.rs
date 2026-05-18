@@ -9,7 +9,7 @@ use crate::context::ContextAssembly;
 use crate::models::{ModelMessage, ModelMessageRole, ModelToolCall};
 
 /// Constant system-prompt prefix; warm-tier summaries are appended at assembly time.
-pub const SESSION_SYSTEM_PROMPT: &str = "You are a concise conversational responder. Treat this as one continuous human-driven text session. Use retrieved memory as context, keep prior turns stable, and never initiate a turn without user input. If an older summarized turn needs exact details, request recall_turn with its turn_id; only summarized turns can be recalled.";
+pub const SESSION_SYSTEM_PROMPT: &str = "You are a concise conversational responder. Treat this as one continuous human-driven text session. Use retrieved memory as context, keep prior turns stable, and never initiate a turn without user input. If an older summarized turn needs exact details, request recall_turn with its turn_id; only summarized turns can be recalled. If the user asks for arithmetic or exact numeric calculation, request calculator with the expression instead of estimating mentally.";
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct ContentHash(pub [u8; 32]);

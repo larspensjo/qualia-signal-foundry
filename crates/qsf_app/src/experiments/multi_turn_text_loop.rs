@@ -25,7 +25,9 @@ use crate::session::{
     MemorySourceConfig, RecallRecord, SessionConfig, SessionEndReason, SessionEvent, SessionLimit,
     SessionState, Turn, TurnSummary, is_turn_summarized,
 };
-use crate::tools::{RECALL_TURN_TOOL_NAME, SessionToolContext, ToolRegistry, ToolResult};
+use crate::tools::{
+    CALCULATOR_TOOL_NAME, RECALL_TURN_TOOL_NAME, SessionToolContext, ToolRegistry, ToolResult,
+};
 
 use super::registry::{Experiment, ExperimentName, ExperimentOutcome};
 
@@ -342,7 +344,7 @@ fn run_one_turn(
     )?;
 
     let registry = ToolRegistry::default();
-    let responder_role = conversational_responder_role_with_recall_tool();
+    let responder_role = conversational_responder_role_with_session_tools();
     let allowed_tools = responder_role
         .allowed_tools
         .iter()
@@ -377,17 +379,21 @@ fn run_one_turn(
 
     if !response.tool_calls.is_empty() {
         let tool_calls = response.tool_calls.clone();
-        recalled_turns =
-            execute_recall_tool_calls(context, state, &request, &registry, &tool_calls)?;
+        let tool_executions =
+            execute_model_tool_calls(context, state, &request, &registry, &tool_calls)?;
+        recalled_turns = tool_executions
+            .iter()
+            .filter_map(|execution| execution.recall.clone())
+            .collect();
         final_messages.push(ModelMessage::assistant_tool_calls(
             response.output_text.clone(),
             tool_calls,
         ));
-        for recall in &recalled_turns {
-            let tool_message = prompt_tool_message_from_recall(recall);
+        for execution in &tool_executions {
+            let tool_message = &execution.prompt_message;
             final_messages.push(ModelMessage::tool_result(
                 &tool_message.call_id,
-                prompt::format_tool_message(&tool_message),
+                prompt::format_tool_message(tool_message),
             ));
         }
         let augmented_prompt = prompt::prompt_assembly_from_messages(final_messages.clone());
@@ -422,15 +428,15 @@ fn run_one_turn(
                 EventType::ErrorOccurred,
                 json!({
                     "session_id": context.run_id(),
-                    "stage": "recall-tool-follow-up",
-                    "error": "recall follow-up returned additional tool calls; multi-round tool calls are not supported",
+                    "stage": "tool-follow-up",
+                    "error": "tool follow-up returned additional tool calls; multi-round tool calls are not supported",
                     "tool_call_count": response.tool_calls.len(),
                     "tool_calls": &response.tool_calls,
                 }),
                 None,
             )?;
             anyhow::bail!(
-                "recall follow-up returned additional tool calls; multi-round tool calls are not supported"
+                "tool follow-up returned additional tool calls; multi-round tool calls are not supported"
             );
         }
     }
@@ -476,34 +482,68 @@ fn completed_turn_count(state: &SessionState) -> usize {
     state.turns.len()
 }
 
-fn conversational_responder_role_with_recall_tool() -> ModelRole {
+fn conversational_responder_role_with_session_tools() -> ModelRole {
     let mut role = ModelRole::predefined(ModelRoleId::ConversationalResponder);
-    role.allowed_tools = vec![RECALL_TURN_TOOL_NAME.to_string()];
+    role.allowed_tools = vec![
+        RECALL_TURN_TOOL_NAME.to_string(),
+        CALCULATOR_TOOL_NAME.to_string(),
+    ];
     role
 }
 
-fn execute_recall_tool_calls(
+struct ToolExecution {
+    prompt_message: PromptToolMessage,
+    recall: Option<RecallRecord>,
+}
+
+fn execute_model_tool_calls(
     context: &mut RunContext,
     state: &SessionState,
     request: &ModelRequest,
     registry: &ToolRegistry,
     tool_calls: &[ModelToolCall],
-) -> anyhow::Result<Vec<RecallRecord>> {
+) -> anyhow::Result<Vec<ToolExecution>> {
     let tool_ctx = SessionToolContext { state };
     let dispatch_started_at = Instant::now();
     let tool_results =
         dispatch_model_tool_calls(context, request, registry, &tool_ctx, tool_calls)?;
     let dispatch_latency_ms = elapsed_ms(dispatch_started_at);
-    let mut recalls = Vec::with_capacity(tool_results.len());
-    let recall_latency_ms = dispatch_latency_ms / tool_results.len().max(1) as u64;
+    let tool_latency_ms = dispatch_latency_ms / tool_results.len().max(1) as u64;
+    let mut executions = Vec::with_capacity(tool_results.len());
 
     for (tool_call, result) in tool_calls.iter().zip(tool_results) {
-        let recall = recall_record_from_tool_result(tool_call, result, recall_latency_ms)?;
-        record_recall_tool_trace(context, state, &recall)?;
-        recalls.push(recall);
+        let (prompt_message, recall) =
+            prompt_tool_message_from_result(context, state, tool_call, result, tool_latency_ms)?;
+        executions.push(ToolExecution {
+            prompt_message,
+            recall,
+        });
     }
 
-    Ok(recalls)
+    Ok(executions)
+}
+
+fn prompt_tool_message_from_result(
+    context: &mut RunContext,
+    state: &SessionState,
+    tool_call: &ModelToolCall,
+    result: ToolResult,
+    latency_ms: u64,
+) -> anyhow::Result<(PromptToolMessage, Option<RecallRecord>)> {
+    if result.tool_name == RECALL_TURN_TOOL_NAME {
+        let recall = recall_record_from_tool_result(tool_call, result, latency_ms)?;
+        record_recall_tool_trace(context, state, &recall)?;
+        let prompt_message = prompt_tool_message_from_recall(&recall);
+        return Ok((prompt_message, Some(recall)));
+    }
+
+    let prompt_message = PromptToolMessage {
+        tool_name: result.tool_name.clone(),
+        call_id: tool_call.call_id.clone(),
+        arguments: tool_call.arguments.clone(),
+        content: format_tool_result_message(&result),
+    };
+    Ok((prompt_message, None))
 }
 
 fn recall_record_from_tool_result(
@@ -563,6 +603,20 @@ fn prompt_tool_message_from_recall(recall: &RecallRecord) -> PromptToolMessage {
         call_id: recall.call_id.clone(),
         arguments: serde_json::json!({ "turn_id": recall.turn_id }),
         content: format_recall_tool_message(recall),
+    }
+}
+
+fn format_tool_result_message(result: &ToolResult) -> String {
+    match result.tool_name.as_str() {
+        CALCULATOR_TOOL_NAME => {
+            format!(
+                "[calculator]\nexpression: {}\nresult: {}\n{}",
+                result.input,
+                result.output_text,
+                result.observation_summary.trim()
+            )
+        }
+        _ => result.observation_summary.clone(),
     }
 }
 
@@ -1283,7 +1337,7 @@ mod tests {
         MemorySourceConfig, RecallRecord, SessionConfig, SessionEndReason, SessionEvent,
         SessionState, Turn, TurnSummary,
     };
-    use crate::tools::RECALL_TURN_TOOL_NAME;
+    use crate::tools::{CALCULATOR_TOOL_NAME, RECALL_TURN_TOOL_NAME};
 
     #[test]
     fn reducer_appends_turns_in_order() {
@@ -1589,6 +1643,51 @@ mod tests {
     }
 
     #[test]
+    fn calculator_tool_answers_arithmetic_turn_through_follow_up() {
+        let base_dir = std::env::temp_dir().join(format!("qsf-calculator-tool-{}", Uuid::new_v4()));
+        let mut context = RunContext::create_in(&base_dir, "multi-turn-text-loop").unwrap();
+        let input = Cursor::new("what is 1231231+12342134?\n:quit\n");
+        let mut output = Vec::new();
+        let memory_source = TestMemorySource;
+
+        run_with_io_and_components(
+            &mut context,
+            input,
+            &mut output,
+            &MockModelClient::default(),
+            &memory_source,
+            test_config_with_warm_threshold(10, 10),
+        )
+        .unwrap();
+
+        let output = String::from_utf8(output).unwrap();
+        let events = fs::read_to_string(context.run_dir().join("events.jsonl")).unwrap();
+        let records = parse_event_records(&events);
+        let tool_requested = records
+            .iter()
+            .find(|record| {
+                record.event_type == EventType::ToolRequested
+                    && record.payload["tool_name"] == CALCULATOR_TOOL_NAME
+            })
+            .unwrap();
+        let tool_completed = records
+            .iter()
+            .find(|record| {
+                record.event_type == EventType::ToolCompleted
+                    && record.payload["tool_name"] == CALCULATOR_TOOL_NAME
+            })
+            .unwrap();
+
+        assert!(output.contains("The result is 13573365."));
+        assert_eq!(tool_requested.payload["input"], "1231231+12342134");
+        assert_eq!(tool_requested.payload["category"], "compute_only");
+        assert_eq!(tool_completed.payload["category"], "compute_only");
+        assert!(events.contains("mock-calculator-0"));
+
+        fs::remove_dir_all(base_dir).unwrap();
+    }
+
+    #[test]
     fn openai_recall_path_preserves_tool_call_id_and_hides_tools_on_follow_up() {
         let base_dir =
             std::env::temp_dir().join(format!("qsf-openai-recall-path-{}", Uuid::new_v4()));
@@ -1626,7 +1725,13 @@ mod tests {
 
         let first_call = &calls[tool_call_index];
         assert_eq!(first_call.role_id, ModelRoleId::ConversationalResponder);
-        assert_eq!(first_call.tools, vec![RECALL_TURN_TOOL_NAME.to_string()]);
+        assert_eq!(
+            first_call.tools,
+            vec![
+                RECALL_TURN_TOOL_NAME.to_string(),
+                CALCULATOR_TOOL_NAME.to_string()
+            ]
+        );
         assert!(first_call.messages.iter().any(|message| message.role
             == crate::models::ModelMessageRole::User
             && message.content.to_ascii_lowercase().contains("recall turn")));
