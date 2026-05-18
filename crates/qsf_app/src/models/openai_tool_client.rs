@@ -218,7 +218,7 @@ fn completion_message_text(message: &ChatCompletionMessage) -> String {
             .filter(|part| part.kind == "text")
             .filter_map(|part| part.text.as_deref())
             .collect::<Vec<_>>()
-            .join(""),
+            .join("\n"),
     }
 }
 
@@ -231,6 +231,8 @@ fn parse_tool_calls(
 
     let mut parsed_calls = Vec::with_capacity(tool_calls.len());
     for tool_call in tool_calls {
+        // Chat Completions tool calls used here are function calls. Built-in
+        // provider tool types need explicit parsing before they are accepted.
         if tool_call.kind != "function" {
             bail!(
                 "OpenAI tool call type `{}` is not supported",

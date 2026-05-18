@@ -405,3 +405,15 @@ crates/qsf_app/src/models/tool_dispatch.rs,
 crates/qsf_app/src/models/model_client.rs,
 docs/DecisionLog.md#2026-05-14---realtime-voice-providers-cannot-execute-tools-directly,
 docs/Plans/Plan.ToolSystemBridge.md
+
+## 2026-05-18 - Model tool dispatch fails fast
+Decision: Model tool dispatch returns an error as soon as any requested tool call fails,
+even if earlier calls in the same batch completed successfully.
+Context: Tool execution emits per-call requested, completed, and failed events, so partial
+progress remains visible in observability artifacts. Returning partial results alongside
+an error would require a new caller contract and could let a model continue from an
+incomplete tool batch as if it were coherent.
+Consequences: Callers must treat a failed model tool batch as failed. Any future partial
+result behavior needs an explicit result type that distinguishes completed calls from the
+failing call.
+Refs: crates/qsf_app/src/models/tool_dispatch.rs

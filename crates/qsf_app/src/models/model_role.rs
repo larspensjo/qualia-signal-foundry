@@ -134,6 +134,25 @@ mod tests {
     use super::{ModelOutputExpectation, ModelRole, ModelRoleId};
 
     #[test]
+    fn role_id_strings_match_serde_snake_case_names() {
+        let ids = [
+            ModelRoleId::MockResponder,
+            ModelRoleId::ConversationalResponder,
+            ModelRoleId::MemoryExtractor,
+            ModelRoleId::SleepSummarizer,
+            ModelRoleId::SessionTurnSummarizer,
+            ModelRoleId::ResearchPlanner,
+            ModelRoleId::Critic,
+        ];
+
+        for role_id in ids {
+            let serialized = serde_json::to_value(role_id).unwrap();
+
+            assert_eq!(serialized.as_str(), Some(role_id.as_str()));
+        }
+    }
+
+    #[test]
     fn sleep_summarizer_role_defaults_to_json_output() {
         let role = ModelRole::predefined(ModelRoleId::SleepSummarizer);
 

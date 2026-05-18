@@ -346,18 +346,13 @@ mod tests {
 
     #[test]
     fn canonical_hash_changes_when_tool_call_id_changes() {
-        let without_call_id = vec![ModelMessage::tool("tool output")];
         let with_call_id = vec![ModelMessage::tool_result("call-1", "tool output")];
         let other_call_id = vec![ModelMessage::tool_result("call-2", "tool output")];
 
-        assert_eq!(without_call_id[0].role, ModelMessageRole::Tool);
+        assert_eq!(with_call_id[0].role, ModelMessageRole::Tool);
         assert_ne!(
             canonical_hash(&with_call_id),
             canonical_hash(&other_call_id)
-        );
-        assert_ne!(
-            canonical_hash(&without_call_id),
-            canonical_hash(&with_call_id)
         );
     }
 

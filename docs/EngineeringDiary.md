@@ -1163,3 +1163,32 @@ Observed:
 - `cargo clippy --all-targets --features openai -- -D warnings`
 
 Refs: crates/qsf_app/src/audio/voice_session_provider.rs
+
+## 2026-05-18 - Model boundary review fixes
+
+Addressed the highest-risk model-module review findings around OpenAI tool-message
+validity, tool-dispatch permissions, and JSON-mode response diagnostics.
+
+What changed:
+- Removed the public invalid `ModelMessage::tool` constructor; tool-role messages are
+  constructed with `tool_result` so a provider call id is present.
+- Built model tool-dispatch permissions from registry metadata instead of a permissive
+  fallback, while preserving failure events for unknown or malformed tool calls.
+- Recorded JSON parse errors on `ModelResponse` when a JSON-mode response is malformed.
+- Added guard tests for role-id string serialization and advertised-tool drift, plus a
+  documented decision that model tool dispatch fails fast.
+
+Observed:
+- `cargo build`
+- `cargo test -p qsf_app models::`
+- `cargo test -p qsf_app conversation::prompt::tests::canonical_hash_changes_when_tool_call_id_changes`
+- `cargo test -p qsf_app`
+- `cargo clippy --all-targets -- -D warnings`
+- `cargo fmt`
+
+Refs: crates/qsf_app/src/models/model_client.rs,
+crates/qsf_app/src/models/tool_dispatch.rs,
+crates/qsf_app/src/models/model_role.rs,
+crates/qsf_app/src/models/openai_tool_client.rs,
+crates/qsf_app/src/conversation/prompt.rs,
+docs/DecisionLog.md

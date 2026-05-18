@@ -8,8 +8,8 @@ use crate::observability::event_log::EventType;
 use crate::observability::trace::elapsed_ms;
 use crate::runtime::run_context::RunContext;
 use crate::tools::{
-    CALCULATOR_TOOL_NAME, RECALL_TURN_TOOL_NAME, ToolCategory, ToolContext, ToolPermission,
-    ToolRegistry, ToolRequest, ToolResult, ToolSideEffectLevel,
+    CALCULATOR_TOOL_NAME, RECALL_TURN_TOOL_NAME, ToolContext, ToolMetadata, ToolPermission,
+    ToolRegistry, ToolRequest, ToolResult,
 };
 
 use super::{ModelRequest, ModelToolCall};
@@ -51,7 +51,24 @@ pub fn dispatch_model_tool_calls(
             bail!(message);
         }
 
-        let tool_request = tool_request_from_model_tool_call(tool_call, context.experiment_id())?;
+        let tool_request =
+            match tool_request_from_model_tool_call(tool_call, context.experiment_id(), registry) {
+                Ok(tool_request) => tool_request,
+                Err(error) => {
+                    context.record_event(
+                        EventType::ToolFailed,
+                        json!({
+                            "session_id": &request.session_id,
+                            "role_id": request.role.role_id,
+                            "tool_name": &tool_call.name,
+                            "call_id": &tool_call.call_id,
+                            "error": error.to_string(),
+                        }),
+                        None,
+                    )?;
+                    return Err(error);
+                }
+            };
         let metadata = registry.metadata_for(&tool_request.tool_name);
         context.record_event(
             EventType::ToolRequested,
@@ -133,7 +150,13 @@ fn debug_assert_request_tools_match_role(request: &ModelRequest) {
 fn tool_request_from_model_tool_call(
     tool_call: &ModelToolCall,
     requested_by: &str,
+    registry: &ToolRegistry,
 ) -> Result<ToolRequest> {
+    let metadata = registry
+        .metadata_for(&tool_call.name)
+        .ok_or_else(|| anyhow::anyhow!("unknown tool `{}`", tool_call.name))?;
+    let permission = permission_from_metadata(&metadata);
+
     match tool_call.name.as_str() {
         RECALL_TURN_TOOL_NAME => {
             let turn_id = tool_call
@@ -142,11 +165,10 @@ fn tool_request_from_model_tool_call(
                 .and_then(|value| value.as_u64())
                 .context("recall_turn requires integer argument `turn_id`")?
                 as usize;
-            Ok(ToolRequest::recall_turn(
-                tool_call.call_id.clone(),
-                turn_id,
-                requested_by,
-            ))
+            let mut request =
+                ToolRequest::recall_turn(tool_call.call_id.clone(), turn_id, requested_by);
+            request.permission = permission;
+            Ok(request)
         }
         CALCULATOR_TOOL_NAME => {
             let expression = tool_call
@@ -154,22 +176,24 @@ fn tool_request_from_model_tool_call(
                 .get("expression")
                 .and_then(|value| value.as_str())
                 .context("calculator requires string argument `expression`")?;
-            Ok(ToolRequest::calculator(expression, requested_by))
+            let mut request = ToolRequest::calculator(expression, requested_by);
+            request.permission = permission;
+            Ok(request)
         }
         _ => Ok(ToolRequest {
             tool_name: tool_call.name.clone(),
             input: tool_call.arguments.to_string(),
             structured: Some(tool_call.arguments.clone()),
-            permission: ToolPermission {
-                allowed_categories: vec![
-                    ToolCategory::ComputeOnly,
-                    ToolCategory::ReadOnly,
-                    ToolCategory::WriteCapable,
-                ],
-                max_side_effect_level: ToolSideEffectLevel::ExternalWrite,
-            },
+            permission,
             requested_by: requested_by.to_string(),
         }),
+    }
+}
+
+fn permission_from_metadata(metadata: &ToolMetadata) -> ToolPermission {
+    ToolPermission {
+        allowed_categories: vec![metadata.category],
+        max_side_effect_level: metadata.side_effect_level,
     }
 }
 
@@ -298,6 +322,31 @@ mod tests {
         );
 
         fs::remove_dir_all(base_dir).unwrap();
+    }
+
+    #[cfg(debug_assertions)]
+    #[test]
+    #[should_panic(expected = "ModelRequest.tools must be derived from ModelRole.allowed_tools")]
+    fn dispatcher_debug_asserts_when_advertised_tools_drift_from_role() {
+        let base_dir =
+            std::env::temp_dir().join(format!("qsf-tool-dispatch-{}", uuid::Uuid::new_v4()));
+        let mut context = RunContext::create_in(&base_dir, "tool-dispatch-test").unwrap();
+        let registry = ToolRegistry::default();
+        let state = SessionState::new(test_config());
+        let tool_ctx = SessionToolContext { state: &state };
+        let mut role = ModelRole::predefined(ModelRoleId::ConversationalResponder);
+        role.allowed_tools = vec![RECALL_TURN_TOOL_NAME.to_string()];
+        let request = ModelRequest::new(role, vec![])
+            .with_session_id(context.run_id())
+            .with_tools(vec![]);
+        let tool_calls = vec![ModelToolCall::new(
+            "call-1",
+            RECALL_TURN_TOOL_NAME,
+            json!({ "turn_id": 0 }),
+        )];
+
+        let _ =
+            dispatch_model_tool_calls(&mut context, &request, &registry, &tool_ctx, &tool_calls);
     }
 
     fn test_turn(index: usize) -> Turn {
