@@ -19,12 +19,14 @@ pub enum ModelMessageRole {
     Tool,
 }
 
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 pub struct ModelMessage {
     pub role: ModelMessageRole,
     pub content: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub tool_call_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub tool_calls: Vec<ModelToolCall>,
 }
 
 impl ModelMessage {
@@ -33,6 +35,7 @@ impl ModelMessage {
             role,
             content: content.into(),
             tool_call_id: None,
+            tool_calls: vec![],
         }
     }
 
@@ -48,6 +51,18 @@ impl ModelMessage {
         Self::new(ModelMessageRole::Assistant, content)
     }
 
+    pub fn assistant_tool_calls(
+        content: impl Into<String>,
+        tool_calls: Vec<ModelToolCall>,
+    ) -> Self {
+        Self {
+            role: ModelMessageRole::Assistant,
+            content: content.into(),
+            tool_call_id: None,
+            tool_calls,
+        }
+    }
+
     pub fn tool(content: impl Into<String>) -> Self {
         Self::new(ModelMessageRole::Tool, content)
     }
@@ -57,6 +72,7 @@ impl ModelMessage {
             role: ModelMessageRole::Tool,
             content: content.into(),
             tool_call_id: Some(tool_call_id.into()),
+            tool_calls: vec![],
         }
     }
 }
@@ -411,7 +427,7 @@ mod tests {
 
     use super::{
         ModelClient, ModelMessage, ModelMessageRole, ModelRequest, ModelResponse, ModelRole,
-        ModelRoleId, ModelUsage, invoke_model_role,
+        ModelRoleId, ModelToolCall, ModelUsage, invoke_model_role,
     };
     use crate::runtime::run_context::RunContext;
 
@@ -469,6 +485,22 @@ mod tests {
         assert_eq!(message.role, ModelMessageRole::Tool);
         assert_eq!(message.content, "tool output");
         assert_eq!(message.tool_call_id.as_deref(), Some("call-123"));
+        assert!(message.tool_calls.is_empty());
+    }
+
+    #[test]
+    fn assistant_tool_call_message_preserves_tool_calls() {
+        let tool_call = ModelToolCall::new(
+            "call-123",
+            "recall_turn",
+            serde_json::json!({ "turn_id": 0 }),
+        );
+        let message = ModelMessage::assistant_tool_calls("", vec![tool_call.clone()]);
+
+        assert_eq!(message.role, ModelMessageRole::Assistant);
+        assert_eq!(message.content, "");
+        assert_eq!(message.tool_call_id, None);
+        assert_eq!(message.tool_calls, vec![tool_call]);
     }
 
     #[test]

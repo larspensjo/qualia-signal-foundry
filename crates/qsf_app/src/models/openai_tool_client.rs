@@ -104,10 +104,30 @@ fn chat_message_to_value(message: &ModelMessage) -> anyhow::Result<Value> {
             "role": "user",
             "content": &message.content,
         })),
-        ModelMessageRole::Assistant => Ok(json!({
-            "role": "assistant",
-            "content": &message.content,
-        })),
+        ModelMessageRole::Assistant => {
+            if message.tool_calls.is_empty() {
+                return Ok(json!({
+                    "role": "assistant",
+                    "content": &message.content,
+                }));
+            }
+
+            let content = if message.content.is_empty() {
+                Value::Null
+            } else {
+                json!(&message.content)
+            };
+
+            Ok(json!({
+                "role": "assistant",
+                "content": content,
+                "tool_calls": message
+                    .tool_calls
+                    .iter()
+                    .map(model_tool_call_to_value)
+                    .collect::<Vec<_>>(),
+            }))
+        }
         ModelMessageRole::Tool => {
             let Some(tool_call_id) = message.tool_call_id.as_ref() else {
                 bail!("OpenAI tool messages require a tool_call_id");
@@ -129,6 +149,17 @@ fn model_tool_definition_to_value(tool: &crate::models::ModelToolDefinition) -> 
             "name": &tool.name,
             "description": &tool.description,
             "parameters": &tool.parameters,
+        }
+    })
+}
+
+fn model_tool_call_to_value(tool_call: &ModelToolCall) -> Value {
+    json!({
+        "id": &tool_call.call_id,
+        "type": "function",
+        "function": {
+            "name": &tool_call.name,
+            "arguments": tool_call.arguments.to_string(),
         }
     })
 }
@@ -300,14 +331,16 @@ pub(crate) struct ChatCompletionPromptTokensDetails {
 
 #[cfg(test)]
 mod tests {
-    use serde_json::json;
+    use serde_json::{Value, json};
 
     use super::{
         ChatCompletionChoice, ChatCompletionFunction, ChatCompletionMessage,
         ChatCompletionPromptTokensDetails, ChatCompletionResponse, ChatCompletionToolCall,
         ChatCompletionUsage, MessageContent, build_request_body, parse_completion_response,
     };
-    use crate::models::{ModelMessage, ModelRequest, ModelRole, ModelRoleId, ModelToolDefinition};
+    use crate::models::{
+        ModelMessage, ModelRequest, ModelRole, ModelRoleId, ModelToolCall, ModelToolDefinition,
+    };
 
     #[test]
     fn text_only_request_omits_tools() {
@@ -334,6 +367,14 @@ mod tests {
             vec![
                 ModelMessage::system("hello"),
                 ModelMessage::user("please recall"),
+                ModelMessage::assistant_tool_calls(
+                    "",
+                    vec![ModelToolCall::new(
+                        "call-1",
+                        "recall_turn",
+                        json!({ "turn_id": 0 }),
+                    )],
+                ),
                 ModelMessage::tool_result("call-1", "tool output"),
             ],
         )
@@ -361,9 +402,21 @@ mod tests {
         assert_eq!(body["model"], "gpt-5.4-mini");
         assert_eq!(body["temperature"], json!(0.0));
         assert_eq!(body["max_completion_tokens"], json!(80));
-        assert_eq!(body["messages"][2]["role"], "tool");
-        assert_eq!(body["messages"][2]["tool_call_id"], "call-1");
-        assert_eq!(body["messages"][2]["content"], "tool output");
+        assert_eq!(body["messages"][2]["role"], "assistant");
+        assert_eq!(body["messages"][2]["content"], Value::Null);
+        assert_eq!(body["messages"][2]["tool_calls"][0]["id"], "call-1");
+        assert_eq!(body["messages"][2]["tool_calls"][0]["type"], "function");
+        assert_eq!(
+            body["messages"][2]["tool_calls"][0]["function"]["name"],
+            "recall_turn"
+        );
+        assert_eq!(
+            body["messages"][2]["tool_calls"][0]["function"]["arguments"],
+            "{\"turn_id\":0}"
+        );
+        assert_eq!(body["messages"][3]["role"], "tool");
+        assert_eq!(body["messages"][3]["tool_call_id"], "call-1");
+        assert_eq!(body["messages"][3]["content"], "tool output");
         assert_eq!(body["tools"][0]["type"], "function");
         assert_eq!(body["tools"][0]["function"]["name"], "recall_turn");
         assert!(body.get("tool_choice").is_none());

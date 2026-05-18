@@ -112,10 +112,9 @@ mod enabled {
 
     fn request_uses_tool_capable_serialization(request: &ModelRequest) -> bool {
         !request.tools.is_empty()
-            || request
-                .messages
-                .iter()
-                .any(|message| matches!(message.role, ModelMessageRole::Tool))
+            || request.messages.iter().any(|message| {
+                matches!(message.role, ModelMessageRole::Tool) || !message.tool_calls.is_empty()
+            })
     }
 
     fn map_message_role(role: ModelMessageRole) -> ChatRole {
@@ -136,7 +135,7 @@ mod enabled {
         };
         use crate::models::{
             ModelClient, ModelMessage, ModelMessageRole, ModelRequest, ModelRole, ModelRoleId,
-            ModelToolDefinition,
+            ModelToolCall, ModelToolDefinition,
         };
 
         #[test]
@@ -170,6 +169,17 @@ mod enabled {
                 ModelRole::predefined(ModelRoleId::MockResponder),
                 vec![ModelMessage::tool_result("call-1", "tool output")],
             );
+            let assistant_tool_call_request = ModelRequest::new(
+                ModelRole::predefined(ModelRoleId::MockResponder),
+                vec![ModelMessage::assistant_tool_calls(
+                    "",
+                    vec![ModelToolCall::new(
+                        "call-1",
+                        "recall_turn",
+                        serde_json::json!({ "turn_id": 0 }),
+                    )],
+                )],
+            );
             let definition_request = ModelRequest::new(
                 ModelRole::predefined(ModelRoleId::MockResponder),
                 vec![ModelMessage::user("hello")],
@@ -187,6 +197,9 @@ mod enabled {
 
             assert!(!request_uses_tool_capable_serialization(&text_only_request));
             assert!(request_uses_tool_capable_serialization(&tool_request));
+            assert!(request_uses_tool_capable_serialization(
+                &assistant_tool_call_request
+            ));
             assert!(request_uses_tool_capable_serialization(&definition_request));
         }
 

@@ -2,10 +2,11 @@ use std::fmt;
 use std::fmt::Write as _;
 
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 use sha2::{Digest, Sha256};
 
 use crate::context::ContextAssembly;
-use crate::models::{ModelMessage, ModelMessageRole};
+use crate::models::{ModelMessage, ModelMessageRole, ModelToolCall};
 
 /// Constant system-prompt prefix; warm-tier summaries are appended at assembly time.
 pub const SESSION_SYSTEM_PROMPT: &str = "You are a concise conversational responder. Treat this as one continuous human-driven text session. Use retrieved memory as context, keep prior turns stable, and never initiate a turn without user input. If an older summarized turn needs exact details, request recall_turn with its turn_id; only summarized turns can be recalled.";
@@ -29,7 +30,7 @@ impl fmt::Display for ContentHash {
     }
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct PromptTurn<'a> {
     pub user_input: &'a str,
     pub retrieved_memory_block: &'a str,
@@ -37,11 +38,22 @@ pub struct PromptTurn<'a> {
     pub assistant_response: &'a str,
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct PromptToolMessage {
     pub tool_name: String,
     pub call_id: String,
+    pub arguments: Value,
     pub content: String,
+}
+
+impl PromptToolMessage {
+    pub fn model_tool_call(&self) -> ModelToolCall {
+        ModelToolCall::new(
+            self.call_id.clone(),
+            self.tool_name.clone(),
+            self.arguments.clone(),
+        )
+    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -50,7 +62,7 @@ pub struct PromptTurnSummary<'a> {
     pub summary: &'a str,
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct PromptAssembly {
     pub messages: Vec<ModelMessage>,
     pub full_request_hash: ContentHash,
@@ -80,7 +92,14 @@ pub fn assemble_prompt_with_summaries(
             turn.retrieved_memory_block,
         )));
         for tool_message in &turn.recalled_tool_messages {
-            messages.push(ModelMessage::tool(format_tool_message(tool_message)));
+            messages.push(ModelMessage::assistant_tool_calls(
+                "",
+                vec![tool_message.model_tool_call()],
+            ));
+            messages.push(ModelMessage::tool_result(
+                &tool_message.call_id,
+                format_tool_message(tool_message),
+            ));
         }
         messages.push(ModelMessage::assistant(turn.assistant_response));
     }
@@ -102,6 +121,7 @@ pub fn prompt_assembly_from_messages(messages: Vec<ModelMessage>) -> PromptAssem
                     .as_ref()
                     .map(|id| id.len())
                     .unwrap_or(0)
+                + tool_calls_byte_len(&message.tool_calls)
         })
         .sum();
 
@@ -196,9 +216,30 @@ pub fn canonical_hash(messages: &[ModelMessage]) -> ContentHash {
         hasher.update(content);
         hasher.update((tool_call_id.len() as u32).to_le_bytes());
         hasher.update(tool_call_id);
+        hasher.update((message.tool_calls.len() as u32).to_le_bytes());
+        for tool_call in &message.tool_calls {
+            update_hash_with_len_prefixed_bytes(&mut hasher, tool_call.call_id.as_bytes());
+            update_hash_with_len_prefixed_bytes(&mut hasher, tool_call.name.as_bytes());
+            let arguments = tool_call.arguments.to_string();
+            update_hash_with_len_prefixed_bytes(&mut hasher, arguments.as_bytes());
+        }
     }
 
     ContentHash(hasher.finalize().into())
+}
+
+fn tool_calls_byte_len(tool_calls: &[ModelToolCall]) -> usize {
+    tool_calls
+        .iter()
+        .map(|tool_call| {
+            tool_call.call_id.len() + tool_call.name.len() + tool_call.arguments.to_string().len()
+        })
+        .sum()
+}
+
+fn update_hash_with_len_prefixed_bytes(hasher: &mut Sha256, bytes: &[u8]) {
+    hasher.update((bytes.len() as u32).to_le_bytes());
+    hasher.update(bytes);
 }
 
 fn message_role_name(role: ModelMessageRole) -> &'static str {
@@ -318,5 +359,27 @@ mod tests {
             canonical_hash(&without_call_id),
             canonical_hash(&with_call_id)
         );
+    }
+
+    #[test]
+    fn canonical_hash_changes_when_assistant_tool_calls_change() {
+        let first = vec![ModelMessage::assistant_tool_calls(
+            "",
+            vec![crate::models::ModelToolCall::new(
+                "call-1",
+                "recall_turn",
+                serde_json::json!({ "turn_id": 0 }),
+            )],
+        )];
+        let second = vec![ModelMessage::assistant_tool_calls(
+            "",
+            vec![crate::models::ModelToolCall::new(
+                "call-2",
+                "recall_turn",
+                serde_json::json!({ "turn_id": 0 }),
+            )],
+        )];
+
+        assert_ne!(canonical_hash(&first), canonical_hash(&second));
     }
 }

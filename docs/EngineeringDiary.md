@@ -1115,3 +1115,51 @@ Observed:
 
 Refs: crates/qsf_app/src/models/openai_tool_client.rs,
 crates/qsf_app/src/models/openai_provider.rs
+
+## 2026-05-18 - OpenAI recall follow-up transcript preservation
+
+Fixed the OpenAI recall follow-up transcript so provider-native tool results are
+preceded by the assistant message that originally requested the tool call.
+
+What changed:
+- Added assistant `tool_calls` preservation to `ModelMessage` and OpenAI request
+  serialization.
+- Rebuilt recalled prompt history with assistant tool-call messages immediately
+  before their matching tool-result messages.
+- Updated the multi-turn recall follow-up path to send the assistant tool-call
+  message before dispatch results.
+- Covered the transcript ordering and serialized OpenAI tool-call payloads in tests.
+
+Observed:
+- `cargo test -p qsf_app models::`
+- `cargo test -p qsf_app multi_turn_text_loop`
+- `cargo test -p qsf_app --features openai models::`
+- `cargo test -p qsf_app --features openai multi_turn_text_loop`
+- `cargo test -p qsf_app`
+- `cargo test -p qsf_app --features openai`
+- `cargo build -p qsf_app --features openai`
+- `cargo clippy --all-targets -- -D warnings`
+- `cargo clippy --all-targets --features openai -- -D warnings`
+- Live OpenAI recall run `runs/2026-05-18-174421-multi-turn-text-loop`
+  completed with one `recall_turn` execution and a final verbatim `[Turn 0]`
+  response.
+
+Refs: crates/qsf_app/src/models/model_client.rs,
+crates/qsf_app/src/conversation/prompt.rs,
+crates/qsf_app/src/experiments/multi_turn_text_loop.rs,
+crates/qsf_app/src/models/openai_tool_client.rs,
+crates/qsf_app/src/models/openai_provider.rs
+
+## 2026-05-18 - OpenAI-feature clippy cleanup
+
+Cleaned up a realtime voice session match arm that only triggered Clippy when the
+OpenAI feature set was checked.
+
+What changed:
+- Collapsed the response transcript completion branch into a match guard while
+  preserving the existing fallback from `transcript` to `text`.
+
+Observed:
+- `cargo clippy --all-targets --features openai -- -D warnings`
+
+Refs: crates/qsf_app/src/audio/voice_session_provider.rs

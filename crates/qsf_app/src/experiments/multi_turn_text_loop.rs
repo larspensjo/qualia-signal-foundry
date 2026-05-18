@@ -376,12 +376,18 @@ fn run_one_turn(
     let mut final_messages = base_prompt.messages.clone();
 
     if !response.tool_calls.is_empty() {
+        let tool_calls = response.tool_calls.clone();
         recalled_turns =
-            execute_recall_tool_calls(context, state, &request, &registry, &response.tool_calls)?;
+            execute_recall_tool_calls(context, state, &request, &registry, &tool_calls)?;
+        final_messages.push(ModelMessage::assistant_tool_calls(
+            response.output_text.clone(),
+            tool_calls,
+        ));
         for recall in &recalled_turns {
+            let tool_message = prompt_tool_message_from_recall(recall);
             final_messages.push(ModelMessage::tool_result(
-                &recall.call_id,
-                format_recall_tool_message(recall),
+                &tool_message.call_id,
+                prompt::format_tool_message(&tool_message),
             ));
         }
         let augmented_prompt = prompt::prompt_assembly_from_messages(final_messages.clone());
@@ -555,6 +561,7 @@ fn prompt_tool_message_from_recall(recall: &RecallRecord) -> PromptToolMessage {
     PromptToolMessage {
         tool_name: recall.tool_name.clone(),
         call_id: recall.call_id.clone(),
+        arguments: serde_json::json!({ "turn_id": recall.turn_id }),
         content: format_recall_tool_message(recall),
     }
 }
@@ -1627,6 +1634,22 @@ mod tests {
         let second_call = &calls[tool_call_index + 1];
         assert_eq!(second_call.role_id, ModelRoleId::ConversationalResponder);
         assert!(second_call.tools.is_empty());
+        let tool_message_index = second_call
+            .messages
+            .iter()
+            .position(|message| message.role == crate::models::ModelMessageRole::Tool)
+            .unwrap();
+        assert!(tool_message_index > 0);
+        let assistant_tool_call_message = &second_call.messages[tool_message_index - 1];
+        assert_eq!(
+            assistant_tool_call_message.role,
+            crate::models::ModelMessageRole::Assistant
+        );
+        assert_eq!(assistant_tool_call_message.tool_calls.len(), 1);
+        assert_eq!(
+            assistant_tool_call_message.tool_calls[0].call_id,
+            "openai-recall-0"
+        );
         assert_eq!(
             second_call
                 .messages
@@ -1635,11 +1658,7 @@ mod tests {
                 .count(),
             1
         );
-        let tool_message = second_call
-            .messages
-            .iter()
-            .find(|message| message.role == crate::models::ModelMessageRole::Tool)
-            .unwrap();
+        let tool_message = &second_call.messages[tool_message_index];
         assert_eq!(
             tool_message.tool_call_id.as_deref(),
             Some("openai-recall-0")
