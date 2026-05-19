@@ -14,6 +14,53 @@ Status: Sketch
 
 The architecture is still exploratory. The structure described here is a candidate mental model for organizing early prototypes and discussions.
 
+## Implementation Status
+
+This document is a high-level mental model. Most named subsystems exist as code today,
+but several are only partially built and some are not yet implemented. Use this
+section to weight the rest of the document; per-subsystem detail lives in the
+focused architecture documents.
+
+**Implemented today:**
+
+- Pure reducer runtime loop, per-run event log, trace log, and markdown report
+  ([crates/qsf_app/src/runtime/](../../crates/qsf_app/src/runtime/),
+  [observability/](../../crates/qsf_app/src/observability/))
+- `ModelRole` + `ModelClient` boundary with deterministic mock and optional OpenAI
+  adapter ([models/](../../crates/qsf_app/src/models/))
+- Tool registry with role-level `allowed_tools` enforced at model tool-call dispatch
+  ([tools/](../../crates/qsf_app/src/tools/),
+  [models/tool_dispatch.rs](../../crates/qsf_app/src/models/tool_dispatch.rs))
+- Versioned `MemoryRecord` and `Association`, file-backed memory source,
+  association-weighted retrieval ([memory/](../../crates/qsf_app/src/memory/))
+- Streaming transcription, text-owned voice loop, realtime voice session provider
+  (all feature-gated under `openai`) ([audio/](../../crates/qsf_app/src/audio/))
+- Sleep-phase session summary plus reviewed-memory promotion pipeline
+  ([sleep/](../../crates/qsf_app/src/sleep/),
+  [memory/reviewed_memory_draft.rs](../../crates/qsf_app/src/memory/reviewed_memory_draft.rs))
+- Multi-turn text loop with warm-tier summarization and tool-augmented recall
+  ([experiments/multi_turn_text_loop.rs](../../crates/qsf_app/src/experiments/multi_turn_text_loop.rs))
+
+**Partial:**
+
+- Associative memory exists only as a toy comparison experiment, not as a live
+  retrieval mechanism (`Experiment.AssociativeMemoryToyModel`)
+- Context assembly selects fragments under a budget but ranking is simple and
+  role-specific assembly strategies are not yet differentiated
+- Sleep consolidation summarizes sessions and drafts memory candidates but does not
+  yet handle decay, reinforcement, association updates, or open-question extraction
+
+**Not yet implemented:**
+
+- Cross-session continuity / `SessionState` persistence
+- An attention or salience subsystem as a first-class signal
+- A volition or goal system
+- Self-reflection through project-document introspection
+- Identity / self-model state
+- A live activation dashboard or other inspection UI
+
+Last reviewed: 2026-05-18 against the code on `main`.
+
 ## System Intent
 
 Qualia Signal Foundry is an experimental platform for simulating consciousness-like behavior.

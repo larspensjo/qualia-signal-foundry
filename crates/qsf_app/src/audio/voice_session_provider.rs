@@ -925,14 +925,14 @@ where
                         }
                         "response.audio_transcript.done"
                         | "response.output_audio_transcript.done"
-                        | "response.output_text.done" => {
-                            if response_text.is_empty() {
-                                if let Some(text) = event["transcript"]
-                                    .as_str()
-                                    .or_else(|| event["text"].as_str())
-                                {
-                                    response_text.push_str(text);
-                                }
+                        | "response.output_text.done"
+                            if response_text.is_empty() =>
+                        {
+                            if let Some(text) = event["transcript"]
+                                .as_str()
+                                .or_else(|| event["text"].as_str())
+                            {
+                                response_text.push_str(text);
                             }
                         }
                         "response.audio.delta" | "response.output_audio.delta" => {

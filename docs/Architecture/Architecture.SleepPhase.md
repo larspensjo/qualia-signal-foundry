@@ -4,6 +4,49 @@
 
 Candidate
 
+## Implementation Status
+
+A minimal session-end sleep flow exists: a sleep pass produces a structured report,
+and a separate reviewed-memory pipeline can promote that report into a memory file
+through an explicit acceptance command. Most richer consolidation behavior
+(decay, reinforcement, associations, automatic triggers) is not built.
+
+**Implemented today:**
+
+- `sleep_phase_session_summary` experiment that produces a structured `SleepReport`
+  from a session
+  ([experiments/sleep_phase_session_summary.rs](../../crates/qsf_app/src/experiments/sleep_phase_session_summary.rs),
+  [sleep/sleep_report.rs](../../crates/qsf_app/src/sleep/sleep_report.rs),
+  [sleep/session_summary.rs](../../crates/qsf_app/src/sleep/session_summary.rs))
+- `reviewed_memory_draft` experiment that converts a sleep report into a memory
+  draft file
+  ([experiments/reviewed_memory_draft.rs](../../crates/qsf_app/src/experiments/reviewed_memory_draft.rs))
+- `accept_reviewed_memory` experiment that promotes an inspected draft into a
+  file-backed memory source the voice/text loops can load
+  ([experiments/accept_reviewed_memory.rs](../../crates/qsf_app/src/experiments/accept_reviewed_memory.rs))
+- Session summarization model call routed through the summarizer model role
+- Sleep-to-memory conversion is explicit and separate; live loops never auto-promote
+  (per the 2026-05-16 decision)
+
+**Partial:**
+
+- Manual trigger only; checkpoint and periodic sleep are not implemented
+- Memory candidate extraction is basic — derived from session content, not from
+  scoring across events
+
+**Not yet implemented:**
+
+- Decay of weak memories
+- Reinforcement of repeated themes
+- Association building or strengthening
+- Open-question extraction as a structured output
+- Decision-candidate extraction
+- Future-context-hint preparation
+- Tool-trace review
+- Replayable sleep with deterministic comparison
+
+Last reviewed: 2026-05-18 against the code on `main`.
+
 ## Summary
 
 The sleep phase is an offline or between-session process that reviews recent activity, updates memory, strengthens useful associations, weakens less relevant material, extracts open questions, and prepares future context.

@@ -4,6 +4,51 @@ Status: Draft
 Maturity: Sketch  
 Area: Core Architecture
 
+## Implementation Status
+
+The memory system has a working schema, a reviewed-memory promotion pipeline, and
+file-backed retrieval. The richer behaviors that make memory feel like memory —
+decay, reinforcement, association growth, cross-session continuity — are not yet
+built.
+
+**Implemented today:**
+
+- `MemoryRecord` and `Association` with per-record `schema_version`, frozen at v1
+  ([memory/memory_record.rs](../../crates/qsf_app/src/memory/memory_record.rs),
+  [memory/association.rs](../../crates/qsf_app/src/memory/association.rs))
+- Association-weighted retrieval with a small fixture
+  ([memory/retrieval.rs](../../crates/qsf_app/src/memory/retrieval.rs),
+  [memory/fixtures.rs](../../crates/qsf_app/src/memory/fixtures.rs))
+- File-backed memory source, opt-in via `QSF_VOICE_MEMORY_SOURCE=file` /
+  `QSF_SESSION_MEMORY_SOURCE=file`
+- Reviewed-memory draft workflow that converts a sleep report into a memory file
+  only through an explicit acceptance command
+  ([memory/reviewed_memory_draft.rs](../../crates/qsf_app/src/memory/reviewed_memory_draft.rs),
+  [experiments/reviewed_memory_draft.rs](../../crates/qsf_app/src/experiments/reviewed_memory_draft.rs),
+  [experiments/accept_reviewed_memory.rs](../../crates/qsf_app/src/experiments/accept_reviewed_memory.rs))
+- Session-local warm summaries and append-only verbatim recall in the multi-turn
+  text loop
+  ([experiments/multi_turn_text_loop.rs](../../crates/qsf_app/src/experiments/multi_turn_text_loop.rs))
+
+**Partial:**
+
+- Associative memory exists as a toy comparison experiment
+  (`Experiment.AssociativeMemoryToyModel`) rather than a production retrieval path
+- Memory candidates are extracted in sleep-phase session summary but only as
+  proposals that require manual review
+
+**Not yet implemented:**
+
+- Cross-session memory store (live `MemoryStore` is per-run only)
+- Memory decay or reinforcement of any kind
+- Explicit episodic / semantic / preference / decision typing of memory items
+  beyond what the schema fields allow
+- Supersession / contradiction representation
+- Vector index, embedding store, or graph store
+- Promotion of session summaries or recall records into durable memory
+
+Last reviewed: 2026-05-18 against the code on `main`.
+
 ## Purpose
 
 This document describes a candidate memory-system architecture for Qualia Signal Foundry.

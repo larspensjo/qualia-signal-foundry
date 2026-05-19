@@ -47,6 +47,11 @@ pub enum ModelOutputExpectation {
 pub struct ModelRole {
     pub role_id: ModelRoleId,
     pub purpose: String,
+    /// Authoritative role-level allow-list for model-callable tools.
+    ///
+    /// Production requests derive `ModelRequest.tools` from this list, and
+    /// `dispatch_model_tool_calls` rejects model tool calls whose names are not
+    /// listed here before registry execution.
     pub allowed_tools: Vec<String>,
     pub context_budget: ContextBudget,
     pub default_model: String,
@@ -127,6 +132,25 @@ impl ModelRole {
 #[cfg(test)]
 mod tests {
     use super::{ModelOutputExpectation, ModelRole, ModelRoleId};
+
+    #[test]
+    fn role_id_strings_match_serde_snake_case_names() {
+        let ids = [
+            ModelRoleId::MockResponder,
+            ModelRoleId::ConversationalResponder,
+            ModelRoleId::MemoryExtractor,
+            ModelRoleId::SleepSummarizer,
+            ModelRoleId::SessionTurnSummarizer,
+            ModelRoleId::ResearchPlanner,
+            ModelRoleId::Critic,
+        ];
+
+        for role_id in ids {
+            let serialized = serde_json::to_value(role_id).unwrap();
+
+            assert_eq!(serialized.as_str(), Some(role_id.as_str()));
+        }
+    }
 
     #[test]
     fn sleep_summarizer_role_defaults_to_json_output() {

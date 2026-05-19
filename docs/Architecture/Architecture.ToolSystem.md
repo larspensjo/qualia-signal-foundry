@@ -4,6 +4,54 @@
 
 Candidate
 
+## Implementation Status
+
+A registry-based tool system is implemented end-to-end for one read-only
+computational tool (`calculator`) and one introspection-style tool (`recall_turn`).
+The wider catalogue of categories described below is mostly aspirational.
+
+**Implemented today:**
+
+- `Tool` trait, `ToolRegistry`, `ToolRequest`, `ToolResult`, `ToolPermission`
+  ([tools/](../../crates/qsf_app/src/tools/))
+- `ModelToolDefinition` / `ModelToolCall` as the model-facing wire shape,
+  marshalled into `ToolRequest` before any execution
+  ([models/model_client.rs](../../crates/qsf_app/src/models/model_client.rs))
+- `ModelRole.allowed_tools` enforced at the model tool-call dispatch boundary;
+  unlisted calls fail before registry execution
+  ([models/tool_dispatch.rs](../../crates/qsf_app/src/models/tool_dispatch.rs),
+  [models/model_role.rs](../../crates/qsf_app/src/models/model_role.rs))
+- `ToolRequested` → `ToolCompleted` / `ToolFailed` lifecycle events with provider
+  metadata
+- `CalculatorTool` (`Experiment.ToolAsPerceptionCalculator`) and `RecallTurnTool`
+  (multi-turn loop) as the two production tools
+  ([tools/calculator_tool.rs](../../crates/qsf_app/src/tools/calculator_tool.rs),
+  [tools/recall_turn_tool.rs](../../crates/qsf_app/src/tools/recall_turn_tool.rs))
+- Realtime voice provider records requested tool calls as QSF events without
+  executing them, preserving the QSF tool boundary
+  ([audio/voice_session_provider.rs](../../crates/qsf_app/src/audio/voice_session_provider.rs))
+- Fail-fast tool dispatch: any failure in a batch fails the whole batch
+
+**Partial:**
+
+- Permission model exists but distinguishes only a small set of cases; the full
+  `ObserveOnly` / `ComputeOnly` / `SandboxedLocal` / `HumanApprovedWrite` /
+  `Disallowed` taxonomy is not all wired
+- Side-effect levels are tracked in registry metadata but not enforced as a
+  separate gate
+
+**Not yet implemented:**
+
+- Search, file inspection, code execution, environment sensing, or any other tool
+  beyond calculator and recall_turn
+- Tool result confidence / trust signal
+- Tool-result-to-memory promotion
+- Asynchronous or interruptible tool execution
+- Project introspection tools (`search_project_docs`, `read_project_doc`, source
+  inspection, run inspection — all still in `Idea.SelfReflectionProjectIntrospection.md`)
+
+Last reviewed: 2026-05-18 against the code on `main`.
+
 ## Summary
 
 The tool system defines how Qualia Signal Foundry can access external capabilities and information.

@@ -364,3 +364,56 @@ Refs: crates/qsf_app/src/tools/tool_registry.rs,
 crates/qsf_app/src/tools/recall_turn_tool.rs,
 crates/qsf_app/src/session/mod.rs,
 docs/Reviews/Review.ToolSystemBridge.Phase3.md
+
+## 2026-05-18 - allowed_tools is retained and enforced
+Decision: `ModelRole.allowed_tools` is retained as the role-level allow-list for
+model-callable tools and is enforced at the model tool-call dispatch boundary.
+Context: This reverses the 2026-05-17 decision "allowed_tools on ModelRole is removed
+as unenforced." That removal was recorded but never executed; its consequences already
+identified dispatch-boundary enforcement as the right future home; and the role is the
+natural source for declaring what a model may call, while `ModelRequest::with_tools()`
+is request-local derived state.
+Consequences: Production model requests derive advertised tool definitions from
+`role.allowed_tools`, and model-emitted tool calls whose names are not listed by the
+role fail before registry execution. Future roles that need tools must list them in
+`allowed_tools`; future request builders must keep `ModelRequest.tools` in sync with
+that declaration.
+Refs: crates/qsf_app/src/models/model_role.rs,
+crates/qsf_app/src/models/tool_dispatch.rs,
+crates/qsf_app/src/experiments/multi_turn_text_loop.rs,
+docs/DecisionLog.md#2026-05-17---allowed_tools-on-modelrole-is-removed-as-unenforced,
+docs/Plans/Plan.ToolSystemBridge.md
+
+## 2026-05-18 - Tool execution boundary is the ToolRegistry
+Decision: All tool execution flows through `ToolRegistry`. `ModelToolDefinition` and
+`ModelToolCall` describe only the model-facing wire shape and must be marshalled into
+`ToolRequest` / `ToolResult` before a tool runs. `ModelRole.allowed_tools` composes
+with `ToolPermission`; both must permit a call. Tool lifecycle events use
+`ToolRequested` -> `ToolCompleted` / `ToolFailed`.
+Context: The registry tools and model-call tool protocol previously evolved as
+parallel surfaces: `recall_turn` bypassed the registry, `CalculatorTool` had no
+model-facing schema, `ModelRole.allowed_tools` was unenforced, and `ToolCompleted` /
+`ToolExecuted` described the same success moment. The realtime voice tool-boundary
+decision from 2026-05-14 already depended on a registry-owned execution boundary.
+Consequences: New tools land as `Tool` implementations and expose a
+`ModelToolDefinition` when model-callable. Provider adapters parse model tool calls but
+do not execute tools directly. Realtime voice and future provider paths route tool
+requests through the same registry boundary before any runtime state or external
+capability is touched.
+Refs: crates/qsf_app/src/tools,
+crates/qsf_app/src/models/tool_dispatch.rs,
+crates/qsf_app/src/models/model_client.rs,
+docs/DecisionLog.md#2026-05-14---realtime-voice-providers-cannot-execute-tools-directly,
+docs/Plans/Plan.ToolSystemBridge.md
+
+## 2026-05-18 - Model tool dispatch fails fast
+Decision: Model tool dispatch returns an error as soon as any requested tool call fails,
+even if earlier calls in the same batch completed successfully.
+Context: Tool execution emits per-call requested, completed, and failed events, so partial
+progress remains visible in observability artifacts. Returning partial results alongside
+an error would require a new caller contract and could let a model continue from an
+incomplete tool batch as if it were coherent.
+Consequences: Callers must treat a failed model tool batch as failed. Any future partial
+result behavior needs an explicit result type that distinguishes completed calls from the
+failing call.
+Refs: crates/qsf_app/src/models/tool_dispatch.rs

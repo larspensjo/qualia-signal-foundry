@@ -994,3 +994,201 @@ Observed:
 Refs: crates/qsf_app/src/session,
 crates/qsf_app/src/tools,
 crates/qsf_app/src/experiments/multi_turn_text_loop.rs
+
+## 2026-05-18 - Model tool allow-list enforcement
+
+Made `ModelRole.allowed_tools` load-bearing at the model tool-call boundary.
+
+What changed:
+- Added a model-side tool dispatcher that rejects tool calls not listed by the role,
+  routes permitted calls through `ToolRegistry`, and records tool lifecycle events.
+- Switched multi-turn recall execution to use the shared dispatcher while keeping
+  recall-specific session records and traces in the experiment.
+- Documented `ModelRole.allowed_tools` as the authoritative role-level allow-list.
+
+Observed:
+- `cargo test -p qsf_app` passed after the dispatch boundary change.
+
+Refs: crates/qsf_app/src/models,
+crates/qsf_app/src/experiments/multi_turn_text_loop.rs
+
+## 2026-05-18 - Tool-call id propagation in model messages
+
+Extended provider-agnostic model messages so tool results can carry the originating
+provider call id through prompt assembly and the multi-turn follow-up path.
+
+What changed:
+- Added optional `tool_call_id` to `ModelMessage` with serde defaults that keep normal
+  system, user, assistant, and tool messages unchanged when the id is absent.
+- Added a dedicated `ModelMessage::tool_result` constructor for tool messages that need
+  to preserve the originating call id.
+- Updated prompt hashing and size accounting to include the tool-call id when present.
+- Switched the multi-turn recall follow-up to append tool messages with the preserved
+  call id.
+- Added unit tests for default tool messages, id-preserving tool results, serde shape,
+  and prompt hash differentiation by call id.
+
+Observed:
+- `cargo test -p qsf_app models::`
+- `cargo test -p qsf_app multi_turn_text_loop`
+- `cargo build -p qsf_app`
+- `cargo clippy --all-targets -- -D warnings`
+
+Refs: crates/qsf_app/src/models/model_client.rs,
+crates/qsf_app/src/conversation/prompt.rs,
+crates/qsf_app/src/experiments/multi_turn_text_loop.rs
+
+## 2026-05-18 - OpenAI tool-capable request serialization
+
+Added a direct Chat Completions request/response path for OpenAI-backed model calls
+that need tool serialization.
+
+What changed:
+- Added a feature-gated `OpenAiToolClient` that serializes QSF messages, tool
+  definitions, `max_completion_tokens`, and JSON response mode directly to OpenAI
+  Chat Completions requests.
+- Routed OpenAI model calls with either declared tools or tool-result messages
+  through the direct serializer so follow-up tool messages preserve provider-native
+  `tool_call_id` values.
+- Parsed OpenAI tool-call responses into `ModelToolCall` values, preserving call id,
+  function name, finish reason, usage, and cached prompt tokens.
+- Rejected malformed tool arguments and missing call ids as provider-response errors
+  before tool dispatch.
+- Added unit tests covering request serialization, response parsing, tool-result
+  messages, and the tool-capable routing decision.
+
+Observed:
+- `cargo test -p qsf_app --features openai models::`
+- `cargo build -p qsf_app --features openai`
+- `cargo clippy --all-targets -- -D warnings`
+
+Refs: crates/qsf_app/Cargo.toml,
+crates/qsf_app/src/models/openai_provider.rs,
+crates/qsf_app/src/models/openai_tool_client.rs
+
+## 2026-05-18 - Multi-turn OpenAI recall path wiring
+
+Confirmed the recall-turn loop works through the OpenAI-backed model client with
+tool definitions on the first conversational request and provider-native tool
+messages on the follow-up request.
+
+What changed:
+- Added a capturing OpenAI-style model client test for the multi-turn loop that
+  records every request, returns a tool call on the recall prompt, and verifies the
+  follow-up request contains the original `tool_call_id`.
+- Verified the first recall request advertises `recall_turn` from the shared tool
+  registry, while the follow-up request carries a tool message and no advertised
+  tools.
+- Covered the sequencing contract that the recall turn produces a second
+  `PromptAssembled` event after the tool result is appended.
+- Kept the existing guard that rejects any follow-up response that still returns
+  tool calls.
+
+Observed:
+- `cargo test -p qsf_app multi_turn_text_loop`
+- `cargo test -p qsf_app --features openai multi_turn_text_loop`
+- `cargo build -p qsf_app --features openai`
+- `cargo clippy --all-targets -- -D warnings`
+
+Refs: crates/qsf_app/src/experiments/multi_turn_text_loop.rs
+
+## 2026-05-18 - OpenAI tool-call response parsing
+
+Tightened the direct OpenAI Chat Completions path so tool-call responses are parsed
+into QSF model responses without losing provider ids or token accounting.
+
+What changed:
+- Parsed OpenAI `tool_calls` entries into `ModelToolCall` values while preserving the
+  provider call id, tool name, and JSON arguments.
+- Kept normal text responses on the same `ModelResponse::from_text` path, including
+  finish reason and usage metadata.
+- Added strict failures for missing tool-call ids, malformed JSON arguments, and
+  unsupported non-function tool-call types.
+- Covered multiple tool calls, text content, content-part text, missing ids,
+  malformed arguments, and cached-token parsing in unit tests.
+
+Observed:
+- `cargo test -p qsf_app --features openai models::`
+- `cargo test -p qsf_app models::`
+- `cargo build -p qsf_app --features openai`
+- `cargo clippy --all-targets -- -D warnings`
+
+Refs: crates/qsf_app/src/models/openai_tool_client.rs,
+crates/qsf_app/src/models/openai_provider.rs
+
+## 2026-05-18 - OpenAI recall follow-up transcript preservation
+
+Fixed the OpenAI recall follow-up transcript so provider-native tool results are
+preceded by the assistant message that originally requested the tool call.
+
+What changed:
+- Added assistant `tool_calls` preservation to `ModelMessage` and OpenAI request
+  serialization.
+- Rebuilt recalled prompt history with assistant tool-call messages immediately
+  before their matching tool-result messages.
+- Updated the multi-turn recall follow-up path to send the assistant tool-call
+  message before dispatch results.
+- Covered the transcript ordering and serialized OpenAI tool-call payloads in tests.
+
+Observed:
+- `cargo test -p qsf_app models::`
+- `cargo test -p qsf_app multi_turn_text_loop`
+- `cargo test -p qsf_app --features openai models::`
+- `cargo test -p qsf_app --features openai multi_turn_text_loop`
+- `cargo test -p qsf_app`
+- `cargo test -p qsf_app --features openai`
+- `cargo build -p qsf_app --features openai`
+- `cargo clippy --all-targets -- -D warnings`
+- `cargo clippy --all-targets --features openai -- -D warnings`
+- Live OpenAI recall run `runs/2026-05-18-174421-multi-turn-text-loop`
+  completed with one `recall_turn` execution and a final verbatim `[Turn 0]`
+  response.
+
+Refs: crates/qsf_app/src/models/model_client.rs,
+crates/qsf_app/src/conversation/prompt.rs,
+crates/qsf_app/src/experiments/multi_turn_text_loop.rs,
+crates/qsf_app/src/models/openai_tool_client.rs,
+crates/qsf_app/src/models/openai_provider.rs
+
+## 2026-05-18 - OpenAI-feature clippy cleanup
+
+Cleaned up a realtime voice session match arm that only triggered Clippy when the
+OpenAI feature set was checked.
+
+What changed:
+- Collapsed the response transcript completion branch into a match guard while
+  preserving the existing fallback from `transcript` to `text`.
+
+Observed:
+- `cargo clippy --all-targets --features openai -- -D warnings`
+
+Refs: crates/qsf_app/src/audio/voice_session_provider.rs
+
+## 2026-05-18 - Model boundary review fixes
+
+Addressed the highest-risk model-module review findings around OpenAI tool-message
+validity, tool-dispatch permissions, and JSON-mode response diagnostics.
+
+What changed:
+- Removed the public invalid `ModelMessage::tool` constructor; tool-role messages are
+  constructed with `tool_result` so a provider call id is present.
+- Built model tool-dispatch permissions from registry metadata instead of a permissive
+  fallback, while preserving failure events for unknown or malformed tool calls.
+- Recorded JSON parse errors on `ModelResponse` when a JSON-mode response is malformed.
+- Added guard tests for role-id string serialization and advertised-tool drift, plus a
+  documented decision that model tool dispatch fails fast.
+
+Observed:
+- `cargo build`
+- `cargo test -p qsf_app models::`
+- `cargo test -p qsf_app conversation::prompt::tests::canonical_hash_changes_when_tool_call_id_changes`
+- `cargo test -p qsf_app`
+- `cargo clippy --all-targets -- -D warnings`
+- `cargo fmt`
+
+Refs: crates/qsf_app/src/models/model_client.rs,
+crates/qsf_app/src/models/tool_dispatch.rs,
+crates/qsf_app/src/models/model_role.rs,
+crates/qsf_app/src/models/openai_tool_client.rs,
+crates/qsf_app/src/conversation/prompt.rs,
+docs/DecisionLog.md

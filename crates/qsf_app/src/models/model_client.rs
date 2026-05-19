@@ -19,17 +19,23 @@ pub enum ModelMessageRole {
     Tool,
 }
 
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 pub struct ModelMessage {
     pub role: ModelMessageRole,
     pub content: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tool_call_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub tool_calls: Vec<ModelToolCall>,
 }
 
 impl ModelMessage {
-    pub fn new(role: ModelMessageRole, content: impl Into<String>) -> Self {
+    fn new(role: ModelMessageRole, content: impl Into<String>) -> Self {
         Self {
             role,
             content: content.into(),
+            tool_call_id: None,
+            tool_calls: vec![],
         }
     }
 
@@ -45,8 +51,25 @@ impl ModelMessage {
         Self::new(ModelMessageRole::Assistant, content)
     }
 
-    pub fn tool(content: impl Into<String>) -> Self {
-        Self::new(ModelMessageRole::Tool, content)
+    pub fn assistant_tool_calls(
+        content: impl Into<String>,
+        tool_calls: Vec<ModelToolCall>,
+    ) -> Self {
+        Self {
+            role: ModelMessageRole::Assistant,
+            content: content.into(),
+            tool_call_id: None,
+            tool_calls,
+        }
+    }
+
+    pub fn tool_result(tool_call_id: impl Into<String>, content: impl Into<String>) -> Self {
+        Self {
+            role: ModelMessageRole::Tool,
+            content: content.into(),
+            tool_call_id: Some(tool_call_id.into()),
+            tool_calls: vec![],
+        }
     }
 }
 
@@ -205,6 +228,8 @@ pub struct ModelResponse {
     pub model_name: String,
     pub output_text: String,
     pub structured_output: Option<Value>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub structured_output_parse_error: Option<String>,
     pub usage: Option<ModelUsage>,
     pub finish_reason: Option<String>,
     pub tool_calls: Vec<ModelToolCall>,
@@ -218,9 +243,12 @@ impl ModelResponse {
         output_text: impl Into<String>,
     ) -> Self {
         let output_text = output_text.into();
-        let structured_output = match request.response_format {
-            ModelResponseFormat::Text => None,
-            ModelResponseFormat::JsonObject => serde_json::from_str(&output_text).ok(),
+        let (structured_output, structured_output_parse_error) = match request.response_format {
+            ModelResponseFormat::Text => (None, None),
+            ModelResponseFormat::JsonObject => match serde_json::from_str(&output_text) {
+                Ok(value) => (Some(value), None),
+                Err(error) => (None, Some(error.to_string())),
+            },
         };
 
         Self {
@@ -229,6 +257,7 @@ impl ModelResponse {
             model_name: model_name.into(),
             output_text,
             structured_output,
+            structured_output_parse_error,
             usage: None,
             finish_reason: None,
             tool_calls: vec![],
@@ -399,8 +428,8 @@ mod tests {
     use anyhow::anyhow;
 
     use super::{
-        ModelClient, ModelMessage, ModelRequest, ModelResponse, ModelRole, ModelRoleId, ModelUsage,
-        invoke_model_role,
+        ModelClient, ModelMessage, ModelMessageRole, ModelRequest, ModelResponse,
+        ModelResponseFormat, ModelRole, ModelRoleId, ModelToolCall, ModelUsage, invoke_model_role,
     };
     use crate::runtime::run_context::RunContext;
 
@@ -440,6 +469,59 @@ mod tests {
         let usage = ModelUsage::new(10, 4).with_cached_input_tokens(10);
 
         assert_eq!(usage.cached_input_tokens, 10);
+    }
+
+    #[test]
+    fn tool_result_message_preserves_tool_call_id() {
+        let message = ModelMessage::tool_result("call-123", "tool output");
+
+        assert_eq!(message.role, ModelMessageRole::Tool);
+        assert_eq!(message.content, "tool output");
+        assert_eq!(message.tool_call_id.as_deref(), Some("call-123"));
+        assert!(message.tool_calls.is_empty());
+    }
+
+    #[test]
+    fn assistant_tool_call_message_preserves_tool_calls() {
+        let tool_call = ModelToolCall::new(
+            "call-123",
+            "recall_turn",
+            serde_json::json!({ "turn_id": 0 }),
+        );
+        let message = ModelMessage::assistant_tool_calls("", vec![tool_call.clone()]);
+
+        assert_eq!(message.role, ModelMessageRole::Assistant);
+        assert_eq!(message.content, "");
+        assert_eq!(message.tool_call_id, None);
+        assert_eq!(message.tool_calls, vec![tool_call]);
+    }
+
+    #[test]
+    fn tool_result_message_serialization_preserves_call_id() {
+        let message = ModelMessage::tool_result("call-123", "tool output");
+        let value = serde_json::to_value(&message).unwrap();
+
+        assert_eq!(
+            value,
+            serde_json::json!({
+                "role": "tool",
+                "tool_call_id": "call-123",
+                "content": "tool output"
+            })
+        );
+    }
+
+    #[test]
+    fn json_response_records_parse_error_when_output_is_malformed() {
+        let mut role = ModelRole::predefined(ModelRoleId::Critic);
+        role.output_expectation = crate::models::ModelOutputExpectation::JsonObject;
+        let mut request = ModelRequest::new(role, vec![ModelMessage::user("json please")]);
+        request.response_format = ModelResponseFormat::JsonObject;
+
+        let response = ModelResponse::from_text(&request, "mock", "mock", "{not-json}");
+
+        assert!(response.structured_output.is_none());
+        assert!(response.structured_output_parse_error.is_some());
     }
 
     #[cfg(debug_assertions)]
