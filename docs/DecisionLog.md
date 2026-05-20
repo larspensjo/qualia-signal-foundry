@@ -440,3 +440,30 @@ decisions are visible through `SessionResumed` events, including config-drift do
 Stage 4 sleep must update or clear sleep metadata as it consumes the manifest.
 Refs: crates/qsf_app/src/session, crates/qsf_app/src/experiments/multi_turn_text_loop.rs,
 crates/qsf_app/src/observability/event_log.rs
+
+## 2026-05-20 - Sleep auto-promotes routine memory candidates
+Decision: Sleep promotes `SleepReport.memory_candidates` into the cross-session
+memory store as `Observation` records automatically, with structural validation and
+normalized-string deduplication. `SleepReport.decision_candidates` are emitted as a
+`ReviewedMemoryDraft` with `kind = Decision` for manual review through the existing
+reviewed-memory workflow. This refines the 2026-05-16 decision: explicit review
+remains the boundary for high-stakes `Decision` records, while routine observations
+flow through automatically so cross-session continuity is observable in normal use.
+Context: The explicit-only conversion boundary protected manual review, but it also
+made ordinary continuity invisible unless the operator ran a separate promotion path.
+`Design.CrossSessionContinuity.md` keeps the manual boundary for decisions while
+letting routine memory candidates become inspectable, persisted observations. Retrieval
+decay is time-based from `last_reinforced_at`, with a 30-day half-life as the starting
+default.
+Consequences: Sleep writes through a commit protocol where the manifest is the last
+file written, so idempotent re-execution can recover from partial writes. Live loops
+can retrieve the resulting memory store, reinforce retrieved memories, and form or
+strengthen co-retrieval associations. Future memory categories that carry decision or
+preference weight should choose explicitly between automatic observation promotion and
+manual reviewed-memory promotion.
+Refs: docs/Plans/Design.CrossSessionContinuity.md,
+docs/Plans/Plan.CrossSessionContinuity.md,
+crates/qsf_app/src/sleep/auto_promote.rs,
+crates/qsf_app/src/sleep/commit.rs,
+crates/qsf_app/src/memory/co_retrieval.rs,
+docs/DecisionLog.md#2026-05-16---sleep-to-memory-conversion-is-explicit-and-separate

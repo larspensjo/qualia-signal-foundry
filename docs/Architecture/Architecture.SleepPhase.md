@@ -6,10 +6,11 @@ Candidate
 
 ## Implementation Status
 
-A minimal session-end sleep flow exists: a sleep pass produces a structured report,
-and a separate reviewed-memory pipeline can promote that report into a memory file
-through an explicit acceptance command. Most richer consolidation behavior
-(decay, reinforcement, associations, automatic triggers) is not built.
+A session-end sleep flow exists: a sleep pass produces a structured report, consumes
+the persisted text-loop `SessionState` when available, promotes routine memory
+candidates into the cross-session store, writes a consolidated brief, and updates the
+continuity manifest through a manifest-last commit protocol. Manual review remains
+the boundary for decision-kind candidates.
 
 **Implemented today:**
 
@@ -25,27 +26,44 @@ through an explicit acceptance command. Most richer consolidation behavior
   file-backed memory source the voice/text loops can load
   ([experiments/accept_reviewed_memory.rs](../../crates/qsf_app/src/experiments/accept_reviewed_memory.rs))
 - Session summarization model call routed through the summarizer model role
-- Sleep-to-memory conversion is explicit and separate; live loops never auto-promote
-  (per the 2026-05-16 decision)
+- Sleep-side auto-promotion of routine memory candidates into `Observation`
+  records, with normalized-string deduplication
+  ([sleep/auto_promote.rs](../../crates/qsf_app/src/sleep/auto_promote.rs))
+- Cross-turn association creation and strengthening from session retrieval history
+  ([sleep/auto_promote.rs](../../crates/qsf_app/src/sleep/auto_promote.rs))
+- Manifest-last sleep commit protocol for `memory-store.json`,
+  `consolidated-brief.json`, archived briefs, and `continuity-manifest.json`
+  ([sleep/commit.rs](../../crates/qsf_app/src/sleep/commit.rs))
+- `ConsolidatedBrief` resume injection into the first live-loop turn after sleep
+  ([experiments/multi_turn_text_loop.rs](../../crates/qsf_app/src/experiments/multi_turn_text_loop.rs))
+- Decision candidates emitted as `ReviewedMemoryDraft` records for manual review
+  instead of automatic acceptance
+  ([memory/reviewed_memory_draft.rs](../../crates/qsf_app/src/memory/reviewed_memory_draft.rs))
+- Real-provider sleep summarization hardened with a larger JSON response budget,
+  compact prompt guidance, and association-index normalization
+  ([sleep/session_summary.rs](../../crates/qsf_app/src/sleep/session_summary.rs),
+  [sleep/sleep_report.rs](../../crates/qsf_app/src/sleep/sleep_report.rs))
 
 **Partial:**
 
 - Manual trigger only; checkpoint and periodic sleep are not implemented
-- Memory candidate extraction is basic — derived from session content, not from
+- Memory candidate extraction is basic: derived from session content, not from
   scoring across events
+- Decay is applied during retrieval through the memory system, not as a separate
+  sleep maintenance sweep
+- Tool-trace review is present only as traceable session context, not as its own
+  structured sleep review path
 
 **Not yet implemented:**
 
-- Decay of weak memories
-- Reinforcement of repeated themes
-- Association building or strengthening
-- Open-question extraction as a structured output
-- Decision-candidate extraction
-- Future-context-hint preparation
-- Tool-trace review
-- Replayable sleep with deterministic comparison
+- Periodic or checkpoint-triggered sleep
+- Explicit decay/pruning of weak memories during sleep
+- Semantic deduplication or contradiction handling during promotion
+- Replay UI or report view for deterministic sleep comparison
+- Voice-loop session consumption by the sleep phase
 
-Last reviewed: 2026-05-18 against the code on `main`.
+Last reviewed: 2026-05-20 against the Stage 5 continuity implementation and
+OpenAI golden-path run.
 
 ## Summary
 

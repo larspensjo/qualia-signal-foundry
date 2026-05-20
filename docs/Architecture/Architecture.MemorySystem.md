@@ -1,15 +1,15 @@
 # Architecture: Memory System
 
-Status: Draft  
-Maturity: Sketch  
+Status: Draft
+Maturity: Sketch
 Area: Core Architecture
 
 ## Implementation Status
 
-The memory system has a working schema, a reviewed-memory promotion pipeline, and
-file-backed retrieval. The richer behaviors that make memory feel like memory —
-decay, reinforcement, association growth, cross-session continuity — are not yet
-built.
+The memory system has a working schema, file-backed retrieval, cross-session
+storage, sleep-side promotion, and live-loop reinforcement. The remaining gaps are
+mostly richer semantics around memory types, contradiction/supersession handling,
+and future retrieval backends.
 
 **Implemented today:**
 
@@ -19,35 +19,50 @@ built.
 - Association-weighted retrieval with a small fixture
   ([memory/retrieval.rs](../../crates/qsf_app/src/memory/retrieval.rs),
   [memory/fixtures.rs](../../crates/qsf_app/src/memory/fixtures.rs))
+- Time-based recency decay against `MemoryRecord.last_reinforced_at`, falling back
+  to `created_at` for legacy records
+  ([memory/retrieval.rs](../../crates/qsf_app/src/memory/retrieval.rs),
+  [memory/memory_record.rs](../../crates/qsf_app/src/memory/memory_record.rs))
+- Cross-session memory store via `MemoryStore`, backed by
+  `state/text-loop/memory-store.json` or `QSF_STATE_DIR/memory-store.json`
+  ([memory/store.rs](../../crates/qsf_app/src/memory/store.rs))
 - File-backed memory source, opt-in via `QSF_VOICE_MEMORY_SOURCE=file` /
   `QSF_SESSION_MEMORY_SOURCE=file`
 - Reviewed-memory draft workflow that converts a sleep report into a memory file
-  only through an explicit acceptance command
+  through an explicit acceptance command for manual review paths
   ([memory/reviewed_memory_draft.rs](../../crates/qsf_app/src/memory/reviewed_memory_draft.rs),
   [experiments/reviewed_memory_draft.rs](../../crates/qsf_app/src/experiments/reviewed_memory_draft.rs),
   [experiments/accept_reviewed_memory.rs](../../crates/qsf_app/src/experiments/accept_reviewed_memory.rs))
+- Sleep-side auto-promotion of routine memory candidates and cross-turn
+  associations into the cross-session store
+  ([sleep/auto_promote.rs](../../crates/qsf_app/src/sleep/auto_promote.rs),
+  [experiments/sleep_phase_session_summary.rs](../../crates/qsf_app/src/experiments/sleep_phase_session_summary.rs))
+- Live-loop co-retrieval association formation and retrieved-memory reinforcement
+  ([memory/co_retrieval.rs](../../crates/qsf_app/src/memory/co_retrieval.rs),
+  [experiments/multi_turn_text_loop.rs](../../crates/qsf_app/src/experiments/multi_turn_text_loop.rs))
 - Session-local warm summaries and append-only verbatim recall in the multi-turn
   text loop
   ([experiments/multi_turn_text_loop.rs](../../crates/qsf_app/src/experiments/multi_turn_text_loop.rs))
 
 **Partial:**
 
-- Associative memory exists as a toy comparison experiment
-  (`Experiment.AssociativeMemoryToyModel`) rather than a production retrieval path
-- Memory candidates are extracted in sleep-phase session summary but only as
-  proposals that require manual review
+- Explicit episodic / semantic / preference / decision typing of memory items is
+  still shallow: the schema has record kinds, but the system mostly promotes
+  routine observations and leaves decision candidates in reviewed drafts.
+- Sleep promotion deduplicates by normalized text, not by semantic equivalence.
+- Associative memory exists in the live retrieval and reinforcement path, while
+  richer graph inspection and editing remain future work.
 
 **Not yet implemented:**
 
-- Cross-session memory store (live `MemoryStore` is per-run only)
-- Memory decay or reinforcement of any kind
-- Explicit episodic / semantic / preference / decision typing of memory items
-  beyond what the schema fields allow
 - Supersession / contradiction representation
 - Vector index, embedding store, or graph store
-- Promotion of session summaries or recall records into durable memory
+- Promotion of session summaries or recall records into durable memory beyond
+  sleep-generated candidates
+- Voice-loop participation in the shared continuity memory store
 
-Last reviewed: 2026-05-18 against the code on `main`.
+Last reviewed: 2026-05-20 against the Stage 5 continuity implementation and
+OpenAI golden-path run.
 
 ## Purpose
 

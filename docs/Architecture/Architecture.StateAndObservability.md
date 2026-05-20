@@ -8,15 +8,17 @@ Candidate
 
 Per-run observability — event log, trace log, engine log, markdown report — is
 implemented and is the backbone of every experiment. State categories are partial:
-session and runtime state exist where experiments need them, but several
-candidate categories listed below have no module yet.
+session and runtime state exist where experiments need them, and the multi-turn
+text loop now has a manifest-backed cross-session state directory. Several
+candidate categories listed below still have no shared module.
 
 **Implemented today:**
 
 - `RunContext` owning the per-run output directory and structured JSONL writers
   ([runtime/run_context.rs](../../crates/qsf_app/src/runtime/run_context.rs))
 - `EventType` covering the event-log catalogue actually used in production
-  (input, transcript, context, model role, tool, memory, sleep, error)
+  (input, transcript, context, model role, tool, memory, sleep, co-retrieval,
+  persistence, error)
   ([observability/event_log.rs](../../crates/qsf_app/src/observability/event_log.rs))
 - Trace records for context assembly, model-role invocation, tool calls, and recall
   ([observability/trace.rs](../../crates/qsf_app/src/observability/trace.rs))
@@ -28,6 +30,14 @@ candidate categories listed below have no module yet.
   config-drift downgrade status, and pending brief path
 - Cross-session text-loop state persisted under `state/text-loop/` by default:
   `continuity-manifest.json` and `session-state.json`
+- Cross-session sleep and memory state persisted in the same state directory:
+  `memory-store.json`, `consolidated-brief.json`, and archived sleep briefs
+  ([memory/store.rs](../../crates/qsf_app/src/memory/store.rs),
+  [sleep/commit.rs](../../crates/qsf_app/src/sleep/commit.rs))
+- Live-loop memory reinforcement events: `CoRetrievalAssociationsProposed`,
+  `MemoryReinforced`, and `MemoryStorePersisted`
+  ([observability/event_log.rs](../../crates/qsf_app/src/observability/event_log.rs),
+  [experiments/multi_turn_text_loop.rs](../../crates/qsf_app/src/experiments/multi_turn_text_loop.rs))
 - `engine.log` initialization redirected to `runs/<run-id>/engine.log` per run
 
 **Partial:**
@@ -36,8 +46,9 @@ candidate categories listed below have no module yet.
 - **Session State** is implemented for the multi-turn text loop
   ([session/mod.rs](../../crates/qsf_app/src/session/mod.rs)) but not reused by
   the voice loop
-- **Memory State** is partial — records and associations exist; reinforcement,
-  decay, retrieval-history fields are not maintained
+- **Memory State** is partial: records, associations, decay inputs, and live
+  reinforcement are maintained for the text loop, but graph inspection,
+  contradiction handling, and voice-loop reuse are not implemented
 - **Tool State** is exposed through registry metadata on `ToolRequested` /
   `ToolCompleted` / `ToolFailed`; there is no separate `ToolState` summary
 
@@ -50,7 +61,8 @@ candidate categories listed below have no module yet.
   memory-graph view, no cost dashboard)
 - `experiment_id` and `memory_update_id` correlation across runs
 
-Last reviewed: 2026-05-20 against the code on `main`.
+Last reviewed: 2026-05-20 against the Stage 5 continuity implementation and
+OpenAI golden-path run.
 
 ## Summary
 

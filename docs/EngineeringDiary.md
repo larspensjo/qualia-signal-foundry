@@ -1282,3 +1282,26 @@ Refs: crates/qsf_app/src/sleep/session_summary.rs,
 crates/qsf_app/src/sleep/sleep_report.rs,
 runs/2026-05-20-121912-sleep-phase-session-summary,
 runs/2026-05-20-122850-sleep-phase-session-summary
+
+## 2026-05-20 - Cross-session continuity golden path
+
+The OpenAI-backed continuity path completed end to end: sleep created a persistent
+memory store, the live text loop loaded that store, and repeated retrieval reinforced
+the sleep memories while creating and strengthening co-retrieval associations.
+
+Observed:
+- Sleep run `runs/2026-05-20-124258-sleep-phase-session-summary` succeeded after the
+  real-provider JSON budget and association-index fixes.
+- Live-loop run `runs/2026-05-20-124436-multi-turn-text-loop` loaded `memory_store`,
+  created five live co-retrieval associations on turn 0, strengthened five existing
+  associations on turn 1, and persisted `reinforcement_count = 2` for the four sleep
+  memories.
+- The first OpenAI responder turn ended with `finish_reason = length`, which did not
+  block reinforcement but remains a conversational output-budget polish item.
+
+Refs: runs/2026-05-20-124258-sleep-phase-session-summary,
+runs/2026-05-20-124436-multi-turn-text-loop,
+crates/qsf_app/src/experiments/sleep_phase_session_summary.rs,
+crates/qsf_app/src/experiments/multi_turn_text_loop.rs,
+crates/qsf_app/src/memory/co_retrieval.rs, docs/DecisionLog.md;
+implements: 2026-05-20 - Sleep auto-promotes routine memory candidates

@@ -2515,7 +2515,7 @@ git commit -m "feat(text-loop): emit co-retrieval associations and reinforcement
 - Modify: `docs/Architecture/Architecture.SleepPhase.md`
 - Modify: `docs/Architecture/Architecture.StateAndObservability.md`
 
-- [ ] **Step 1:** In each file's *Implementation Status* section, move the relevant items from "not yet implemented" to "implemented today" with code-module refs. For example, in `Architecture.MemorySystem.md`:
+- [x] **Step 1:** In each file's *Implementation Status* section, move the relevant items from "not yet implemented" to "implemented today" with code-module refs. For example, in `Architecture.MemorySystem.md`:
 
 ```markdown
 **Implemented today:**
@@ -2547,7 +2547,7 @@ git commit -m "docs(architecture): update implementation-status sections for cro
 **Files:**
 - Modify: `docs/DecisionLog.md`
 
-- [ ] **Step 1:** Append a new entry. Replace `YYYY-MM-DD` with today's date.
+- [x] **Step 1:** Append a new entry. Replace `YYYY-MM-DD` with today's date.
 
 ```markdown
 ## YYYY-MM-DD - Sleep auto-promotes routine memory candidates
@@ -2588,9 +2588,9 @@ git commit -m "docs(decision-log): refine 2026-05-16 boundary; sleep auto-promot
 - Modify: `docs/EngineeringDiary.md`
 - Create: `docs/Plans/Idea.VoiceLoopUnification.md`
 
-- [ ] **Step 1:** Append a diary entry following the file's existing template. Reference this plan, the design doc, and the new decision-log entry.
+- [x] **Step 1:** Append a diary entry following the file's existing template. Reference this plan, the design doc, and the new decision-log entry.
 
-- [ ] **Step 2:** Create `docs/Plans/Idea.VoiceLoopUnification.md` as a thin stub:
+- [x] **Step 2:** Create `docs/Plans/Idea.VoiceLoopUnification.md` as a thin stub:
 
 ```markdown
 # Idea: Voice Loop Unification with Multi-Turn SessionState
