@@ -76,7 +76,7 @@ impl ExperimentName {
                 "Compare selected and omitted memory context under a deliberately small budget"
             }
             Self::ModelRoleSmokeTest => {
-                "Invoke a model role through a deterministic mock client or the optional OpenAI adapter"
+                "Invoke a model role through a deterministic mock client or the explicitly selected OpenAI adapter"
             }
             Self::MultiTurnTextLoop => {
                 "Run a human-driven text conversation with append-only session state and cache-stable prompt assembly"

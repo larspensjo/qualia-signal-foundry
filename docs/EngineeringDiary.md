@@ -926,8 +926,6 @@ Verified Stage 2 before starting recall-tool work with automated checks and a de
 eight-turn CLI run that crossed the default warm threshold.
 
 Observed:
-- `cargo test multi_turn_text_loop --lib`, `cargo build`,
-  `cargo clippy --all-targets -- -D warnings`, and `cargo fmt` completed successfully.
 - Run `runs/2026-05-17-053037-multi-turn-text-loop` completed with eight appended
   turns, two `TurnSummarized` events, no `SessionLimitReached` event, and warm summaries
   produced by `gpt-5.4-nano`.
@@ -986,7 +984,6 @@ What changed:
   tool execution.
 
 Observed:
-- `cargo test -p qsf_app` passed after the migration.
 - Borrowed session state cannot be downcast through `std::any::Any` because `Any`
   requires `'static`; the context trait now exposes a narrow session-state accessor
   instead of an `as_any` downcast hook.
@@ -1006,9 +1003,6 @@ What changed:
   recall-specific session records and traces in the experiment.
 - Documented `ModelRole.allowed_tools` as the authoritative role-level allow-list.
 
-Observed:
-- `cargo test -p qsf_app` passed after the dispatch boundary change.
-
 Refs: crates/qsf_app/src/models,
 crates/qsf_app/src/experiments/multi_turn_text_loop.rs
 
@@ -1027,12 +1021,6 @@ What changed:
   call id.
 - Added unit tests for default tool messages, id-preserving tool results, serde shape,
   and prompt hash differentiation by call id.
-
-Observed:
-- `cargo test -p qsf_app models::`
-- `cargo test -p qsf_app multi_turn_text_loop`
-- `cargo build -p qsf_app`
-- `cargo clippy --all-targets -- -D warnings`
 
 Refs: crates/qsf_app/src/models/model_client.rs,
 crates/qsf_app/src/conversation/prompt.rs,
@@ -1057,11 +1045,6 @@ What changed:
 - Added unit tests covering request serialization, response parsing, tool-result
   messages, and the tool-capable routing decision.
 
-Observed:
-- `cargo test -p qsf_app --features openai models::`
-- `cargo build -p qsf_app --features openai`
-- `cargo clippy --all-targets -- -D warnings`
-
 Refs: crates/qsf_app/Cargo.toml,
 crates/qsf_app/src/models/openai_provider.rs,
 crates/qsf_app/src/models/openai_tool_client.rs
@@ -1084,12 +1067,6 @@ What changed:
 - Kept the existing guard that rejects any follow-up response that still returns
   tool calls.
 
-Observed:
-- `cargo test -p qsf_app multi_turn_text_loop`
-- `cargo test -p qsf_app --features openai multi_turn_text_loop`
-- `cargo build -p qsf_app --features openai`
-- `cargo clippy --all-targets -- -D warnings`
-
 Refs: crates/qsf_app/src/experiments/multi_turn_text_loop.rs
 
 ## 2026-05-18 - OpenAI tool-call response parsing
@@ -1106,12 +1083,6 @@ What changed:
   unsupported non-function tool-call types.
 - Covered multiple tool calls, text content, content-part text, missing ids,
   malformed arguments, and cached-token parsing in unit tests.
-
-Observed:
-- `cargo test -p qsf_app --features openai models::`
-- `cargo test -p qsf_app models::`
-- `cargo build -p qsf_app --features openai`
-- `cargo clippy --all-targets -- -D warnings`
 
 Refs: crates/qsf_app/src/models/openai_tool_client.rs,
 crates/qsf_app/src/models/openai_provider.rs
@@ -1131,15 +1102,6 @@ What changed:
 - Covered the transcript ordering and serialized OpenAI tool-call payloads in tests.
 
 Observed:
-- `cargo test -p qsf_app models::`
-- `cargo test -p qsf_app multi_turn_text_loop`
-- `cargo test -p qsf_app --features openai models::`
-- `cargo test -p qsf_app --features openai multi_turn_text_loop`
-- `cargo test -p qsf_app`
-- `cargo test -p qsf_app --features openai`
-- `cargo build -p qsf_app --features openai`
-- `cargo clippy --all-targets -- -D warnings`
-- `cargo clippy --all-targets --features openai -- -D warnings`
 - Live OpenAI recall run `runs/2026-05-18-174421-multi-turn-text-loop`
   completed with one `recall_turn` execution and a final verbatim `[Turn 0]`
   response.
@@ -1159,9 +1121,6 @@ What changed:
 - Collapsed the response transcript completion branch into a match guard while
   preserving the existing fallback from `transcript` to `text`.
 
-Observed:
-- `cargo clippy --all-targets --features openai -- -D warnings`
-
 Refs: crates/qsf_app/src/audio/voice_session_provider.rs
 
 ## 2026-05-18 - Model boundary review fixes
@@ -1177,14 +1136,6 @@ What changed:
 - Recorded JSON parse errors on `ModelResponse` when a JSON-mode response is malformed.
 - Added guard tests for role-id string serialization and advertised-tool drift, plus a
   documented decision that model tool dispatch fails fast.
-
-Observed:
-- `cargo build`
-- `cargo test -p qsf_app models::`
-- `cargo test -p qsf_app conversation::prompt::tests::canonical_hash_changes_when_tool_call_id_changes`
-- `cargo test -p qsf_app`
-- `cargo clippy --all-targets -- -D warnings`
-- `cargo fmt`
 
 Refs: crates/qsf_app/src/models/model_client.rs,
 crates/qsf_app/src/models/tool_dispatch.rs,
@@ -1208,17 +1159,23 @@ What changed:
 - Refreshed the tool-system architecture status for calculator availability in
   the multi-turn loop.
 
-Observed:
-- `cargo test -p qsf_app calculator_tool_answers_arithmetic_turn_through_follow_up`
-- `cargo test -p qsf_app openai_recall_path_preserves_tool_call_id_and_hides_tools_on_follow_up`
-- `cargo test -p qsf_app dispatcher_executes_allowed_recall_turn_tool`
-- `cargo build`
-- `cargo test -p qsf_app`
-- `cargo clippy --all-targets -- -D warnings`
-- `cargo fmt`
-- `cargo test -p qsf_app`
-
 Refs: crates/qsf_app/src/experiments/multi_turn_text_loop.rs,
 crates/qsf_app/src/conversation/prompt.rs,
 crates/qsf_app/src/models/mock_model.rs,
 docs/Architecture/Architecture.ToolSystem.md
+
+## 2026-05-20 - OpenAI provider path compiled unconditionally
+
+Removed the `qsf_app/openai` Cargo feature so the live OpenAI model, realtime
+transcription, and realtime voice session adapters are compiled by default while
+runtime provider selection still defaults to mocks unless explicitly configured.
+
+What changed:
+- Made the former OpenAI-feature dependencies unconditional in `qsf_app`.
+- Removed `#[cfg(feature = "openai")]` gates and the fallback stubs that reported
+  the feature as missing.
+- Updated setup and generated voice-memory instructions to drop `--features openai`.
+
+Refs: crates/qsf_app/Cargo.toml, crates/qsf_app/src/models,
+crates/qsf_app/src/audio, README.md, docs/DecisionLog.md; implements:
+2026-05-20 - openai Cargo feature removed
