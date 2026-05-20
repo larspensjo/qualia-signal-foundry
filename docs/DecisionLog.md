@@ -467,3 +467,31 @@ crates/qsf_app/src/sleep/auto_promote.rs,
 crates/qsf_app/src/sleep/commit.rs,
 crates/qsf_app/src/memory/co_retrieval.rs,
 docs/DecisionLog.md#2026-05-16---sleep-to-memory-conversion-is-explicit-and-separate
+
+## 2026-05-20 - Post-hoc browser tools use Rust backend + browser frontend split
+Decision: Browser-based post-hoc inspection tools (starting with the Memory Association
+Browser) are served by a dedicated Rust crate, `qsf_browser_server`, that owns file
+access, persisted-format ownership, schema validation, derived data, and the
+visualization DTO contract. The TypeScript/Vite/PixiJS frontend consumes that
+visualization API only and never reads persisted JSON files directly. Memory record,
+association, and store-loading types are extracted from `qsf_app` into a shared
+`qsf_memory` crate that both `qsf_app` and `qsf_browser_server` depend on. The Live
+Activation Dashboard remains a separate concern and will be served by `qsf_app`
+itself when implemented, because LAD needs real-time data from the running simulation.
+Context: `docs/RustBackendBrowserFrontend.md` proposed keeping Rust as the semantic
+layer for browser visualizations to avoid duplicating domain semantics in TypeScript
+and to keep the UI from coupling to internal storage details. Review of
+`Design.MemoryAssociationBrowser.md` flagged that depending on all of `qsf_app` would
+drag model providers, audio providers, and experiments into a post-hoc inspection
+binary, so memory types are extracted to a shared crate before the browser server is
+built. The MAB and LAD have different latency and coupling constraints; sharing one
+backend would conflate sealed-artifact inspection with live runtime observability.
+Consequences: `qsf_browser_server` depends on `qsf_memory` (not `qsf_app`) for store
+loading. New post-hoc inspection tools that read sealed artifacts may add route
+groups to `qsf_browser_server`. Live observability tools must not be added to
+`qsf_browser_server`; they belong in `qsf_app`. The TypeScript frontend defines DTO
+type mirrors but does not own persisted-format knowledge.
+Refs: docs/Plans/Design.MemoryAssociationBrowser.md,
+docs/Plans/Idea.MemoryAssociationBrowser.md,
+docs/Plans/Design.LiveActivationDashboard.md,
+docs/RustBackendBrowserFrontend.md
