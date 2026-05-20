@@ -29,6 +29,8 @@ pub struct MemoryRecord {
     pub created_at: OffsetDateTime,
     pub importance: f64,
     pub reinforcement_count: u32,
+    #[serde(default, with = "time::serde::rfc3339::option")]
+    pub last_reinforced_at: Option<OffsetDateTime>,
     pub source_reference: String,
     pub estimated_tokens: usize,
 }
@@ -57,9 +59,15 @@ impl MemoryRecord {
             created_at,
             importance,
             reinforcement_count,
+            last_reinforced_at: None,
             source_reference: source_reference.into(),
             estimated_tokens,
         }
+    }
+
+    pub fn with_last_reinforced_at(mut self, at: OffsetDateTime) -> Self {
+        self.last_reinforced_at = Some(at);
+        self
     }
 
     pub fn ensure_current_schema(&self) -> anyhow::Result<()> {
@@ -127,6 +135,27 @@ mod tests {
         record.schema_version = MEMORY_RECORD_SCHEMA_VERSION + 1;
 
         assert!(record.ensure_current_schema().is_err());
+    }
+
+    #[test]
+    fn deserializes_v1_record_without_last_reinforced_at_with_none_fallback() {
+        let v1_json = r#"{
+            "schema_version": 1,
+            "id": "memory.legacy",
+            "kind": "observation",
+            "title": "Legacy",
+            "summary": "An old record predating last_reinforced_at.",
+            "tags": [],
+            "created_at": "2026-05-09T12:00:00Z",
+            "importance": 0.5,
+            "reinforcement_count": 0,
+            "source_reference": "tests",
+            "estimated_tokens": 10
+        }"#;
+
+        let record: MemoryRecord = serde_json::from_str(v1_json).unwrap();
+        assert_eq!(record.last_reinforced_at, None);
+        assert!(record.ensure_current_schema().is_ok());
     }
 
     fn timestamp() -> OffsetDateTime {

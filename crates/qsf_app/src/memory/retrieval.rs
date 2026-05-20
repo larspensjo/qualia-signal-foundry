@@ -3,11 +3,14 @@ use std::fmt;
 use std::time::Instant;
 
 use serde::Serialize;
+use time::OffsetDateTime;
 
 use crate::observability::trace::{duration_ms, duration_ns};
 
 use super::association::{Association, ensure_current_association_schema};
 use super::memory_record::{MemoryRecord, ensure_current_memory_schema};
+
+pub(crate) const DECAY_HALFLIFE_DAYS: f64 = 30.0;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -77,7 +80,7 @@ pub fn retrieve_memories(
 
     let started_at = Instant::now();
     let query_terms = tokenize(query);
-    let recency_by_id = recency_scores(records);
+    let now = OffsetDateTime::now_utc();
     let seed_ids = keyword_seed_ids(records, &query_terms);
     let association_paths = association_paths_by_target(associations, &seed_ids);
 
@@ -89,13 +92,7 @@ pub fn retrieve_memories(
                 .get(&record.id)
                 .cloned()
                 .unwrap_or_default();
-            let score = score_record(
-                record,
-                strategy,
-                *recency_by_id.get(&record.id).unwrap_or(&0.0),
-                &matched_terms,
-                &paths,
-            );
+            let score = score_record(record, strategy, now, &matched_terms, &paths);
 
             RetrievedMemory {
                 memory: record.clone(),
@@ -142,10 +139,11 @@ pub fn retrieved_memory_ids(memories: &[RetrievedMemory]) -> Vec<String> {
 fn score_record(
     record: &MemoryRecord,
     strategy: RetrievalStrategy,
-    recency: f64,
+    now: OffsetDateTime,
     matched_terms: &[String],
     association_paths: &[AssociationPath],
 ) -> RetrievalScore {
+    let recency = compute_recency_decay(record, now);
     let keyword = matched_terms_in_text(record, matched_terms) as f64;
     let tag = matched_terms_in_tags(record, matched_terms) as f64;
     let association = association_paths
@@ -183,6 +181,13 @@ fn score_record(
         importance,
         reinforcement,
     }
+}
+
+pub(crate) fn compute_recency_decay(record: &MemoryRecord, now: OffsetDateTime) -> f64 {
+    let reference = record.last_reinforced_at.unwrap_or(record.created_at);
+    let age_seconds = (now - reference).whole_seconds().max(0) as f64;
+    let age_days = age_seconds / 86_400.0;
+    (-std::f64::consts::LN_2 * age_days / DECAY_HALFLIFE_DAYS).exp()
 }
 
 fn tokenize(input: &str) -> HashSet<String> {
@@ -273,25 +278,10 @@ fn association_paths_by_target(
     paths
 }
 
-fn recency_scores(records: &[MemoryRecord]) -> HashMap<String, f64> {
-    let mut sorted = records.iter().collect::<Vec<_>>();
-    sorted.sort_by_key(|record| std::cmp::Reverse(record.created_at));
-    let total = sorted.len().max(1) as f64;
-
-    sorted
-        .into_iter()
-        .enumerate()
-        .map(|(index, record)| {
-            let score = (total - index as f64) / total;
-            (record.id.clone(), score)
-        })
-        .collect()
-}
-
 #[cfg(test)]
 mod tests {
     use super::{RetrievalStrategy, retrieve_memories};
-    use crate::memory::phase_four_fixture;
+    use crate::memory::{MemoryRecord, MemoryRecordKind, phase_four_fixture};
 
     #[test]
     fn recency_only_prefers_newest_records() {
@@ -363,5 +353,92 @@ mod tests {
         assert!(!terms.contains("ai"));
         assert!(!terms.contains("ui"));
         assert!(!terms.contains("id"));
+    }
+
+    #[test]
+    fn recency_uses_time_based_decay_from_last_reinforced_at() {
+        use time::OffsetDateTime;
+        use time::format_description::well_known::Rfc3339;
+
+        let now = OffsetDateTime::parse("2026-06-01T00:00:00Z", &Rfc3339).unwrap();
+        let recent = MemoryRecord::new(
+            "memory.recent",
+            MemoryRecordKind::Observation,
+            "Recent",
+            "Recent",
+            vec![],
+            now - time::Duration::days(1),
+            0.5,
+            0,
+            "tests",
+            10,
+        )
+        .with_last_reinforced_at(now - time::Duration::days(1));
+        let stale = MemoryRecord::new(
+            "memory.stale",
+            MemoryRecordKind::Observation,
+            "Stale",
+            "Stale",
+            vec![],
+            now - time::Duration::days(120),
+            0.5,
+            0,
+            "tests",
+            10,
+        )
+        .with_last_reinforced_at(now - time::Duration::days(120));
+
+        let recent_score = super::compute_recency_decay(&recent, now);
+        let stale_score = super::compute_recency_decay(&stale, now);
+
+        assert!(recent_score > 0.9, "recent score was {recent_score}");
+        assert!(stale_score < 0.1, "stale score was {stale_score}");
+    }
+
+    #[test]
+    fn recency_falls_back_to_created_at_when_last_reinforced_at_is_none() {
+        use time::OffsetDateTime;
+        use time::format_description::well_known::Rfc3339;
+
+        let now = OffsetDateTime::parse("2026-06-01T00:00:00Z", &Rfc3339).unwrap();
+        let record = MemoryRecord::new(
+            "memory.legacy",
+            MemoryRecordKind::Observation,
+            "Legacy",
+            "Legacy",
+            vec![],
+            now - time::Duration::days(10),
+            0.5,
+            0,
+            "tests",
+            10,
+        );
+        assert_eq!(record.last_reinforced_at, None);
+
+        let score = super::compute_recency_decay(&record, now);
+        assert!(score > 0.5 && score < 1.0, "fallback score was {score}");
+    }
+
+    #[test]
+    fn recency_decay_halves_at_configured_halflife() {
+        use time::OffsetDateTime;
+        use time::format_description::well_known::Rfc3339;
+
+        let now = OffsetDateTime::parse("2026-06-01T00:00:00Z", &Rfc3339).unwrap();
+        let record = MemoryRecord::new(
+            "memory.halflife",
+            MemoryRecordKind::Observation,
+            "Half-life",
+            "Half-life",
+            vec![],
+            now - time::Duration::days(super::DECAY_HALFLIFE_DAYS as i64),
+            0.5,
+            0,
+            "tests",
+            10,
+        );
+
+        let score = super::compute_recency_decay(&record, now);
+        assert!((score - 0.5).abs() < 0.001, "half-life score was {score}");
     }
 }

@@ -5,6 +5,7 @@ pub mod fixtures;
 pub mod memory_record;
 pub mod retrieval;
 pub mod reviewed_memory_draft;
+pub mod store;
 
 pub use association::{ASSOCIATION_SCHEMA_VERSION, Association};
 pub use fixtures::{MemoryFixture, phase_four_fixture};
@@ -18,3 +19,4 @@ pub use reviewed_memory_draft::{
     ReviewedMemoryDraft, convert_sleep_report_to_reviewed_memory_draft, load_reviewed_memory_draft,
     render_reviewed_memory_draft_markdown, write_reviewed_memory_draft,
 };
+pub use store::{MemoryStore, MemoryStoreContents};

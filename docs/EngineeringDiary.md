@@ -1179,3 +1179,19 @@ What changed:
 Refs: crates/qsf_app/Cargo.toml, crates/qsf_app/src/models,
 crates/qsf_app/src/audio, README.md, docs/DecisionLog.md; implements:
 2026-05-20 - openai Cargo feature removed
+
+## 2026-05-20 - Cross-session memory store foundation
+
+Added the persistence and retrieval primitives needed before sleep can create a durable
+cross-session memory store.
+
+What changed:
+- Added optional `MemoryRecord.last_reinforced_at` with backwards-compatible v1 JSON deserialization.
+- Changed memory retrieval recency scoring from rank order to time decay against `last_reinforced_at`, falling back to `created_at`.
+- Added `MemoryStore` load, append, schema validation, and atomic pretty-JSON persistence.
+
+Observed:
+- Existing default retrieval behavior still prefers newer fixture records when no reinforcement timestamp exists.
+
+Refs: crates/qsf_app/src/memory/memory_record.rs, crates/qsf_app/src/memory/retrieval.rs,
+crates/qsf_app/src/memory/store.rs

@@ -371,6 +371,7 @@ fn convert_memory_candidate(
             .unwrap_or(DEFAULT_DRAFT_IMPORTANCE)
             .clamp(0.0, 1.0),
         reinforcement_count: 0,
+        last_reinforced_at: None,
         source_reference,
         estimated_tokens: estimated_tokens(&summary),
     }
