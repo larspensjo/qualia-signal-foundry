@@ -119,22 +119,25 @@ fn parse_association_candidates(
     let Some(entries) = optional_array(value, field_name)? else {
         return Ok(vec![]);
     };
+    let zero_based_indexes = association_candidates_use_zero_based_indexes(entries, field_name)?;
 
     entries
         .iter()
         .enumerate()
         .map(|(index, entry)| match entry {
             Value::Object(_) => Ok(SleepAssociationCandidate {
-                from_memory_candidate_index: required_positive_usize(
+                from_memory_candidate_index: required_association_index(
                     entry,
                     "from_memory_candidate_index",
+                    zero_based_indexes,
                 )
                 .with_context(|| {
                     format!("expected `{field_name}[{index}]` to contain a 1-based source index")
                 })?,
-                to_memory_candidate_index: required_positive_usize(
+                to_memory_candidate_index: required_association_index(
                     entry,
                     "to_memory_candidate_index",
+                    zero_based_indexes,
                 )
                 .with_context(|| {
                     format!("expected `{field_name}[{index}]` to contain a 1-based target index")
@@ -148,6 +151,30 @@ fn parse_association_candidates(
             ),
         })
         .collect()
+}
+
+fn association_candidates_use_zero_based_indexes(
+    entries: &[Value],
+    field_name: &'static str,
+) -> anyhow::Result<bool> {
+    let mut zero_based = false;
+    for (index, entry) in entries.iter().enumerate() {
+        if !entry.is_object() {
+            continue;
+        }
+
+        let from_index = required_nonnegative_usize(entry, "from_memory_candidate_index")
+            .with_context(|| {
+                format!("expected `{field_name}[{index}]` to contain a source index")
+            })?;
+        let to_index = required_nonnegative_usize(entry, "to_memory_candidate_index")
+            .with_context(|| {
+                format!("expected `{field_name}[{index}]` to contain a target index")
+            })?;
+        zero_based = zero_based || from_index == 0 || to_index == 0;
+    }
+
+    Ok(zero_based)
 }
 
 fn parse_summary_list(value: &Value, field_name: &'static str) -> anyhow::Result<Vec<String>> {
@@ -176,14 +203,29 @@ fn required_string(value: &Value, field_name: &'static str) -> anyhow::Result<St
         .ok_or_else(|| anyhow!("missing or non-string required field `{field_name}`"))
 }
 
-fn required_positive_usize(value: &Value, field_name: &'static str) -> anyhow::Result<usize> {
+fn required_association_index(
+    value: &Value,
+    field_name: &'static str,
+    zero_based_indexes: bool,
+) -> anyhow::Result<usize> {
+    let number = required_nonnegative_usize(value, field_name)?;
+    if zero_based_indexes {
+        return number
+            .checked_add(1)
+            .ok_or_else(|| anyhow!("field `{field_name}` is too large"));
+    }
+    if number == 0 {
+        bail!("field `{field_name}` must be 1 or greater");
+    }
+
+    Ok(number)
+}
+
+fn required_nonnegative_usize(value: &Value, field_name: &'static str) -> anyhow::Result<usize> {
     let number = value
         .get(field_name)
         .and_then(Value::as_u64)
         .ok_or_else(|| anyhow!("missing or non-integer required field `{field_name}`"))?;
-    if number == 0 {
-        bail!("field `{field_name}` must be 1 or greater");
-    }
 
     usize::try_from(number).with_context(|| format!("field `{field_name}` is too large"))
 }
@@ -325,6 +367,56 @@ mod tests {
         assert_eq!(
             report.association_candidates[0].reason.as_deref(),
             Some("Both describe runtime flow.")
+        );
+    }
+
+    #[test]
+    fn parse_sleep_report_normalizes_zero_based_association_candidates() {
+        let report = parse_sleep_report(&json!({
+            "session_summary": "Short summary.",
+            "memory_candidates": [
+                "Typed model roles.",
+                "Deterministic mock model.",
+                "Explicit event traces.",
+                "Reviewable sleep output."
+            ],
+            "association_candidates": [
+                {
+                    "from_memory_candidate_index": 0,
+                    "to_memory_candidate_index": 1,
+                    "weight": 0.88,
+                    "reason": "Both were introduced together."
+                },
+                {
+                    "from_memory_candidate_index": 2,
+                    "to_memory_candidate_index": 3,
+                    "weight": 0.79,
+                    "reason": "Traceability supports reviewable sleep output."
+                }
+            ],
+            "open_questions": [],
+            "decision_candidates": [],
+            "future_context_hints": [],
+            "review_notes": []
+        }))
+        .unwrap();
+
+        assert_eq!(report.association_candidates.len(), 2);
+        assert_eq!(
+            report.association_candidates[0].from_memory_candidate_index,
+            1
+        );
+        assert_eq!(
+            report.association_candidates[0].to_memory_candidate_index,
+            2
+        );
+        assert_eq!(
+            report.association_candidates[1].from_memory_candidate_index,
+            3
+        );
+        assert_eq!(
+            report.association_candidates[1].to_memory_candidate_index,
+            4
         );
     }
 

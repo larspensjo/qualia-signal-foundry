@@ -1228,3 +1228,57 @@ Refs: crates/qsf_app/src/sleep/{auto_promote,commit}.rs,
 crates/qsf_app/src/experiments/{sleep_phase_session_summary,multi_turn_text_loop}.rs,
 crates/qsf_app/src/memory/reviewed_memory_draft.rs,
 crates/qsf_app/src/context/context_assembler.rs
+
+## 2026-05-20 - Live co-retrieval reinforcement
+
+The multi-turn text loop now treats an existing cross-session memory store as the
+retrieval source of truth and writes live retrieval reinforcement back to that store
+once per turn.
+
+What changed:
+- Added a pure `memory::co_retrieval` delta generator with deterministic pair ordering,
+  capped new association creation, and direction-independent strengthening.
+- Wired the text loop to create or strengthen co-retrieval associations, bump retrieved
+  memory reinforcement counts, and set `last_reinforced_at` from the live clock when
+  `state/text-loop/memory-store.json` exists.
+- Added `CoRetrievalAssociationsProposed`, `MemoryReinforced`, and
+  `MemoryStorePersisted` event variants, plus a cold-start no-write event when no
+  persistent store exists.
+- Added regression coverage for pure delta behavior, persisted text-loop association
+  creation and strengthening, store-source resolution, and emitted observability events.
+
+Observed:
+- Cold-start runs still retrieve from the configured fixture or file source but skip
+  live memory writes until sleep creates the persistent memory store.
+
+Refs: crates/qsf_app/src/memory/co_retrieval.rs,
+crates/qsf_app/src/experiments/multi_turn_text_loop.rs,
+crates/qsf_app/src/observability/event_log.rs
+
+## 2026-05-20 - Sleep summarizer OpenAI JSON budget
+
+The real OpenAI sleep summarizer path could hit the 512-token output cap and leave
+the JSON response truncated, which made the cross-session golden path fail before
+sleep committed the memory store.
+
+What changed:
+- Raised the sleep summarizer output budget for JSON responses.
+- Tightened the sleep prompt to request compact JSON only, numeric importance values,
+  bounded list sizes, and explicit 1-based association indexes.
+- Normalized real-provider zero-based `association_candidates` indexes to the
+  internal 1-based `SleepReport` contract when the provider clearly uses zero-based
+  indexing.
+- Expanded the missing-JSON error to include provider finish reason and parse error,
+  and covered the request budget/schema guidance plus zero-based association parsing
+  in focused unit tests.
+
+Observed:
+- The failed run `runs/2026-05-20-121912-sleep-phase-session-summary` ended with
+  `finish_reason = max_tokens` and an EOF JSON parse error after 512 output tokens.
+- The follow-up run `runs/2026-05-20-122850-sleep-phase-session-summary` returned
+  valid JSON but used zero-based association indexes.
+
+Refs: crates/qsf_app/src/sleep/session_summary.rs,
+crates/qsf_app/src/sleep/sleep_report.rs,
+runs/2026-05-20-121912-sleep-phase-session-summary,
+runs/2026-05-20-122850-sleep-phase-session-summary

@@ -1,3 +1,4 @@
+use std::collections::HashSet;
 use std::fs;
 use std::io::{BufRead, Write};
 use std::path::{Path, PathBuf};
@@ -276,7 +277,7 @@ fn run_with_io_and_components_at_state_dir(
         &mut state,
         SessionEvent::SessionStarted(config.clone()),
     )?;
-    let memory_snapshot = memory_source.load(context)?;
+    let memory_snapshot = load_session_memory_snapshot(context, memory_source, &state_dir)?;
     write_memory_source_snapshot(context, &memory_snapshot)?;
     writeln!(output, "multi-turn-text-loop ready; type :quit to exit")?;
 
@@ -339,6 +340,7 @@ fn run_with_io_and_components_at_state_dir(
         match run_one_turn(
             context,
             &mut state,
+            &state_dir,
             &memory_snapshot,
             model_client,
             &user_input,
@@ -402,6 +404,7 @@ fn run_with_io_and_components_at_state_dir(
 fn run_one_turn(
     context: &mut RunContext,
     state: &mut SessionState,
+    state_dir: &Path,
     memory_snapshot: &SessionMemorySourceSnapshot,
     model_client: &dyn ModelClient,
     user_input: &str,
@@ -565,6 +568,7 @@ fn run_one_turn(
             output_tokens,
         },
     )?;
+    apply_live_memory_reinforcement(context, state, state_dir, &retrieval)?;
 
     let turn = Turn {
         index: completed_turn_count(state),
@@ -592,6 +596,174 @@ fn run_one_turn(
 
 fn completed_turn_count(state: &SessionState) -> usize {
     state.turns.len()
+}
+
+fn apply_live_memory_reinforcement(
+    context: &mut RunContext,
+    state: &SessionState,
+    state_dir: &Path,
+    retrieval: &RetrievalResult,
+) -> anyhow::Result<()> {
+    let turn_index = completed_turn_count(state);
+    let memory_store_path = state_dir.join("memory-store.json");
+    let retrieved_pairs = retrieval
+        .selected
+        .iter()
+        .map(|memory| (memory.memory.id.clone(), memory.score.total))
+        .collect::<Vec<_>>();
+    let retrieved_ids = retrieved_pairs
+        .iter()
+        .map(|(id, _)| id.clone())
+        .collect::<Vec<_>>();
+
+    if !memory_store_path.exists() {
+        context.record_event(
+            EventType::MemoryReinforced,
+            json!({
+                "turn_index": turn_index,
+                "ids": Vec::<String>::new(),
+                "requested_ids": retrieved_ids,
+                "count": 0,
+                "timestamp_source": "live_now",
+                "skipped_reason": "no persistent memory store on cold start",
+            }),
+            None,
+        )?;
+        return Ok(());
+    }
+
+    let mut store = crate::memory::MemoryStore::load_or_empty(&memory_store_path)?;
+    let now = time::OffsetDateTime::now_utc();
+    let deltas = crate::memory::co_retrieval::generate_deltas(
+        &retrieved_pairs,
+        &store.contents().associations,
+        turn_index,
+        &state.session_id,
+        now,
+    );
+
+    let mut created_count = 0;
+    let mut strengthened_count = 0;
+    for delta in &deltas {
+        match delta {
+            crate::memory::co_retrieval::CoRetrievalDelta::Create {
+                from,
+                to,
+                weight,
+                reason,
+                at,
+            } => {
+                store
+                    .contents_mut()
+                    .associations
+                    .push(crate::memory::Association::new(
+                        from.clone(),
+                        to.clone(),
+                        *weight,
+                        reason.clone(),
+                        *at,
+                    ));
+                created_count += 1;
+            }
+            crate::memory::co_retrieval::CoRetrievalDelta::Strengthen {
+                from,
+                to,
+                new_weight,
+                at,
+            } => {
+                if let Some(existing) =
+                    store
+                        .contents_mut()
+                        .associations
+                        .iter_mut()
+                        .find(|association| {
+                            (association.from_memory_id == *from && association.to_memory_id == *to)
+                                || (association.from_memory_id == *to
+                                    && association.to_memory_id == *from)
+                        })
+                {
+                    existing.weight = *new_weight;
+                    existing.last_reinforced_at = *at;
+                    strengthened_count += 1;
+                }
+            }
+        }
+    }
+
+    let retrieved_id_set = retrieved_ids.iter().cloned().collect::<HashSet<_>>();
+    let mut reinforced_ids = Vec::new();
+    for record in &mut store.contents_mut().records {
+        if retrieved_id_set.contains(&record.id) {
+            record.reinforcement_count = record.reinforcement_count.saturating_add(1);
+            record.last_reinforced_at = Some(now);
+            reinforced_ids.push(record.id.clone());
+        }
+    }
+    reinforced_ids.sort();
+    let reinforced_count = reinforced_ids.len();
+
+    let dropped_count = candidate_pair_count(&retrieved_pairs)
+        .saturating_sub(created_count)
+        .saturating_sub(strengthened_count);
+
+    context.record_event(
+        EventType::CoRetrievalAssociationsProposed,
+        json!({
+            "turn_index": turn_index,
+            "proposed_count": deltas.len(),
+            "created_count": created_count,
+            "strengthened_count": strengthened_count,
+            "dropped_count": dropped_count,
+        }),
+        None,
+    )?;
+    context.record_event(
+        EventType::MemoryReinforced,
+        json!({
+            "turn_index": turn_index,
+            "ids": reinforced_ids.clone(),
+            "requested_ids": retrieved_ids,
+            "count": reinforced_count,
+            "timestamp_source": "live_now",
+        }),
+        None,
+    )?;
+
+    if !deltas.is_empty() || !reinforced_ids.is_empty() {
+        store.persist()?;
+        context.record_event(
+            EventType::MemoryStorePersisted,
+            json!({
+                "turn_index": turn_index,
+                "path": memory_store_path.display().to_string(),
+                "records_count": store.contents().records.len(),
+                "associations_count": store.contents().associations.len(),
+            }),
+            None,
+        )?;
+    }
+
+    Ok(())
+}
+
+fn candidate_pair_count(retrieved: &[(String, f64)]) -> usize {
+    let mut pairs = HashSet::new();
+    for first_index in 0..retrieved.len() {
+        for second_index in (first_index + 1)..retrieved.len() {
+            let first_id = &retrieved[first_index].0;
+            let second_id = &retrieved[second_index].0;
+            if first_id == second_id {
+                continue;
+            }
+            let pair = if first_id <= second_id {
+                (first_id.clone(), second_id.clone())
+            } else {
+                (second_id.clone(), first_id.clone())
+            };
+            pairs.insert(pair);
+        }
+    }
+    pairs.len()
 }
 
 fn conversational_responder_role_with_session_tools() -> ModelRole {
@@ -1075,6 +1247,23 @@ trait SessionMemorySource {
     fn load(&self, context: &mut RunContext) -> anyhow::Result<SessionMemorySourceSnapshot>;
 }
 
+fn load_session_memory_snapshot(
+    context: &mut RunContext,
+    memory_source: &dyn SessionMemorySource,
+    state_dir: &Path,
+) -> anyhow::Result<SessionMemorySourceSnapshot> {
+    let memory_store_path = state_dir.join("memory-store.json");
+    if memory_store_path.exists() {
+        let store = crate::memory::MemoryStore::load_or_empty(&memory_store_path)?;
+        return Ok(SessionMemorySourceSnapshot::from_memory_store(
+            &memory_store_path,
+            store.contents().clone(),
+        ));
+    }
+
+    memory_source.load(context)
+}
+
 struct PhaseFourSessionMemorySource;
 
 impl SessionMemorySource for PhaseFourSessionMemorySource {
@@ -1192,6 +1381,15 @@ impl SessionMemorySourceSnapshot {
             source_reference: source_reference.into(),
             records: fixture.records,
             associations: fixture.associations,
+        }
+    }
+
+    fn from_memory_store(path: &Path, contents: crate::memory::MemoryStoreContents) -> Self {
+        Self {
+            source_name: "memory_store".to_string(),
+            source_reference: path.display().to_string(),
+            records: contents.records,
+            associations: contents.associations,
         }
     }
 }
@@ -1667,6 +1865,7 @@ mod tests {
         );
         assert!(events.contains("ContextAssembled"));
         assert!(events.contains("PromptAssembled"));
+        assert!(events.contains("no persistent memory store on cold start"));
         assert_event_order(
             &records,
             EventType::PromptAssembled,
@@ -1755,6 +1954,131 @@ mod tests {
             resumed.payload["previous_session_id"].as_str(),
             Some(first_state.session_id.as_str())
         );
+
+        fs::remove_dir_all(base_dir).unwrap();
+    }
+
+    #[test]
+    fn live_loop_reinforces_persistent_memory_store_and_emits_events() {
+        let base_dir = std::env::temp_dir().join(format!("qsf-live-memory-{}", Uuid::new_v4()));
+        let state_dir = base_dir.join("state/text-loop");
+        let memory_store_path = state_dir.join("memory-store.json");
+        let fixture = phase_four_fixture();
+        let mut store = crate::memory::MemoryStore::load_or_empty(&memory_store_path).unwrap();
+        store.append_records(fixture.records.clone());
+        store.persist().unwrap();
+
+        let memory_source = TestMemorySource;
+        let mut context =
+            RunContext::create_in(base_dir.join("run"), "multi-turn-text-loop").unwrap();
+        let mut output = Vec::new();
+        run_with_io_and_components_at_state_dir(
+            &mut context,
+            Cursor::new("context budget memory retrieval\n:quit\n"),
+            &mut output,
+            &MockModelClient::default(),
+            &memory_source,
+            test_config(5),
+            &state_dir,
+        )
+        .unwrap();
+
+        let reloaded = crate::memory::MemoryStore::load_or_empty(&memory_store_path).unwrap();
+        assert!(
+            reloaded
+                .contents()
+                .records
+                .iter()
+                .any(|record| record.last_reinforced_at.is_some())
+        );
+        assert!(reloaded.contents().associations.iter().any(|association| {
+            association
+                .reason
+                .contains("co-retrieved in turn 0 of session")
+        }));
+
+        let events = fs::read_to_string(context.run_dir().join("events.jsonl")).unwrap();
+        let records = parse_event_records(&events);
+        let retrieval_requested = records
+            .iter()
+            .find(|record| record.event_type == EventType::MemoryRetrievalRequested)
+            .unwrap();
+        let proposed = records
+            .iter()
+            .find(|record| record.event_type == EventType::CoRetrievalAssociationsProposed)
+            .unwrap();
+        let reinforced = records
+            .iter()
+            .find(|record| record.event_type == EventType::MemoryReinforced)
+            .unwrap();
+        assert!(
+            records
+                .iter()
+                .any(|record| record.event_type == EventType::MemoryStorePersisted)
+        );
+        assert_eq!(retrieval_requested.payload["memory_source"], "memory_store");
+        assert!(proposed.payload["created_count"].as_u64().unwrap() > 0);
+        assert_eq!(reinforced.payload["timestamp_source"], "live_now");
+        assert!(reinforced.payload["count"].as_u64().unwrap() > 0);
+
+        fs::remove_dir_all(base_dir).unwrap();
+    }
+
+    #[test]
+    fn live_loop_strengthens_existing_persistent_association() {
+        let base_dir =
+            std::env::temp_dir().join(format!("qsf-live-memory-strengthen-{}", Uuid::new_v4()));
+        let state_dir = base_dir.join("state/text-loop");
+        let memory_store_path = state_dir.join("memory-store.json");
+        let fixture = phase_four_fixture();
+        let mut store = crate::memory::MemoryStore::load_or_empty(&memory_store_path).unwrap();
+        store.append_records(fixture.records.clone());
+        store.append_associations([crate::memory::Association::new(
+            "memory.context-budget",
+            "memory.associative-memory",
+            0.4,
+            "existing edge before live turn",
+            time::OffsetDateTime::from(std::time::SystemTime::UNIX_EPOCH),
+        )]);
+        store.persist().unwrap();
+
+        let memory_source = TestMemorySource;
+        let mut context =
+            RunContext::create_in(base_dir.join("run"), "multi-turn-text-loop").unwrap();
+        let mut output = Vec::new();
+        run_with_io_and_components_at_state_dir(
+            &mut context,
+            Cursor::new("context budget memory retrieval\n:quit\n"),
+            &mut output,
+            &MockModelClient::default(),
+            &memory_source,
+            test_config(5),
+            &state_dir,
+        )
+        .unwrap();
+
+        let reloaded = crate::memory::MemoryStore::load_or_empty(&memory_store_path).unwrap();
+        let matching_associations = reloaded
+            .contents()
+            .associations
+            .iter()
+            .filter(|association| {
+                (association.from_memory_id == "memory.context-budget"
+                    && association.to_memory_id == "memory.associative-memory")
+                    || (association.from_memory_id == "memory.associative-memory"
+                        && association.to_memory_id == "memory.context-budget")
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(matching_associations.len(), 1);
+        assert!((matching_associations[0].weight - 0.45).abs() < 1e-9);
+
+        let events = fs::read_to_string(context.run_dir().join("events.jsonl")).unwrap();
+        let records = parse_event_records(&events);
+        let proposed = records
+            .iter()
+            .find(|record| record.event_type == EventType::CoRetrievalAssociationsProposed)
+            .unwrap();
+        assert!(proposed.payload["strengthened_count"].as_u64().unwrap() > 0);
 
         fs::remove_dir_all(base_dir).unwrap();
     }

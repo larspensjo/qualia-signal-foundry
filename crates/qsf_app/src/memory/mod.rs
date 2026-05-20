@@ -1,6 +1,7 @@
 //! In-memory records, associations, fixtures, and retrieval strategies.
 
 pub mod association;
+pub mod co_retrieval;
 pub mod fixtures;
 pub mod memory_record;
 pub mod retrieval;
