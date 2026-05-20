@@ -6,7 +6,13 @@
 
 ## Status
 
-Proposed
+Completed.
+
+Implemented as the registered `streaming-transcription-mvp` experiment. The
+deterministic simulated path, feature-gated OpenAI realtime transcription adapter,
+prerecorded WAV evaluation path, and live microphone evaluation path have all been
+validated. The default path remains deterministic unless provider and input-source
+environment variables explicitly select real audio.
 
 ## Summary
 
@@ -44,7 +50,6 @@ Architecture/Architecture.AudioLoop.md
 Architecture/Architecture.RuntimeLoop.md
 Architecture/Architecture.StateAndObservability.md
 Research/ResearchQuestions.Audio.md
-Plans/Plan.FrameworkMVP.md
 ```
 
 ## Hypothesis
@@ -149,20 +154,61 @@ The experiment is inconclusive if:
 - reducers depend on provider-specific objects
 - raw audio or secrets are logged accidentally
 
-## Interpretation Guidance
+## Results
 
-Use this distinction:
+Implemented in `crates/qsf_app/src/experiments/streaming_transcription_mvp.rs` and
+`crates/qsf_app/src/audio/transcript_provider.rs`.
 
-```text
+### What Happened
+
+- The transcript provider boundary was implemented with deterministic simulated
+  transcription by default.
+- The OpenAI realtime transcription adapter was added behind the `openai` feature,
+  using explicit provider and input-source configuration.
+- The experiment records provider-session, latency, and runtime-bridge traces.
+- Partial transcripts are emitted as audio transcript events; the final transcript is
+  bridged into `InputReceived` through the normal runtime input boundary.
+- Live prerecorded WAV and microphone evaluations completed successfully with
+  `gpt-realtime-whisper`.
+
+### Measurements
+
+- The generated report records provider, input source, transcript revisions, first
+  partial latency, final transcript latency, and runtime input dispatch latency.
+- Events distinguish audio lifecycle, partial transcript, final transcript,
+  transcription failure, latency, and runtime input dispatch.
+- Safety markers record that raw audio and secrets are not logged.
+
+### Observations
+
+- The transcript-first boundary fit the existing unidirectional runtime flow.
+- Partial transcripts can remain observable without mutating committed runtime state.
+- Final transcript dispatch is a clean bridge from audio perception into normal
+  runtime input.
+
+### Failure Modes
+
+- Real-provider runs depend on credentials, local audio devices, permissions,
+  network behavior, and recording conditions.
+- The microphone path is an evaluation path, not always-listening production audio.
+- Full speech-to-speech interaction, render-only TTS, and interruption handling remain
+  separate experiment surfaces.
+
+## Interpretation
+
 Observed:
-  What transcript events, timings, and failures occurred.
+  Streaming transcription can emit observable partial and final transcript events,
+  measure transcript latency, and bridge finalized text into runtime input without
+  logging raw audio or secrets.
 
 Interpreted:
-  What the result suggests about realtime presence and next audio steps.
+  Transcript-first audio is the right first provider-backed audio boundary. It keeps
+  realtime input compatible with the reducer/event architecture while deferring full
+  voice-session complexity.
 
 Uncertain:
-  What remains unclear until microphone, playback, or full realtime sessions are tested.
-```
+  Presence quality, spoken output rendering, turn-taking, and interruption behavior
+  still require the follow-up voice-loop experiments.
 
 ## Follow-Up Questions
 
@@ -175,8 +221,8 @@ Uncertain:
 ## Follow-Up Experiments
 
 ```text
-Experiment.AudioLoopMVP
 Experiment.RealtimeVoiceSessionMVP
+Experiment.TextOwnedVoiceLoop
 Experiment.InterruptionHandlingAudio
 Experiment.RealtimeTranslationMVP
 ```
@@ -190,4 +236,7 @@ Experiment.RealtimeTranslationMVP
 
 ## Final Status
 
-TBD
+Completed as the transcript-first realtime audio MVP. This closes the first audio
+provider boundary and provides the foundation for `Experiment.RealtimeVoiceSessionMVP`
+and `Experiment.TextOwnedVoiceLoop`; it does not by itself implement full-duplex
+voice, spoken answer playback, or interruption handling.

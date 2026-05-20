@@ -43,14 +43,14 @@ Later
 
 | Experiment | Priority | Status | Main Question |
 |---|---:|---:|---|
-| `Experiment.AssociativeMemoryToyModel` | High | Proposed | Can a small weighted memory graph retrieve useful context better than recency-only lookup? |
-| `Experiment.FrameworkSkeletonMVP` | High | Proposed | What is the smallest runnable framework needed to support future experiments? |
-| `Experiment.EventLogAndTraceMVP` | High | Proposed | What minimal event log and trace format is useful for understanding system behavior? |
-| `Experiment.ContextBudgetRetrievalComparison` | High | Proposed | How should the system select memories under a small context budget? |
-| `Experiment.SleepPhaseSessionSummary` | High | Proposed | Does a session-end summary improve continuity in the next session? |
-| `Experiment.StreamingTranscriptionMVP` | Medium | Proposed | Can live speech be represented as observable partial and final transcript events? |
-| `Experiment.AudioLoopMVP` | Medium | Proposed | Can a minimal audio loop create a stronger sense of presence than text-only interaction? |
-| `Experiment.ToolAsPerceptionCalculator` | Medium | Proposed | How should a simple read-only computational tool be represented as perception? |
+| `Experiment.AssociativeMemoryToyModel` | High | Completed | Can a small weighted memory graph retrieve useful context better than recency-only lookup? |
+| `Experiment.FrameworkSkeletonMVP` | High | Completed | What is the smallest runnable framework needed to support future experiments? |
+| `Experiment.EventLogAndTraceMVP` | High | Completed | What minimal event log and trace format is useful for understanding system behavior? |
+| `Experiment.ContextBudgetRetrievalTest` | High | Completed | How should the system select memories under a small context budget? |
+| `Experiment.SleepPhaseSessionSummary` | High | Completed | Does a session-end summary improve continuity in the next session? |
+| `Experiment.StreamingTranscriptionMVP` | Medium | Completed | Can live speech be represented as observable partial and final transcript events? |
+| `Experiment.AudioLoopMVP` | Medium | Superseded | Can a minimal audio loop create a stronger sense of presence than text-only interaction? |
+| `Experiment.ToolAsPerceptionCalculator` | Medium | Completed | How should a simple read-only computational tool be represented as perception? |
 | `Experiment.MemoryDecayPolicy` | Medium | Proposed | Does memory decay improve relevance or accidentally hide useful older memories? |
 | `Experiment.ModelRoleSplitLiveVsSleep` | Medium | Proposed | Is it useful to split live interaction and sleep consolidation into separate model roles? |
 | `Experiment.ContextTraceInspection` | Medium | Proposed | Can a researcher understand why specific context was selected? |
@@ -68,11 +68,11 @@ Later
 ### Experiment.AssociativeMemoryToyModel
 
 **Priority:** High  
-**Status:** Proposed
+**Status:** Completed
 
-Build a small toy version of associative memory using simple text memories, weighted links, recency, and reinforcement.
+Built a small toy version of associative memory using simple text memories, weighted links, recency, and reinforcement.
 
-This experiment should compare associative retrieval against simpler baselines such as recency-only lookup or keyword lookup.
+This experiment compares associative retrieval against simpler baselines such as recency-only lookup and keyword/tag lookup.
 
 Related documents:
 
@@ -108,9 +108,9 @@ Useful observations:
 ### Experiment.FrameworkSkeletonMVP
 
 **Priority:** High  
-**Status:** Proposed
+**Status:** Completed
 
-Create the smallest runnable project framework that can host later experiments.
+Created the smallest runnable project framework that can host later experiments.
 
 This experiment is less about consciousness simulation and more about making future experiments easy to run.
 
@@ -142,9 +142,9 @@ Possible success criteria:
 ### Experiment.EventLogAndTraceMVP
 
 **Priority:** High  
-**Status:** Proposed
+**Status:** Completed
 
-Define and test a minimal event log and trace system.
+Defined and tested a minimal event log and trace system.
 
 This experiment should answer what must be recorded to understand a runtime step.
 
@@ -174,12 +174,12 @@ Possible success criteria:
 - The trace explains why output happened.
 - The log is useful without being too verbose.
 
-### Experiment.ContextBudgetRetrievalComparison
+### Experiment.ContextBudgetRetrievalTest
 
 **Priority:** High  
-**Status:** Proposed
+**Status:** Completed
 
-Compare several ways of selecting context under a small budget.
+Compared several ways of selecting context under a small budget.
 
 Candidate strategies:
 
@@ -210,9 +210,9 @@ Possible success criteria:
 ### Experiment.SleepPhaseSessionSummary
 
 **Priority:** High  
-**Status:** Proposed
+**Status:** Completed
 
-Run a simple session-end sleep phase that produces a summary, memory candidates, and open questions.
+Ran a simple session-end sleep phase that produces a summary, memory candidates, association candidates, open questions, decision candidates, future context hints, and review notes.
 
 Related documents:
 
@@ -236,12 +236,12 @@ Possible success criteria:
 ### Experiment.StreamingTranscriptionMVP
 
 **Priority:** Medium
-**Status:** Proposed
+**Status:** Completed
 
-Build the first provider-backed audio boundary by representing streaming speech-to-text
+Built the first provider-backed audio boundary by representing streaming speech-to-text
 as partial and final transcript events.
 
-This should come before the full audio loop because it tests real-time input, event
+This came before broader voice-loop work because it tested real-time input, event
 ordering, transcript finalization, and latency tracing without requiring TTS, playback,
 or interruption handling.
 
@@ -274,11 +274,11 @@ Possible success criteria:
 ### Experiment.AudioLoopMVP
 
 **Priority:** Medium  
-**Status:** Proposed
+**Status:** Superseded
 
-Build a minimal audio input/output loop after streaming transcription events work.
+This broad audio-loop proposal was split into narrower experiments after streaming transcription events worked.
 
-This may be the first experiment that tests real-time presence directly, but it may require more setup than memory experiments.
+Use `Experiment.StreamingTranscriptionMVP`, `Experiment.RealtimeVoiceSessionMVP`, and `Experiment.TextOwnedVoiceLoop` for the active audio implementation record.
 
 Related documents:
 
@@ -309,9 +309,9 @@ Possible success criteria:
 ### Experiment.ToolAsPerceptionCalculator
 
 **Priority:** Medium  
-**Status:** Proposed
+**Status:** Completed
 
-Give the system access to a simple calculator-like tool and represent the result as an observation rather than an action.
+Gave the system access to a simple calculator-like tool and represented the result as an observation rather than an action.
 
 Related documents:
 
@@ -517,9 +517,9 @@ Architecture/Architecture.RuntimeLoop.md
 Architecture/Architecture.StateAndObservability.md
 ```
 
-## Recommended First Experiment
+## Historical First Experiment
 
-Recommended first experiment:
+Completed first experiment:
 
 ```text
 Experiment.AssociativeMemoryToyModel
@@ -534,7 +534,7 @@ Reason:
 - It can be implemented with simple data structures.
 - It can produce useful traces early.
 
-Recommended first framework-support experiment:
+Completed first framework-support experiment:
 
 ```text
 Experiment.FrameworkSkeletonMVP

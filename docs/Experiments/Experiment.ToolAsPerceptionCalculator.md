@@ -6,7 +6,12 @@
 
 ## Status
 
-Proposed
+Completed.
+
+Implemented as the registered `tool-as-perception-calculator` experiment. The
+experiment executes a deterministic compute-only calculator tool, records request,
+permission, result, failure, and latency events, writes a tool invocation trace, and
+turns the result into a tool-observation context fragment.
 
 ## Summary
 
@@ -226,44 +231,62 @@ The experiment should produce:
 
 ## Results
 
-To be filled in after running the experiment.
+Implemented in `crates/qsf_app/src/experiments/tool_as_perception_calculator.rs` and
+`crates/qsf_app/src/tools/`.
 
 ### What Happened
 
-TBD
+- The placeholder experiment was replaced by a real calculator tool path.
+- The run creates a structured calculator request, validates it through the static
+  tool registry, executes the deterministic calculator, and records the normalized
+  result.
+- The result becomes a tool-observation context fragment before context assembly.
+- Tool validation or execution errors record `ToolFailed` before bubbling the error
+  to the runner.
 
 ### Measurements
 
-TBD
+- Events record tool request metadata, completion metadata, latency, output text, and
+  numeric value.
+- The tool trace records request, permission, metadata, result, and latency.
+- Context assembly records whether the tool observation fragment was selected under
+  the context budget.
 
 ### Observations
 
-TBD
+- Compute-only tool use can fit the existing event, trace, and context-budget model.
+- Treating the calculator result as an observation keeps the tool from becoming a
+  hidden state mutation.
+- Explicit metadata for category and side-effect level makes the permission boundary
+  visible before dispatch.
 
 ### Surprises
 
-TBD
+- The existing context fragment path was enough to carry a tool result without a
+  separate tool-specific prompt channel.
 
 ### Failure Modes
 
-TBD
+- The calculator parser is intentionally narrow and supports arithmetic expressions
+  only.
+- The registry is static and code-defined.
+- This experiment does not yet prove the shape for noisy, slow, or externally backed
+  tools such as search or file inspection.
 
 ## Interpretation
 
-TBD
-
-Use this distinction:
-
-```text
 Observed:
-  What happened.
+  A deterministic compute-only tool can be represented as a structured request,
+  normalized result, trace record, and context fragment.
 
 Interpreted:
-  What we think it means.
+  The tool system should continue to treat early tools as perception extensions:
+  explicit request, explicit permission boundary, observable result, and context
+  selection before model use.
 
 Uncertain:
-  What remains unclear.
-```
+  The same envelope still needs testing with tools that are slower, uncertain,
+  externally backed, or permission-sensitive.
 
 ## Follow-Up Questions
 
@@ -294,8 +317,10 @@ Experiment.ToolLatencyImpact
 
 ## Final Status
 
-TBD
+Completed as the first tool-as-perception MVP. Keep this document as the experiment
+spec plus outcome summary; future tool experiments should reuse the request/result
+observability shape while testing less deterministic tools.
 
 ## Notes
 
-This is a safe first tool experiment because a calculator has no external side effects and produces verifiable results. The purpose is to shape the tool interface, not to test advanced reasoning.
+This was a safe first tool experiment because a calculator has no external side effects and produces verifiable results. The purpose was to shape the tool interface, not to test advanced reasoning.

@@ -6,7 +6,14 @@
 
 ## Status
 
-Proposed
+Superseded.
+
+This broad all-in-one audio-loop proposal has been split into narrower experiment
+paths. Transcript-first input is covered by `Experiment.StreamingTranscriptionMVP`,
+provider-owned realtime voice sessions are covered by
+`Experiment.RealtimeVoiceSessionMVP`, and QSF-owned spoken-turn behavior is covered by
+`Experiment.TextOwnedVoiceLoop`. Keep this document as historical context for the
+original audio-loop question, not as the active implementation plan.
 
 ## Summary
 
@@ -16,9 +23,10 @@ The goal is to determine whether the project can capture microphone input, conve
 
 This is not intended to create a polished voice assistant. It is an experiment in real-time presence.
 
-This experiment should follow `Experiment.StreamingTranscriptionMVP`. The transcript
-event boundary should be working before this experiment adds speech synthesis,
-playback, and voice-loop timing.
+This experiment was originally intended to follow `Experiment.StreamingTranscriptionMVP`.
+That work has since been decomposed into narrower voice-session and text-owned voice
+experiments so the project can evaluate provider ownership, QSF response ownership,
+memory retrieval, and speech handoff separately.
 
 ## Motivation
 
@@ -76,7 +84,7 @@ A minimal microphone-to-model-to-speech loop can create a noticeably stronger se
 - always-on background operation
 - production audio device management
 - full duplex `gpt-realtime-2` sessions; these belong in a separate realtime
-  voice-session experiment, see Phase 10 of `Plan.FrameworkMVP.md`
+  voice-session experiment
 
 ## Setup
 
@@ -219,44 +227,68 @@ The experiment should produce:
 
 ## Results
 
-To be filled in after running the experiment.
+This exact all-in-one experiment was not run as a single implementation path. Its
+scope was decomposed into smaller experiments that proved parts of the audio loop
+with clearer ownership boundaries.
 
 ### What Happened
 
-TBD
+- `Experiment.StreamingTranscriptionMVP` implemented the transcript provider boundary,
+  partial/final transcript events, latency traces, and final transcript bridge into
+  runtime input.
+- `Experiment.RealtimeVoiceSessionMVP` implemented a full realtime voice-session
+  provider path while keeping provider-requested tools routed into QSF events instead
+  of direct execution.
+- `Experiment.TextOwnedVoiceLoop` implemented a QSF-owned transcript-to-memory-to-
+  context-to-model-to-output path with speech output metadata.
+- Render-only live spoken TTS and robust interruption/barge-in remain not yet
+  implemented.
 
 ### Measurements
 
-TBD
+- Streaming transcription records first partial, final transcript, and runtime input
+  dispatch latency.
+- Realtime voice-session runs record provider session timing, response start, first
+  audio, response completion, speech playback metadata, interruption events, and tool
+  request routing.
+- Text-owned voice-loop runs record transcript dispatch, memory retrieval, context
+  assembly, model runtime, speech output, and total observed turn latency.
 
 ### Observations
 
-TBD
+- Splitting the audio loop made ownership boundaries clearer than a single broad MVP
+  would have.
+- QSF can own transcript interpretation, memory retrieval, context assembly, model
+  response, and output text while audio providers remain side-effect adapters.
+- Provider-owned realtime voice is useful to evaluate, but it must not bypass QSF
+  memory, reducer, or tool-permission boundaries.
 
 ### Surprises
 
-TBD
+- Speech-output metadata was enough to prove exact QSF text handoff before adding
+  live render-only TTS.
 
 ### Failure Modes
 
-TBD
+- The project still lacks live spoken answer rendering through a real TTS provider.
+- Interruption/barge-in behavior is still mostly unimplemented.
+- Full-duplex always-listening behavior remains out of scope for the implemented
+  slices.
 
 ## Interpretation
 
-TBD
-
-Use this distinction:
-
-```text
 Observed:
-  What happened.
+  The broad audio-loop question is better served by smaller experiments with explicit
+  ownership boundaries.
 
 Interpreted:
-  What we think it means.
+  Future audio work should continue to distinguish transcript input, provider-owned
+  realtime sessions, QSF-owned answer generation, speech output rendering, and
+  interruption handling.
 
 Uncertain:
-  What remains unclear.
-```
+  The next open audio questions are live spoken output quality, end-to-end perceived
+  presence, and interruption behavior under real conversational timing.
 
 ## Follow-Up Questions
 
@@ -285,7 +317,10 @@ Experiment.ExternalInputEventStream
 
 ## Final Status
 
-TBD
+Superseded by `Experiment.StreamingTranscriptionMVP`,
+`Experiment.RealtimeVoiceSessionMVP`, and `Experiment.TextOwnedVoiceLoop`. Do not use
+this document as the active audio implementation plan; use it as historical context
+for the original microphone-to-response-to-speech question.
 
 ## Notes
 

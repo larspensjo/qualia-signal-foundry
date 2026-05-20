@@ -8,7 +8,7 @@ Example:
 
 ```text
 Experiment.AssociativeMemoryToyModel
-Experiment.AudioLoopMVP
+Experiment.StreamingTranscriptionMVP
 Experiment.SleepPhaseSessionSummary
 ```
 
@@ -23,6 +23,7 @@ Running
 Completed
 Paused
 Abandoned
+Superseded
 ```
 
 ## Summary
@@ -303,7 +304,7 @@ Example:
 
 ```text
 Experiment.AssociativeMemoryDecayPolicy
-Experiment.ContextBudgetRetrievalComparison
+Experiment.ContextBudgetRetrievalTest
 Experiment.SleepPhaseAssociationUpdate
 ```
 

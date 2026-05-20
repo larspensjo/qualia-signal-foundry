@@ -45,8 +45,7 @@ What changed:
   `engine_logging` integration.
 - `.gitignore` extended to cover generated run and log outputs.
 
-Refs: Cargo.toml, Cargo.lock, crates/qsf_app, crates/engine_logging,
-docs/Plans/Plan.FrameworkMVP.md
+Refs: Cargo.toml, Cargo.lock, crates/qsf_app, crates/engine_logging
 
 ## 2026-05-09 - Event log and trace MVP
 
@@ -116,8 +115,7 @@ What changed:
 - Recorded the durable rule that realtime providers are side-effect adapters, not owners
   of runtime state or memory/tool decisions.
 
-Refs: docs/Plans/Plan.FrameworkMVP.md,
-docs/Experiments/Experiment.StreamingTranscriptionMVP.md,
+Refs:docs/Experiments/Experiment.StreamingTranscriptionMVP.md,
 docs/Architecture/Architecture.AudioLoop.md,
 docs/Concepts/Concept.RealtimePresence.md,
 docs/Research/ResearchQuestions.Audio.md,
@@ -385,8 +383,7 @@ Observed:
   larger follow-up topics; they were not needed to stabilize the completed Phase 9 path.
 
 Refs: docs/Reviews/Review.AudioModule.md,
-crates/qsf_app/src/audio/transcript_provider.rs,
-docs/Plans/Plan.FrameworkMVP.md,
+crates/qsf_app/src/audio/transcript_provider.rs
 docs/Experiments/Experiment.StreamingTranscriptionMVP.md
 
 ## 2026-05-14 - Realtime voice session MVP

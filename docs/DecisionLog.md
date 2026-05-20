@@ -70,8 +70,7 @@ Consequences: `gpt-realtime-whisper` is the first OpenAI realtime speech target.
 `gpt-realtime-translate` is reserved for translation-specific experiments. Realtime
 providers emit QSF events and do not own runtime state, memory promotion, tool
 permissions, or decisions.
-Refs: docs/Plans/Plan.FrameworkMVP.md,
-docs/Experiments/Experiment.StreamingTranscriptionMVP.md,
+Refs: docs/Experiments/Experiment.StreamingTranscriptionMVP.md,
 docs/Architecture/Architecture.AudioLoop.md,
 https://developers.openai.com/api/docs/guides/realtime-transcription,
 https://developers.openai.com/api/docs/models/gpt-realtime-2,
@@ -96,7 +95,6 @@ actually changes, and are kept out of the live runtime. A future cross-run share
 store (for example, from sleep-phase consolidation) is out of scope and may use a
 different policy.
 Refs: docs/Plans/Design.MemorySchemaVersioning.md,
-docs/Plans/Plan.FrameworkMVP.md,
 docs/Architecture/Architecture.MemorySystem.md
 
 ## 2026-05-11 - Model access uses explicit roles and optional provider adapters
@@ -120,8 +118,7 @@ Consequences: Tests and normal experiment runs stay deterministic by default. WA
 microphone evaluation are opt-in side-effect paths, and any future provider must preserve
 the same no-secret/no-raw-audio observability boundary.
 Refs: crates/qsf_app/src/audio/transcript_provider.rs,
-crates/qsf_app/src/experiments/streaming_transcription_mvp.rs,
-docs/Plans/Plan.FrameworkMVP.md
+crates/qsf_app/src/experiments/streaming_transcription_mvp.rs
 
 ## 2026-05-13 - Feature-gated audio providers need explicit compile checks
 Decision: Phase 9 real-audio readiness includes compiling the `qsf_app/openai` feature
@@ -148,7 +145,6 @@ target. Accuracy comparisons should use explicit model selection rather than cha
 the default away from the realtime path. Full speech-to-speech work remains separate
 and should use the documented Realtime conversation model family.
 Refs: crates/qsf_app/src/audio/transcript_provider.rs,
-docs/Plans/Plan.FrameworkMVP.md,
 docs/Experiments/Experiment.StreamingTranscriptionMVP.md,
 https://developers.openai.com/api/docs/guides/realtime-transcription,
 https://developers.openai.com/api/docs/models/gpt-realtime-whisper
@@ -265,8 +261,7 @@ Consequences: Conversion artifacts remain inspectable before acceptance, source 
 runs are left unchanged, and the text-owned voice loop only uses converted memory when
 configured through the explicit file-backed memory source.
 Refs: crates/qsf_app/src/experiments/reviewed_memory_draft.rs,
-crates/qsf_app/src/memory/reviewed_memory_draft.rs,
-docs/Plans/Plan.ReviewedMemoryPromotion.md
+crates/qsf_app/src/memory/reviewed_memory_draft.rs
 
 ## 2026-05-17 - Multi-turn warm tier ages by active turn count
 Decision: The multi-turn text loop warm tier ages the oldest active verbatim turns by
@@ -292,8 +287,7 @@ turn recall would add token cost without extending continuity.
 Consequences: Recall execution validates that the requested `turn_id` is summarized
 before returning verbatim text. Future wider recall behavior should be introduced as a
 deliberate policy change, not as an implicit side effect of tool plumbing.
-Refs: crates/qsf_app/src/experiments/multi_turn_text_loop.rs,
-docs/Plans/Plan.MultiTurnTextLoop.md
+Refs: crates/qsf_app/src/experiments/multi_turn_text_loop.rs
 
 ## 2026-05-17 - Stage 3.1 bypasses openai_provider_kit for tool-capable requests
 Decision: Stage 3.1 of the multi-turn text loop writes OpenAI-specific tool-capable
@@ -313,9 +307,7 @@ duplicated in the new module for the tool path. Future kit upgrades or a migrati
 the Responses API can replace the bypass module without affecting the provider-agnostic
 model boundary.
 Refs: crates/qsf_app/src/models/openai_provider.rs,
-crates/qsf_app/Cargo.toml,
-docs/Plans/Plan.MultiTurnTextLoop.md,
-docs/Reviews/Review.Plan.MultiTurnTextLoop.Stage3.1.2026-05-17.md
+crates/qsf_app/Cargo.toml
 
 ## 2026-05-17 - Stage 3.1 uses Chat Completions, not Responses API
 Decision: Stage 3.1 sends tool definitions and tool results through the Chat
@@ -330,8 +322,7 @@ shape. Tool results use `{"role":"tool","tool_call_id":"...","content":"..."}`.
 `finish_reason: "tool_calls"` signals a tool call. A future migration to the Responses
 API should be a separate phase that changes both paths together.
 Refs: https://developers.openai.com/docs/guides/function-calling,
-https://developers.openai.com/docs/guides/migrate-to-responses,
-docs/Plans/Plan.MultiTurnTextLoop.md
+https://developers.openai.com/docs/guides/migrate-to-responses
 
 ## 2026-05-17 - allowed_tools on ModelRole is removed as unenforced
 Decision: The `allowed_tools` field is removed from `ModelRole`. Tool authorization
@@ -347,8 +338,7 @@ Consequences: `ModelRole::allowed_tools` is deleted. The
 behavior change — no code ever read the field. If enforcement is added later, it
 belongs in `invoke_model_role` or the provider adapter, not as a passive annotation.
 Refs: crates/qsf_app/src/models/model_role.rs,
-crates/qsf_app/src/experiments/multi_turn_text_loop.rs:597-601,
-docs/Plans/Plan.MultiTurnTextLoop.md
+crates/qsf_app/src/experiments/multi_turn_text_loop.rs:597-601
 
 ## 2026-05-17 - ToolContext uses typed borrowed-state accessors
 Decision: Tool execution keeps a single `Tool` trait, and tools receive runtime
@@ -381,8 +371,7 @@ that declaration.
 Refs: crates/qsf_app/src/models/model_role.rs,
 crates/qsf_app/src/models/tool_dispatch.rs,
 crates/qsf_app/src/experiments/multi_turn_text_loop.rs,
-docs/DecisionLog.md#2026-05-17---allowed_tools-on-modelrole-is-removed-as-unenforced,
-docs/Plans/Plan.ToolSystemBridge.md
+docs/DecisionLog.md#2026-05-17---allowed_tools-on-modelrole-is-removed-as-unenforced
 
 ## 2026-05-18 - Tool execution boundary is the ToolRegistry
 Decision: All tool execution flows through `ToolRegistry`. `ModelToolDefinition` and
@@ -403,8 +392,7 @@ capability is touched.
 Refs: crates/qsf_app/src/tools,
 crates/qsf_app/src/models/tool_dispatch.rs,
 crates/qsf_app/src/models/model_client.rs,
-docs/DecisionLog.md#2026-05-14---realtime-voice-providers-cannot-execute-tools-directly,
-docs/Plans/Plan.ToolSystemBridge.md
+docs/DecisionLog.md#2026-05-14---realtime-voice-providers-cannot-execute-tools-directly
 
 ## 2026-05-18 - Model tool dispatch fails fast
 Decision: Model tool dispatch returns an error as soon as any requested tool call fails,

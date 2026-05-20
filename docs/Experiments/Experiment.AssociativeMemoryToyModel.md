@@ -6,7 +6,13 @@
 
 ## Status
 
-Proposed
+Completed.
+
+Implemented as the registered `associative-memory-toy-model` experiment. The
+experiment now runs deterministically against the Phase 4 memory fixture, compares
+recency-only, keyword/tag, and association-weighted retrieval, writes memory and
+context traces, and emits `memory-fixture.json` plus `retrieval-comparison.md` run
+artifacts.
 
 ## Summary
 
@@ -226,44 +232,63 @@ The experiment should produce:
 
 ## Results
 
-To be filled in after running the experiment.
+Implemented in `crates/qsf_app/src/experiments/memory_and_context.rs`.
 
 ### What Happened
 
-TBD
+- The placeholder experiment was replaced by a real retrieval comparison.
+- The run uses a controlled fixture and executes three strategies: recency-only,
+  keyword/tag, and association-weighted retrieval.
+- Each strategy feeds retrieved memories through the same context budget so selected
+  and omitted fragments can be compared.
+- The experiment records `MemoryRetrievalRequested`, `MemoryRetrieved`,
+  `ContextAssemblyRequested`, and `ContextAssembled` events with trace details.
 
 ### Measurements
 
-TBD
+- Retrieval output records selected and omitted memory ids per strategy.
+- Context output records selected and omitted fragment ids, estimated token use, and
+  retrieval/context latency fields.
+- The generated comparison report records selected memory ids, selected context ids,
+  omitted context ids, and token use.
+- Manual relevance ratings are still not automated.
 
 ### Observations
 
-TBD
+- Association-weighted retrieval can surface linked context-budget and sleep-phase
+  memories even when they are not the newest records.
+- Retrieval traces expose score components, matched terms, association paths, and
+  omitted candidates for manual review.
+- Context assembly can reuse the same selected/omitted-fragment observability across
+  retrieval strategies.
 
 ### Surprises
 
-TBD
+- The existing event, trace, memory, and context-budget surfaces were enough to host
+  the toy model without adding a separate experiment-specific reporting framework.
 
 ### Failure Modes
 
-TBD
+- The fixture is hand-authored, so score behavior may be overfit to the first memory
+  graph.
+- Estimated token counts are rough, not tokenizer-derived.
+- The result supports a first retrieval direction, but it is not evidence that the
+  strategy scales to larger or real memories.
 
 ## Interpretation
 
-TBD
-
-Use this distinction:
-
-```text
 Observed:
-  What happened.
+  The experiment can compare multiple retrieval strategies under one budget and make
+  selected and omitted memories inspectable.
 
 Interpreted:
-  What we think it means.
+  Association-weighted retrieval is promising enough to keep as a first-class
+  experiment strategy, while recency-only remains useful as a baseline.
 
 Uncertain:
-  What remains unclear.
-```
+  The project still needs larger fixtures, manual relevance review, and eventually
+  live memory use before treating association-weighted retrieval as the default
+  memory policy.
 
 ## Follow-Up Questions
 
@@ -293,8 +318,10 @@ Experiment.MemoryPromotionRules
 
 ## Final Status
 
-TBD
+Completed as a deterministic toy-model experiment. Keep this document as the
+experiment spec plus outcome summary; future memory work should build on the emitted
+retrieval traces rather than treating this as a production memory-system decision.
 
 ## Notes
 
-This should probably be one of the first experiments because it tests a central project idea without requiring audio, external services, or real-time infrastructure.
+This was one of the first useful experiments because it tested a central project idea without requiring audio, external services, or real-time infrastructure.

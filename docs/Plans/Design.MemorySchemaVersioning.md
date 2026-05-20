@@ -140,6 +140,5 @@ No compatibility module is needed at v1. It is introduced when v2 is.
 
 ## Refs
 
-- docs/Plans/Plan.FrameworkMVP.md (Phase 4)
 - docs/Architecture/Architecture.MemorySystem.md
 - docs/DecisionLog.md

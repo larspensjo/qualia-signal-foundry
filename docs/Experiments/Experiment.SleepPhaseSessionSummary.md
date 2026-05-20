@@ -6,7 +6,12 @@
 
 ## Status
 
-Proposed
+Completed.
+
+Implemented as the registered `sleep-phase-session-summary` experiment. The
+experiment runs a reviewable sleep summary through the shared model-role boundary,
+records sleep request/completion events, writes a sleep trace, and emits
+`sleep-report.json` plus `sleep-report.md` artifacts.
 
 ## Summary
 
@@ -204,44 +209,66 @@ The experiment should produce:
 
 ## Results
 
-To be filled in after running the experiment.
+Implemented in `crates/qsf_app/src/experiments/sleep_phase_session_summary.rs` and
+`crates/qsf_app/src/sleep/`.
 
 ### What Happened
 
-TBD
+- The placeholder experiment was replaced by a real sleep-phase path.
+- The run summarizes a short session transcript through the configured model
+  provider, using the deterministic mock provider by default.
+- The generated sleep report separates session summary, memory candidates,
+  association candidates, open questions, decision candidates, future context hints,
+  and review notes.
+- The experiment records `SleepPhaseRequested`, `SleepPhaseCompleted`, and
+  `OutputProduced` events and writes dedicated sleep artifacts.
 
 ### Measurements
 
-TBD
+- The completion event records counts for memory candidates, association candidates,
+  open questions, decision candidates, future context hints, review notes, and
+  latency.
+- The trace records provider name, model name, usage, input bundle, and full parsed
+  report details.
+- The generated `sleep-report.json` preserves structured fields for downstream review
+  and memory-draft conversion.
 
 ### Observations
 
-TBD
+- The existing model-role path is sufficient for the first sleep summarizer; no
+  second model abstraction was needed.
+- Sleep outputs remain explicitly provisional and reviewable.
+- Review notes in the artifact help prevent memory or decision candidates from being
+  confused with accepted state.
 
 ### Surprises
 
-TBD
+- The sleep phase could be integrated as an experiment-specific side-effect path
+  while preserving the same event/trace/report model as earlier experiments.
 
 ### Failure Modes
 
-TBD
+- The default input is a short inline transcript rather than a full prior run's event
+  log.
+- Real-provider output quality depends on prompt compliance and structured JSON
+  parsing.
+- The sleep phase drafts memory material but does not update durable memory by
+  itself.
 
 ## Interpretation
 
-TBD
-
-Use this distinction:
-
-```text
 Observed:
-  What happened.
+  A controlled post-session pass can produce useful reviewable summaries, candidate
+  memories, open questions, and decision candidates without mutating durable state.
 
 Interpreted:
-  What we think it means.
+  Sleep-phase work should remain artifact-first and review-gated. It is a useful
+  bridge from session activity to memory drafting, not an automatic decision maker.
 
 Uncertain:
-  What remains unclear.
-```
+  Future work still needs to test full event-log ingestion, larger sessions,
+  association updates, decay, reinforcement, and reviewed promotion into durable
+  memory.
 
 ## Follow-Up Questions
 
@@ -271,7 +298,9 @@ Experiment.ContextBudgetRetrievalTest
 
 ## Final Status
 
-TBD
+Completed as a deterministic sleep-phase MVP. Keep this document as the experiment
+spec plus outcome summary; later memory-promotion work should consume the reviewable
+sleep artifacts rather than bypassing human review.
 
 ## Notes
 

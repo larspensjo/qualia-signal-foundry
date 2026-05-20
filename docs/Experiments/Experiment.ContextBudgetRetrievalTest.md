@@ -6,7 +6,12 @@
 
 ## Status
 
-Proposed
+Completed.
+
+Implemented as the registered `context-budget-retrieval-test` experiment. The
+experiment now runs deterministically against the Phase 4 memory fixture, compares
+retrieval strategies under a deliberately small two-fragment budget, and emits
+`memory-fixture.json` plus `context-budget-comparison.md` run artifacts.
 
 ## Summary
 
@@ -221,44 +226,61 @@ The experiment should produce:
 
 ## Results
 
-To be filled in after running the experiment.
+Implemented in `crates/qsf_app/src/experiments/memory_and_context.rs`.
 
 ### What Happened
 
-TBD
+- The placeholder experiment was replaced by a real context-budget comparison.
+- The run retrieves candidate memory fragments with recency-only, keyword/tag, and
+  association-weighted strategies.
+- Each strategy is forced through a two-fragment, seventy-token budget.
+- The run records which fragments were selected, which were omitted, and why.
 
 ### Measurements
 
-TBD
+- The comparison report records selected memory ids, selected context ids, omitted
+  context ids, and estimated token use.
+- Events and traces include retrieval latency, context assembly latency, selected
+  fragment ids, omitted fragment ids, and budget use.
+- Manual quality scoring is not implemented yet; the artifact is ready for human
+  review but does not produce an automatic relevance score.
 
 ### Observations
 
-TBD
+- A small context budget creates visible tradeoffs between direct relevance,
+  association strength, recency, and token cost.
+- Omitted fragments are as important as selected fragments for explaining context
+  pressure.
+- The same context assembler can be used by multiple retrieval strategies if the
+  traces keep strategy and budget metadata attached.
 
 ### Surprises
 
-TBD
+- The first useful context-budget result did not require a full production context
+  manager; a small greedy selector plus clear omissions was enough to expose the
+  central tradeoffs.
 
 ### Failure Modes
 
-TBD
+- The current budget policy is greedy and does not search for lower-cost fragment
+  combinations after selecting a high-scoring expensive fragment.
+- Token counts are estimates.
+- The fixture is small and hand-authored, so retrieval quality still needs manual
+  review and broader fixtures.
 
 ## Interpretation
 
-TBD
-
-Use this distinction:
-
-```text
 Observed:
-  What happened.
+  The experiment can force selected and omitted memory fragments through a strict
+  budget and make the tradeoffs inspectable.
 
 Interpreted:
-  What we think it means.
+  Context assembly should continue to record both included and omitted fragments;
+  otherwise budget pressure becomes invisible.
 
 Uncertain:
-  What remains unclear.
-```
+  It is still unclear whether greedy score order is good enough or whether the
+  assembler should optimize total utility under budget.
 
 ## Follow-Up Questions
 
@@ -288,8 +310,10 @@ Experiment.ReplaySingleRuntimeStep
 
 ## Final Status
 
-TBD
+Completed as a deterministic context-budget experiment. Keep this document as the
+experiment spec plus outcome summary; future context-manager work should treat the
+selected/omitted trace shape as useful evidence, not as a final ranking policy.
 
 ## Notes
 
-This experiment should be run before the context manager becomes too complex. The goal is to learn which retrieval signals matter, not to optimize final performance.
+This experiment ran before the context manager became too complex. The goal was to learn which retrieval signals matter, not to optimize final performance.
