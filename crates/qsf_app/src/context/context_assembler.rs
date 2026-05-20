@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
 
 use super::context_budget::ContextBudget;
-use super::context_fragment::ContextFragment;
+use super::context_fragment::{ContextFragment, ContextSourceKind};
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 pub struct ContextSelection {
@@ -21,6 +21,16 @@ pub struct ContextAssembly {
     pub selected: Vec<ContextSelection>,
     pub omitted: Vec<ContextOmission>,
     pub used_estimated_tokens: usize,
+}
+
+impl ContextAssembly {
+    pub fn retrieved_memory_ids(&self) -> Vec<String> {
+        self.selected
+            .iter()
+            .filter(|selection| selection.fragment.source_kind == ContextSourceKind::Memory)
+            .map(|selection| selection.fragment.fragment_id.clone())
+            .collect()
+    }
 }
 
 pub fn assemble_context(fragments: Vec<ContextFragment>, budget: ContextBudget) -> ContextAssembly {

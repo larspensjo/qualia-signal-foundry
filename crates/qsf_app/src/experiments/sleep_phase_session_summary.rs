@@ -1,4 +1,5 @@
 use std::fs;
+use std::path::Path;
 use std::time::Instant;
 
 use anyhow::Context;
@@ -36,6 +37,20 @@ impl SleepPhaseSessionSummaryExperiment {
         context: &mut RunContext,
         requested_provider: &str,
     ) -> anyhow::Result<ExperimentOutcome> {
+        self.run_with_provider_at_state_dir(
+            context,
+            requested_provider,
+            crate::session::resume::state_dir_from_env(),
+        )
+    }
+
+    fn run_with_provider_at_state_dir(
+        &self,
+        context: &mut RunContext,
+        requested_provider: &str,
+        state_dir: impl AsRef<Path>,
+    ) -> anyhow::Result<ExperimentOutcome> {
+        let state_dir = state_dir.as_ref().to_path_buf();
         let input =
             SleepInputBundle::new("session_transcript", "sleep-session-summary", SESSION_TEXT)
                 .with_review_notes(vec![
@@ -123,7 +138,7 @@ impl SleepPhaseSessionSummaryExperiment {
             Some(sleep_trace_id),
         )?;
 
-        Ok(ExperimentOutcome {
+        let outcome = ExperimentOutcome {
             summary: format!(
                 "The sleep session summary experiment summarized a short session through the `{}` provider, wrote a reviewable sleep report artifact, and recorded explicit sleep-phase events and traces without promoting any candidate into an accepted decision.",
                 summary.response.provider_name
@@ -146,8 +161,114 @@ impl SleepPhaseSessionSummaryExperiment {
                 "Reuse the shared model-role invocation path for sleep summarization until a distinct effect boundary is required.".to_string(),
             ],
             extra_artifacts: vec!["sleep-report.json".to_string(), "sleep-report.md".to_string()],
-        })
+        };
+
+        commit_cross_session_sleep(context, &summary.report, outcome, &state_dir)
     }
+}
+
+fn commit_cross_session_sleep(
+    context: &RunContext,
+    report: &SleepReport,
+    mut outcome: ExperimentOutcome,
+    state_dir: &Path,
+) -> anyhow::Result<ExperimentOutcome> {
+    let resume_inputs = crate::session::resume::load_resume_inputs(state_dir)?;
+    let Some(session) = resume_inputs.previous_session.clone() else {
+        return Ok(outcome);
+    };
+
+    if resume_inputs
+        .manifest
+        .last_sleep_consumed_session_id
+        .as_deref()
+        == Some(session.session_id.as_str())
+        && !resume_inputs.manifest.sleep_pending
+    {
+        return Ok(outcome);
+    }
+
+    let as_of = session
+        .turns
+        .iter()
+        .map(|turn| turn.completed_at)
+        .max()
+        .map(time::OffsetDateTime::from)
+        .unwrap_or_else(time::OffsetDateTime::now_utc);
+    let sleep_run_id = context.run_id().to_string();
+    let store_path = state_dir.join("memory-store.json");
+    let mut store = crate::memory::MemoryStore::load_or_empty(&store_path)?;
+    let plan = crate::sleep::auto_promote::build_promotion_plan(
+        report,
+        &session,
+        store.contents(),
+        as_of,
+        &sleep_run_id,
+    );
+
+    store.append_records(plan.new_records.clone());
+    store.append_associations(plan.new_associations.clone());
+    for (from_id, to_id, new_weight) in &plan.strengthened_associations {
+        if let Some(existing) = store
+            .contents_mut()
+            .associations
+            .iter_mut()
+            .find(|association| {
+                association.from_memory_id == *from_id && association.to_memory_id == *to_id
+            })
+        {
+            existing.weight = *new_weight;
+            existing.last_reinforced_at = as_of;
+        }
+    }
+
+    crate::memory::reviewed_memory_draft::write_decision_candidates_draft(
+        &report.decision_candidates,
+        &sleep_run_id,
+        context.run_dir(),
+        as_of,
+    )?;
+
+    let promoted_count = plan.new_records.len();
+    let new_associations_count = plan.new_associations.len();
+    let brief = crate::sleep::commit::ConsolidatedBrief {
+        previous_session_summary: report.session_summary.clone(),
+        future_context_hints: report.future_context_hints.clone(),
+        open_questions: report.open_questions.clone(),
+        promoted_count,
+        new_associations_count,
+    };
+
+    crate::sleep::commit::SleepCommit {
+        state_dir,
+        new_store_contents: store.contents().clone(),
+        brief,
+        sleep_run_id: sleep_run_id.clone(),
+        consumed_session_id: session.session_id.clone(),
+        brief_archive_name: format!("sleep-{sleep_run_id}.json"),
+    }
+    .write()?;
+
+    outcome.observations.push(format!(
+        "Cross-session sleep consumed session `{}` and promoted {} routine memories with {} new associations.",
+        session.session_id, promoted_count, new_associations_count
+    ));
+    outcome
+        .extra_artifacts
+        .push("state/text-loop/consolidated-brief.json".to_string());
+    outcome
+        .extra_artifacts
+        .push("state/text-loop/memory-store.json".to_string());
+    if !report.decision_candidates.is_empty() {
+        outcome
+            .extra_artifacts
+            .push("reviewed-memory-draft.json".to_string());
+        outcome
+            .extra_artifacts
+            .push("reviewed-memory-draft.md".to_string());
+    }
+
+    Ok(outcome)
 }
 
 fn write_sleep_artifacts(
@@ -254,7 +375,9 @@ mod tests {
         let mut context = RunContext::create_in(&base_dir, "phase-seven-test").unwrap();
         let experiment = SleepPhaseSessionSummaryExperiment;
 
-        let outcome = experiment.run_with_provider(&mut context, "mock").unwrap();
+        let outcome = experiment
+            .run_with_provider_at_state_dir(&mut context, "mock", base_dir.join("state/text-loop"))
+            .unwrap();
         let events = fs::read_to_string(context.run_dir().join("events.jsonl")).unwrap();
         let traces = fs::read_to_string(context.run_dir().join("traces.jsonl")).unwrap();
         let sleep_report = fs::read_to_string(context.run_dir().join("sleep-report.md")).unwrap();

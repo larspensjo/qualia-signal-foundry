@@ -1,3 +1,5 @@
+pub mod auto_promote;
+pub mod commit;
 mod session_summary;
 mod sleep_report;
 

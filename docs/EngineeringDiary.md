@@ -1207,3 +1207,24 @@ Refs: crates/qsf_app/src/session, crates/qsf_app/src/experiments/multi_turn_text
 crates/qsf_app/src/observability/event_log.rs, docs/Architecture/Architecture.RuntimeLoop.md,
 docs/Architecture/Architecture.StateAndObservability.md, docs/DecisionLog.md, .gitignore;
 implements: 2026-05-20 - Text-loop continuity uses a manifest-backed state directory
+
+## 2026-05-20 - Sleep continuity commit and consolidated brief resume
+
+Sleep can now consume a persisted session, auto-promote routine memory candidates into the cross-session store, write a consolidated brief through a manifest-last commit, and leave decision candidates in the reviewed-memory draft workflow. The multi-turn text loop loads the consolidated brief on the next boot and prepends it to the first turn's memory context.
+
+What changed:
+- Added pure sleep promotion and commit helpers with idempotency coverage.
+- Wired the sleep experiment to update `memory-store.json`, `consolidated-brief.json`, the brief archive, and the continuity manifest when a pending session exists.
+- Added decision-kind reviewed-memory draft output for sleep decision candidates.
+- Added first-turn consolidated brief injection for `ConsolidatedBrief` resumes.
+
+Observed:
+- The sleep experiment still behaves as a legacy artifact-only run when no persisted session is present.
+- Focused tests cover promotion, commit idempotency, decision draft output, sleep wiring, awake continuation, and consolidated-brief resume injection.
+- Sleep memory ids intentionally normalize the sleep run id segment to lowercase, and cross-turn association reasons use "co-retrieved within N turns" wording to match the implemented retrieval signal.
+- Continuity-state paths in `extra_artifacts` are report breadcrumbs outside the run directory; the report writer renders them as text links and does not dereference them.
+
+Refs: crates/qsf_app/src/sleep/{auto_promote,commit}.rs,
+crates/qsf_app/src/experiments/{sleep_phase_session_summary,multi_turn_text_loop}.rs,
+crates/qsf_app/src/memory/reviewed_memory_draft.rs,
+crates/qsf_app/src/context/context_assembler.rs

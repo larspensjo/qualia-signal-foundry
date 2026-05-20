@@ -220,6 +220,7 @@ fn run_with_io_and_components_at_state_dir(
         .as_ref()
         .map(|session| session.session_id.clone());
     let brief_path = resume_inputs.manifest.last_sleep_brief_path.clone();
+    let mut pending_boot_brief: Option<crate::sleep::commit::ConsolidatedBrief> = None;
     let mut state = match resume_mode {
         crate::session::manifest::ResumeMode::ColdStart => SessionState::new(config.clone()),
         crate::session::manifest::ResumeMode::AwakeContinuation => {
@@ -230,7 +231,28 @@ fn run_with_io_and_components_at_state_dir(
             crate::session::continuation::prepare_awake_continuation(previous, &config)
         }
         crate::session::manifest::ResumeMode::ConsolidatedBrief => {
-            // A consolidated brief starts a new session while retaining a traceable predecessor id.
+            if let Some(path) = &brief_path {
+                let absolute_path = if path.is_absolute() {
+                    path.clone()
+                } else {
+                    state_dir.join(path)
+                };
+                if absolute_path.exists() {
+                    let raw = fs::read_to_string(&absolute_path).with_context(|| {
+                        format!(
+                            "failed to read consolidated brief `{}`",
+                            absolute_path.display()
+                        )
+                    })?;
+                    pending_boot_brief = Some(serde_json::from_str(&raw).with_context(|| {
+                        format!(
+                            "failed to parse consolidated brief `{}`",
+                            absolute_path.display()
+                        )
+                    })?);
+                }
+            }
+
             let mut fresh = SessionState::new(config.clone());
             fresh.previous_session_id = previous_session_id.clone();
             fresh
@@ -306,12 +328,21 @@ fn run_with_io_and_components_at_state_dir(
             }
         }
 
+        let boot_brief_fragment = if completed_turn_count(&state) == 0 {
+            pending_boot_brief
+                .take()
+                .map(|brief| format_boot_brief_for_context(&brief))
+        } else {
+            None
+        };
+
         match run_one_turn(
             context,
             &mut state,
             &memory_snapshot,
             model_client,
             &user_input,
+            boot_brief_fragment,
         ) {
             Ok(response) => {
                 writeln!(output, "{response}")?;
@@ -374,6 +405,7 @@ fn run_one_turn(
     memory_snapshot: &SessionMemorySourceSnapshot,
     model_client: &dyn ModelClient,
     user_input: &str,
+    boot_brief_fragment: Option<String>,
 ) -> anyhow::Result<String> {
     let turn_started_at = SystemTime::now();
     let retrieval = retrieve_session_memories(context, state, memory_snapshot, user_input)?;
@@ -406,6 +438,11 @@ fn run_one_turn(
     )?;
 
     let retrieved_memory_block = prompt::retrieved_memory_block(&assembly);
+    let retrieved_memory_block = match boot_brief_fragment {
+        Some(brief) if retrieved_memory_block.is_empty() => brief,
+        Some(brief) => format!("{brief}\n\n{retrieved_memory_block}"),
+        None => retrieved_memory_block,
+    };
     let base_prompt = assemble_session_prompt(state, user_input, &retrieved_memory_block);
     verify_prompt_prefix(state, &base_prompt)?;
     apply_session_event(
@@ -824,6 +861,33 @@ fn assemble_session_prompt(
         user_input,
         retrieved_memory_block,
     )
+}
+
+fn format_boot_brief_for_context(brief: &crate::sleep::commit::ConsolidatedBrief) -> String {
+    let mut text = String::new();
+    text.push_str("Previous session summary:\n");
+    text.push_str(&brief.previous_session_summary);
+    text.push('\n');
+
+    if !brief.future_context_hints.is_empty() {
+        text.push_str("\nFuture context hints:\n");
+        for hint in &brief.future_context_hints {
+            text.push_str("- ");
+            text.push_str(hint);
+            text.push('\n');
+        }
+    }
+
+    if !brief.open_questions.is_empty() {
+        text.push_str("\nOpen questions:\n");
+        for question in &brief.open_questions {
+            text.push_str("- ");
+            text.push_str(question);
+            text.push('\n');
+        }
+    }
+
+    text
 }
 
 fn verify_prompt_prefix(
@@ -1767,6 +1831,20 @@ mod tests {
         previous.turns.push(test_turn(0));
         previous.turns.push(test_turn(1));
         crate::session::persistence::persist_session_state(&previous, &state_dir).unwrap();
+        fs::create_dir_all(&state_dir).unwrap();
+        fs::write(
+            state_dir.join("consolidated-brief.json"),
+            serde_json::to_string_pretty(&crate::sleep::commit::ConsolidatedBrief {
+                previous_session_summary: "The previous session established reducer purity."
+                    .to_string(),
+                future_context_hints: vec!["Carry reducer purity forward.".to_string()],
+                open_questions: vec!["How should sleep summarize associations?".to_string()],
+                promoted_count: 1,
+                new_associations_count: 0,
+            })
+            .unwrap(),
+        )
+        .unwrap();
         crate::session::manifest::ContinuityManifest {
             current_session_id: Some(previous.session_id.clone()),
             current_session_state_path: Some(PathBuf::from("session-state.json")),
@@ -1800,6 +1878,16 @@ mod tests {
                 .unwrap();
         assert_eq!(resumed_state.turns.len(), 1);
         assert_eq!(resumed_state.turns[0].index, 0);
+        assert!(
+            resumed_state.turns[0]
+                .retrieved_memory_block
+                .contains("Previous session summary:")
+        );
+        assert!(
+            resumed_state.turns[0]
+                .retrieved_memory_block
+                .contains("The previous session established reducer purity.")
+        );
         assert_eq!(
             resumed_state.previous_session_id.as_deref(),
             Some(previous.session_id.as_str())

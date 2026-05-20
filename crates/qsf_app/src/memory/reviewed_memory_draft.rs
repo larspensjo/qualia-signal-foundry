@@ -148,6 +148,65 @@ pub fn write_reviewed_memory_draft(
     Ok(())
 }
 
+pub fn write_decision_candidates_draft(
+    candidates: &[String],
+    sleep_run_id: &str,
+    run_dir: &Path,
+    as_of: OffsetDateTime,
+) -> anyhow::Result<()> {
+    if candidates.is_empty() {
+        return Ok(());
+    }
+
+    let sanitized_sleep_run_id = sanitize_memory_id_segment(sleep_run_id);
+    let records = candidates
+        .iter()
+        .enumerate()
+        .filter_map(|(index, candidate)| {
+            let summary = candidate.trim().to_string();
+            if summary.is_empty() {
+                return None;
+            }
+
+            Some(MemoryRecord {
+                schema_version: MEMORY_RECORD_SCHEMA_VERSION,
+                id: format!(
+                    "memory.sleep.{sanitized_sleep_run_id}.decision.{}",
+                    candidate_index_label(index)
+                ),
+                kind: MemoryRecordKind::Decision,
+                title: title_from_summary(&summary, index),
+                summary: summary.clone(),
+                tags: vec![],
+                created_at: as_of,
+                importance: DEFAULT_DRAFT_IMPORTANCE,
+                reinforcement_count: 0,
+                last_reinforced_at: None,
+                source_reference: format!(
+                    "sleep-run:{sleep_run_id}#decision_candidates[{}]",
+                    candidate_index_label(index)
+                ),
+                estimated_tokens: estimated_tokens(&summary),
+            })
+        })
+        .collect::<Vec<_>>();
+
+    if records.is_empty() {
+        return Ok(());
+    }
+
+    let draft = ReviewedMemoryDraft {
+        source_sleep_run_id: sleep_run_id.to_string(),
+        source_sleep_report_path: run_dir.join("sleep-report.json"),
+        fixture: MemoryFixture {
+            records,
+            associations: vec![],
+        },
+        association_reviews: vec![],
+    };
+    write_reviewed_memory_draft(run_dir, &draft)
+}
+
 pub fn render_reviewed_memory_draft_markdown(
     draft: &ReviewedMemoryDraft,
     draft_json_path: impl AsRef<Path>,
@@ -599,6 +658,7 @@ fn estimated_tokens(summary: &str) -> usize {
 #[cfg(test)]
 mod tests {
     use serde_json::json;
+    use tempfile::TempDir;
     use time::format_description::well_known::Rfc3339;
 
     use crate::memory::MEMORY_RECORD_SCHEMA_VERSION;
@@ -868,6 +928,30 @@ mod tests {
             draft.association_reviews[0].status,
             AssociationDraftStatus::Omitted("self-association is not useful".to_string())
         );
+    }
+
+    #[test]
+    fn write_decision_candidates_draft_emits_decision_kind_records() {
+        let dir = TempDir::new().unwrap();
+        let candidates = vec![
+            "Tools should remain read-only until permissions mature.".to_string(),
+            "Voice loop unification waits until SessionState is shared.".to_string(),
+        ];
+
+        write_decision_candidates_draft(&candidates, "sleep-1", dir.path(), timestamp()).unwrap();
+
+        let json_path = dir.path().join(REVIEWED_MEMORY_DRAFT_JSON);
+        assert!(json_path.exists());
+        let raw = std::fs::read_to_string(&json_path).unwrap();
+        let fixture: MemoryFixture = serde_json::from_str(&raw).unwrap();
+        assert_eq!(fixture.records.len(), 2);
+        assert!(
+            fixture
+                .records
+                .iter()
+                .all(|record| record.kind == MemoryRecordKind::Decision)
+        );
+        assert!(dir.path().join(REVIEWED_MEMORY_DRAFT_MARKDOWN).exists());
     }
 
     #[test]
