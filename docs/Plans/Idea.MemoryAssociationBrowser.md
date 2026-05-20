@@ -46,8 +46,8 @@ Their primary user interfaces should probably remain different.
 
 ## Shared Visual Guideline
 
-The memory browser should use the same visual guideline as the live activation
-dashboard, with
+The memory browser should use the shared QSF visual language captured in
+`Design.SharedVisualLanguage.md`. That language uses
 [concept-art-activation-map-2026-05-18.jpg](../Assets/LiveActivationDashboard/concept-art-activation-map-2026-05-18.jpg)
 as a mood reference.
 

@@ -380,6 +380,10 @@ The dashboard should be understandable without becoming a literal brain diagram.
 
 ## Visual Identity
 
+The reusable UI rules for this identity are promoted into
+`Design.SharedVisualLanguage.md`. This section remains the exploratory origin
+for the dashboard-specific direction.
+
 The dashboard should have a deliberate visual identity, not merely a functional debug
 layout. It should be pleasing to keep open during long sessions while still looking
 professional, modern, and research-oriented.

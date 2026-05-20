@@ -284,6 +284,11 @@ references.
 
 ## Visual Reference
 
+The shared visual rules for QSF UI tools live in
+`Design.SharedVisualLanguage.md`. This dashboard should follow that document
+for palette, channel color semantics, graph styling, motion, and evidence
+traceability.
+
 The first visual north star is the activation-map concept art:
 
 ![Concept art for the Live Activation Dashboard](../Assets/LiveActivationDashboard/concept-art-activation-map-2026-05-18.jpg)
