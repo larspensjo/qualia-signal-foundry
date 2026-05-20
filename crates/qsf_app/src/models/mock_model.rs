@@ -3,8 +3,13 @@ use std::collections::HashMap;
 use anyhow::bail;
 use serde_json::json;
 
-use super::model_client::{ModelClient, ModelRequest, ModelResponse, ModelToolCall, ModelUsage};
+use super::model_client::{
+    ModelClient, ModelMessageRole, ModelRequest, ModelResponse, ModelToolCall, ModelUsage,
+};
 use super::model_role::ModelRoleId;
+
+const CALCULATOR_TOOL_NAME: &str = "calculator";
+const RECALL_TURN_TOOL_NAME: &str = "recall_turn";
 
 #[derive(Clone, Debug)]
 struct MockFixture {
@@ -166,28 +171,100 @@ impl ModelClient for MockModelClient {
             request.model_name.clone(),
             fixture.output_text.clone(),
         )
-        .with_usage(usage);
+        .with_usage(usage.clone());
 
-        if request.role.role_id == ModelRoleId::ConversationalResponder
-            && request.tools.iter().any(|tool| tool.name == "recall_turn")
-            && request
-                .last_user_message()
-                .map(|message| message.to_ascii_lowercase().contains("recall turn"))
-                .unwrap_or(false)
-        {
-            response = response
-                .with_tool_calls(vec![ModelToolCall::new(
-                    "mock-recall-0",
-                    "recall_turn",
-                    json!({ "turn_id": 0 }),
-                )])
-                .with_finish_reason("tool_calls");
+        if request.role.role_id == ModelRoleId::ConversationalResponder {
+            if let Some(result) = calculator_result_from_tool_message(request) {
+                response = ModelResponse::from_text(
+                    request,
+                    self.client_name(),
+                    request.model_name.clone(),
+                    format!("The result is {result}."),
+                )
+                .with_usage(usage)
+                .with_finish_reason("stop");
+            } else if request
+                .tools
+                .iter()
+                .any(|tool| tool.name == RECALL_TURN_TOOL_NAME)
+                && request
+                    .last_user_message()
+                    .map(|message| message.to_ascii_lowercase().contains("recall turn"))
+                    .unwrap_or(false)
+            {
+                response = response
+                    .with_tool_calls(vec![ModelToolCall::new(
+                        "mock-recall-0",
+                        RECALL_TURN_TOOL_NAME,
+                        json!({ "turn_id": 0 }),
+                    )])
+                    .with_finish_reason("tool_calls");
+            } else if request
+                .tools
+                .iter()
+                .any(|tool| tool.name == CALCULATOR_TOOL_NAME)
+                && request
+                    .last_user_message()
+                    .and_then(extract_arithmetic_expression)
+                    .is_some()
+            {
+                let expression = request
+                    .last_user_message()
+                    .and_then(extract_arithmetic_expression)
+                    .expect("expression was just checked");
+                response = response
+                    .with_tool_calls(vec![ModelToolCall::new(
+                        "mock-calculator-0",
+                        CALCULATOR_TOOL_NAME,
+                        json!({ "expression": expression }),
+                    )])
+                    .with_finish_reason("tool_calls");
+            } else {
+                response = response.with_finish_reason("stop");
+            }
         } else {
             response = response.with_finish_reason("stop");
         }
 
         Ok(response)
     }
+}
+
+fn extract_arithmetic_expression(message: &str) -> Option<String> {
+    let user_text = message
+        .rsplit_once("[User]\n")
+        .map(|(_, text)| text)
+        .unwrap_or(message);
+    let expression = user_text
+        .chars()
+        .filter(|ch| ch.is_ascii_digit() || matches!(ch, '+' | '-' | '*' | '/' | '(' | ')' | '.'))
+        .collect::<String>();
+
+    if expression
+        .chars()
+        .any(|ch| matches!(ch, '+' | '-' | '*' | '/'))
+        && expression.chars().any(|ch| ch.is_ascii_digit())
+    {
+        Some(expression)
+    } else {
+        None
+    }
+}
+
+fn calculator_result_from_tool_message(request: &ModelRequest) -> Option<String> {
+    request.messages.iter().rev().find_map(|message| {
+        if message.role != ModelMessageRole::Tool || !message.content.contains("[calculator]") {
+            return None;
+        }
+
+        message
+            .content
+            .lines()
+            .find_map(|line| line.strip_prefix("result: "))
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(ToString::to_string)
+    })
 }
 
 #[cfg(test)]

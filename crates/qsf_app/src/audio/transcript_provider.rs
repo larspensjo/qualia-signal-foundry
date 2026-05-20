@@ -1,7 +1,5 @@
 use std::fmt;
-#[cfg(feature = "openai")]
 use std::sync::OnceLock;
-#[cfg(feature = "openai")]
 use std::time::{Duration, Instant};
 
 use serde::{Deserialize, Serialize};
@@ -14,24 +12,15 @@ pub const TRANSCRIPT_INPUT_SOURCE_ENV_VAR: &str = "QSF_TRANSCRIPT_INPUT_SOURCE";
 pub const TRANSCRIPT_WAV_PATH_ENV_VAR: &str = "QSF_TRANSCRIPT_WAV_PATH";
 pub const TRANSCRIPT_MIC_DEVICE_ENV_VAR: &str = "QSF_TRANSCRIPT_MIC_DEVICE";
 pub const TRANSCRIPT_MIC_DURATION_MS_ENV_VAR: &str = "QSF_TRANSCRIPT_MIC_DURATION_MS";
-#[cfg(feature = "openai")]
 pub const OPENAI_API_KEY_ENV_VAR: &str = "OPENAI_API_KEY";
-#[cfg(feature = "openai")]
 pub const OPENAI_REALTIME_TIMEOUT_MS_ENV_VAR: &str = "QSF_OPENAI_REALTIME_TIMEOUT_MS";
-
-#[cfg(feature = "openai")]
 pub(super) const OPENAI_REALTIME_TRANSCRIPTION_WEBSOCKET_URL: &str =
     "wss://api.openai.com/v1/realtime?intent=transcription";
-#[cfg(feature = "openai")]
 pub(super) const OPENAI_REALTIME_PCM_RATE_HZ: u32 = 24_000;
-#[cfg(feature = "openai")]
 pub(super) const OPENAI_REALTIME_PCM_CHANNELS: u16 = 1;
-#[cfg(feature = "openai")]
 pub(super) const OPENAI_REALTIME_CHUNK_MS: u64 = 100;
 const DEFAULT_LIVE_MICROPHONE_DURATION_MS: u64 = 4_000;
-#[cfg(feature = "openai")]
 pub(super) const DEFAULT_OPENAI_REALTIME_TIMEOUT_MS: u64 = 30_000;
-#[cfg(feature = "openai")]
 pub(super) const DEFAULT_OPENAI_REALTIME_CONNECT_TIMEOUT_MS: u64 = 15_000;
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -342,7 +331,6 @@ impl OpenAiRealtimeTranscriptProvider {
         &self.model
     }
 
-    #[cfg(feature = "openai")]
     fn transcribe_realtime(
         &self,
         request: &TranscriptProviderRequest,
@@ -377,21 +365,6 @@ impl OpenAiRealtimeTranscriptProvider {
             audio,
             Duration::from_millis(timeout_ms),
         ))
-    }
-
-    #[cfg(not(feature = "openai"))]
-    fn transcribe_realtime(
-        &self,
-        request: &TranscriptProviderRequest,
-    ) -> Result<TranscriptProviderSession, TranscriptProviderError> {
-        Err(TranscriptProviderError::Unavailable {
-            provider: self.provider_name().to_string(),
-            reason: format!(
-                "adapter target `{}` is defined for input source `{}`, but qsf_app was built without the `openai` feature",
-                self.model,
-                request.input_source.label(),
-            ),
-        })
     }
 }
 
@@ -485,8 +458,6 @@ fn contains_credential_like_content(message: &str) -> bool {
                 && token.len() >= 16
         })
 }
-
-#[cfg(feature = "openai")]
 pub(super) fn openai_realtime_runtime(
     provider_name: &str,
 ) -> Result<&'static tokio::runtime::Runtime, TranscriptProviderError> {
@@ -505,8 +476,6 @@ pub(super) fn openai_realtime_runtime(
         }),
     }
 }
-
-#[cfg(feature = "openai")]
 pub(super) fn read_env_u64(env_var: &str, default: u64) -> u64 {
     std::env::var(env_var)
         .ok()
@@ -554,18 +523,12 @@ fn default_simulated_input_source() -> TranscriptInputSource {
         chunk_count: SIMULATED_TRANSCRIPT_CHUNK_COUNT,
     }
 }
-
-#[cfg(feature = "openai")]
 fn pcm16_to_bytes(samples: &[i16]) -> Vec<u8> {
     samples.iter().flat_map(|s| s.to_le_bytes()).collect()
 }
-
-#[cfg(feature = "openai")]
 pub(super) fn elapsed_ms(started_at: Instant) -> u64 {
     started_at.elapsed().as_millis() as u64
 }
-
-#[cfg(feature = "openai")]
 pub(super) fn parse_realtime_server_event(
     provider_name: &str,
     text: &str,
@@ -582,8 +545,6 @@ pub(super) fn parse_realtime_server_event(
         }
     }
 }
-
-#[cfg(feature = "openai")]
 pub(super) fn realtime_audio_from_source(
     input_source: &TranscriptInputSource,
     provider_name: &str,
@@ -599,8 +560,6 @@ pub(super) fn realtime_audio_from_source(
         } => capture_live_pcm16(device, *duration_ms, provider_name),
     }
 }
-
-#[cfg(feature = "openai")]
 fn read_wav_pcm16(path: &str, provider_name: &str) -> Result<Vec<u8>, TranscriptProviderError> {
     let reader =
         hound::WavReader::open(path).map_err(|e| TranscriptProviderError::Unavailable {
@@ -650,8 +609,6 @@ fn read_wav_pcm16(path: &str, provider_name: &str) -> Result<Vec<u8>, Transcript
 
     Ok(pcm16_to_bytes(&samples))
 }
-
-#[cfg(feature = "openai")]
 fn capture_live_pcm16(
     device_name: &str,
     duration_ms: u64,
@@ -798,8 +755,6 @@ fn capture_live_pcm16(
 
     Ok(pcm16_to_bytes(&samples.lock().unwrap()))
 }
-
-#[cfg(feature = "openai")]
 async fn transcribe_openai_realtime(
     provider_name: &str,
     model: &str,
@@ -1120,23 +1075,6 @@ mod tests {
         assert_eq!(session.chunks[1].chunk_index, 1);
     }
 
-    #[cfg(not(feature = "openai"))]
-    #[test]
-    fn openai_realtime_provider_names_current_target_model_when_feature_disabled() {
-        let provider = OpenAiRealtimeTranscriptProvider::default();
-        let request = TranscriptProviderRequest::simulated("session-test");
-        let error = provider.transcribe(&request).unwrap_err();
-
-        assert_eq!(provider.model(), OPENAI_REALTIME_TRANSCRIPTION_MODEL);
-        assert!(matches!(error, TranscriptProviderError::Unavailable { .. }));
-        assert!(
-            error
-                .message()
-                .contains(OPENAI_REALTIME_TRANSCRIPTION_MODEL)
-        );
-    }
-
-    #[cfg(feature = "openai")]
     #[test]
     fn openai_realtime_provider_validates_local_inputs_before_network_call() {
         let provider = OpenAiRealtimeTranscriptProvider::default();

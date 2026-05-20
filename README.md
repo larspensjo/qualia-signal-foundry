@@ -45,10 +45,10 @@ Currently implemented experiment paths include:
 
 - **Multi-turn text loop** with hot active turns, warm summaries, and a `recall_turn`
   tool that can fetch verbatim text from summarized turns — works with a deterministic
-  mock model by default and with the live OpenAI Chat Completions API when the
-  `openai` feature is enabled.
+  mock model by default and with the live OpenAI Chat Completions API when explicitly
+  selected through configuration.
 - **Streaming transcription** of microphone or WAV input via the OpenAI realtime
-  transcription adapter (feature-gated).
+  transcription adapter.
 - **Realtime voice session** and a **text-owned voice loop** that retrieves memory
   before context assembly and routes any provider-requested tool calls through the
   QSF tool boundary instead of executing them directly.
@@ -129,17 +129,16 @@ cargo run -p qsf_app -- experiment <name>
 
 Each run writes its artifacts into a fresh directory under `runs/`.
 
-### Optional `openai` feature
+### OpenAI-backed providers
 
-Audio providers and the live OpenAI-backed model client are gated behind the
-`openai` Cargo feature. Enabling them also requires an explicit provider selection
-through environment variables; possessing an API key alone does not switch the
-runtime away from the deterministic mock path.
+OpenAI-backed providers require an explicit provider selection through environment
+variables; possessing an API key alone does not switch the runtime away from the
+deterministic mock path.
 
 ```powershell
 $env:OPENAI_API_KEY = "<key>"
 $env:QSF_MODEL_PROVIDER = "openai"
-cargo run -p qsf_app --features openai -- experiment multi-turn-text-loop
+cargo run -p qsf_app -- experiment multi-turn-text-loop
 ```
 
 Per-experiment configuration variables (warm-summary thresholds, memory sources,

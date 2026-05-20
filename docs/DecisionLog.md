@@ -405,3 +405,20 @@ Consequences: Callers must treat a failed model tool batch as failed. Any future
 result behavior needs an explicit result type that distinguishes completed calls from the
 failing call.
 Refs: crates/qsf_app/src/models/tool_dispatch.rs
+
+## 2026-05-20 - openai Cargo feature removed
+Decision: The `openai` Cargo feature is removed from `qsf_app`. Real-provider
+code for OpenAI Chat Completions, realtime transcription, and realtime voice
+sessions compiles unconditionally. Provider selection at runtime remains explicit
+via `QSF_MODEL_PROVIDER` / `QSF_TRANSCRIPT_PROVIDER` /
+`QSF_VOICE_SESSION_PROVIDER` per the 2026-05-11 decision.
+Context: The feature gate was an early hedge from when real-provider code was
+experimental. It now adds CI complexity, hides drift behind a flag, and conflicts
+with cross-session continuity work that touches code in previously feature-gated
+paths. Removing the gate also unblocks the planned voice/text loop unification.
+Consequences: `cargo build` / `cargo test` exercise the full path. API keys still
+do not switch the runtime away from mocks; provider selection is the single
+decision point.
+Refs: crates/qsf_app/Cargo.toml, crates/qsf_app/src/models,
+crates/qsf_app/src/audio,
+docs/DecisionLog.md#2026-05-11---model-access-uses-explicit-roles-and-optional-provider-adapters

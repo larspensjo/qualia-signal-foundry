@@ -1,10 +1,8 @@
 use anyhow::Context;
 
 use super::model_client::{ModelClient, ModelRequest, ModelResponse};
-#[cfg(feature = "openai")]
 use super::model_client::{ModelMessageRole, ModelResponseFormat, ModelUsage};
 
-#[cfg(feature = "openai")]
 mod enabled {
     use anyhow::Context;
     use openai_provider_kit::{
@@ -204,7 +202,7 @@ mod enabled {
         }
 
         #[test]
-        #[ignore = "requires OPENAI_API_KEY and the openai feature"]
+        #[ignore = "requires OPENAI_API_KEY and explicit OpenAI provider access"]
         fn openai_provider_completes_trivial_request() {
             if std::env::var("OPENAI_API_KEY").is_err() {
                 return;
@@ -224,31 +222,6 @@ mod enabled {
 
             assert_eq!(response.provider_name, "openai");
             assert!(!response.output_text.trim().is_empty());
-        }
-    }
-}
-
-#[cfg(not(feature = "openai"))]
-mod enabled {
-    use anyhow::bail;
-
-    use super::{ModelClient, ModelRequest, ModelResponse};
-
-    pub struct OpenAiProviderModelClient;
-
-    impl OpenAiProviderModelClient {
-        pub fn from_env() -> anyhow::Result<Self> {
-            bail!("qsf_app was built without the `openai` feature")
-        }
-    }
-
-    impl ModelClient for OpenAiProviderModelClient {
-        fn client_name(&self) -> &str {
-            "openai"
-        }
-
-        fn complete(&self, _request: &ModelRequest) -> anyhow::Result<ModelResponse> {
-            bail!("qsf_app was built without the `openai` feature")
         }
     }
 }

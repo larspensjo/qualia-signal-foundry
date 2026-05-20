@@ -6,33 +6,22 @@ license.workspace = true
 authors.workspace = true
 rust-version.workspace = true
 
-[features]
-default = []
-openai = [
-  "dep:base64",
-  "dep:cpal",
-  "dep:futures-util",
-  "dep:openai_provider_kit",
-  "dep:reqwest",
-  "dep:tokio",
-  "dep:tokio-tungstenite",
-]
-
 [dependencies]
 anyhow.workspace = true
-base64 = { workspace = true, optional = true }
+base64.workspace = true
 clap.workspace = true
-cpal = { workspace = true, optional = true }
+cpal.workspace = true
 engine_logging = { path = "../engine_logging" }
-futures-util = { workspace = true, optional = true }
+futures-util.workspace = true
 hound.workspace = true
 log.workspace = true
-openai_provider_kit = { git = "https://github.com/larspensjo/web_page_filet_mignon", package = "openai_provider_kit", rev = "ca28629d42fb350a7935df6907573e2f972b3ba9", optional = true }
-reqwest = { version = "0.12", default-features = false, features = ["blocking", "json", "rustls-tls"], optional = true }
+openai_provider_kit = { git = "https://github.com/larspensjo/web_page_filet_mignon", package = "openai_provider_kit", rev = "ca28629d42fb350a7935df6907573e2f972b3ba9" }
+reqwest = { version = "0.12", default-features = false, features = ["blocking", "json", "rustls-tls"] }
 serde.workspace = true
 serde_json.workspace = true
 sha2.workspace = true
+tempfile = "3"
 time.workspace = true
-tokio = { workspace = true, optional = true }
-tokio-tungstenite = { workspace = true, optional = true }
+tokio.workspace = true
+tokio-tungstenite.workspace = true
 uuid.workspace = true

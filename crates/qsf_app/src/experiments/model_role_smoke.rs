@@ -24,7 +24,7 @@ impl Experiment for ModelRoleSmokeExperiment {
     }
 
     fn description(&self) -> &'static str {
-        "Invoke a model role through a deterministic mock client or the optional OpenAI adapter"
+        "Invoke a model role through a deterministic mock client or the explicitly selected OpenAI adapter"
     }
 
     fn run(&self, context: &mut RunContext) -> anyhow::Result<ExperimentOutcome> {
@@ -87,7 +87,7 @@ impl ModelRoleSmokeExperiment {
                 "The OpenAI-backed client remains a thin adapter over `openai_provider_kit`, while the default smoke path stays deterministic through the mock client.".to_string(),
             ],
             failure_modes: vec![
-                "The OpenAI-backed path is compiled only when the `openai` Cargo feature is enabled.".to_string(),
+                "The OpenAI-backed path requires explicit provider selection and environment credentials.".to_string(),
                 "No cost estimation is emitted yet for OpenAI-backed calls because the provider kit does not currently expose pricing metadata.".to_string(),
             ],
             follow_up_questions: vec![

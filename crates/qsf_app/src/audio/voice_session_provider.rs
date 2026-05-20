@@ -1,5 +1,4 @@
 use std::fmt;
-#[cfg(feature = "openai")]
 use std::time::{Duration, Instant};
 
 use serde::{Deserialize, Serialize};
@@ -16,8 +15,6 @@ pub const REALTIME_SESSION_WAV_PATH_ENV_VAR: &str = "QSF_REALTIME_SESSION_WAV_PA
 pub const REALTIME_SESSION_MIC_DEVICE_ENV_VAR: &str = "QSF_REALTIME_SESSION_MIC_DEVICE";
 pub const REALTIME_SESSION_MIC_DURATION_MS_ENV_VAR: &str = "QSF_REALTIME_SESSION_MIC_DURATION_MS";
 pub const OPENAI_REALTIME_VOICE_INPUT_TRANSCRIPTION_MODEL: &str = "gpt-4o-mini-transcribe";
-
-#[cfg(feature = "openai")]
 const OPENAI_REALTIME_VOICE_WEBSOCKET_BASE_URL: &str = "wss://api.openai.com/v1/realtime";
 const DEFAULT_LIVE_MICROPHONE_DURATION_MS: u64 = 4_000;
 const SIMULATED_VOICE_CHUNK_COUNT: u32 = 3;
@@ -372,7 +369,6 @@ impl OpenAiRealtimeSessionProvider {
         &self.model
     }
 
-    #[cfg(feature = "openai")]
     fn run_openai_session(
         &self,
         request: &RealtimeSessionRequest,
@@ -409,21 +405,6 @@ impl OpenAiRealtimeSessionProvider {
             request,
             Duration::from_millis(timeout_ms),
         ))
-    }
-
-    #[cfg(not(feature = "openai"))]
-    fn run_openai_session(
-        &self,
-        request: &RealtimeSessionRequest,
-    ) -> Result<VoiceProviderSession, RealtimeSessionProviderError> {
-        Err(RealtimeSessionProviderError::Unavailable {
-            provider: self.provider_name().to_string(),
-            reason: format!(
-                "adapter target `{}` is defined for input source `{}`, but qsf_app was built without the `openai` feature",
-                self.model,
-                request.input_source.label(),
-            ),
-        })
     }
 }
 
@@ -522,8 +503,6 @@ fn default_simulated_input_source() -> TranscriptInputSource {
         chunk_count: SIMULATED_VOICE_CHUNK_COUNT,
     }
 }
-
-#[cfg(feature = "openai")]
 fn validate_realtime_input_source_before_network(
     input_source: &TranscriptInputSource,
     provider_name: &str,
@@ -534,8 +513,6 @@ fn validate_realtime_input_source_before_network(
 
     Ok(())
 }
-
-#[cfg(feature = "openai")]
 async fn run_openai_realtime_voice_session(
     provider_name: &str,
     model: &str,
@@ -655,8 +632,6 @@ async fn run_openai_realtime_voice_session(
     )
     .await
 }
-
-#[cfg(feature = "openai")]
 fn build_openai_realtime_response_create(request: &RealtimeSessionRequest) -> serde_json::Value {
     serde_json::json!({
         "type": "response.create",
@@ -674,8 +649,6 @@ fn build_openai_realtime_response_create(request: &RealtimeSessionRequest) -> se
         },
     })
 }
-
-#[cfg(feature = "openai")]
 fn build_openai_realtime_session_update(
     model: &str,
     request: &RealtimeSessionRequest,
@@ -714,8 +687,6 @@ fn build_openai_realtime_session_update(
 
     update
 }
-
-#[cfg(feature = "openai")]
 async fn wait_for_session_created<S>(
     provider_name: &str,
     model: &str,
@@ -778,8 +749,6 @@ where
         reason: "timed out waiting for session.created".to_string(),
     })?
 }
-
-#[cfg(feature = "openai")]
 async fn send_audio_input<S>(
     provider_name: &str,
     write: &mut S,
@@ -841,8 +810,6 @@ where
 
     Ok(chunks)
 }
-
-#[cfg(feature = "openai")]
 async fn collect_openai_voice_session<S>(
     provider_name: &str,
     confirmed_model: String,
@@ -1065,16 +1032,12 @@ fn signed_timestamp_difference(lhs_ms: u64, rhs_ms: u64) -> i64 {
         -i64::try_from(difference).unwrap_or(i64::MAX)
     }
 }
-
-#[cfg(any(feature = "openai", test))]
 fn is_text_only_simulated_request(request: &RealtimeSessionRequest) -> bool {
     matches!(
         request.input_source,
         TranscriptInputSource::Simulated { .. }
     )
 }
-
-#[cfg(any(feature = "openai", test))]
 fn fallback_input_transcript(request: &RealtimeSessionRequest) -> String {
     if is_text_only_simulated_request(request) {
         request.prompt.clone()
@@ -1082,8 +1045,6 @@ fn fallback_input_transcript(request: &RealtimeSessionRequest) -> String {
         "<no-input-transcript>".to_string()
     }
 }
-
-#[cfg(feature = "openai")]
 fn extract_response_text(event: &serde_json::Value) -> Option<String> {
     let output = event["response"]["output"].as_array()?;
     let mut text = String::new();
@@ -1137,22 +1098,6 @@ mod tests {
         );
     }
 
-    #[cfg(not(feature = "openai"))]
-    #[test]
-    fn openai_realtime_session_provider_names_current_target_model_when_feature_disabled() {
-        let provider = OpenAiRealtimeSessionProvider::default();
-        let request = RealtimeSessionRequest::simulated("voice-session-test");
-        let error = provider.run_session(&request).unwrap_err();
-
-        assert_eq!(provider.model(), OPENAI_REALTIME_VOICE_MODEL);
-        assert!(matches!(
-            error,
-            RealtimeSessionProviderError::Unavailable { .. }
-        ));
-        assert!(error.message().contains(OPENAI_REALTIME_VOICE_MODEL));
-    }
-
-    #[cfg(feature = "openai")]
     #[test]
     fn openai_realtime_session_provider_validates_local_inputs_before_network_call() {
         let provider = OpenAiRealtimeSessionProvider::default();
@@ -1171,7 +1116,6 @@ mod tests {
         assert!(error.message().contains("does-not-exist.wav"));
     }
 
-    #[cfg(feature = "openai")]
     #[test]
     fn openai_realtime_session_update_includes_output_audio_rate() {
         let request = RealtimeSessionRequest::simulated("voice-session-test");
@@ -1196,7 +1140,6 @@ mod tests {
         );
     }
 
-    #[cfg(feature = "openai")]
     #[test]
     fn openai_realtime_response_create_uses_session_modalities() {
         let request = RealtimeSessionRequest::simulated("voice-session-test");

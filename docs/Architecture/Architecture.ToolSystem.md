@@ -23,10 +23,16 @@ The wider catalogue of categories described below is mostly aspirational.
   [models/model_role.rs](../../crates/qsf_app/src/models/model_role.rs))
 - `ToolRequested` → `ToolCompleted` / `ToolFailed` lifecycle events with provider
   metadata
-- `CalculatorTool` (`Experiment.ToolAsPerceptionCalculator`) and `RecallTurnTool`
-  (multi-turn loop) as the two production tools
+- `CalculatorTool` (`Experiment.ToolAsPerceptionCalculator` and the multi-turn
+  conversational loop) and `RecallTurnTool` (multi-turn loop) as the two
+  production tools
   ([tools/calculator_tool.rs](../../crates/qsf_app/src/tools/calculator_tool.rs),
   [tools/recall_turn_tool.rs](../../crates/qsf_app/src/tools/recall_turn_tool.rs))
+- Multi-turn conversational requests advertise `calculator` and `recall_turn`
+  from the responder role allow-list, then feed successful tool results back as
+  provider-native tool messages before the final response
+  ([experiments/multi_turn_text_loop.rs](../../crates/qsf_app/src/experiments/multi_turn_text_loop.rs),
+  [conversation/prompt.rs](../../crates/qsf_app/src/conversation/prompt.rs))
 - Realtime voice provider records requested tool calls as QSF events without
   executing them, preserving the QSF tool boundary
   ([audio/voice_session_provider.rs](../../crates/qsf_app/src/audio/voice_session_provider.rs))
