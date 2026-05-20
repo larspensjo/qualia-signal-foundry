@@ -5,8 +5,19 @@ use serde::{Deserialize, Serialize};
 use crate::context::ContextAssembly;
 use crate::conversation::ContentHash;
 
+pub mod continuation;
+pub mod manifest;
+pub mod persistence;
+pub mod resume;
+
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 pub struct SessionState {
+    #[serde(default)]
+    pub session_id: String,
+    /// Previous session id is set only when a new session is bootstrapped from a consolidated brief.
+    /// Awake continuation keeps the same `session_id` and leaves this empty.
+    #[serde(default)]
+    pub previous_session_id: Option<String>,
     pub started_at: SystemTime,
     pub config: SessionConfig,
     pub turns: Vec<Turn>,
@@ -21,7 +32,13 @@ pub struct SessionState {
 
 impl SessionState {
     pub fn new(config: SessionConfig) -> Self {
+        Self::new_with_id(uuid::Uuid::new_v4().to_string(), config)
+    }
+
+    pub fn new_with_id(session_id: String, config: SessionConfig) -> Self {
         Self {
+            session_id,
+            previous_session_id: None,
             started_at: SystemTime::now(),
             config,
             turns: vec![],
@@ -147,4 +164,69 @@ pub fn is_turn_summarized(state: &SessionState, turn_index: usize) -> bool {
     // Summaries are append-only and always cover the oldest unsummarized turns.
     // Completed Turn records stay in `turns`; prompt assembly skips this prefix.
     turn_index < state.summarized_turns.len()
+}
+
+#[cfg(test)]
+pub(crate) mod tests {
+    use std::time::SystemTime;
+
+    use super::*;
+    use crate::context::{ContextAssembly, ContextBudget};
+    use crate::conversation::ContentHash;
+
+    #[test]
+    fn new_session_state_carries_session_id_and_no_previous() {
+        let state = SessionState::new_with_id("session-abc".to_string(), config());
+
+        assert_eq!(state.session_id, "session-abc");
+        assert_eq!(state.previous_session_id, None);
+    }
+
+    #[test]
+    fn session_state_serde_roundtrips_with_new_fields() {
+        let state = SessionState::new_with_id("session-roundtrip".to_string(), config());
+
+        let json = serde_json::to_string(&state).unwrap();
+        let parsed: SessionState = serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed.session_id, "session-roundtrip");
+        assert_eq!(parsed.previous_session_id, None);
+    }
+
+    pub(crate) fn fake_turn(index: usize) -> Turn {
+        Turn {
+            index,
+            started_at: SystemTime::UNIX_EPOCH,
+            completed_at: SystemTime::UNIX_EPOCH,
+            user_input: format!("turn-{index}-input"),
+            context_assembly: ContextAssembly {
+                budget: ContextBudget::new(4, 600),
+                selected: vec![],
+                omitted: vec![],
+                used_estimated_tokens: 0,
+            },
+            retrieved_memory_block: String::new(),
+            assistant_response: format!("turn-{index}-response"),
+            recalled_turns: vec![],
+            model_id: "mock".to_string(),
+            model_latency_ms: 0,
+            input_tokens: 0,
+            cached_input_tokens: 0,
+            output_tokens: 0,
+            full_request_hash: ContentHash([index as u8; 32]),
+            message_count: 0,
+        }
+    }
+
+    fn config() -> SessionConfig {
+        SessionConfig {
+            model_id: "mock".to_string(),
+            max_turns: 10,
+            warm_threshold: 2,
+            allow_over_limit: false,
+            memory_source: MemorySourceConfig {
+                source: "fixture".to_string(),
+                file: None,
+            },
+        }
+    }
 }

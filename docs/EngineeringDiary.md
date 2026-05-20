@@ -1192,3 +1192,18 @@ Observed:
 
 Refs: crates/qsf_app/src/memory/memory_record.rs, crates/qsf_app/src/memory/retrieval.rs,
 crates/qsf_app/src/memory/store.rs
+
+## 2026-05-20 - Multi-turn text loop awake continuation
+
+Added the continuity manifest and persisted `SessionState` path for the multi-turn text loop so a later run can resume an unfinished awake session.
+
+What changed:
+- Added stable session identifiers, atomic session-state persistence, an atomic continuity manifest, a pure resume classifier, and `prepare_awake_continuation` reset semantics.
+- Wired `multi-turn-text-loop` boot through `ColdStart`, `AwakeContinuation`, and the Stage 4 placeholder `ConsolidatedBrief` mode, emitting `SessionResumed` before `SessionStarted`.
+- Persisted the session state and manifest at loop end under the configured state directory, with `state/` ignored locally.
+- Downgraded awake-continuation attempts to `ColdStart` when the stored session config differs from the new run, and pinned the consolidated-brief placeholder with a loop-level test.
+
+Refs: crates/qsf_app/src/session, crates/qsf_app/src/experiments/multi_turn_text_loop.rs,
+crates/qsf_app/src/observability/event_log.rs, docs/Architecture/Architecture.RuntimeLoop.md,
+docs/Architecture/Architecture.StateAndObservability.md, docs/DecisionLog.md, .gitignore;
+implements: 2026-05-20 - Text-loop continuity uses a manifest-backed state directory

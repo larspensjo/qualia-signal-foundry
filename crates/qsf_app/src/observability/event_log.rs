@@ -35,6 +35,7 @@ pub enum EventType {
     SleepPhaseRequested,
     SleepPhaseCompleted,
     SessionStarted,
+    SessionResumed,
     PromptAssembled,
     TurnCompleted,
     TurnSummarized,

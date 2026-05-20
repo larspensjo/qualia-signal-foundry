@@ -1,7 +1,7 @@
 # Architecture: Runtime Loop
 
-Status: Draft  
-Maturity: Sketch  
+Status: Draft
+Maturity: Sketch
 Area: Core Architecture
 
 ## Implementation Status
@@ -27,6 +27,10 @@ document as a candidate design that real experiments incrementally fill in.
   trace emission
 - `session_id` propagation through transcript, runtime input, model role, output,
   and speech playback for voice turns
+- Cross-session boot for the multi-turn text loop: load continuity manifest, classify
+  resume mode, emit `SessionResumed`, then enter the normal reducer-driven loop
+  ([session/resume.rs](../../crates/qsf_app/src/session/resume.rs),
+  [experiments/multi_turn_text_loop.rs](../../crates/qsf_app/src/experiments/multi_turn_text_loop.rs))
 
 **Partial:**
 
@@ -40,14 +44,13 @@ document as a candidate design that real experiments incrementally fill in.
 
 **Not yet implemented:**
 
-- Cross-session `SessionState` persistence
 - Scheduled / internal timer events
 - The candidate state categories `AttentionState`, `ToolState` aggregator, and
   `AudioState` as a unified module — equivalents are scattered across audio and
   experiment code
 - Interruption and turn-taking handling in the live loop
 
-Last reviewed: 2026-05-18 against the code on `main`.
+Last reviewed: 2026-05-20 against the code on `main`.
 
 ## Purpose
 
@@ -106,6 +109,23 @@ The runtime loop uses a unidirectional, reducer-style state update model:
 
 This is a deliberate architectural commitment recorded in `docs/DecisionLog.md`.
 See also: `Agents.md`, which carries this as a coding standard.
+
+## Multi-Turn Boot Continuity
+
+The multi-turn text loop now has a pre-loop boot step:
+
+```text
+state/text-loop/continuity-manifest.json
+  -> load previous SessionState if present
+  -> classify ColdStart | AwakeContinuation | ConsolidatedBrief
+  -> emit SessionResumed
+  -> SessionStarted event enters the reducer loop
+```
+
+`state/text-loop/` is process-working-directory relative unless `QSF_STATE_DIR` is set.
+`AwakeContinuation` keeps the same `session_id` and carries turns forward only when the
+stored `SessionConfig` matches the new run. `ConsolidatedBrief` starts a fresh session
+with `previous_session_id` set, while Stage 4 owns actual brief injection.
 
 ## Candidate Flow
 

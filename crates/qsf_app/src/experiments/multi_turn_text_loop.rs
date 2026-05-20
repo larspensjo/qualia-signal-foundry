@@ -1,6 +1,6 @@
 use std::fs;
 use std::io::{BufRead, Write};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::time::{Instant, SystemTime};
 
 use anyhow::Context;
@@ -56,18 +56,20 @@ impl Experiment for MultiTurnTextLoopExperiment {
 
     fn run(&self, context: &mut RunContext) -> anyhow::Result<ExperimentOutcome> {
         let config = SessionConfig::from_env();
+        let state_dir = crate::session::resume::state_dir_from_env();
         let model_client = build_client(requested_provider_from_env())?;
         let memory_source = build_session_memory_source_from_env();
         let stdin = std::io::stdin();
         let mut stdout = std::io::stdout();
 
-        run_with_io_and_components(
+        run_with_io_and_components_at_state_dir(
             context,
             stdin.lock(),
             &mut stdout,
             model_client.as_ref(),
             memory_source.as_ref(),
             config,
+            state_dir,
         )
     }
 }
@@ -166,6 +168,7 @@ fn reduce_session_in_place(state: &mut SessionState, event: SessionEvent) {
     }
 }
 
+#[cfg_attr(not(test), allow(dead_code))]
 fn run_with_io_and_components(
     context: &mut RunContext,
     mut input: impl BufRead,
@@ -174,7 +177,78 @@ fn run_with_io_and_components(
     memory_source: &dyn SessionMemorySource,
     config: SessionConfig,
 ) -> anyhow::Result<ExperimentOutcome> {
-    let mut state = SessionState::new(config.clone());
+    let state_dir = context.run_dir().join("state/text-loop");
+    run_with_io_and_components_at_state_dir(
+        context,
+        &mut input,
+        output,
+        model_client,
+        memory_source,
+        config,
+        state_dir,
+    )
+}
+
+fn run_with_io_and_components_at_state_dir(
+    context: &mut RunContext,
+    mut input: impl BufRead,
+    output: &mut impl Write,
+    model_client: &dyn ModelClient,
+    memory_source: &dyn SessionMemorySource,
+    config: SessionConfig,
+    state_dir: impl AsRef<Path>,
+) -> anyhow::Result<ExperimentOutcome> {
+    let state_dir = state_dir.as_ref().to_path_buf();
+    let resume_inputs = crate::session::resume::load_resume_inputs(&state_dir)?;
+    let classified_resume_mode = crate::session::resume::classify_resume_mode(&resume_inputs);
+    let config_changed = resume_inputs
+        .previous_session
+        .as_ref()
+        .map(|session| session.config != config)
+        .unwrap_or(false);
+    let downgraded_for_config = matches!(
+        classified_resume_mode,
+        crate::session::manifest::ResumeMode::AwakeContinuation
+    ) && config_changed;
+    let resume_mode = if downgraded_for_config {
+        crate::session::manifest::ResumeMode::ColdStart
+    } else {
+        classified_resume_mode
+    };
+    let previous_session_id = resume_inputs
+        .previous_session
+        .as_ref()
+        .map(|session| session.session_id.clone());
+    let brief_path = resume_inputs.manifest.last_sleep_brief_path.clone();
+    let mut state = match resume_mode {
+        crate::session::manifest::ResumeMode::ColdStart => SessionState::new(config.clone()),
+        crate::session::manifest::ResumeMode::AwakeContinuation => {
+            let previous = resume_inputs
+                .previous_session
+                .clone()
+                .context("awake continuation requires a previous session")?;
+            crate::session::continuation::prepare_awake_continuation(previous, &config)
+        }
+        crate::session::manifest::ResumeMode::ConsolidatedBrief => {
+            // A consolidated brief starts a new session while retaining a traceable predecessor id.
+            let mut fresh = SessionState::new(config.clone());
+            fresh.previous_session_id = previous_session_id.clone();
+            fresh
+        }
+    };
+    context.record_event(
+        EventType::SessionResumed,
+        json!({
+            "mode": resume_mode,
+            "classified_mode": classified_resume_mode,
+            "config_changed": config_changed,
+            "downgraded_for_config": downgraded_for_config,
+            "session_id": state.session_id.clone(),
+            "previous_session_id": previous_session_id,
+            "brief_path": brief_path,
+        }),
+        None,
+    )?;
     apply_session_event(
         context,
         &mut state,
@@ -262,6 +336,7 @@ fn run_with_io_and_components(
     }
 
     write_multi_turn_report(context, &state, &memory_snapshot)?;
+    persist_continuity_state(&state, &state_dir, &resume_inputs.manifest)?;
 
     Ok(ExperimentOutcome {
         summary: format!(
@@ -911,6 +986,27 @@ fn end_session(
     apply_session_event(context, state, SessionEvent::SessionEnded { reason })
 }
 
+fn persist_continuity_state(
+    state: &SessionState,
+    state_dir: &Path,
+    previous_manifest: &crate::session::manifest::ContinuityManifest,
+) -> anyhow::Result<()> {
+    let state_path = crate::session::persistence::persist_session_state(state, state_dir)?;
+    let mut manifest = previous_manifest.clone();
+    manifest.current_session_id = Some(state.session_id.clone());
+    manifest.current_session_state_path = Some(
+        state_path
+            .strip_prefix(state_dir)
+            .unwrap_or(&state_path)
+            .to_path_buf(),
+    );
+    // Stage 4 will decide when stale sleep metadata is cleared or replaced after brief consumption.
+    manifest.sleep_pending = true;
+    manifest.resume_mode = crate::session::manifest::ResumeMode::AwakeContinuation;
+    manifest.persist(state_dir.join("continuity-manifest.json"))?;
+    Ok(())
+}
+
 trait SessionMemorySource {
     fn load(&self, context: &mut RunContext) -> anyhow::Result<SessionMemorySourceSnapshot>;
 }
@@ -1214,7 +1310,7 @@ fn write_multi_turn_report(
         .map(|turn| turn.recalled_turns.len())
         .sum::<usize>();
     markdown.push_str(&format!("- Recall tool executions: `{recall_count}`\n"));
-    markdown.push_str("- Session state persistence: `in_memory_only`\n\n");
+    markdown.push_str("- Session state persistence: `continuity_manifest`\n\n");
     markdown.push_str("## Warm Summaries\n\n");
     if state.summarized_turns.is_empty() {
         markdown.push_str("- None\n\n");
@@ -1312,6 +1408,7 @@ fn sanitize_error(error: &str) -> String {
 mod tests {
     use std::fs;
     use std::io::Cursor;
+    use std::path::PathBuf;
 
     use serde_json::Value;
     use uuid::Uuid;
@@ -1319,6 +1416,7 @@ mod tests {
     use super::{
         DEFAULT_SESSION_MODEL, SessionMemorySource, age_out_warm_turns,
         prompt_prefix_status_for_report, reduce_session, run_with_io_and_components,
+        run_with_io_and_components_at_state_dir,
     };
     use crate::context::{ContextAssembly, ContextBudget};
     use crate::conversation::ContentHash;
@@ -1526,6 +1624,199 @@ mod tests {
         assert_eq!(turns[1].payload["turn"]["index"], 1);
         assert_eq!(turns[2].payload["turn"]["index"], 2);
         assert_turn_prefix_hashes_are_stable(&turns);
+
+        fs::remove_dir_all(base_dir).unwrap();
+    }
+
+    #[test]
+    fn multi_turn_loop_persists_and_resumes_awake_continuation() {
+        let base_dir = std::env::temp_dir().join(format!("qsf-continuity-{}", Uuid::new_v4()));
+        let state_dir = base_dir.join("state/text-loop");
+        let memory_source = TestMemorySource;
+
+        let mut first_context =
+            RunContext::create_in(base_dir.join("first"), "multi-turn-text-loop").unwrap();
+        let mut first_output = Vec::new();
+        run_with_io_and_components_at_state_dir(
+            &mut first_context,
+            Cursor::new("first turn\n:quit\n"),
+            &mut first_output,
+            &MockModelClient::default(),
+            &memory_source,
+            test_config(5),
+            &state_dir,
+        )
+        .unwrap();
+
+        let first_state =
+            crate::session::persistence::load_session_state(state_dir.join("session-state.json"))
+                .unwrap();
+        assert_eq!(first_state.turns.len(), 1);
+        let manifest = crate::session::manifest::ContinuityManifest::load_or_default(
+            state_dir.join("continuity-manifest.json"),
+        )
+        .unwrap();
+        assert!(manifest.sleep_pending);
+
+        let mut second_context =
+            RunContext::create_in(base_dir.join("second"), "multi-turn-text-loop").unwrap();
+        let mut second_output = Vec::new();
+        run_with_io_and_components_at_state_dir(
+            &mut second_context,
+            Cursor::new("second turn\n:quit\n"),
+            &mut second_output,
+            &MockModelClient::default(),
+            &memory_source,
+            test_config(5),
+            &state_dir,
+        )
+        .unwrap();
+
+        let second_state =
+            crate::session::persistence::load_session_state(state_dir.join("session-state.json"))
+                .unwrap();
+        assert_eq!(second_state.turns.len(), 2);
+        assert_eq!(second_state.turns[0].index, 0);
+        assert_eq!(second_state.turns[1].index, 1);
+        assert_eq!(second_state.session_id, first_state.session_id);
+
+        let events = fs::read_to_string(second_context.run_dir().join("events.jsonl")).unwrap();
+        let records = parse_event_records(&events);
+        let resumed = records
+            .iter()
+            .find(|record| record.event_type == EventType::SessionResumed)
+            .unwrap();
+        assert_eq!(resumed.payload["mode"], "awake_continuation");
+        assert_eq!(
+            resumed.payload["previous_session_id"].as_str(),
+            Some(first_state.session_id.as_str())
+        );
+
+        fs::remove_dir_all(base_dir).unwrap();
+    }
+
+    #[test]
+    fn awake_continuation_config_drift_downgrades_to_cold_start() {
+        let base_dir =
+            std::env::temp_dir().join(format!("qsf-continuity-config-drift-{}", Uuid::new_v4()));
+        let state_dir = base_dir.join("state/text-loop");
+        let memory_source = TestMemorySource;
+
+        let mut first_context =
+            RunContext::create_in(base_dir.join("first"), "multi-turn-text-loop").unwrap();
+        let mut first_output = Vec::new();
+        run_with_io_and_components_at_state_dir(
+            &mut first_context,
+            Cursor::new("first turn\n:quit\n"),
+            &mut first_output,
+            &MockModelClient::default(),
+            &memory_source,
+            test_config(5),
+            &state_dir,
+        )
+        .unwrap();
+
+        let first_state =
+            crate::session::persistence::load_session_state(state_dir.join("session-state.json"))
+                .unwrap();
+        let mut changed_config = test_config(5);
+        changed_config.model_id = "changed-model".to_string();
+
+        let mut second_context =
+            RunContext::create_in(base_dir.join("second"), "multi-turn-text-loop").unwrap();
+        let mut second_output = Vec::new();
+        run_with_io_and_components_at_state_dir(
+            &mut second_context,
+            Cursor::new("second turn\n:quit\n"),
+            &mut second_output,
+            &MockModelClient::default(),
+            &memory_source,
+            changed_config,
+            &state_dir,
+        )
+        .unwrap();
+
+        let second_state =
+            crate::session::persistence::load_session_state(state_dir.join("session-state.json"))
+                .unwrap();
+        assert_eq!(second_state.turns.len(), 1);
+        assert_eq!(second_state.turns[0].index, 0);
+        assert_ne!(second_state.session_id, first_state.session_id);
+
+        let events = fs::read_to_string(second_context.run_dir().join("events.jsonl")).unwrap();
+        let records = parse_event_records(&events);
+        let resumed = records
+            .iter()
+            .find(|record| record.event_type == EventType::SessionResumed)
+            .unwrap();
+        assert_eq!(resumed.payload["mode"], "cold_start");
+        assert_eq!(resumed.payload["classified_mode"], "awake_continuation");
+        assert_eq!(resumed.payload["config_changed"], true);
+        assert_eq!(resumed.payload["downgraded_for_config"], true);
+
+        fs::remove_dir_all(base_dir).unwrap();
+    }
+
+    #[test]
+    fn consolidated_brief_resume_starts_fresh_with_previous_session_id() {
+        let base_dir =
+            std::env::temp_dir().join(format!("qsf-continuity-brief-{}", Uuid::new_v4()));
+        let state_dir = base_dir.join("state/text-loop");
+        let config = test_config(5);
+        let mut previous = SessionState::new_with_id("brief-prev".to_string(), config.clone());
+        previous.turns.push(test_turn(0));
+        previous.turns.push(test_turn(1));
+        crate::session::persistence::persist_session_state(&previous, &state_dir).unwrap();
+        crate::session::manifest::ContinuityManifest {
+            current_session_id: Some(previous.session_id.clone()),
+            current_session_state_path: Some(PathBuf::from("session-state.json")),
+            last_sleep_run_id: Some("sleep-1".to_string()),
+            last_sleep_brief_path: Some(PathBuf::from("consolidated-brief.json")),
+            last_sleep_consumed_session_id: Some(previous.session_id.clone()),
+            sleep_pending: false,
+            resume_mode: crate::session::manifest::ResumeMode::ConsolidatedBrief,
+            ..crate::session::manifest::ContinuityManifest::default()
+        }
+        .persist(state_dir.join("continuity-manifest.json"))
+        .unwrap();
+
+        let memory_source = TestMemorySource;
+        let mut context =
+            RunContext::create_in(base_dir.join("brief"), "multi-turn-text-loop").unwrap();
+        let mut output = Vec::new();
+        run_with_io_and_components_at_state_dir(
+            &mut context,
+            Cursor::new("fresh after sleep\n:quit\n"),
+            &mut output,
+            &MockModelClient::default(),
+            &memory_source,
+            config,
+            &state_dir,
+        )
+        .unwrap();
+
+        let resumed_state =
+            crate::session::persistence::load_session_state(state_dir.join("session-state.json"))
+                .unwrap();
+        assert_eq!(resumed_state.turns.len(), 1);
+        assert_eq!(resumed_state.turns[0].index, 0);
+        assert_eq!(
+            resumed_state.previous_session_id.as_deref(),
+            Some(previous.session_id.as_str())
+        );
+        assert_ne!(resumed_state.session_id, previous.session_id);
+
+        let events = fs::read_to_string(context.run_dir().join("events.jsonl")).unwrap();
+        let records = parse_event_records(&events);
+        let resumed = records
+            .iter()
+            .find(|record| record.event_type == EventType::SessionResumed)
+            .unwrap();
+        assert_eq!(resumed.payload["mode"], "consolidated_brief");
+        assert_eq!(
+            resumed.payload["previous_session_id"].as_str(),
+            Some(previous.session_id.as_str())
+        );
 
         fs::remove_dir_all(base_dir).unwrap();
     }

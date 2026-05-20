@@ -24,6 +24,10 @@ candidate categories listed below have no module yet.
   ([reports/markdown_report.rs](../../crates/qsf_app/src/reports/markdown_report.rs))
 - `session_id`, model-role timing, prompt-hash, and tool-call lifecycle metadata on
   events
+- `SessionResumed` events that record the text-loop boot decision, previous session id,
+  config-drift downgrade status, and pending brief path
+- Cross-session text-loop state persisted under `state/text-loop/` by default:
+  `continuity-manifest.json` and `session-state.json`
 - `engine.log` initialization redirected to `runs/<run-id>/engine.log` per run
 
 **Partial:**
@@ -42,12 +46,11 @@ candidate categories listed below have no module yet.
 - **Identity / Self-Model State** — no module exists
 - **Research State** as a structured surface — experiment metadata lives in the
   report but not as an inspectable runtime category
-- `StateSnapshot` / cross-session persistence
 - Observability views beyond the per-run markdown report (no timeline UI, no
   memory-graph view, no cost dashboard)
 - `experiment_id` and `memory_update_id` correlation across runs
 
-Last reviewed: 2026-05-18 against the code on `main`.
+Last reviewed: 2026-05-20 against the code on `main`.
 
 ## Summary
 
@@ -237,6 +240,11 @@ Archived
 ```
 
 This helps prevent accidental promotion of short-lived observations into long-term memory.
+
+The multi-turn text loop currently persists cross-session state in a local
+`state/text-loop/` directory, or in `QSF_STATE_DIR` when that environment variable is
+set. The manifest is the observable commit record for whether the next boot should be a
+cold start, awake continuation, or consolidated-brief resume.
 
 ## State Ownership
 
