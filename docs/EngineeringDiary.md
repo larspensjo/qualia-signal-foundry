@@ -1398,3 +1398,21 @@ Open question:
   still load the id directly rather than jumping the list page to that record.
 
 Refs: crates/qsf_browser_server/ui, .gitignore
+## 2026-05-21 - Memory association browser reference fixture
+
+Curated the tracked memory-association browser reference bundle so it can act as a
+self-contained QA graph rather than only a generated continuity smoke fixture.
+
+What changed:
+- Added the phase-four seed memory records alongside the generated sleep-promoted
+  memory so stored associations have resolvable endpoints.
+- Varied reference association weights and preserved reinforcement metadata to cover
+  browser sorting, filtering, and edge rendering cases.
+- Added a fixture README explaining why this continuity bundle lives under tracked
+  experiment fixtures instead of ignored `state/` or `runs/` folders.
+
+Observed:
+- The fixture manifest intentionally remains in awake-continuation state after the
+  follow-up text-loop run, with sleep pending for the current session.
+
+Refs: docs/Experiments/Fixtures/memory-association-browser-reference

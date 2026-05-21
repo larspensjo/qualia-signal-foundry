@@ -14,6 +14,10 @@ OpenAI function calling still needs adapter work before live recall-use
 comparisons are meaningful, so the live run verifies continuity and warm summaries
 but not live tool execution.
 
+Supersession note, 2026-05-21: the provider-native OpenAI function-calling follow-up
+was completed in Stage 3.1. See
+`docs/Experiments/Report.MultiTurnTextLoop.Stage3.1.2026-05-21.md`.
+
 ## Commands
 
 ```powershell
@@ -62,8 +66,9 @@ the recall in the Recall Tool table.
 
 Prompt ordering matched the Stage 3 contract: normal turns emitted
 `PromptAssembled` before `ModelRoleRequested`; the recall turn emitted an initial
-prompt event, then `ToolRequested`/`ToolExecuted`, then a second prompt event for
-the tool-augmented prompt before the follow-up model request.
+prompt event, then tool lifecycle events, then a second prompt event for the
+tool-augmented prompt before the follow-up model request. The current tool lifecycle
+names are `ToolRequested` -> `ToolCompleted` / `ToolFailed`.
 
 ## Live OpenAI Run
 
@@ -102,15 +107,15 @@ documented 1024 input-token floor.
 
 ## Automated Coverage
 
-Focused tests now cover:
+Focused tests covered at the time:
 - summarized-turn recall happy path
 - active-turn recall failure with no appended turn
 - follow-up tool-call failure with no appended turn
-- `SessionEvent::ToolExecuted` as non-mutating reducer input
+- tool execution events as non-mutating reducer input
 - prompt-prefix stability when recalled tool messages are frozen into prior turns
 
 ## Open Follow-Up
 
-Provider-native OpenAI function calling remains the blocker for the live Stage 3
-report goals: recall-use frequency, latency cost of real tool round trips, and
-cross-model tool-use behavior.
+Closed by Stage 3.1: provider-native OpenAI function calling is no longer the blocker
+for live recall execution. See the Stage 3.1 report for current implementation and
+verification evidence.

@@ -1,6 +1,6 @@
 # Idea: Voice Loop Unification with Multi-Turn SessionState
 
-Status: Idea - not yet planned.
+Status: Promoted to `Plan.VoiceLoopUnification.md`.
 
 ## Motivation
 
