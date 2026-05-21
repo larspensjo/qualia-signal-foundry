@@ -1365,3 +1365,36 @@ Observed:
 - Broken associations remain loadable and are surfaced through summaries, details, and neighborhoods without inventing placeholder member records.
 
 Refs: crates/qsf_browser_server/src/memory, crates/qsf_browser_server/tests/data_endpoints.rs, docs/Reviews/Review.Phase2.MemoryAssociationBrowser.md
+
+## 2026-05-21 - Memory browser frontend shell
+
+The browser server gained a Vite/TypeScript workbench shell for inspecting the
+read-only memory API.
+
+What changed:
+- Added the frontend scaffold, visual tokens, layout shell, API DTO mirrors, URL
+  state reducer, toolbar, filters, memory list, inspector, raw JSON overlay, and
+  load-error screen.
+- Kept the association canvas as a placeholder while wiring the rest of the page
+  through `/api/health`, `/api/store/summary`, `/api/memories`, and memory
+  detail/raw endpoints.
+- Applied review follow-up for async request sequencing, raw JSON overlay dismissal
+  and error handling, empty tag normalization, load-error escaping, and a first
+  Vitest URL-state round-trip test.
+
+Observed:
+- The backend still does not expose the active store path, so the toolbar shows
+  the planned `(store)` placeholder.
+- `npm install` reported two moderate advisories in the Vite 5 dependency tree;
+  no forced upgrade was applied because that would change the planned dependency
+  line.
+- Adding Vitest changed `npm audit` output to four moderate advisories; no forced
+  upgrade was applied.
+
+Open question:
+- External testing should confirm URL state survives refreshes and that the
+  load-error screen is clear against a deliberately bad store path.
+- The `delta-since` filter remains URL/filter-field only, and selected-id deep links
+  still load the id directly rather than jumping the list page to that record.
+
+Refs: crates/qsf_browser_server/ui, .gitignore

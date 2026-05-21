@@ -14,7 +14,7 @@
 
 ## Status
 
-Active. Phase 0 complete.
+Active. Phase 3 implementation complete; external human verification pending.
 
 ## Core Invariants
 
@@ -2299,7 +2299,7 @@ Build the TypeScript/Vite shell at `crates/qsf_browser_server/ui/`. Implement la
 - Create: `crates/qsf_browser_server/ui/src/main.ts`
 - Modify: `.gitignore` (add `crates/qsf_browser_server/ui/node_modules/` and `crates/qsf_browser_server/ui/dist/`)
 
-- [ ] **Step 1: `package.json`**
+- [x] **Step 1: `package.json`**
 
 ```json
 {
@@ -2318,7 +2318,7 @@ Build the TypeScript/Vite shell at `crates/qsf_browser_server/ui/`. Implement la
 }
 ```
 
-- [ ] **Step 2: `tsconfig.json`**
+- [x] **Step 2: `tsconfig.json`**
 
 ```json
 {
@@ -2339,7 +2339,7 @@ Build the TypeScript/Vite shell at `crates/qsf_browser_server/ui/`. Implement la
 }
 ```
 
-- [ ] **Step 3: `vite.config.ts`** (Vite proxies `/api/*` to the Rust server in dev)
+- [x] **Step 3: `vite.config.ts`** (Vite proxies `/api/*` to the Rust server in dev)
 
 ```ts
 import { defineConfig } from "vite";
@@ -2358,7 +2358,7 @@ export default defineConfig({
 });
 ```
 
-- [ ] **Step 4: `index.html`**
+- [x] **Step 4: `index.html`**
 
 ```html
 <!doctype html>
@@ -2375,7 +2375,7 @@ export default defineConfig({
 </html>
 ```
 
-- [ ] **Step 5: Minimal `main.ts`**
+- [x] **Step 5: Minimal `main.ts`**
 
 ```ts
 // src/main.ts
@@ -2383,7 +2383,7 @@ const root = document.getElementById("app");
 if (root) root.textContent = "QSF Memory Association Browser — loading…";
 ```
 
-- [ ] **Step 6: Update `.gitignore`**
+- [x] **Step 6: Update `.gitignore`**
 
 Append:
 ```
@@ -2391,7 +2391,7 @@ crates/qsf_browser_server/ui/node_modules/
 crates/qsf_browser_server/ui/dist/
 ```
 
-- [ ] **Step 7: Verify**
+- [x] **Step 7: Verify**
 
 Run:
 ```bash
@@ -2407,7 +2407,7 @@ Expected: a `dist/` folder is created and contains `index.html` + bundled JS.
 - Create: `crates/qsf_browser_server/ui/src/tokens.css`
 - Modify: `crates/qsf_browser_server/ui/src/main.ts`
 
-- [ ] **Step 1: Tokens**
+- [x] **Step 1: Tokens**
 
 ```css
 /* src/tokens.css */
@@ -2446,7 +2446,7 @@ html, body, #app {
 a { color: var(--qsf-signal-context); }
 ```
 
-- [ ] **Step 2: Import tokens from `main.ts`**
+- [x] **Step 2: Import tokens from `main.ts`**
 
 Replace `main.ts`:
 
@@ -2457,7 +2457,7 @@ const root = document.getElementById("app");
 if (root) root.textContent = "QSF Memory Association Browser — loading…";
 ```
 
-- [ ] **Step 3: Verify**
+- [x] **Step 3: Verify**
 
 Run: `npm run build`. Expected: build succeeds and `dist/assets/` contains the CSS.
 
@@ -2467,7 +2467,7 @@ Run: `npm run build`. Expected: build succeeds and `dist/assets/` contains the C
 - Create: `crates/qsf_browser_server/ui/src/types.ts`
 - Create: `crates/qsf_browser_server/ui/src/api.ts`
 
-- [ ] **Step 1: Type mirrors**
+- [x] **Step 1: Type mirrors**
 
 ```ts
 // src/types.ts
@@ -2584,7 +2584,7 @@ export type HealthResponse =
   | { status: "error"; load_error: LoadError };
 ```
 
-- [ ] **Step 2: API wrappers**
+- [x] **Step 2: API wrappers**
 
 ```ts
 // src/api.ts
@@ -2660,7 +2660,7 @@ export const api = {
 };
 ```
 
-- [ ] **Step 3: Verify**
+- [x] **Step 3: Verify**
 
 Run: `npm run build`
 Expected: TypeScript compiles cleanly.
@@ -2670,7 +2670,7 @@ Expected: TypeScript compiles cleanly.
 **Files:**
 - Create: `crates/qsf_browser_server/ui/src/state.ts`
 
-- [ ] **Step 1: Write the reducer**
+- [x] **Step 1: Write the reducer**
 
 ```ts
 // src/state.ts
@@ -2749,11 +2749,11 @@ export function urlToState(search: string): ViewState {
 }
 ```
 
-- [ ] **Step 2: Add a small unit test harness** (skip if Vitest is not added to the project; otherwise add `vitest` to devDependencies and create `src/state.test.ts` asserting `urlToState(stateToUrl(s)) === s` round-trip for a sample state.)
+- [x] **Step 2: Add a small unit test harness** (skip if Vitest is not added to the project; otherwise add `vitest` to devDependencies and create `src/state.test.ts` asserting `urlToState(stateToUrl(s)) === s` round-trip for a sample state.)
 
 Defer Vitest unless the project owner wants it.
 
-- [ ] **Step 3: Verify**
+- [x] **Step 3: Verify**
 
 Run: `npm run build`
 Expected: TypeScript compiles cleanly.
@@ -2764,7 +2764,7 @@ Expected: TypeScript compiles cleanly.
 - Create: `crates/qsf_browser_server/ui/src/ui/layout.css`
 - Create: `crates/qsf_browser_server/ui/src/ui/shell.ts`
 
-- [ ] **Step 1: Layout CSS**
+- [x] **Step 1: Layout CSS**
 
 ```css
 /* src/ui/layout.css */
@@ -2834,7 +2834,7 @@ Expected: TypeScript compiles cleanly.
 .load-error code { background: rgba(255,93,115,0.1); padding: 2px 6px; border-radius: 3px; }
 ```
 
-- [ ] **Step 2: Shell renderer**
+- [x] **Step 2: Shell renderer**
 
 ```ts
 // src/ui/shell.ts
@@ -2869,7 +2869,7 @@ export type Slots = ReturnType<typeof getSlots>;
 export type { ViewState };
 ```
 
-- [ ] **Step 3: Wire into `main.ts`**
+- [x] **Step 3: Wire into `main.ts`**
 
 Replace `src/main.ts`:
 
@@ -2886,7 +2886,7 @@ slots.statusbar.textContent = "loading…";
 // Subsequent tasks wire components into the slots.
 ```
 
-- [ ] **Step 4: Verify**
+- [x] **Step 4: Verify**
 
 Run: `npm run build`, then `npm run dev` and open `http://127.0.0.1:5173`.
 Expected: the workbench shell renders with placeholders. Vite dev proxies `/api/*` to the running `cargo run -p qsf_browser_server` instance; both should be running to exercise the next tasks.
@@ -2901,7 +2901,7 @@ Expected: the workbench shell renders with placeholders. Vite dev proxies `/api/
 - Create: `crates/qsf_browser_server/ui/src/ui/loadError.ts`
 - Modify: `crates/qsf_browser_server/ui/src/main.ts`
 
-- [ ] **Step 1: Toolbar**
+- [x] **Step 1: Toolbar**
 
 ```ts
 // src/ui/toolbar.ts
@@ -2971,7 +2971,7 @@ export function renderToolbar(
 }
 ```
 
-- [ ] **Step 2: Filters row**
+- [x] **Step 2: Filters row**
 
 ```ts
 // src/ui/filters.ts
@@ -3019,7 +3019,7 @@ export function renderFilters(
 
 (Only the most common filters are surfaced in the row to keep the initial UI compact; remaining params remain reachable via URL until UI polish in a later phase. This is acceptable per the design's "denser, calmer" workbench mode and is documented in the design's Search/Filter section. Tests still cover the full predicate set on the backend.)
 
-- [ ] **Step 3: List**
+- [x] **Step 3: List**
 
 ```ts
 // src/ui/list.ts
@@ -3052,7 +3052,7 @@ function escapeHtml(s: string): string {
 }
 ```
 
-- [ ] **Step 4: Inspector**
+- [x] **Step 4: Inspector**
 
 ```ts
 // src/ui/inspector.ts
@@ -3128,7 +3128,7 @@ function escapeHtml(s: string): string {
 }
 ```
 
-- [ ] **Step 5: Load-error screen**
+- [x] **Step 5: Load-error screen**
 
 ```ts
 // src/ui/loadError.ts
@@ -3155,7 +3155,7 @@ function escapeHtml(s: string): string {
 }
 ```
 
-- [ ] **Step 6: Verify**
+- [x] **Step 6: Verify**
 
 Run: `npm run build`. Expected: cleanly typechecks and bundles.
 
@@ -3164,7 +3164,7 @@ Run: `npm run build`. Expected: cleanly typechecks and bundles.
 **Files:**
 - Modify: `crates/qsf_browser_server/ui/src/main.ts`
 
-- [ ] **Step 1: Implement the top-level controller**
+- [x] **Step 1: Implement the top-level controller**
 
 ```ts
 // src/main.ts
@@ -3226,6 +3226,12 @@ cd crates/qsf_browser_server/ui && npm run dev   # in shell 2
 ```
 Open `http://localhost:5173`. Expected: the workbench shows the list, summary in status bar, selecting a memory renders the inspector, sort and search update the list and the URL.
 
+Implementation note: `npm run build` passed, the Rust server was smoke-tested
+against `tests/fixtures/small-store.json`, `/api/health` returned OK, and the
+Vite dev URL returned HTTP 200. Full browser interaction remains an external
+human verification item because in-app browser automation was unavailable in
+this session.
+
 - [ ] **Step 3: External human verification**
 
 Ask the project owner to:
@@ -3236,8 +3242,8 @@ Ask the project owner to:
 
 ### Task 3.8: Close out Phase 3
 
-- [ ] Standard closing steps (`cargo clippy`, `cargo fmt`, `cargo test`; also `npm run build`).
-- [ ] Diary entry covering the frontend shell, URL state, load-error screen.
+- [x] Standard closing steps (`cargo clippy`, `cargo fmt`, `cargo test`; also `npm run build`).
+- [x] Diary entry covering the frontend shell, URL state, load-error screen.
 - [ ] Commit: `feat(qsf_browser_server-ui): workbench shell with list, inspector, filters, load-error screen`.
 
 ---

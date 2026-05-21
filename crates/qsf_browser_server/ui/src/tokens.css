@@ -1,0 +1,37 @@
+:root {
+  --qsf-bg-page: #050812;
+  --qsf-bg-field: #07162a;
+  --qsf-bg-panel: rgba(7, 18, 32, 0.88);
+  --qsf-bg-panel-elevated: rgba(12, 30, 48, 0.92);
+  --qsf-border-subtle: rgba(172, 215, 255, 0.18);
+  --qsf-border-active: rgba(158, 221, 255, 0.56);
+  --qsf-text-primary: #eaf6ff;
+  --qsf-text-secondary: #b8cbe2;
+  --qsf-text-muted: #6f89a5;
+  --qsf-signal-context: #7de3ff;
+  --qsf-signal-memory: #ffd76a;
+  --qsf-signal-association: #ffb94a;
+  --qsf-signal-error: #ff5d73;
+  --qsf-signal-success: #7ae28a;
+  --qsf-radius-panel: 8px;
+  --qsf-duration-fast: 140ms;
+  --qsf-duration-panel: 180ms;
+  --qsf-font-tabular: "Inter", "Segoe UI", system-ui, sans-serif;
+}
+
+html,
+body,
+#app {
+  background: var(--qsf-bg-page);
+  color: var(--qsf-text-primary);
+  font-family: var(--qsf-font-tabular);
+  font-variant-numeric: tabular-nums;
+  margin: 0;
+  height: 100%;
+  font-size: 14px;
+  line-height: 20px;
+}
+
+a {
+  color: var(--qsf-signal-context);
+}
