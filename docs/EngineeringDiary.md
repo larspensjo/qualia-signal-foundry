@@ -1321,3 +1321,14 @@ What changed:
 
 Refs: crates/qsf_memory, crates/qsf_app/src/memory;
 implements: 2026-05-20 - Post-hoc browser tools use Rust backend + browser frontend split
+
+## 2026-05-21 - Project statistics script added
+
+Adapted the project statistics PowerShell script to qualia-signal-foundry, replacing hardcoded project references, handling wildcard workspace crates, and partitioning documentation.
+
+What changed:
+- Created `scripts/project-stats.ps1` to calculate lines of code and tests across workspace crates.
+- Configured documentation metrics to partition planning (Plan, Design, Idea prefixes) from other files.
+- Formatted output numbers using Invariant Culture to ensure clean comma separators.
+
+Refs: scripts/project-stats.ps1
