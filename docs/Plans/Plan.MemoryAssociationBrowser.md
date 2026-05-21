@@ -1211,7 +1211,7 @@ Implement the read DTOs, the pure filter/sort/mapping logic, and the data endpoi
 **Files:**
 - Modify: `crates/qsf_browser_server/src/memory/dto.rs`
 
-- [ ] **Step 1: Add the read DTO types**
+- [x] **Step 1: Add the read DTO types**
 
 Append to `crates/qsf_browser_server/src/memory/dto.rs`:
 
@@ -1302,7 +1302,7 @@ pub struct MemoryPage {
 }
 ```
 
-- [ ] **Step 2: Verify**
+- [x] **Step 2: Verify**
 
 Run: `cargo build -p qsf_browser_server`
 
@@ -1312,7 +1312,7 @@ Run: `cargo build -p qsf_browser_server`
 - Create: `crates/qsf_browser_server/src/memory/mapping.rs`
 - Modify: `crates/qsf_browser_server/src/memory/mod.rs`
 
-- [ ] **Step 1: Write mapping functions**
+- [x] **Step 1: Write mapping functions**
 
 ```rust
 // crates/qsf_browser_server/src/memory/mapping.rs
@@ -1488,7 +1488,7 @@ pub mod mapping;
 pub mod routes_stub;
 ```
 
-- [ ] **Step 2: Write mapping tests**
+- [x] **Step 2: Write mapping tests**
 
 Append to `crates/qsf_browser_server/src/memory/mapping.rs`:
 
@@ -1557,7 +1557,7 @@ mod tests {
 }
 ```
 
-- [ ] **Step 3: Run tests**
+- [x] **Step 3: Run tests**
 
 Run: `cargo test -p qsf_browser_server`
 Expected: mapping tests pass.
@@ -1568,7 +1568,7 @@ Expected: mapping tests pass.
 - Create: `crates/qsf_browser_server/src/memory/filters.rs`
 - Modify: `crates/qsf_browser_server/src/memory/mod.rs`
 
-- [ ] **Step 1: Write filter and sort logic**
+- [x] **Step 1: Write filter and sort logic**
 
 ```rust
 // crates/qsf_browser_server/src/memory/filters.rs
@@ -1735,7 +1735,7 @@ pub mod mapping;
 pub mod routes_stub;
 ```
 
-- [ ] **Step 2: Add filter/sort tests**
+- [x] **Step 2: Add filter/sort tests**
 
 Append `#[cfg(test)]` block to `crates/qsf_browser_server/src/memory/filters.rs` covering each predicate (keyword, kind, tag, created range, last_reinforced range, delta_since, min_importance, min_reinforcement_count, has_associations, orphaned, missing_last_reinforced) and each sort key against the same fixture used in `mapping.rs`. Use direct construction of `ListQuery { ..Default::default() }` per test.
 
@@ -1904,7 +1904,7 @@ mod tests {
 }
 ```
 
-- [ ] **Step 3: Run tests**
+- [x] **Step 3: Run tests**
 
 Run: `cargo test -p qsf_browser_server`
 Expected: all filter and sort tests pass.
@@ -1917,7 +1917,7 @@ Expected: all filter and sort tests pass.
 - Modify: `crates/qsf_browser_server/src/server.rs`
 - Delete: `crates/qsf_browser_server/src/memory/routes_stub.rs` (after the real routes are in place; see Step 4)
 
-- [ ] **Step 1: Write the real handlers**
+- [x] **Step 1: Write the real handlers**
 
 ```rust
 // crates/qsf_browser_server/src/memory/routes.rs
@@ -2122,7 +2122,7 @@ struct NeighborhoodQuery {
 }
 ```
 
-- [ ] **Step 2: Register the real routes module**
+- [x] **Step 2: Register the real routes module**
 
 ```rust
 // crates/qsf_browser_server/src/memory/mod.rs
@@ -2132,7 +2132,7 @@ pub mod mapping;
 pub mod routes;
 ```
 
-- [ ] **Step 3: Swap server module to use the real router**
+- [x] **Step 3: Swap server module to use the real router**
 
 In `crates/qsf_browser_server/src/server.rs`, change:
 
@@ -2145,11 +2145,11 @@ use crate::memory::routes;
 ```
 and update the `.merge(routes_stub::router())` line to `.merge(routes::router())`.
 
-- [ ] **Step 4: Delete the stub module**
+- [x] **Step 4: Delete the stub module**
 
 Remove `crates/qsf_browser_server/src/memory/routes_stub.rs` and any remaining `pub mod routes_stub;` line. The earlier integration test in `tests/health_load_error.rs` should be updated to import `memory::routes` instead of `routes_stub`.
 
-- [ ] **Step 5: Verify**
+- [x] **Step 5: Verify**
 
 Run: `cargo build -p qsf_browser_server`
 Expected: builds clean.
@@ -2160,7 +2160,7 @@ Expected: builds clean.
 - Create: `crates/qsf_browser_server/tests/data_endpoints.rs`
 - Create: `crates/qsf_browser_server/tests/fixtures/small-store.json` (committed test fixture)
 
-- [ ] **Step 1: Write a small fixture store**
+- [x] **Step 1: Write a small fixture store**
 
 ```json
 // crates/qsf_browser_server/tests/fixtures/small-store.json
@@ -2176,7 +2176,7 @@ Expected: builds clean.
 }
 ```
 
-- [ ] **Step 2: Write integration tests**
+- [x] **Step 2: Write integration tests**
 
 ```rust
 // crates/qsf_browser_server/tests/data_endpoints.rs
@@ -2250,7 +2250,7 @@ async fn neighborhood_includes_broken_edge_member_missing() {
 }
 ```
 
-- [ ] **Step 3: Run tests**
+- [x] **Step 3: Run tests**
 
 Run: `cargo test -p qsf_browser_server`
 Expected: all integration tests pass.
@@ -2279,8 +2279,8 @@ Ask the project owner to inspect the JSON for ordering, counts, broken-edge hand
 
 ### Task 2.7: Close out Phase 2
 
-- [ ] Standard closing steps.
-- [ ] Diary entry covering DTOs, filters, sort keys, mapping, and integration tests.
+- [x] Standard closing steps.
+- [x] Diary entry covering DTOs, filters, sort keys, mapping, and integration tests.
 - [ ] Commit: `feat(qsf_browser_server): memory list/summary/detail endpoints`.
 
 ---

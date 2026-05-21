@@ -4,7 +4,7 @@ use axum::Router;
 
 use crate::cli::Args;
 use crate::health;
-use crate::memory::routes_stub;
+use crate::memory::routes;
 use crate::state::AppState;
 
 pub async fn serve(args: Args) -> anyhow::Result<()> {
@@ -16,7 +16,7 @@ pub async fn serve(args: Args) -> anyhow::Result<()> {
 
     let app = Router::new()
         .merge(health::router())
-        .merge(routes_stub::router())
+        .merge(routes::router())
         .with_state(state);
 
     let addr = SocketAddr::new(args.host, args.port);

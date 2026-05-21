@@ -4,13 +4,13 @@ use axum::http::Request;
 use http_body_util::BodyExt;
 use tower::ServiceExt;
 
-use qsf_browser_server::{cli::Args, health, memory::routes_stub, state::AppState};
+use qsf_browser_server::{cli::Args, health, memory::routes, state::AppState};
 
 fn app(args: Args) -> Router {
     let state = AppState::load(&args);
     Router::new()
         .merge(health::router())
-        .merge(routes_stub::router())
+        .merge(routes::router())
         .with_state(state)
 }
 

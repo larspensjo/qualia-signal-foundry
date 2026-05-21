@@ -1349,3 +1349,19 @@ What changed:
 
 Refs: crates/qsf_browser_server;
 implements: 2026-05-20 - Post-hoc browser tools use Rust backend + browser frontend split
+
+## 2026-05-21 - Memory browser data endpoints
+
+The browser server gained read-only memory DTOs and API endpoints for store summaries, paged memory lists, memory details, raw persisted records, and selected-memory neighborhoods.
+
+What changed:
+- Added pure mapping, filtering, sorting, pagination, and orphan/broken-edge handling for loaded memory stores.
+- Replaced placeholder data routes with real `/api/store/summary` and `/api/memories/*` handlers.
+- Added integration coverage with a small store fixture that preserves raw extra fields and includes a broken association.
+- Applied review follow-up by avoiding per-record kind string allocation, reusing the built memory id index for detail and neighborhood lookups, and adding regression coverage for multi-tag OR filtering, keyword haystacks, high-side pagination clamp, and neighborhood limit ordering.
+- Left a code note for caching the immutable store index if request volume makes rebuilds hot.
+
+Observed:
+- Broken associations remain loadable and are surfaced through summaries, details, and neighborhoods without inventing placeholder member records.
+
+Refs: crates/qsf_browser_server/src/memory, crates/qsf_browser_server/tests/data_endpoints.rs, docs/Reviews/Review.Phase2.MemoryAssociationBrowser.md
