@@ -1305,3 +1305,22 @@ crates/qsf_app/src/experiments/sleep_phase_session_summary.rs,
 crates/qsf_app/src/experiments/multi_turn_text_loop.rs,
 crates/qsf_app/src/memory/co_retrieval.rs, docs/DecisionLog.md;
 implements: 2026-05-20 - Sleep auto-promotes routine memory candidates
+
+## 2026-05-21 - Memory association browser reference fixture
+
+Curated the tracked memory-association browser reference bundle so it can act as a
+self-contained QA graph rather than only a generated continuity smoke fixture.
+
+What changed:
+- Added the phase-four seed memory records alongside the generated sleep-promoted
+  memory so stored associations have resolvable endpoints.
+- Varied reference association weights and preserved reinforcement metadata to cover
+  browser sorting, filtering, and edge rendering cases.
+- Added a fixture README explaining why this continuity bundle lives under tracked
+  experiment fixtures instead of ignored `state/` or `runs/` folders.
+
+Observed:
+- The fixture manifest intentionally remains in awake-continuation state after the
+  follow-up text-loop run, with sleep pending for the current session.
+
+Refs: docs/Experiments/Fixtures/memory-association-browser-reference

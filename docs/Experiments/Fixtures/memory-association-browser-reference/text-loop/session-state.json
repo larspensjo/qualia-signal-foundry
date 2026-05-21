@@ -1,0 +1,294 @@
+{
+  "session_id": "26c8a820-5238-4037-9303-bfc895a39343",
+  "previous_session_id": "02d39e7c-c903-4338-a6aa-ba2319880d3b",
+  "started_at": {
+    "secs_since_epoch": 1779366439,
+    "nanos_since_epoch": 856327500
+  },
+  "config": {
+    "model_id": "gpt-5.4-mini",
+    "max_turns": 12,
+    "warm_threshold": 3,
+    "allow_over_limit": false,
+    "memory_source": {
+      "source": "phase_four_fixture",
+      "file": null
+    }
+  },
+  "turns": [
+    {
+      "index": 0,
+      "started_at": {
+        "secs_since_epoch": 1779366439,
+        "nanos_since_epoch": 858620600
+      },
+      "completed_at": {
+        "secs_since_epoch": 1779366439,
+        "nanos_since_epoch": 863482600
+      },
+      "user_input": "Use the consolidated brief and revisit context budgets.",
+      "context_assembly": {
+        "budget": {
+          "max_fragments": 4,
+          "max_estimated_tokens": 600
+        },
+        "selected": [
+          {
+            "fragment": {
+              "fragment_id": "memory.sleep.2026-05-21-122533-sleep-phase-session-summary.001",
+              "source_kind": "memory",
+              "summary": "Model roles now flow through the same event and trace artifacts as other subsystems.",
+              "tags": [],
+              "score": 1.8079880735175562,
+              "estimated_tokens": 21,
+              "source_reference": "session-transcript:model-role-smoke",
+              "selection_reason": "matched terms: and, the"
+            },
+            "cumulative_estimated_tokens": 21
+          }
+        ],
+        "omitted": [],
+        "used_estimated_tokens": 21
+      },
+      "retrieved_memory_block": "Previous session summary:\nMock sleep summarizer reviewed the session and preserved explicit follow-up fields.\n\nFuture context hints:\n- Include the selected provider and structured output expectation in later sleep reports.\n\nOpen questions:\n- Should future sleep consolidation split extraction and summarization into separate roles?\n\n\n- memory.sleep.2026-05-21-122533-sleep-phase-session-summary.001: Model roles now flow through the same event and trace artifacts as other subsystems.",
+      "assistant_response": "I am a QSF runtime voice loop. I turn your speech into events, assemble context, and answer through the framework before speech playback.",
+      "recalled_turns": [],
+      "model_id": "gpt-5.4-mini",
+      "model_latency_ms": 0,
+      "input_tokens": 58,
+      "cached_input_tokens": 19,
+      "output_tokens": 28,
+      "full_request_hash": [
+        174,
+        186,
+        5,
+        129,
+        147,
+        78,
+        45,
+        212,
+        103,
+        189,
+        73,
+        229,
+        117,
+        31,
+        122,
+        15,
+        64,
+        112,
+        70,
+        197,
+        181,
+        113,
+        111,
+        152,
+        8,
+        235,
+        234,
+        255,
+        165,
+        173,
+        194,
+        157
+      ],
+      "message_count": 2
+    },
+    {
+      "index": 1,
+      "started_at": {
+        "secs_since_epoch": 1779366439,
+        "nanos_since_epoch": 863889900
+      },
+      "completed_at": {
+        "secs_since_epoch": 1779366439,
+        "nanos_since_epoch": 867931100
+      },
+      "user_input": "Compare tools-as-perception with external audio inputs.",
+      "context_assembly": {
+        "budget": {
+          "max_fragments": 4,
+          "max_estimated_tokens": 600
+        },
+        "selected": [
+          {
+            "fragment": {
+              "fragment_id": "memory.sleep.2026-05-21-122533-sleep-phase-session-summary.001",
+              "source_kind": "memory",
+              "summary": "Model roles now flow through the same event and trace artifacts as other subsystems.",
+              "tags": [],
+              "score": 0.507988073517556,
+              "estimated_tokens": 21,
+              "source_reference": "session-transcript:model-role-smoke",
+              "selection_reason": "selected by retrieval score"
+            },
+            "cumulative_estimated_tokens": 21
+          }
+        ],
+        "omitted": [],
+        "used_estimated_tokens": 21
+      },
+      "retrieved_memory_block": "- memory.sleep.2026-05-21-122533-sleep-phase-session-summary.001: Model roles now flow through the same event and trace artifacts as other subsystems.",
+      "assistant_response": "I am a QSF runtime voice loop. I turn your speech into events, assemble context, and answer through the framework before speech playback.",
+      "recalled_turns": [],
+      "model_id": "gpt-5.4-mini",
+      "model_latency_ms": 0,
+      "input_tokens": 58,
+      "cached_input_tokens": 19,
+      "output_tokens": 28,
+      "full_request_hash": [
+        16,
+        123,
+        181,
+        167,
+        221,
+        8,
+        79,
+        211,
+        148,
+        190,
+        9,
+        113,
+        197,
+        229,
+        234,
+        14,
+        179,
+        70,
+        81,
+        110,
+        29,
+        167,
+        90,
+        50,
+        113,
+        53,
+        103,
+        131,
+        153,
+        135,
+        213,
+        218
+      ],
+      "message_count": 4
+    },
+    {
+      "index": 2,
+      "started_at": {
+        "secs_since_epoch": 1779366439,
+        "nanos_since_epoch": 868222000
+      },
+      "completed_at": {
+        "secs_since_epoch": 1779366439,
+        "nanos_since_epoch": 873643900
+      },
+      "user_input": "Strengthen the link between observability and association debugging.",
+      "context_assembly": {
+        "budget": {
+          "max_fragments": 4,
+          "max_estimated_tokens": 600
+        },
+        "selected": [
+          {
+            "fragment": {
+              "fragment_id": "memory.sleep.2026-05-21-122533-sleep-phase-session-summary.001",
+              "source_kind": "memory",
+              "summary": "Model roles now flow through the same event and trace artifacts as other subsystems.",
+              "tags": [],
+              "score": 1.8079880735175562,
+              "estimated_tokens": 21,
+              "source_reference": "session-transcript:model-role-smoke",
+              "selection_reason": "matched terms: and, the"
+            },
+            "cumulative_estimated_tokens": 21
+          }
+        ],
+        "omitted": [],
+        "used_estimated_tokens": 21
+      },
+      "retrieved_memory_block": "- memory.sleep.2026-05-21-122533-sleep-phase-session-summary.001: Model roles now flow through the same event and trace artifacts as other subsystems.",
+      "assistant_response": "I am a QSF runtime voice loop. I turn your speech into events, assemble context, and answer through the framework before speech playback.",
+      "recalled_turns": [],
+      "model_id": "gpt-5.4-mini",
+      "model_latency_ms": 0,
+      "input_tokens": 58,
+      "cached_input_tokens": 19,
+      "output_tokens": 28,
+      "full_request_hash": [
+        71,
+        56,
+        144,
+        61,
+        220,
+        124,
+        129,
+        103,
+        180,
+        77,
+        179,
+        248,
+        255,
+        29,
+        194,
+        180,
+        176,
+        79,
+        73,
+        53,
+        114,
+        233,
+        95,
+        226,
+        106,
+        245,
+        126,
+        73,
+        202,
+        73,
+        112,
+        200
+      ],
+      "message_count": 6
+    }
+  ],
+  "summarized_turns": [],
+  "ended_reason": "quit_command",
+  "last_input": "Strengthen the link between observability and association debugging.",
+  "last_prompt_hash": [
+    71,
+    56,
+    144,
+    61,
+    220,
+    124,
+    129,
+    103,
+    180,
+    77,
+    179,
+    248,
+    255,
+    29,
+    194,
+    180,
+    176,
+    79,
+    73,
+    53,
+    114,
+    233,
+    95,
+    226,
+    106,
+    245,
+    126,
+    73,
+    202,
+    73,
+    112,
+    200
+  ],
+  "prefix_invalidated_since_last_prompt": false,
+  "last_model_error": null,
+  "limit_reached": null
+}

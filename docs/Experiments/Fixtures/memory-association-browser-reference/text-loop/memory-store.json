@@ -1,0 +1,430 @@
+{
+  "records": [
+    {
+      "schema_version": 1,
+      "id": "memory.associative-memory",
+      "kind": "concept",
+      "title": "Associative memory",
+      "summary": "Explicit weighted links should make indirect recall inspectable and comparable against recency and keyword baselines.",
+      "tags": [
+        "memory",
+        "association",
+        "retrieval",
+        "trace"
+      ],
+      "created_at": "2026-05-01T09:00:00Z",
+      "importance": 0.95,
+      "reinforcement_count": 3,
+      "last_reinforced_at": "2026-05-21T12:23:36.6067608Z",
+      "source_reference": "docs/Concepts/Concept.AssociativeMemory.md",
+      "estimated_tokens": 42
+    },
+    {
+      "schema_version": 1,
+      "id": "memory.context-budget",
+      "kind": "concept",
+      "title": "Context budget",
+      "summary": "The live loop should select compact context under explicit token and fragment budgets instead of loading everything.",
+      "tags": [
+        "context",
+        "budget",
+        "retrieval",
+        "selection"
+      ],
+      "created_at": "2026-05-02T09:00:00Z",
+      "importance": 0.9,
+      "reinforcement_count": 2,
+      "last_reinforced_at": "2026-05-21T12:23:36.6067608Z",
+      "source_reference": "docs/Concepts/Concept.ContextBudget.md",
+      "estimated_tokens": 38
+    },
+    {
+      "schema_version": 1,
+      "id": "memory.sleep-phase",
+      "kind": "concept",
+      "title": "Sleep phase consolidation",
+      "summary": "Sleep-phase work can summarize sessions, propose memory candidates, and create associations without silently accepting decisions.",
+      "tags": [
+        "sleep",
+        "summary",
+        "memory",
+        "consolidation"
+      ],
+      "created_at": "2026-05-03T09:00:00Z",
+      "importance": 0.78,
+      "reinforcement_count": 1,
+      "last_reinforced_at": "2026-05-21T12:23:36.6067608Z",
+      "source_reference": "docs/Concepts/Concept.SleepPhase.md",
+      "estimated_tokens": 44
+    },
+    {
+      "schema_version": 1,
+      "id": "memory.tools-as-perception",
+      "kind": "concept",
+      "title": "Tools as perception",
+      "summary": "Early tools should be read-only or compute-only observations that feed structured results back into the runtime.",
+      "tags": [
+        "tools",
+        "perception",
+        "safety",
+        "context"
+      ],
+      "created_at": "2026-05-04T09:00:00Z",
+      "importance": 0.74,
+      "reinforcement_count": 1,
+      "last_reinforced_at": "2026-05-21T12:23:36.6067608Z",
+      "source_reference": "docs/Concepts/Concept.ToolsAsPerception.md",
+      "estimated_tokens": 36
+    },
+    {
+      "schema_version": 1,
+      "id": "memory.observability",
+      "kind": "architecture_note",
+      "title": "Structured observability",
+      "summary": "Developer logs, event logs, and trace logs are separate artifacts with different responsibilities.",
+      "tags": [
+        "observability",
+        "event-log",
+        "trace",
+        "report"
+      ],
+      "created_at": "2026-05-05T09:00:00Z",
+      "importance": 0.86,
+      "reinforcement_count": 2,
+      "last_reinforced_at": "2026-05-21T12:23:36.6067608Z",
+      "source_reference": "docs/Architecture/Architecture.StateAndObservability.md",
+      "estimated_tokens": 35
+    },
+    {
+      "schema_version": 1,
+      "id": "memory.runtime-flow",
+      "kind": "decision",
+      "title": "Unidirectional runtime flow",
+      "summary": "Runtime state changes through pure reducers; side effects return as events before state changes.",
+      "tags": [
+        "runtime",
+        "reducer",
+        "events",
+        "state"
+      ],
+      "created_at": "2026-05-06T09:00:00Z",
+      "importance": 0.98,
+      "reinforcement_count": 4,
+      "last_reinforced_at": "2026-05-21T12:23:36.6067608Z",
+      "source_reference": "docs/DecisionLog.md",
+      "estimated_tokens": 32
+    },
+    {
+      "schema_version": 1,
+      "id": "memory.model-roles",
+      "kind": "architecture_note",
+      "title": "Model roles",
+      "summary": "Different model calls should describe why they are being made and what output they expect.",
+      "tags": [
+        "model",
+        "roles",
+        "mock",
+        "openai"
+      ],
+      "created_at": "2026-05-07T09:00:00Z",
+      "importance": 0.65,
+      "reinforcement_count": 0,
+      "source_reference": "docs/Architecture/Architecture.ModelRoles.md",
+      "estimated_tokens": 30
+    },
+    {
+      "schema_version": 1,
+      "id": "memory.audio-loop",
+      "kind": "experiment",
+      "title": "Transcript-first audio loop",
+      "summary": "Realtime speech integration starts with transcript events before full speech-to-speech presence.",
+      "tags": [
+        "audio",
+        "transcript",
+        "realtime",
+        "events"
+      ],
+      "created_at": "2026-05-08T09:00:00Z",
+      "importance": 0.72,
+      "reinforcement_count": 1,
+      "source_reference": "docs/Experiments/Experiment.StreamingTranscriptionMVP.md",
+      "estimated_tokens": 34
+    },
+    {
+      "schema_version": 1,
+      "id": "memory.external-inputs",
+      "kind": "question",
+      "title": "External inputs",
+      "summary": "External signals need to become structured input events instead of bypassing the runtime loop.",
+      "tags": [
+        "external-inputs",
+        "events",
+        "runtime",
+        "perception"
+      ],
+      "created_at": "2026-05-09T09:00:00Z",
+      "importance": 0.68,
+      "reinforcement_count": 0,
+      "source_reference": "docs/Concepts/Concept.ExternalInputs.md",
+      "estimated_tokens": 31
+    },
+    {
+      "schema_version": 1,
+      "id": "memory.non-goals",
+      "kind": "observation",
+      "title": "Framework MVP non-goals",
+      "summary": "The MVP defers production storage, full agent autonomy, video input, cloud deployment, and polished UI.",
+      "tags": [
+        "non-goals",
+        "scope",
+        "mvp",
+        "safety"
+      ],
+      "created_at": "2026-05-10T09:00:00Z",
+      "importance": 0.8,
+      "reinforcement_count": 1,
+      "source_reference": "docs/ProjectFrame/NonGoals.md",
+      "estimated_tokens": 33
+    },
+    {
+      "schema_version": 1,
+      "id": "memory.sleep.2026-05-21-122533-sleep-phase-session-summary.001",
+      "kind": "observation",
+      "title": "Model roles now flow through the same event and trace artifacts",
+      "summary": "Model roles now flow through the same event and trace artifacts as other subsystems.",
+      "tags": [],
+      "created_at": "2026-05-21T12:23:36.6067608Z",
+      "importance": 0.88,
+      "reinforcement_count": 3,
+      "last_reinforced_at": "2026-05-21T12:27:19.8699323Z",
+      "source_reference": "session-transcript:model-role-smoke",
+      "estimated_tokens": 21
+    }
+  ],
+  "associations": [
+    {
+      "schema_version": 1,
+      "from_memory_id": "memory.associative-memory",
+      "to_memory_id": "memory.context-budget",
+      "weight": 0.92,
+      "reason": "co-retrieved within 3 turns during session 02d39e7c-c903-4338-a6aa-ba2319880d3b",
+      "last_reinforced_at": "2026-05-21T12:23:36.6067608Z"
+    },
+    {
+      "schema_version": 1,
+      "from_memory_id": "memory.associative-memory",
+      "to_memory_id": "memory.external-inputs",
+      "weight": 0.42,
+      "reason": "co-retrieved within 3 turns during session 02d39e7c-c903-4338-a6aa-ba2319880d3b",
+      "last_reinforced_at": "2026-05-21T12:23:36.6067608Z"
+    },
+    {
+      "schema_version": 1,
+      "from_memory_id": "memory.associative-memory",
+      "to_memory_id": "memory.model-roles",
+      "weight": 0.58,
+      "reason": "co-retrieved within 3 turns during session 02d39e7c-c903-4338-a6aa-ba2319880d3b",
+      "last_reinforced_at": "2026-05-21T12:23:36.6067608Z"
+    },
+    {
+      "schema_version": 1,
+      "from_memory_id": "memory.associative-memory",
+      "to_memory_id": "memory.observability",
+      "weight": 0.7,
+      "reason": "co-retrieved within 3 turns during session 02d39e7c-c903-4338-a6aa-ba2319880d3b",
+      "last_reinforced_at": "2026-05-21T12:23:36.6067608Z"
+    },
+    {
+      "schema_version": 1,
+      "from_memory_id": "memory.associative-memory",
+      "to_memory_id": "memory.runtime-flow",
+      "weight": 0.51,
+      "reason": "co-retrieved within 3 turns during session 02d39e7c-c903-4338-a6aa-ba2319880d3b",
+      "last_reinforced_at": "2026-05-21T12:23:36.6067608Z"
+    },
+    {
+      "schema_version": 1,
+      "from_memory_id": "memory.associative-memory",
+      "to_memory_id": "memory.sleep-phase",
+      "weight": 0.72,
+      "reason": "co-retrieved within 3 turns during session 02d39e7c-c903-4338-a6aa-ba2319880d3b",
+      "last_reinforced_at": "2026-05-21T12:23:36.6067608Z"
+    },
+    {
+      "schema_version": 1,
+      "from_memory_id": "memory.associative-memory",
+      "to_memory_id": "memory.tools-as-perception",
+      "weight": 0.46,
+      "reason": "co-retrieved within 3 turns during session 02d39e7c-c903-4338-a6aa-ba2319880d3b",
+      "last_reinforced_at": "2026-05-21T12:23:36.6067608Z"
+    },
+    {
+      "schema_version": 1,
+      "from_memory_id": "memory.context-budget",
+      "to_memory_id": "memory.external-inputs",
+      "weight": 0.33,
+      "reason": "co-retrieved within 3 turns during session 02d39e7c-c903-4338-a6aa-ba2319880d3b",
+      "last_reinforced_at": "2026-05-21T12:23:36.6067608Z"
+    },
+    {
+      "schema_version": 1,
+      "from_memory_id": "memory.context-budget",
+      "to_memory_id": "memory.model-roles",
+      "weight": 0.41,
+      "reason": "co-retrieved within 3 turns during session 02d39e7c-c903-4338-a6aa-ba2319880d3b",
+      "last_reinforced_at": "2026-05-21T12:23:36.6067608Z"
+    },
+    {
+      "schema_version": 1,
+      "from_memory_id": "memory.context-budget",
+      "to_memory_id": "memory.observability",
+      "weight": 0.64,
+      "reason": "co-retrieved within 3 turns during session 02d39e7c-c903-4338-a6aa-ba2319880d3b",
+      "last_reinforced_at": "2026-05-21T12:23:36.6067608Z"
+    },
+    {
+      "schema_version": 1,
+      "from_memory_id": "memory.context-budget",
+      "to_memory_id": "memory.runtime-flow",
+      "weight": 0.57,
+      "reason": "co-retrieved within 3 turns during session 02d39e7c-c903-4338-a6aa-ba2319880d3b",
+      "last_reinforced_at": "2026-05-21T12:23:36.6067608Z"
+    },
+    {
+      "schema_version": 1,
+      "from_memory_id": "memory.context-budget",
+      "to_memory_id": "memory.sleep-phase",
+      "weight": 0.69,
+      "reason": "co-retrieved within 3 turns during session 02d39e7c-c903-4338-a6aa-ba2319880d3b",
+      "last_reinforced_at": "2026-05-21T12:23:36.6067608Z"
+    },
+    {
+      "schema_version": 1,
+      "from_memory_id": "memory.context-budget",
+      "to_memory_id": "memory.tools-as-perception",
+      "weight": 0.44,
+      "reason": "co-retrieved within 3 turns during session 02d39e7c-c903-4338-a6aa-ba2319880d3b",
+      "last_reinforced_at": "2026-05-21T12:23:36.6067608Z"
+    },
+    {
+      "schema_version": 1,
+      "from_memory_id": "memory.external-inputs",
+      "to_memory_id": "memory.model-roles",
+      "weight": 0.29,
+      "reason": "co-retrieved within 3 turns during session 02d39e7c-c903-4338-a6aa-ba2319880d3b",
+      "last_reinforced_at": "2026-05-21T12:23:36.6067608Z"
+    },
+    {
+      "schema_version": 1,
+      "from_memory_id": "memory.external-inputs",
+      "to_memory_id": "memory.observability",
+      "weight": 0.62,
+      "reason": "co-retrieved within 3 turns during session 02d39e7c-c903-4338-a6aa-ba2319880d3b",
+      "last_reinforced_at": "2026-05-21T12:23:36.6067608Z"
+    },
+    {
+      "schema_version": 1,
+      "from_memory_id": "memory.external-inputs",
+      "to_memory_id": "memory.runtime-flow",
+      "weight": 0.86,
+      "reason": "co-retrieved within 3 turns during session 02d39e7c-c903-4338-a6aa-ba2319880d3b",
+      "last_reinforced_at": "2026-05-21T12:23:36.6067608Z"
+    },
+    {
+      "schema_version": 1,
+      "from_memory_id": "memory.external-inputs",
+      "to_memory_id": "memory.sleep-phase",
+      "weight": 0.53,
+      "reason": "co-retrieved within 3 turns during session 02d39e7c-c903-4338-a6aa-ba2319880d3b",
+      "last_reinforced_at": "2026-05-21T12:23:36.6067608Z"
+    },
+    {
+      "schema_version": 1,
+      "from_memory_id": "memory.external-inputs",
+      "to_memory_id": "memory.tools-as-perception",
+      "weight": 0.67,
+      "reason": "co-retrieved within 3 turns during session 02d39e7c-c903-4338-a6aa-ba2319880d3b",
+      "last_reinforced_at": "2026-05-21T12:23:36.6067608Z"
+    },
+    {
+      "schema_version": 1,
+      "from_memory_id": "memory.model-roles",
+      "to_memory_id": "memory.observability",
+      "weight": 0.83,
+      "reason": "co-retrieved within 3 turns during session 02d39e7c-c903-4338-a6aa-ba2319880d3b",
+      "last_reinforced_at": "2026-05-21T12:23:36.6067608Z"
+    },
+    {
+      "schema_version": 1,
+      "from_memory_id": "memory.model-roles",
+      "to_memory_id": "memory.runtime-flow",
+      "weight": 0.49,
+      "reason": "co-retrieved within 3 turns during session 02d39e7c-c903-4338-a6aa-ba2319880d3b",
+      "last_reinforced_at": "2026-05-21T12:23:36.6067608Z"
+    },
+    {
+      "schema_version": 1,
+      "from_memory_id": "memory.model-roles",
+      "to_memory_id": "memory.sleep-phase",
+      "weight": 0.61,
+      "reason": "co-retrieved within 3 turns during session 02d39e7c-c903-4338-a6aa-ba2319880d3b",
+      "last_reinforced_at": "2026-05-21T12:23:36.6067608Z"
+    },
+    {
+      "schema_version": 1,
+      "from_memory_id": "memory.model-roles",
+      "to_memory_id": "memory.tools-as-perception",
+      "weight": 0.52,
+      "reason": "co-retrieved within 3 turns during session 02d39e7c-c903-4338-a6aa-ba2319880d3b",
+      "last_reinforced_at": "2026-05-21T12:23:36.6067608Z"
+    },
+    {
+      "schema_version": 1,
+      "from_memory_id": "memory.observability",
+      "to_memory_id": "memory.runtime-flow",
+      "weight": 0.74,
+      "reason": "co-retrieved within 3 turns during session 02d39e7c-c903-4338-a6aa-ba2319880d3b",
+      "last_reinforced_at": "2026-05-21T12:23:36.6067608Z"
+    },
+    {
+      "schema_version": 1,
+      "from_memory_id": "memory.observability",
+      "to_memory_id": "memory.sleep-phase",
+      "weight": 0.81,
+      "reason": "co-retrieved within 3 turns during session 02d39e7c-c903-4338-a6aa-ba2319880d3b",
+      "last_reinforced_at": "2026-05-21T12:23:36.6067608Z"
+    },
+    {
+      "schema_version": 1,
+      "from_memory_id": "memory.observability",
+      "to_memory_id": "memory.tools-as-perception",
+      "weight": 0.55,
+      "reason": "co-retrieved within 3 turns during session 02d39e7c-c903-4338-a6aa-ba2319880d3b",
+      "last_reinforced_at": "2026-05-21T12:23:36.6067608Z"
+    },
+    {
+      "schema_version": 1,
+      "from_memory_id": "memory.runtime-flow",
+      "to_memory_id": "memory.sleep-phase",
+      "weight": 0.78,
+      "reason": "co-retrieved within 3 turns during session 02d39e7c-c903-4338-a6aa-ba2319880d3b",
+      "last_reinforced_at": "2026-05-21T12:23:36.6067608Z"
+    },
+    {
+      "schema_version": 1,
+      "from_memory_id": "memory.runtime-flow",
+      "to_memory_id": "memory.tools-as-perception",
+      "weight": 0.48,
+      "reason": "co-retrieved within 3 turns during session 02d39e7c-c903-4338-a6aa-ba2319880d3b",
+      "last_reinforced_at": "2026-05-21T12:23:36.6067608Z"
+    },
+    {
+      "schema_version": 1,
+      "from_memory_id": "memory.sleep-phase",
+      "to_memory_id": "memory.tools-as-perception",
+      "weight": 0.59,
+      "reason": "co-retrieved within 3 turns during session 02d39e7c-c903-4338-a6aa-ba2319880d3b",
+      "last_reinforced_at": "2026-05-21T12:23:36.6067608Z"
+    }
+  ]
+}

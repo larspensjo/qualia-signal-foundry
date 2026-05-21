@@ -1,0 +1,10 @@
+{
+  "schema_version": 1,
+  "current_session_id": "26c8a820-5238-4037-9303-bfc895a39343",
+  "current_session_state_path": "session-state.json",
+  "last_sleep_run_id": "2026-05-21-122533-sleep-phase-session-summary",
+  "last_sleep_brief_path": "consolidated-brief.json",
+  "last_sleep_consumed_session_id": "02d39e7c-c903-4338-a6aa-ba2319880d3b",
+  "sleep_pending": true,
+  "resume_mode": "awake_continuation"
+}
