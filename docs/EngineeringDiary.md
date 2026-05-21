@@ -1332,3 +1332,20 @@ What changed:
 - Formatted output numbers using Invariant Culture to ensure clean comma separators.
 
 Refs: scripts/project-stats.ps1
+
+## 2026-05-21 - qsf_browser_server skeleton with /api/health
+
+New crate `qsf_browser_server` hosts the HTTP server for post-hoc memory
+inspection. Phase 1 implements CLI args, `AppState` over `qsf_memory::load_existing`,
+the `/api/health` route, stubbed `503` responses on the other `/api/*` routes,
+loopback-by-default binding, and a non-loopback disclosure warning logged via
+`engine_logging`.
+
+What changed:
+- Added the axum server crate with read-only dependencies on `qsf_memory` and
+  `engine_logging`.
+- Added a browser-facing load-error DTO separate from persisted memory types.
+- Added integration coverage for missing-store health and data-route responses.
+
+Refs: crates/qsf_browser_server;
+implements: 2026-05-20 - Post-hoc browser tools use Rust backend + browser frontend split
