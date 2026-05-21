@@ -9,6 +9,8 @@
 # Generates a comprehensive statistics report for the qualia-signal-foundry
 # project, including:
 # - Rust source code lines by crate
+# - Authored frontend source lines
+# - Config and test data file counts
 # - PowerShell script lines
 # - Documentation lines (plans/designs/ideas, other)
 # - External dependency count
@@ -78,6 +80,18 @@ function Count-RustTests {
     }
 
     return $totalTests
+}
+
+function Test-GeneratedOrVendorPath {
+    param(
+        [string]$Path
+    )
+
+    return $Path -match '\\node_modules\\' -or
+        $Path -match '\\dist\\' -or
+        $Path -match '\\target\\' -or
+        $Path -match '\\runs\\' -or
+        $Path -match '\\state\\'
 }
 
 function Get-WorkspaceCrates {
@@ -174,6 +188,72 @@ function Get-RustStats {
             }
         }
     }
+
+    return $stats
+}
+
+function Get-FrontendStats {
+    $stats = @{
+        TypeScript = @{Lines = 0; Files = 0}
+        Css = @{Lines = 0; Files = 0}
+        Html = @{Lines = 0; Files = 0}
+    }
+
+    $cratesPath = Join-Path $projectRoot "crates"
+    if (-not (Test-Path $cratesPath)) {
+        return $stats
+    }
+
+    $uiRoots = @(Get-ChildItem -Path $cratesPath -Directory -Recurse -ErrorAction SilentlyContinue | Where-Object {
+        $_.Name -eq "ui" -and -not (Test-GeneratedOrVendorPath -Path $_.FullName)
+    })
+
+    foreach ($uiRoot in $uiRoots) {
+        $tsFiles = @(Get-ChildItem -Path $uiRoot.FullName -Include "*.ts", "*.tsx" -Recurse -File -ErrorAction SilentlyContinue | Where-Object {
+            -not (Test-GeneratedOrVendorPath -Path $_.FullName) -and
+            $_.Name -notmatch '\.d\.ts$'
+        })
+        $cssFiles = @(Get-ChildItem -Path $uiRoot.FullName -Filter "*.css" -Recurse -File -ErrorAction SilentlyContinue | Where-Object {
+            -not (Test-GeneratedOrVendorPath -Path $_.FullName)
+        })
+        $htmlFiles = @(Get-ChildItem -Path $uiRoot.FullName -Filter "*.html" -Recurse -File -ErrorAction SilentlyContinue | Where-Object {
+            -not (Test-GeneratedOrVendorPath -Path $_.FullName)
+        })
+
+        $stats.TypeScript.Lines += Count-Lines -Files $tsFiles
+        $stats.TypeScript.Files += $tsFiles.Count
+        $stats.Css.Lines += Count-Lines -Files $cssFiles
+        $stats.Css.Files += $cssFiles.Count
+        $stats.Html.Lines += Count-Lines -Files $htmlFiles
+        $stats.Html.Files += $htmlFiles.Count
+    }
+
+    return $stats
+}
+
+function Get-ConfigDataStats {
+    $stats = @{
+        Json = @{Lines = 0; Files = 0; Lockfiles = 0}
+    }
+
+    $searchRoots = @(
+        (Join-Path $projectRoot "crates"),
+        (Join-Path $projectRoot "docs\Experiments\Fixtures")
+    ) | Where-Object { Test-Path $_ }
+
+    $jsonFiles = @()
+    foreach ($searchRoot in $searchRoots) {
+        $jsonFiles += Get-ChildItem -Path $searchRoot -Filter "*.json" -Recurse -File -ErrorAction SilentlyContinue | Where-Object {
+            -not (Test-GeneratedOrVendorPath -Path $_.FullName)
+        }
+    }
+
+    $jsonLockFiles = @($jsonFiles | Where-Object { $_.Name -match 'lock' })
+    $jsonCountedFiles = @($jsonFiles | Where-Object { $_.Name -notmatch 'lock' })
+
+    $stats.Json.Lines = Count-Lines -Files $jsonCountedFiles
+    $stats.Json.Files = $jsonCountedFiles.Count
+    $stats.Json.Lockfiles = $jsonLockFiles.Count
 
     return $stats
 }
@@ -279,6 +359,8 @@ function Get-DependencyCount {
 function Show-StatisticsReport {
     param(
         [hashtable]$RustStats,
+        [hashtable]$FrontendStats,
+        [hashtable]$ConfigDataStats,
         [hashtable]$PowerShellStats,
         [hashtable]$DocStats,
         [int]$DependencyCount
@@ -287,8 +369,9 @@ function Show-StatisticsReport {
     # Calculate totals
     $totalRustLines = ($RustStats.Values | ForEach-Object { $_.Lines } | Measure-Object -Sum).Sum
     $totalRustTests = ($RustStats.Values | ForEach-Object { $_.Tests } | Measure-Object -Sum).Sum
+    $totalFrontendLines = ($FrontendStats.Values | ForEach-Object { $_.Lines } | Measure-Object -Sum).Sum
     $totalDocLines = ($DocStats.Values | ForEach-Object { $_.Lines } | Measure-Object -Sum).Sum
-    $totalProjectLines = $totalRustLines + $PowerShellStats.Lines + $totalDocLines
+    $totalProjectLines = $totalRustLines + $totalFrontendLines + $PowerShellStats.Lines + $totalDocLines
 
     # Header
     Write-Host ""
@@ -323,6 +406,32 @@ function Show-StatisticsReport {
     Write-Host " lines" -ForegroundColor Yellow -NoNewline
     Write-Host " $(Format-Number $totalRustTests -Width 5) unit tests" -ForegroundColor Yellow
     Write-Host ""
+
+    # Frontend Section
+    if ($totalFrontendLines -gt 0) {
+        Write-Host "---------------------------------------------------------------" -ForegroundColor Cyan
+        Write-Host "  FRONTEND SOURCE" -ForegroundColor Cyan
+        Write-Host "---------------------------------------------------------------" -ForegroundColor Cyan
+        Write-Host ""
+
+        Write-Host "  TypeScript ..................." -NoNewline
+        Write-Host (Format-Number $FrontendStats.TypeScript.Lines -Width 10) -ForegroundColor Green -NoNewline
+        Write-Host " lines ($($FrontendStats.TypeScript.Files) files)"
+
+        Write-Host "  CSS .........................." -NoNewline
+        Write-Host (Format-Number $FrontendStats.Css.Lines -Width 10) -ForegroundColor Green -NoNewline
+        Write-Host " lines ($($FrontendStats.Css.Files) files)"
+
+        Write-Host "  HTML ........................." -NoNewline
+        Write-Host (Format-Number $FrontendStats.Html.Lines -Width 10) -ForegroundColor Green -NoNewline
+        Write-Host " lines ($($FrontendStats.Html.Files) files)"
+
+        Write-Host "  -----------------------------------------" -ForegroundColor DarkGray
+        Write-Host "  TOTAL FRONTEND " -NoNewline
+        Write-Host (Format-Number $totalFrontendLines -Width 24) -ForegroundColor Yellow -NoNewline
+        Write-Host " lines" -ForegroundColor Yellow
+        Write-Host ""
+    }
 
     # Scripts Section
     Write-Host "---------------------------------------------------------------" -ForegroundColor Cyan
@@ -364,6 +473,28 @@ function Show-StatisticsReport {
     Write-Host "  External Crates .............." -NoNewline
     Write-Host (Format-Number $DependencyCount -Width 10) -ForegroundColor Green -NoNewline
     Write-Host " dependencies"
+    Write-Host ""
+
+    # Config and Data Section
+    Write-Host "---------------------------------------------------------------" -ForegroundColor Cyan
+    Write-Host "  CONFIG AND TEST DATA" -ForegroundColor Cyan
+    Write-Host "---------------------------------------------------------------" -ForegroundColor Cyan
+    Write-Host ""
+
+    Write-Host "  JSON Config/Data ............." -NoNewline
+    Write-Host (Format-Number $ConfigDataStats.Json.Lines -Width 10) -ForegroundColor Green -NoNewline
+    Write-Host " lines ($($ConfigDataStats.Json.Files) files)"
+
+    if ($ConfigDataStats.Json.Lockfiles -gt 0) {
+        $lockfileLabel = "files"
+        if ($ConfigDataStats.Json.Lockfiles -eq 1) {
+            $lockfileLabel = "file"
+        }
+
+        Write-Host "  JSON Lockfiles ..............." -NoNewline
+        Write-Host (Format-Number $ConfigDataStats.Json.Lockfiles -Width 10) -ForegroundColor DarkGreen -NoNewline
+        Write-Host " $lockfileLabel excluded from line totals"
+    }
     Write-Host ""
 
     # Summary Section
@@ -409,6 +540,8 @@ function Invoke-ProjectStatsReport {
         Write-Host "Collecting project statistics..." -ForegroundColor Yellow
 
         $rustStats = Get-RustStats
+        $frontendStats = Get-FrontendStats
+        $configDataStats = Get-ConfigDataStats
         $powerShellStats = Get-PowerShellStats
         $docStats = Get-DocumentationStats
         $dependencyCount = Get-DependencyCount
@@ -416,6 +549,8 @@ function Invoke-ProjectStatsReport {
         # Display formatted report
         Show-StatisticsReport `
             -RustStats $rustStats `
+            -FrontendStats $frontendStats `
+            -ConfigDataStats $configDataStats `
             -PowerShellStats $powerShellStats `
             -DocStats $docStats `
             -DependencyCount $dependencyCount

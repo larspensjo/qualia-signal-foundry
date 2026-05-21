@@ -1416,3 +1416,14 @@ Observed:
   follow-up text-loop run, with sleep pending for the current session.
 
 Refs: docs/Experiments/Fixtures/memory-association-browser-reference
+
+## 2026-05-21 - Project stats include browser UI source
+
+The project statistics report now accounts for authored browser UI source and JSON config/test data without counting generated frontend output or vendored dependencies.
+
+What changed:
+- Added frontend TypeScript, CSS, and HTML reporting to the project stats script.
+- Added JSON config/data reporting that excludes lockfiles from line totals.
+- Excluded `node_modules`, `dist`, `target`, `runs`, and `state` paths from authored file counts.
+
+Refs: scripts/project-stats.ps1
