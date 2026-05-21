@@ -1,5 +1,9 @@
 # Idea: Memory Association Browser
 
+> Status: This idea has graduated to a design and shipping implementation. See
+> [Design.MemoryAssociationBrowser.md](Design.MemoryAssociationBrowser.md) and
+> [Plan.MemoryAssociationBrowser.md](Plan.MemoryAssociationBrowser.md).
+
 ## Status
 
 Brainstorm

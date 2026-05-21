@@ -14,7 +14,7 @@
 
 ## Status
 
-Active. Not yet started.
+Active. Phase 0 complete.
 
 ## Core Invariants
 
@@ -68,7 +68,7 @@ Move the persisted memory types and store loader out of `qsf_app` into a new sha
 - Create: `crates/qsf_memory/Cargo.toml`
 - Create: `crates/qsf_memory/src/lib.rs`
 
-- [ ] **Step 1: Create the Cargo manifest**
+- [x] **Step 1: Create the Cargo manifest**
 
 ```toml
 # crates/qsf_memory/Cargo.toml
@@ -93,7 +93,7 @@ time = { workspace = true }
 `MemoryStore::persist` (moved in Task 0.4) uses `tempfile::NamedTempFile`
 in production code, not just tests.
 
-- [ ] **Step 2: Create the empty lib root**
+- [x] **Step 2: Create the empty lib root**
 
 ```rust
 // crates/qsf_memory/src/lib.rs
@@ -101,7 +101,7 @@ in production code, not just tests.
 //! shared between qsf_app and qsf_browser_server.
 ```
 
-- [ ] **Step 3: Verify the workspace picks it up**
+- [x] **Step 3: Verify the workspace picks it up**
 
 Run: `cargo build -p qsf_memory`
 Expected: builds with no errors (empty crate).
@@ -114,11 +114,11 @@ Expected: builds with no errors (empty crate).
 - Modify: `crates/qsf_app/src/memory/memory_record.rs`
 - Modify: `crates/qsf_app/src/memory/mod.rs`
 
-- [ ] **Step 1: Copy `memory_record.rs` content into the new crate**
+- [x] **Step 1: Copy `memory_record.rs` content into the new crate**
 
 Copy the full contents of `crates/qsf_app/src/memory/memory_record.rs` into `crates/qsf_memory/src/record.rs` unchanged.
 
-- [ ] **Step 2: Re-export from `qsf_memory` lib root**
+- [x] **Step 2: Re-export from `qsf_memory` lib root**
 
 Append to `crates/qsf_memory/src/lib.rs`:
 
@@ -127,7 +127,7 @@ pub mod record;
 pub use record::{MEMORY_RECORD_SCHEMA_VERSION, MemoryRecord, MemoryRecordKind};
 ```
 
-- [ ] **Step 3: Replace `qsf_app`'s copy with a thin re-export**
+- [x] **Step 3: Replace `qsf_app`'s copy with a thin re-export**
 
 Replace `crates/qsf_app/src/memory/memory_record.rs` with:
 
@@ -140,7 +140,7 @@ pub use qsf_memory::record::ensure_current_memory_schema;
 
 (If `ensure_current_memory_schema` is a free function in the original file, ensure it is also re-exported from `qsf_memory::record` in Step 1.)
 
-- [ ] **Step 4: Add the `qsf_memory` dependency to `qsf_app`**
+- [x] **Step 4: Add the `qsf_memory` dependency to `qsf_app`**
 
 Modify `crates/qsf_app/Cargo.toml` `[dependencies]`:
 
@@ -148,7 +148,7 @@ Modify `crates/qsf_app/Cargo.toml` `[dependencies]`:
 qsf_memory = { path = "../qsf_memory" }
 ```
 
-- [ ] **Step 5: Verify**
+- [x] **Step 5: Verify**
 
 Run: `cargo build -p qsf_app`
 Expected: builds with no errors.
@@ -160,11 +160,11 @@ Expected: builds with no errors.
 - Modify: `crates/qsf_memory/src/lib.rs`
 - Modify: `crates/qsf_app/src/memory/association.rs`
 
-- [ ] **Step 1: Copy `association.rs` content into `qsf_memory`**
+- [x] **Step 1: Copy `association.rs` content into `qsf_memory`**
 
 Copy `crates/qsf_app/src/memory/association.rs` to `crates/qsf_memory/src/association.rs` unchanged.
 
-- [ ] **Step 2: Re-export from the lib root**
+- [x] **Step 2: Re-export from the lib root**
 
 Append to `crates/qsf_memory/src/lib.rs`:
 
@@ -173,7 +173,7 @@ pub mod association;
 pub use association::{ASSOCIATION_SCHEMA_VERSION, Association, ensure_current_association_schema};
 ```
 
-- [ ] **Step 3: Replace `qsf_app`'s copy with a thin re-export**
+- [x] **Step 3: Replace `qsf_app`'s copy with a thin re-export**
 
 Replace `crates/qsf_app/src/memory/association.rs` with:
 
@@ -182,7 +182,7 @@ Replace `crates/qsf_app/src/memory/association.rs` with:
 pub use qsf_memory::{ASSOCIATION_SCHEMA_VERSION, Association, ensure_current_association_schema};
 ```
 
-- [ ] **Step 4: Verify**
+- [x] **Step 4: Verify**
 
 Run: `cargo build -p qsf_app`
 Expected: builds with no errors.
@@ -194,11 +194,11 @@ Expected: builds with no errors.
 - Modify: `crates/qsf_memory/src/lib.rs`
 - Modify: `crates/qsf_app/src/memory/store.rs`
 
-- [ ] **Step 1: Move `MemoryStoreContents` and `MemoryStore` into `qsf_memory::store`**
+- [x] **Step 1: Move `MemoryStoreContents` and `MemoryStore` into `qsf_memory::store`**
 
 Copy `crates/qsf_app/src/memory/store.rs` to `crates/qsf_memory/src/store.rs`. Update imports: replace `super::association::...` with `crate::association::...` and `super::memory_record::...` with `crate::record::...`.
 
-- [ ] **Step 2: Re-export from the lib root**
+- [x] **Step 2: Re-export from the lib root**
 
 Append to `crates/qsf_memory/src/lib.rs`:
 
@@ -207,7 +207,7 @@ pub mod store;
 pub use store::{MemoryStore, MemoryStoreContents};
 ```
 
-- [ ] **Step 3: Replace `qsf_app`'s copy with a re-export**
+- [x] **Step 3: Replace `qsf_app`'s copy with a re-export**
 
 Replace `crates/qsf_app/src/memory/store.rs` with:
 
@@ -216,7 +216,7 @@ Replace `crates/qsf_app/src/memory/store.rs` with:
 pub use qsf_memory::{MemoryStore, MemoryStoreContents};
 ```
 
-- [ ] **Step 4: Verify the move**
+- [x] **Step 4: Verify the move**
 
 Run: `cargo build` (workspace) and then `cargo test -p qsf_app`.
 Expected: full workspace builds; existing tests still pass.
@@ -227,7 +227,7 @@ Expected: full workspace builds; existing tests still pass.
 - Create: `crates/qsf_memory/src/errors.rs`
 - Modify: `crates/qsf_memory/src/lib.rs`
 
-- [ ] **Step 1: Write the error enum**
+- [x] **Step 1: Write the error enum**
 
 ```rust
 // crates/qsf_memory/src/errors.rs
@@ -280,14 +280,14 @@ pub struct ShapeError {
 }
 ```
 
-- [ ] **Step 2: Re-export from the lib root**
+- [x] **Step 2: Re-export from the lib root**
 
 ```rust
 pub mod errors;
 pub use errors::{SchemaVersions, ShapeError, StoreLoadError};
 ```
 
-- [ ] **Step 3: Verify**
+- [x] **Step 3: Verify**
 
 Run: `cargo build -p qsf_memory`
 Expected: builds with no errors.
@@ -298,7 +298,7 @@ Expected: builds with no errors.
 - Modify: `crates/qsf_memory/src/store.rs`
 - Test: inline `#[cfg(test)]` block in `store.rs`
 
-- [ ] **Step 1: Add the loaded-store struct that carries the raw index**
+- [x] **Step 1: Add the loaded-store struct that carries the raw index**
 
 Append to `crates/qsf_memory/src/store.rs`:
 
@@ -320,7 +320,7 @@ pub struct LoadedStore {
 }
 ```
 
-- [ ] **Step 2: Implement `load_existing`**
+- [x] **Step 2: Implement `load_existing`**
 
 Append to `crates/qsf_memory/src/store.rs`:
 
@@ -463,7 +463,7 @@ pub fn dangling_association_ids(contents: &MemoryStoreContents) -> Vec<String> {
 }
 ```
 
-- [ ] **Step 3: Re-export the new surface**
+- [x] **Step 3: Re-export the new surface**
 
 Append to `crates/qsf_memory/src/lib.rs`:
 
@@ -471,7 +471,7 @@ Append to `crates/qsf_memory/src/lib.rs`:
 pub use store::{LoadedStore, dangling_association_ids, load_existing};
 ```
 
-- [ ] **Step 4: Write tests against fixture stores**
+- [x] **Step 4: Write tests against fixture stores**
 
 Append to `crates/qsf_memory/src/store.rs`:
 
@@ -552,14 +552,14 @@ mod tests {
 }
 ```
 
-- [ ] **Step 5: Run tests**
+- [x] **Step 5: Run tests**
 
 Run: `cargo test -p qsf_memory`
 Expected: all seven tests pass.
 
 ### Task 0.7: Close out Phase 0
 
-- [ ] **Step 1: Run the standard closing steps for the workspace**
+- [x] **Step 1: Run the standard closing steps for the workspace**
 
 Run:
 ```bash
@@ -569,7 +569,7 @@ cargo test
 ```
 Expected: all clean, all tests pass.
 
-- [ ] **Step 2: Add a diary entry**
+- [x] **Step 2: Add a diary entry**
 
 Append to `docs/EngineeringDiary.md`:
 
@@ -590,7 +590,7 @@ Refs: crates/qsf_memory, crates/qsf_app/src/memory; implements:
 docs/DecisionLog.md#2026-05-20---post-hoc-browser-tools-use-rust-backend--browser-frontend-split
 ```
 
-- [ ] **Step 3: Commit**
+- [x] **Step 3: Commit**
 
 ```bash
 git add crates/qsf_memory crates/qsf_app docs/EngineeringDiary.md

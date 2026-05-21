@@ -1400,6 +1400,7 @@ dependencies = [
  "hound",
  "log",
  "openai_provider_kit",
+ "qsf_memory",
  "reqwest 0.12.28",
  "serde",
  "serde_json",
@@ -1409,6 +1410,18 @@ dependencies = [
  "tokio",
  "tokio-tungstenite",
  "uuid",
+]
+
+[[package]]
+name = "qsf_memory"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror 2.0.18",
+ "time",
 ]
 
 [[package]]

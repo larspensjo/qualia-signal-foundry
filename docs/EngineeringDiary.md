@@ -1305,3 +1305,19 @@ crates/qsf_app/src/experiments/sleep_phase_session_summary.rs,
 crates/qsf_app/src/experiments/multi_turn_text_loop.rs,
 crates/qsf_app/src/memory/co_retrieval.rs, docs/DecisionLog.md;
 implements: 2026-05-20 - Sleep auto-promotes routine memory candidates
+
+## 2026-05-21 - Extract qsf_memory shared crate
+
+Memory record, association, and store-loading types moved from `qsf_app` into a
+new `qsf_memory` crate. The new crate adds a `load_existing` helper for existing
+store reads, a two-pass loader that retains source-faithful per-record JSON,
+structured load errors, and dangling association detection.
+
+What changed:
+- Added `crates/qsf_memory` with record, association, store, and error modules.
+- Kept `qsf_app::memory::*` import paths working through compatibility re-exports.
+- Added loader coverage for missing files, invalid JSON, unsupported schemas,
+  invalid shapes, duplicate IDs, raw-record preservation, and dangling references.
+
+Refs: crates/qsf_memory, crates/qsf_app/src/memory;
+implements: 2026-05-20 - Post-hoc browser tools use Rust backend + browser frontend split

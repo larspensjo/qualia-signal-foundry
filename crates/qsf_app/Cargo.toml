@@ -16,6 +16,7 @@ futures-util.workspace = true
 hound.workspace = true
 log.workspace = true
 openai_provider_kit = { git = "https://github.com/larspensjo/web_page_filet_mignon", package = "openai_provider_kit", rev = "ca28629d42fb350a7935df6907573e2f972b3ba9" }
+qsf_memory = { path = "../qsf_memory" }
 reqwest = { version = "0.12", default-features = false, features = ["blocking", "json", "rustls-tls"] }
 serde.workspace = true
 serde_json.workspace = true
