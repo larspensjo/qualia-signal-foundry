@@ -63,6 +63,91 @@ External agency:
 
 The early project should explore the first and avoid the second.
 
+## World Model, Delta, And Initiative
+
+The human-mind analogy is useful if it is treated as an inspiration, not a literal
+blueprint. A human mind appears to maintain some working model of the world, compare
+that model against goals or needs, notice a difference, and generate initiatives that
+might reduce the difference. Qualia Signal Foundry could use a simplified,
+inspectable version of that loop.
+
+Candidate shape:
+
+```text
+current world model
+  + active goal or tension
+  -> discrepancy / delta
+  -> initiative proposal
+  -> action, question, reflection, or experiment candidate
+  -> observed outcome
+  -> satisfaction, blocking, or reinforcement signal
+```
+
+In this project, the "world model" should not mean a complete simulated reality. It
+can start as compact, structured state about the system's own situation:
+
+- current topic and user request
+- known project state
+- active assumptions and uncertainties
+- retrieved memories and their confidence
+- recent actions, traces, and outcomes
+- open questions and unresolved tensions
+- current experiment mode and boundaries
+
+The delta is the useful research object. It can represent a mismatch such as:
+
+- a goal wants an open question answered, but the world model says evidence is weak
+- a coherence goal wants consistency, but the world model contains conflicting notes
+- a continuity goal wants a prior thread preserved, but the current context lacks it
+- an experiment-seeking goal wants a testable hypothesis, but no experiment exists
+- an attention goal sees a relevant memory, but the context budget omitted it
+
+The initiative is then a bounded response to the delta. It might ask a question,
+request memory retrieval, queue reflection, propose an experiment, or shape the next
+response. It should not directly perform write-capable external actions.
+
+This framing gives the goal system a middle layer between "goal exists" and "system
+does something." The system would not act merely because a goal has high priority. It
+would act because an inspectable comparison found a specific discrepancy that an
+allowed initiative could plausibly reduce.
+
+## Reward As Evidence-Backed Update
+
+The human reward-system analogy is also useful, but the early implementation should
+avoid modeling pleasure, pain, mood, or biological drive. A safer translation is an
+evidence-backed update that records whether an initiative reduced, failed to reduce,
+or increased the goal/world delta.
+
+Candidate reward-like signals:
+
+```text
+DeltaReduced
+DeltaResolved
+DeltaUnchanged
+DeltaIncreased
+InitiativeBlocked
+InitiativeProducedUsefulEvidence
+InitiativeProducedNoise
+```
+
+These signals can drive reinforcement without becoming mystical:
+
+- reinforce the goal if it repeatedly produces useful initiatives
+- reinforce memories, traces, or context fragments that helped reduce the delta
+- reduce salience or apply cooldown when the delta is resolved
+- keep a blocked goal visible as unresolved tension
+- weaken or retire goals that repeatedly produce noise
+- queue reflection when a satisfied goal creates a new question
+
+The key constraint is that reward-like updates should reference observable evidence:
+events, traces, artifacts, tests, review actions, user confirmations, or structured
+match results. A model may propose that a delta was reduced, but durable updates
+should preserve why that judgment was accepted.
+
+This lets the project study reward-like behavior as a control signal while staying
+inside the existing research values: inspectability, replayability, bounded effects,
+and no claims of literal subjective reward.
+
 ## Candidate Goal Types
 
 The exact goals should not be fixed yet. Early work should preserve the question
@@ -183,6 +268,8 @@ Goal
   persistence
   source
   evidence_refs
+  world_model_refs
+  current_delta_summary
   current_status
   allowed_effects
   last_activated_at
@@ -282,6 +369,9 @@ GoalSatisfied
 GoalBlocked
 GoalDecayed
 GoalRetired
+GoalWorldDeltaDetected
+GoalWorldDeltaReduced
+GoalWorldDeltaIncreased
 ```
 
 Early effects should stay bounded:
@@ -301,11 +391,19 @@ the evidence that made the match plausible.
 Mood-like state should remain out of scope until basic goal-event alignment and
 reinforcement can be observed, tested, and explained.
 
+Goal/world deltas can make satisfaction less binary. A goal does not need to be fully
+satisfied before the system can learn from an initiative. The runtime can record that
+the delta became smaller, larger, unchanged, blocked, or newly legible. That creates a
+reward-like signal without requiring the project to claim that the simulation felt
+rewarded.
+
 ## Possible Runtime Shape
 
 ```text
 input or internal event
   -> reducer updates explicit state
+  -> world-model summary is selected from current state, memory, and traces
+  -> goal/world comparator detects discrepancies
   -> goal evaluator proposes activation, progress, satisfaction, or blocking events
   -> reducer updates active goal salience and satisfaction state
   -> attention uses active goals as one signal
@@ -325,10 +423,26 @@ GoalActivated(goal_id, trigger_ref, occurred_at)
   -> last_activated_at = occurred_at
   -> append trigger_ref to evidence_refs
 
+GoalWorldDeltaDetected(goal_id, world_model_ref, delta_summary, occurred_at)
+  -> current_delta_summary = delta_summary
+  -> append world_model_ref to world_model_refs
+  -> raise salience if the delta is relevant and not in cooldown
+
 GoalProgressObserved(goal_id, evidence_ref, occurred_at)
   -> append evidence_ref to progress_evidence_refs
   -> last_progress_at = occurred_at
   -> reinforcement_count += 1
+
+GoalWorldDeltaReduced(goal_id, evidence_ref, occurred_at)
+  -> append evidence_ref to progress_evidence_refs
+  -> last_progress_at = occurred_at
+  -> reinforcement_count += 1
+  -> lower current_delta_summary severity or mark partial resolution
+
+GoalWorldDeltaIncreased(goal_id, evidence_ref, occurred_at)
+  -> append evidence_ref to progress_evidence_refs
+  -> keep current_status = Active or Blocked
+  -> raise or preserve salience according to conflict policy
 
 GoalSatisfied(goal_id, evidence_ref, occurred_at)
   -> current_status = Satisfied
@@ -504,6 +618,39 @@ Evaluate:
 - does satisfaction reduce repetition through retirement or cooldown?
 - can introspection explain the evidence chain?
 
+### Experiment: Goal World-Delta Loop
+
+Give the simulation a goal, a compact world-model fixture, and events that change the
+world model across several turns.
+
+Example:
+
+```text
+Goal:
+  Keep project claims aligned with implemented behavior.
+
+World model at turn 1:
+  docs mention a candidate goal system, but no runtime module exists.
+
+Delta:
+  a response draft implies the goal system is implemented.
+
+Allowed initiative:
+  request project introspection or soften the claim.
+
+Outcome evidence:
+  trace shows the response was corrected to "candidate design".
+```
+
+Evaluate:
+
+- does the comparator find a useful discrepancy?
+- does the initiative reduce the discrepancy without derailing the user request?
+- does the trace explain the goal, world-model evidence, delta, initiative, and
+  outcome?
+- does repeated success reinforce the useful context fragments rather than merely the
+  goal text?
+
 ## Risks And Failure Modes
 
 ### Anthropomorphic Overreach
@@ -569,6 +716,31 @@ Mitigation:
 - distinguish proposed satisfaction from accepted satisfaction
 - keep satisfaction updates inspectable and replayable
 
+### False Or Stale World Model
+
+The system may generate initiatives from an inaccurate model of the project, user
+intent, or current runtime state.
+
+Mitigation:
+
+- keep world-model summaries source-referenced
+- attach confidence or freshness to world-model fragments
+- prefer project introspection when the delta depends on implementation status
+- trace which world-model fragments caused the initiative
+- allow user correction to supersede stale world-model state
+
+### Delta Chasing
+
+The system may over-focus on reducing internal discrepancies even when the user wants
+a direct answer.
+
+Mitigation:
+
+- keep explicit user input and safety/project boundaries above goal deltas
+- let context budgeting omit low-value deltas
+- require initiatives to declare an allowed effect and expected benefit
+- apply cooldowns to deltas that repeatedly produce unhelpful initiatives
+
 ## Open Questions
 
 - Should goals be called goals, drives, tensions, intentions, priorities, or
@@ -577,11 +749,19 @@ Mitigation:
 - Who or what is allowed to create a durable goal?
 - Should the simulation be able to propose its own goals?
 - How should goal salience be scored?
+- What is the smallest useful world-model representation for early experiments?
+- Should goal/world deltas be explicit state, transient trace records, or both?
+- Which parts of the world model should be sourced from memory versus current runtime
+  state versus project introspection?
 - Can goals be evaluated without a model call?
+- Can goal/world deltas be evaluated without a model call?
 - How should a goal be satisfied, weakened, or retired?
 - What evidence is strong enough to mark a goal as progressed or satisfied?
+- What evidence is strong enough to say that a goal/world delta was reduced?
 - Should satisfaction reinforce memories, lower goal salience, create follow-up
   goals, or all three?
+- Should delta reduction reinforce the goal, the initiative type, the world-model
+  fragment, the retrieved memory, or some combination?
 - Should satisfaction events be accepted automatically when evidence is structured,
   or should they require review in early experiments?
 - Should goals be memories, separate state, or both?
@@ -598,5 +778,8 @@ The conservative first step is to treat goals as explicit, inspectable, read-onl
 fixtures that can influence attention and reflection but cannot directly cause
 external action. The first reinforcement mechanism should be goal-event alignment:
 recorded evidence can activate, progress, satisfy, block, cool down, or retire a goal
-without claiming literal pleasure or biological drive. Exact goal content should
-remain open until an experiment needs a specific fixture.
+without claiming literal pleasure or biological drive. The next useful refinement is
+to insert a compact world-model comparison step: goals become active when sourced
+state shows a meaningful discrepancy, and reward-like reinforcement records whether an
+initiative reduced that discrepancy. Exact goal content should remain open until an
+experiment needs a specific fixture.
