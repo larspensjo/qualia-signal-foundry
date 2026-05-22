@@ -9,6 +9,8 @@ use crate::models::{build_client, requested_provider_from_env};
 use crate::observability::event_log::EventType;
 use crate::observability::trace::{TraceRecord, elapsed_ns};
 use crate::runtime::run_context::RunContext;
+use crate::session::SessionState;
+use crate::session::resume::ResumeInputs;
 use crate::sleep::{SleepInputBundle, SleepReport, summarize_session};
 
 use super::registry::{Experiment, ExperimentName, ExperimentOutcome};
@@ -51,13 +53,8 @@ impl SleepPhaseSessionSummaryExperiment {
         state_dir: impl AsRef<Path>,
     ) -> anyhow::Result<ExperimentOutcome> {
         let state_dir = state_dir.as_ref().to_path_buf();
-        let input =
-            SleepInputBundle::new("session_transcript", "sleep-session-summary", SESSION_TEXT)
-                .with_review_notes(vec![
-                "All memory and decision outputs remain pending human review.".to_string(),
-                "Trace the sleep report back to the session transcript rather than hidden state."
-                    .to_string(),
-            ]);
+        let resume_inputs = crate::session::resume::load_resume_inputs(&state_dir)?;
+        let input = build_sleep_input(&resume_inputs);
 
         context.record_event(
             EventType::InputReceived,
@@ -140,17 +137,18 @@ impl SleepPhaseSessionSummaryExperiment {
 
         let outcome = ExperimentOutcome {
             summary: format!(
-                "The sleep session summary experiment summarized a short session through the `{}` provider, wrote a reviewable sleep report artifact, and recorded explicit sleep-phase events and traces without promoting any candidate into an accepted decision.",
-                summary.response.provider_name
+                "The sleep session summary experiment summarized `{}` through the `{}` provider, wrote a reviewable sleep report artifact, and recorded explicit sleep-phase events and traces without promoting any candidate into an accepted decision.",
+                input.source_label, summary.response.provider_name
             ),
             observations: vec![
                 "The sleep phase reuses the model-role path, so provider selection, latency, and usage stay observable without special-case plumbing.".to_string(),
                 "Sleep reports preserve separate fields for summary, memory candidates, open questions, decision candidates, and future context hints.".to_string(),
+                format!("The sleep input source was `{}` ({}) rather than hidden state.", input.source_label, input.source_kind),
                 "Review notes are carried into the artifact so the output stays explicitly provisional.".to_string(),
             ],
             failure_modes: vec![
                 "The default mock provider keeps the experiment deterministic, but real-provider output quality still depends on prompt compliance and structured JSON output.".to_string(),
-                "The current experiment uses a short inline transcript rather than replaying a full prior run's event log.".to_string(),
+                "Cold-start runs with no persisted prior session still use a short inline transcript so the smoke path remains runnable.".to_string(),
             ],
             follow_up_questions: vec![
                 "Should sleep summaries later ingest raw event logs directly instead of preassembled transcript text?".to_string(),
@@ -253,12 +251,15 @@ fn commit_cross_session_sleep(
         "Cross-session sleep consumed session `{}` and promoted {} routine memories with {} new associations.",
         session.session_id, promoted_count, new_associations_count
     ));
+    outcome.extra_artifacts.push(
+        state_dir
+            .join("consolidated-brief.json")
+            .display()
+            .to_string(),
+    );
     outcome
         .extra_artifacts
-        .push("state/text-loop/consolidated-brief.json".to_string());
-    outcome
-        .extra_artifacts
-        .push("state/text-loop/memory-store.json".to_string());
+        .push(state_dir.join("memory-store.json").display().to_string());
     if !report.decision_candidates.is_empty() {
         outcome
             .extra_artifacts
@@ -269,6 +270,85 @@ fn commit_cross_session_sleep(
     }
 
     Ok(outcome)
+}
+
+fn build_sleep_input(resume_inputs: &ResumeInputs) -> SleepInputBundle {
+    match &resume_inputs.previous_session {
+        Some(session) => session_sleep_input(session),
+        None => SleepInputBundle::new(
+            "session_transcript",
+            "sleep-session-summary",
+            SESSION_TEXT,
+        )
+        .with_review_notes(vec![
+            "No persisted prior session was available; this run uses the built-in smoke-test transcript."
+                .to_string(),
+            "All memory and decision outputs remain pending human review.".to_string(),
+            "Trace the sleep report back to the session transcript rather than hidden state."
+                .to_string(),
+        ]),
+    }
+}
+
+fn session_sleep_input(session: &SessionState) -> SleepInputBundle {
+    let mut transcript = String::new();
+    transcript.push_str("Persisted previous session for sleep consolidation.\n");
+    transcript.push_str(&format!("Session id: {}\n", session.session_id));
+    if let Some(previous_session_id) = &session.previous_session_id {
+        transcript.push_str(&format!("Previous session id: {previous_session_id}\n"));
+    }
+    transcript.push_str(&format!("Completed turn count: {}\n", session.turns.len()));
+    if let Some(reason) = &session.ended_reason {
+        transcript.push_str(&format!("Ended reason: {reason:?}\n"));
+    }
+
+    if !session.summarized_turns.is_empty() {
+        transcript.push_str("\nPrior turn summaries:\n");
+        for summary in &session.summarized_turns {
+            transcript.push_str(&format!(
+                "- Turn {} summarized after turn {}: {}\n",
+                summary.turn_index, summary.summarized_after_turn_index, summary.summary
+            ));
+        }
+    }
+
+    transcript.push_str("\nCompleted turns:\n");
+    if session.turns.is_empty() {
+        transcript.push_str("- None recorded.\n");
+    } else {
+        for turn in &session.turns {
+            transcript.push_str(&format!("\nTurn {}:\n", turn.index));
+            transcript.push_str("User:\n");
+            transcript.push_str(turn.user_input.trim());
+            transcript.push_str("\nAssistant:\n");
+            transcript.push_str(turn.assistant_response.trim());
+            transcript.push('\n');
+
+            if !turn.retrieved_memory_block.trim().is_empty() {
+                transcript.push_str("Retrieved memory block:\n");
+                transcript.push_str(turn.retrieved_memory_block.trim());
+                transcript.push('\n');
+            }
+
+            if !turn.recalled_turns.is_empty() {
+                transcript.push_str("Recalled turns:\n");
+                for recall in &turn.recalled_turns {
+                    transcript.push_str(&format!(
+                        "- {} recalled turn {} via {}\n",
+                        recall.call_id, recall.turn_id, recall.tool_name
+                    ));
+                }
+            }
+        }
+    }
+
+    SleepInputBundle::new("session_state", session.session_id.clone(), transcript)
+        .with_review_notes(vec![
+            "This sleep pass uses the persisted previous session state as its source.".to_string(),
+            "All memory and decision outputs remain pending human review.".to_string(),
+            "Trace the sleep report back to concrete prior turns rather than hidden state."
+                .to_string(),
+        ])
 }
 
 fn write_sleep_artifacts(
@@ -365,9 +445,13 @@ fn push_markdown_list(markdown: &mut String, items: &[String]) {
 #[cfg(test)]
 mod tests {
     use std::fs;
+    use std::path::PathBuf;
 
-    use super::SleepPhaseSessionSummaryExperiment;
+    use super::{SleepPhaseSessionSummaryExperiment, build_sleep_input};
     use crate::runtime::run_context::RunContext;
+    use crate::session::manifest::{ContinuityManifest, ResumeMode};
+    use crate::session::resume::ResumeInputs;
+    use crate::session::{MemorySourceConfig, SessionConfig, SessionState, TurnSummary};
 
     #[test]
     fn sleep_experiment_writes_sleep_report_artifacts() {
@@ -391,5 +475,108 @@ mod tests {
         assert!(sleep_report.contains("manual review"));
 
         fs::remove_dir_all(base_dir).unwrap();
+    }
+
+    #[test]
+    fn sleep_input_uses_persisted_previous_turns_when_available() {
+        let mut previous = SessionState::new_with_id("session-from-state".to_string(), config());
+        previous.turns.push(crate::session::tests::fake_turn(0));
+        previous.summarized_turns.push(TurnSummary {
+            turn_index: 0,
+            summarized_after_turn_index: 1,
+            summary: "The prior turn summary should be visible to sleep.".to_string(),
+            model_id: "mock".to_string(),
+            model_latency_ms: 0,
+            input_tokens: 0,
+            output_tokens: 0,
+        });
+        previous.turns[0].user_input = "Please remember the continuity rule.".to_string();
+        previous.turns[0].assistant_response =
+            "I will keep sleep consolidation reviewable.".to_string();
+
+        let input = build_sleep_input(&ResumeInputs {
+            manifest: ContinuityManifest::default(),
+            previous_session: Some(previous),
+        });
+
+        assert_eq!(input.source_kind, "session_state");
+        assert_eq!(input.source_label, "session-from-state");
+        assert!(
+            input
+                .session_text
+                .contains("Please remember the continuity rule.")
+        );
+        assert!(
+            input
+                .session_text
+                .contains("I will keep sleep consolidation reviewable.")
+        );
+        assert!(
+            input
+                .session_text
+                .contains("The prior turn summary should be visible to sleep.")
+        );
+        assert!(
+            input
+                .review_notes
+                .iter()
+                .any(|note| note.contains("persisted previous session state"))
+        );
+    }
+
+    #[test]
+    fn sleep_experiment_marks_persisted_session_as_sleep_source() {
+        let base_dir =
+            std::env::temp_dir().join(format!("qsf-real-sleep-{}", uuid::Uuid::new_v4()));
+        let state_dir = base_dir.join("state/text-loop");
+        let mut previous = SessionState::new_with_id("session-to-sleep".to_string(), config());
+        previous.turns.push(crate::session::tests::fake_turn(0));
+        crate::session::persistence::persist_session_state(&previous, &state_dir).unwrap();
+        ContinuityManifest {
+            current_session_id: Some(previous.session_id.clone()),
+            current_session_state_path: Some(PathBuf::from("session-state.json")),
+            sleep_pending: true,
+            resume_mode: ResumeMode::AwakeContinuation,
+            ..ContinuityManifest::default()
+        }
+        .persist(state_dir.join("continuity-manifest.json"))
+        .unwrap();
+
+        let mut context = RunContext::create_in(&base_dir, "real-sleep-test").unwrap();
+        let experiment = SleepPhaseSessionSummaryExperiment;
+        let outcome = experiment
+            .run_with_provider_at_state_dir(&mut context, "mock", &state_dir)
+            .unwrap();
+        let sleep_report = fs::read_to_string(context.run_dir().join("sleep-report.md")).unwrap();
+
+        assert!(sleep_report.contains("Source: `session-to-sleep` (session_state)"));
+        assert!(
+            outcome.extra_artifacts.contains(
+                &state_dir
+                    .join("consolidated-brief.json")
+                    .display()
+                    .to_string()
+            )
+        );
+        assert!(
+            outcome
+                .extra_artifacts
+                .contains(&state_dir.join("memory-store.json").display().to_string())
+        );
+
+        fs::remove_dir_all(base_dir).unwrap();
+    }
+
+    fn config() -> SessionConfig {
+        SessionConfig {
+            model_id: "mock".to_string(),
+            max_turns: 10,
+            warm_threshold: 2,
+            allow_over_limit: false,
+            memory_source: MemorySourceConfig {
+                source: "fixture".to_string(),
+                file: None,
+            },
+        }
     }
 }

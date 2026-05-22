@@ -1663,3 +1663,20 @@ Observed:
 
 Refs: crates/qsf_browser_server/src/session_context.rs,
 crates/qsf_browser_server/ui, crates/qsf_browser_server/tests/data_endpoints.rs
+
+## 2026-05-22 - Sleep uses persisted session turns
+
+The sleep session summary experiment now builds its sleep input from the persisted
+previous session state when one exists, so consolidation is grounded in actual prior
+turns instead of the built-in sample transcript.
+
+What changed:
+- Added a sleep input builder that includes completed turns, prior turn summaries,
+  retrieved memory blocks, and recall metadata from `session-state.json`.
+- Kept the old inline transcript only as the no-session smoke-test fallback.
+- Added regression coverage for the input builder and for the sleep report recording
+  the persisted session as its source.
+- Report artifact links now reflect the configured state directory instead of always
+  naming `state/text-loop`.
+
+Refs: crates/qsf_app/src/experiments/sleep_phase_session_summary.rs
