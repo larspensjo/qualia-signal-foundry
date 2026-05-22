@@ -10,6 +10,7 @@ $script:QsfCompletionCommands = @(
     "browser",
     "ui",
     "workbench",
+    "doctor",
     "list",
     "help"
 )

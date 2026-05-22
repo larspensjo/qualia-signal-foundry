@@ -26,9 +26,9 @@ Describe "qsf.ps1 argument completion" {
         $matches | Should -Contain "browser"
         $matches | Should -Contain "ui"
         $matches | Should -Contain "workbench"
+        $matches | Should -Contain "doctor"
         $matches | Should -Contain "list"
         $matches | Should -Contain "help"
-        $matches | Should -Not -Contain "doctor"
     }
 
     It "completes list targets" {

@@ -12,7 +12,8 @@ param(
     [string]$VoiceMemoryFile = "",
     [string]$Store = "state/text-loop/memory-store.json",
     [string]$BindHost = "127.0.0.1",
-    [int]$Port = 3939
+    [int]$Port = 3939,
+    [switch]$Workbench
 )
 
 $ErrorActionPreference = "Stop"
@@ -332,6 +333,7 @@ Usage:
   .\scripts\qsf.ps1 browser [-Store <path>] [-BindHost <ip>] [-Port <port>]
   .\scripts\qsf.ps1 ui
   .\scripts\qsf.ps1 workbench [-Store <path>] [-BindHost <ip>] [-Port <port>]
+  .\scripts\qsf.ps1 doctor [-Profile <name>] [-Workbench]
   .\scripts\qsf.ps1 list experiments
   .\scripts\qsf.ps1 list profiles
 
@@ -348,9 +350,226 @@ Examples:
   .\scripts\qsf.ps1 browser -Store $sampleStore -BindHost 127.0.0.1 -Port 3939
   .\scripts\qsf.ps1 ui
   .\scripts\qsf.ps1 workbench
+  .\scripts\qsf.ps1 doctor -Workbench
   .\scripts\qsf.ps1 list experiments
   .\scripts\qsf.ps1 list profiles
 "@
+}
+
+function New-DoctorCheck {
+    param(
+        [Parameter(Mandatory = $true)]
+        [ValidateSet("ok", "warn", "fail")]
+        [string]$Status,
+
+        [Parameter(Mandatory = $true)]
+        [string]$Name,
+
+        [Parameter(Mandatory = $true)]
+        [string]$Message
+    )
+
+    [pscustomobject]@{
+        Status = $Status
+        Name = $Name
+        Message = $Message
+    }
+}
+
+function Test-CommandAvailable {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$Name
+    )
+
+    return $null -ne (Get-Command $Name -ErrorAction SilentlyContinue)
+}
+
+function Get-CommandVersionText {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$Executable,
+
+        [Parameter(Mandatory = $true)]
+        [string[]]$Arguments
+    )
+
+    try {
+        $output = & $Executable @Arguments 2>$null
+        if ($LASTEXITCODE -ne 0 -or $null -eq $output) {
+            return ""
+        }
+        return [string]($output | Select-Object -First 1)
+    }
+    catch {
+        return ""
+    }
+}
+
+function Test-PortOccupied {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$HostName,
+
+        [Parameter(Mandatory = $true)]
+        [int]$PortNumber
+    )
+
+    $client = [System.Net.Sockets.TcpClient]::new()
+    try {
+        $connectTask = $client.ConnectAsync($HostName, $PortNumber)
+        if (-not $connectTask.Wait(250)) {
+            return $false
+        }
+        return $client.Connected
+    }
+    catch {
+        return $false
+    }
+    finally {
+        $client.Dispose()
+    }
+}
+
+function Add-DoctorCheck {
+    param(
+        [Parameter(Mandatory = $true)]
+        [AllowEmptyCollection()]
+        [System.Collections.Generic.List[object]]$Checks,
+
+        [Parameter(Mandatory = $true)]
+        [object]$Check
+    )
+
+    [void]$Checks.Add($Check)
+}
+
+function Invoke-Doctor {
+    $checks = [System.Collections.Generic.List[object]]::new()
+
+    $expectedRoot = Split-Path -Parent $PSScriptRoot
+    if ((Test-Path -LiteralPath (Join-Path $expectedRoot "Cargo.toml") -PathType Leaf) -and
+        (Test-Path -LiteralPath (Join-Path $expectedRoot "crates") -PathType Container)) {
+        Add-DoctorCheck $checks (New-DoctorCheck -Status "ok" -Name "Repository root" -Message $expectedRoot)
+    }
+    else {
+        Add-DoctorCheck $checks (New-DoctorCheck -Status "fail" -Name "Repository root" -Message "Could not identify repository root from scripts directory.")
+    }
+
+    if ($PSVersionTable.PSVersion -ge [version]"7.6") {
+        Add-DoctorCheck $checks (New-DoctorCheck -Status "ok" -Name "PowerShell" -Message $PSVersionTable.PSVersion.ToString())
+    }
+    else {
+        Add-DoctorCheck $checks (New-DoctorCheck -Status "fail" -Name "PowerShell" -Message "Found $($PSVersionTable.PSVersion); launcher requires 7.6 or newer.")
+    }
+
+    if (Test-CommandAvailable -Name "cargo") {
+        Add-DoctorCheck $checks (New-DoctorCheck -Status "ok" -Name "cargo" -Message (Get-CommandVersionText -Executable "cargo" -Arguments @("--version")))
+    }
+    else {
+        Add-DoctorCheck $checks (New-DoctorCheck -Status "fail" -Name "cargo" -Message "cargo was not found on PATH.")
+    }
+
+    if (Test-CommandAvailable -Name "rustc") {
+        Add-DoctorCheck $checks (New-DoctorCheck -Status "ok" -Name "Rust toolchain" -Message (Get-CommandVersionText -Executable "rustc" -Arguments @("--version")))
+    }
+    else {
+        Add-DoctorCheck $checks (New-DoctorCheck -Status "fail" -Name "Rust toolchain" -Message "rustc was not found on PATH.")
+    }
+
+    if (Test-CommandAvailable -Name "node") {
+        Add-DoctorCheck $checks (New-DoctorCheck -Status "ok" -Name "Node" -Message (Get-CommandVersionText -Executable "node" -Arguments @("--version")))
+    }
+    elseif ($Workbench) {
+        Add-DoctorCheck $checks (New-DoctorCheck -Status "fail" -Name "Node" -Message "node was not found on PATH; workbench requires the Vite UI.")
+    }
+    else {
+        Add-DoctorCheck $checks (New-DoctorCheck -Status "warn" -Name "Node" -Message "node was not found on PATH; only UI/workbench launches need it.")
+    }
+
+    if (Test-CommandAvailable -Name "npm") {
+        Add-DoctorCheck $checks (New-DoctorCheck -Status "ok" -Name "npm" -Message (Get-CommandVersionText -Executable "npm" -Arguments @("--version")))
+    }
+    elseif ($Workbench) {
+        Add-DoctorCheck $checks (New-DoctorCheck -Status "fail" -Name "npm" -Message "npm was not found on PATH; workbench requires the Vite UI.")
+    }
+    else {
+        Add-DoctorCheck $checks (New-DoctorCheck -Status "warn" -Name "npm" -Message "npm was not found on PATH; only UI/workbench launches need it.")
+    }
+
+    $nodeModules = Join-Path $uiDir "node_modules"
+    if (Test-Path -LiteralPath $nodeModules -PathType Container) {
+        Add-DoctorCheck $checks (New-DoctorCheck -Status "ok" -Name "UI dependencies" -Message "crates/qsf_browser_server/ui/node_modules exists.")
+    }
+    elseif ($Workbench) {
+        Add-DoctorCheck $checks (New-DoctorCheck -Status "fail" -Name "UI dependencies" -Message "Missing. Run: cd crates/qsf_browser_server/ui; npm install")
+    }
+    else {
+        Add-DoctorCheck $checks (New-DoctorCheck -Status "warn" -Name "UI dependencies" -Message "Missing. Run before UI/workbench use: cd crates/qsf_browser_server/ui; npm install")
+    }
+
+    $resolvedDefaultStore = Join-Path $projectRoot $defaultStore
+    if (Test-Path -LiteralPath $resolvedDefaultStore -PathType Leaf) {
+        Add-DoctorCheck $checks (New-DoctorCheck -Status "ok" -Name "Default memory store" -Message $defaultStore)
+    }
+    elseif ($Workbench) {
+        Add-DoctorCheck $checks (New-DoctorCheck -Status "fail" -Name "Default memory store" -Message "Missing: $defaultStore. Try sample store: $sampleStore")
+    }
+    else {
+        Add-DoctorCheck $checks (New-DoctorCheck -Status "warn" -Name "Default memory store" -Message "Missing: $defaultStore. Try sample store: $sampleStore")
+    }
+
+    if (Test-PortOccupied -HostName "127.0.0.1" -PortNumber 3939) {
+        $status = if ($Workbench) { "fail" } else { "warn" }
+        Add-DoctorCheck $checks (New-DoctorCheck -Status $status -Name "Port 3939" -Message "127.0.0.1:3939 appears occupied.")
+    }
+    else {
+        Add-DoctorCheck $checks (New-DoctorCheck -Status "ok" -Name "Port 3939" -Message "127.0.0.1:3939 appears available.")
+    }
+
+    if ([string]::IsNullOrEmpty([System.Environment]::GetEnvironmentVariable("OPENAI_API_KEY", "Process"))) {
+        Add-DoctorCheck $checks (New-DoctorCheck -Status "warn" -Name "OPENAI_API_KEY" -Message "Not set; only OpenAI-backed profiles need it.")
+    }
+    else {
+        Add-DoctorCheck $checks (New-DoctorCheck -Status "ok" -Name "OPENAI_API_KEY" -Message "Set in process environment; value not shown.")
+    }
+
+    if (-not [string]::IsNullOrWhiteSpace($Profile)) {
+        try {
+            [void](Get-ProfileEnvironmentDelta)
+            Add-DoctorCheck $checks (New-DoctorCheck -Status "ok" -Name "Profile '$Profile'" -Message "Prerequisites satisfied.")
+        }
+        catch {
+            Add-DoctorCheck $checks (New-DoctorCheck -Status "fail" -Name "Profile '$Profile'" -Message $_.Exception.Message)
+        }
+    }
+
+    Write-Host "QSF doctor"
+    Write-Host "Project root: $projectRoot"
+    if ($Workbench) {
+        Write-Host "Mode: workbench prerequisites"
+    }
+    elseif (-not [string]::IsNullOrWhiteSpace($Profile)) {
+        Write-Host "Mode: profile prerequisites"
+    }
+    else {
+        Write-Host "Mode: general prerequisites"
+    }
+    Write-Host ""
+
+    foreach ($check in $checks) {
+        $label = switch ($check.Status) {
+            "ok" { "OK" }
+            "warn" { "WARN" }
+            "fail" { "FAIL" }
+        }
+        Write-Host ("[{0}] {1}: {2}" -f $label, $check.Name, $check.Message)
+    }
+
+    $failures = @($checks | Where-Object { $_.Status -eq "fail" })
+    if ($failures.Count -gt 0) {
+        $script:QsfExitCode = 1
+    }
 }
 
 function Test-UiDependencies {
@@ -453,6 +672,9 @@ switch ($Command.ToLowerInvariant()) {
     }
     "workbench" {
         Invoke-Workbench
+    }
+    "doctor" {
+        Invoke-Doctor
     }
     "list" {
         switch ($Subject.ToLowerInvariant()) {

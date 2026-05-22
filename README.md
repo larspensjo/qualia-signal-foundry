@@ -124,6 +124,7 @@ pwsh -NoProfile -File .\scripts\qsf.ps1 help
 .\scripts\qsf.ps1 list experiments
 .\scripts\qsf.ps1 app -Experiment multi-turn-text-loop
 .\scripts\qsf.ps1 app -Experiment multi-turn-text-loop -Profile mock
+.\scripts\qsf.ps1 doctor
 ```
 
 The launcher requires PowerShell 7.6 or newer.
@@ -155,6 +156,19 @@ secrets. For example:
 `openai-text` and `openai-transcription-mic` require `OPENAI_API_KEY` to already exist
 in the shell environment; the launcher checks this before starting the experiment and
 does not print secret-like values.
+
+Check local prerequisites without starting Cargo, Vite, or the API server:
+
+```powershell
+.\scripts\qsf.ps1 doctor
+.\scripts\qsf.ps1 doctor -Profile openai-text
+.\scripts\qsf.ps1 doctor -Workbench
+```
+
+`doctor` reports PowerShell, Cargo, Rust, Node/npm, UI dependencies, the default
+memory store, port `3939`, and whether `OPENAI_API_KEY` is present without printing
+its value. General checks warn about optional UI or OpenAI prerequisites; `-Workbench`
+turns workbench requirements into failures.
 
 Start the memory browser API with the default store, host, and port:
 

@@ -2,7 +2,7 @@
 
 ## Status
 
-Phase 3 argument completion is implemented.
+Phase 4 doctor and diagnostics is implemented.
 
 ## Goal
 
@@ -505,7 +505,7 @@ Add commands that explain why a launch will or will not work.
 
 ### Required Checks
 
-- [ ] `doctor` checks:
+- [x] `doctor` checks:
   - PowerShell version
   - `cargo`
   - Rust toolchain
@@ -516,19 +516,19 @@ Add commands that explain why a launch will or will not work.
   - whether port `3939` appears occupied
   - `OPENAI_API_KEY` presence without printing the value
 
-- [ ] `doctor -Profile <name>` checks profile prerequisites.
-- [ ] `doctor -Workbench` checks both API and UI prerequisites.
+- [x] `doctor -Profile <name>` checks profile prerequisites.
+- [x] `doctor -Workbench` checks both API and UI prerequisites.
 
 ### Verification
 
-- [ ] Run `.\scripts\qsf.ps1 doctor`.
-- [ ] Run `.\scripts\qsf.ps1 doctor -Profile openai-text`.
-- [ ] Run `.\scripts\qsf.ps1 doctor -Workbench`.
-- [ ] Confirm missing optional dependencies are warnings, not hard failures, unless the
+- [x] Run `.\scripts\qsf.ps1 doctor`.
+- [x] Run `.\scripts\qsf.ps1 doctor -Profile openai-text`.
+- [x] Run `.\scripts\qsf.ps1 doctor -Workbench`.
+- [x] Confirm missing optional dependencies are warnings, not hard failures, unless the
   selected command requires them.
-- [ ] Run `cargo build`.
-- [ ] Run `cargo clippy --all-targets -- -D warnings`.
-- [ ] Run `cargo fmt`.
+- [x] Run `cargo build`.
+- [x] Run `cargo clippy --all-targets -- -D warnings`.
+- [x] Run `cargo fmt`.
 
 ## Phase 5: Polish And Documentation Consolidation
 

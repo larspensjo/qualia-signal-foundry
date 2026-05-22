@@ -1506,3 +1506,23 @@ Observed:
   tests.
 
 Refs: scripts/qsf-completion.Tests.ps1, scripts/qsf-completion.ps1
+
+## 2026-05-22 - PowerShell launcher doctor
+
+Added a non-launching diagnostics command for the local PowerShell launcher so setup
+issues can be identified before starting Cargo or Vite.
+
+What changed:
+- Added `doctor`, `doctor -Profile <name>`, and `doctor -Workbench` checks for
+  PowerShell, Cargo, Rust, repository root detection, Node/npm, UI dependencies, the
+  default memory store, port `3939`, and `OPENAI_API_KEY` presence with secret values
+  hidden.
+- Updated launcher help, argument completion, completion tests, and README usage for
+  the new diagnostics command.
+
+Observed:
+- General doctor output treats optional UI/OpenAI prerequisites as warnings, while
+  workbench-specific missing prerequisites become failures.
+
+Refs: scripts/qsf.ps1, scripts/qsf-completion.ps1, scripts/qsf-completion.Tests.ps1,
+README.md
