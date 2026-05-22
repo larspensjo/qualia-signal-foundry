@@ -123,9 +123,30 @@ pwsh -NoProfile -File .\scripts\qsf.ps1 help
 .\scripts\qsf.ps1 help
 .\scripts\qsf.ps1 list experiments
 .\scripts\qsf.ps1 app -Experiment multi-turn-text-loop
+.\scripts\qsf.ps1 app -Experiment multi-turn-text-loop -Profile mock
 ```
 
 The launcher requires PowerShell 7.6 or newer.
+
+List the checked-in launch profiles:
+
+```powershell
+.\scripts\qsf.ps1 list profiles
+```
+
+Profiles apply environment variables only to the launched child process and print the
+effective environment changes before running Cargo. Checked-in profiles do not contain
+secrets. For example:
+
+```powershell
+.\scripts\qsf.ps1 app -Experiment multi-turn-text-loop -Profile mock
+.\scripts\qsf.ps1 app -Experiment multi-turn-text-loop -Profile openai-text
+.\scripts\qsf.ps1 app -Experiment text-owned-voice-loop -Profile file-memory -VoiceMemoryFile docs/Experiments/Fixtures/voice-memory.example.json
+```
+
+`openai-text` and `openai-transcription-mic` require `OPENAI_API_KEY` to already exist
+in the shell environment; the launcher checks this before starting the experiment and
+does not print secret-like values.
 
 Start the memory browser API with the default store, host, and port:
 

@@ -1,0 +1,79 @@
+{
+  "profiles": [
+    {
+      "name": "mock",
+      "description": "Use deterministic mock providers by clearing provider override variables.",
+      "env": {
+        "QSF_MODEL_PROVIDER": "mock",
+        "QSF_TRANSCRIPT_PROVIDER": "simulated",
+        "QSF_REALTIME_SESSION_PROVIDER": "simulated",
+        "QSF_SPEECH_OUTPUT_PROVIDER": "simulated"
+      },
+      "clear_env": [
+        "QSF_CONVERSATION_MODEL",
+        "QSF_TRANSCRIPT_INPUT_SOURCE",
+        "QSF_TRANSCRIPT_WAV_PATH",
+        "QSF_TRANSCRIPT_MIC_DEVICE",
+        "QSF_TRANSCRIPT_MIC_DURATION_MS",
+        "QSF_OPENAI_REALTIME_TIMEOUT_MS",
+        "QSF_REALTIME_SESSION_INPUT_SOURCE",
+        "QSF_REALTIME_SESSION_WAV_PATH",
+        "QSF_REALTIME_SESSION_MIC_DEVICE",
+        "QSF_REALTIME_SESSION_MIC_DURATION_MS",
+        "QSF_SPEECH_OUTPUT_MODEL",
+        "QSF_SPEECH_OUTPUT_VOICE",
+        "QSF_SPEECH_OUTPUT_MODE",
+        "QSF_VOICE_MEMORY_SOURCE",
+        "QSF_VOICE_MEMORY_FILE",
+        "QSF_SESSION_MEMORY_SOURCE",
+        "QSF_SESSION_MEMORY_FILE"
+      ],
+      "requires": []
+    },
+    {
+      "name": "openai-text",
+      "description": "Use the OpenAI model provider for text experiments.",
+      "env": {
+        "QSF_MODEL_PROVIDER": "openai"
+      },
+      "clear_env": [],
+      "requires": [
+        {
+          "kind": "env",
+          "name": "OPENAI_API_KEY"
+        }
+      ]
+    },
+    {
+      "name": "file-memory",
+      "description": "Use a caller-supplied JSON file as the voice-loop memory source.",
+      "env": {
+        "QSF_VOICE_MEMORY_SOURCE": "file"
+      },
+      "clear_env": [
+        "QSF_TRANSCRIPT_PROVIDER",
+        "QSF_TRANSCRIPT_INPUT_SOURCE",
+        "QSF_TRANSCRIPT_WAV_PATH",
+        "QSF_TRANSCRIPT_MIC_DEVICE",
+        "QSF_TRANSCRIPT_MIC_DURATION_MS",
+        "QSF_OPENAI_REALTIME_TIMEOUT_MS"
+      ],
+      "requires": []
+    },
+    {
+      "name": "openai-transcription-mic",
+      "description": "Use OpenAI realtime transcription with the default microphone input.",
+      "env": {
+        "QSF_TRANSCRIPT_PROVIDER": "openai",
+        "QSF_TRANSCRIPT_INPUT_SOURCE": "mic"
+      },
+      "clear_env": [],
+      "requires": [
+        {
+          "kind": "env",
+          "name": "OPENAI_API_KEY"
+        }
+      ]
+    }
+  ]
+}

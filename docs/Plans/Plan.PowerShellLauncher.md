@@ -2,7 +2,7 @@
 
 ## Status
 
-Phase 1 minimal single-script launcher is implemented.
+Phase 2 launch profiles are implemented.
 
 ## Goal
 
@@ -378,45 +378,45 @@ Field rules:
 
 Checked-in profiles must not contain secrets.
 
-- [ ] `mock`
+- [x] `mock`
   - Clears or overrides provider settings so mock behavior remains explicit.
 
-- [ ] `openai-text`
+- [x] `openai-text`
   - Sets `QSF_MODEL_PROVIDER=openai`.
   - Requires `OPENAI_API_KEY` to already exist in the user's environment.
 
-- [ ] `file-memory`
+- [x] `file-memory`
   - Sets `QSF_VOICE_MEMORY_SOURCE=file`.
   - Requires `-VoiceMemoryFile <path>`, which sets `QSF_VOICE_MEMORY_FILE` for the
     child process.
 
-- [ ] `openai-transcription-mic`
+- [x] `openai-transcription-mic`
   - Sets transcript provider variables for live microphone transcription.
   - Requires `OPENAI_API_KEY` to already exist.
 
 ### Profile Behavior
 
-- [ ] `-Profile <name>` applies only to the child process.
-- [ ] `-VoiceMemoryFile <path>` is accepted for `app` commands and is meaningful when
+- [x] `-Profile <name>` applies only to the child process.
+- [x] `-VoiceMemoryFile <path>` is accepted for `app` commands and is meaningful when
   combined with the `file-memory` profile.
-- [ ] `list profiles` prints profile names, descriptions, set variables, cleared
+- [x] `list profiles` prints profile names, descriptions, set variables, cleared
   variables, and requirements without showing secret values.
-- [ ] The launcher prints which environment variables are set, unset, or inherited.
-- [ ] Secret-like variable values are redacted in printed output.
-- [ ] Missing prerequisites produce a clear error before starting the command.
-- [ ] Unknown profile names list valid profiles.
+- [x] The launcher prints which environment variables are set, unset, or inherited.
+- [x] Secret-like variable values are redacted in printed output.
+- [x] Missing prerequisites produce a clear error before starting the command.
+- [x] Unknown profile names list valid profiles.
 
 ### Verification
 
-- [ ] Run `.\scripts\qsf.ps1 list profiles`.
-- [ ] Run `.\scripts\qsf.ps1 app -Experiment multi-turn-text-loop -Profile mock`.
-- [ ] Run `.\scripts\qsf.ps1 app -Experiment text-owned-voice-loop -Profile file-memory -VoiceMemoryFile docs/Experiments/Fixtures/voice-memory.example.json`.
-- [ ] Run `.\scripts\qsf.ps1 app -Experiment multi-turn-text-loop -Profile openai-text`
+- [x] Run `.\scripts\qsf.ps1 list profiles`.
+- [x] Run `.\scripts\qsf.ps1 app -Experiment multi-turn-text-loop -Profile mock`.
+- [x] Run `.\scripts\qsf.ps1 app -Experiment text-owned-voice-loop -Profile file-memory -VoiceMemoryFile docs/Experiments/Fixtures/voice-memory.example.json`.
+- [x] Run `.\scripts\qsf.ps1 app -Experiment multi-turn-text-loop -Profile openai-text`
   without `OPENAI_API_KEY` and confirm the error is clear.
 - [ ] Run with `OPENAI_API_KEY` present if available.
-- [ ] Run `cargo build`.
-- [ ] Run `cargo clippy --all-targets -- -D warnings`.
-- [ ] Run `cargo fmt`.
+- [x] Run `cargo build`.
+- [x] Run `cargo clippy --all-targets -- -D warnings`.
+- [x] Run `cargo fmt`.
 
 ### External Human Testing
 

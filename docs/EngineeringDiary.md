@@ -1453,3 +1453,22 @@ Observed:
 
 Refs: scripts/qsf.ps1, README.md, crates/qsf_browser_server/src/cli.rs,
 crates/qsf_browser_server/ui/package.json
+
+## 2026-05-22 - PowerShell launcher profiles
+
+Added process-scoped launch profiles so common provider and memory-source environment
+bundles are visible without permanently changing the caller's shell.
+
+What changed:
+- Added checked-in launcher profiles for mock providers, OpenAI text, file-backed
+  voice memory, and OpenAI microphone transcription.
+- Extended the launcher with `-Profile`, `-VoiceMemoryFile`, `list profiles`,
+  profile prerequisite checks, child-process environment set/clear handling, and
+  secret-like value redaction in printed output.
+- Documented profile usage in the README.
+
+Observed:
+- Missing profile prerequisites fail before Cargo starts, and unknown profile names
+  list the valid checked-in profiles.
+
+Refs: scripts/qsf.ps1, scripts/qsf.profiles.json, README.md
