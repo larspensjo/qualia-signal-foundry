@@ -2,7 +2,9 @@
 
 ## Status
 
-Planned. No implementation has started yet.
+Phase 0 complete as a design/inventory pass. No application code has changed yet.
+
+Phase 1 is the next implementation step.
 
 This plan promotes `Idea.VoiceLoopUnification.md` into an incremental implementation
 path. The strategic direction is that voice becomes the primary live loop while typed
@@ -298,6 +300,167 @@ Verification:
 Docs to update:
 
 - This plan only, unless a separate design note is created.
+
+Phase 0 outcome: no separate `docs/Plans/Design.VoiceLoopUnification.md` is needed
+yet. The adapter boundary, event mapping, config split, and payload fields below are
+specific enough for Phase 1. Create the design note only if implementation discovers
+a deeper conflict than this plan can carry cleanly.
+
+### Phase 0 Adapter Boundary
+
+Provider-specific data must be normalized before it reaches a shared reducer. The
+boundary is:
+
+```text
+provider request/session structs and raw provider events
+  -> provider adapter normalization
+  -> shared live-session reducer events
+  -> pure reducer state transition
+```
+
+Rules:
+
+- Reducers accept QSF-owned event names and payloads only. They must not branch on
+  OpenAI event names such as `response.audio_transcript.delta`,
+  `input_audio_buffer.speech_started`, or `response.function_call_arguments.done`.
+- Provider adapters may keep raw provider event names in traces or sanitized
+  observability payload fields when useful for debugging, but reducer payloads use
+  stable fields such as `provider_id`, `utterance_id`, `response_id`, `revision_index`,
+  `detected_at_ms`, `status`, and `stop_outcome`.
+- `TranscriptProviderSession` maps to input-side facts:
+  `AudioInputStarted`, `AudioInputChunkCaptured`, `AudioPartialTranscript`,
+  `AudioFinalTranscript`, `AudioInputEnded`, `LatencyMeasurementRecorded`, and then
+  `InputReceived`.
+- `VoiceProviderSession` maps to realtime facts:
+  `RealtimeSessionStarted`, audio input facts, `RealtimePreambleProduced`,
+  `RealtimeResponseStarted`, provider `ToolRequested`, `OutputProduced`,
+  `SpeechPlaybackRequested`, optional `SpeechPlaybackStarted`, `UserInterrupted`,
+  `RealtimeResponseCompleted`, `SpeechPlaybackCompleted`, and
+  `RealtimeSessionCompleted` / `RealtimeSessionFailed`.
+- Tool calls emitted by a provider are reducer-visible requests only. They are not
+  executed unless the QSF tool boundary later routes and permits them.
+- Speech playback adapters report playback lifecycle facts. They do not own assistant
+  cognition, prompt assembly, memory retrieval, or durable session state.
+
+### Phase 0 Shared Reducer Event Inventory
+
+The shared reducer event set should keep existing text-loop behavior recognizable
+while widening payloads to carry exchange and modality context. During Phase 1 and
+Phase 2, compatibility events can still be recorded in observability and `Turn` can
+still be derived for persistence.
+
+| Current or needed fact | Shared reducer event | Phase 0 payload requirement | Notes |
+| --- | --- | --- | --- |
+| `SessionStarted(SessionConfig)` | `SessionStarted` | `session_id`, `config`, resolved `state_dir`, `resume_mode` when known | Existing event stays; add path/resume context where boot code has it. |
+| `SessionResumed` observability event | `SessionResumed` | `session_id`, `resume_mode`, `state_dir`, predecessor/current state path, downgrade reason if any | Already observable, but should become reducer-visible once live state owns resume cleanup. |
+| `InputReceived { input }` | `InputReceived` | `session_id`, `exchange_index`, `input: ExchangeInput`, source modality, `utterance_id` for voice | Text maps to `ExchangeInput::Text`; final speech maps to `ExchangeInput::Voice`. |
+| `AudioPartialTranscript` | `AudioPartialTranscript` | `session_id`, `exchange_index` if allocated, `utterance_id`, `utterance_index`, `revision_index`, `source_chunk_index`, `received_at_ms`, transcript, `provider_id` | Updates live state only; not a completed durable exchange. |
+| `AudioFinalTranscript` | `AudioFinalTranscript` | `session_id`, `exchange_index`, `utterance_id`, `utterance_index`, `received_at_ms`, final transcript, `provider_id` | Adapter should emit this before `InputReceived`; reducer can collapse it into voice input state. |
+| `MemoryRetrieved` | `MemoryRetrieved` | `session_id`, `exchange_index`, retrieved block, recalled memory ids/items, source store path when persistent | Current text event mutates nothing; shared event should attach retrieval to the active exchange. |
+| `ContextAssembled(ContextAssembly)` | `ContextAssembled` | `session_id`, `exchange_index`, `ContextAssembly` | Existing context payload carries selected/omitted details. |
+| `PromptAssembled { ... }` | `PromptAssembled` | `session_id`, `exchange_index`, `full_request_hash`, `message_count`, `total_bytes` | Keeps cache/debug behavior stable. |
+| `ModelRoleCompleted { ... }` | `ModelRoleCompleted` | `session_id`, `exchange_index`, `model_id`, provider/model names where known, latency, token counts, response text, optional model tool calls | Captures QSF-owned model use. |
+| `OutputProduced` | `OutputProduced` | `session_id`, `exchange_index`, `response_id`, text, output owner/source, target, produced_at_ms | For text and text-owned voice, this follows `ModelRoleCompleted`; provider-owned realtime output may use it only in explicit realtime experiments. |
+| `ModelRoleFailed { error_summary }` | `ModelRoleFailed` | `session_id`, `exchange_index`, role id/model id when known, sanitized error summary | Leaves active exchange failed without inventing output. |
+| `TurnCompleted(Turn)` | `ExchangeCompleted` | `session_id`, `exchange_index`, completed `Exchange`, completion status, completed_at | Phase 1/2 derive `Turn` from `Exchange`; Phase 3 persists `Exchange` canonically. |
+| `TurnSummarized(TurnSummary)` | `ExchangeSummarized` / compatibility `TurnSummarized` | `session_id`, summarized `exchange_index`, summary, model use | Keep `TurnSummarized` as compatibility until sleep reads exchanges. |
+| `ToolCompleted(RecallRecord)` | `ToolCompleted` | `session_id`, `exchange_index`, `call_id`, tool name, category, side-effect level, latency, result summary/verbatim when permitted | Add `exchange_index`; keep recall-specific fields inside the tool result payload. |
+| `ToolRequested` observability event | `ToolRequested` | `session_id`, `exchange_index`, `call_id`, tool name, source, arguments summary, `auto_executed=false` for provider requests | Needed for realtime provider tool-call routing. |
+| `ToolFailed` observability event | `ToolFailed` | `session_id`, `exchange_index`, `call_id`, tool name, sanitized error, permission outcome | Needed once provider requests are routed through QSF permissions. |
+| `SessionLimitReached { ... }` | `SessionLimitReached` | `session_id`, current completed exchange count, max, override flag | Count exchanges, not raw partial audio facts. |
+| `SessionEnded { reason }` | `SessionEnded` | `session_id`, reason, runtime phase, active exchange cleanup summary | Awake resume must not restart in `speaking` or `listening`. |
+| `SpeechPlaybackRequested` | `SpeechPlaybackRequested` | `session_id`, `exchange_index`, `response_id`, adapter/provider id, voice/model/mode, text hash or text, requested_at_ms | Boundary marker before side-effect playback. |
+| `SpeechPlaybackStarted` | `SpeechPlaybackStarted` | `session_id`, `exchange_index`, `response_id`, adapter/provider id, started_at_ms | Moves runtime phase to speaking only if the response is still active. |
+| `SpeechPlaybackCompleted` | `SpeechPlaybackCompleted` | `session_id`, `exchange_index`, `response_id`, adapter/provider id, completed_at_ms, status, audio metadata | Completes playback state; does not by itself imply model cognition. |
+| `UserInterrupted` | `UserInterrupted` | `session_id`, `exchange_index`, `response_id`, `utterance_id` if new speech exists, detected_at_ms, source, action, `stop_outcome`, partial response text when available | Phase 4 consumes this for deterministic barge-in state. |
+| `RealtimeSessionStarted` | `RealtimeSessionStarted` | `session_id`, provider id, provider model, input source summary, voice, output modalities | Adapter/session lifecycle fact; initializes provider observability state only. |
+| `RealtimePreambleProduced` | `RealtimePreambleProduced` | `session_id`, `exchange_index`, `response_id`, `provider_id`, text, received_at_ms | Persist as provider event/preamble; never feed into QSF prompt assembly. |
+| `RealtimeResponseStarted` | `RealtimeResponseStarted` | `session_id`, `exchange_index`, `response_id`, `provider_id`, started_at_ms, target | Creates/updates active response lifecycle state. |
+| `RealtimeResponseCompleted` | `RealtimeResponseCompleted` | `session_id`, `exchange_index`, `response_id`, `provider_id`, completed_at_ms, status, text, audio metadata | Completes provider response lifecycle for realtime experiments. |
+| `RealtimeSessionCompleted` | `RealtimeSessionCompleted` | `session_id`, provider id, completed_at_ms, final status | Session adapter lifecycle fact; not a durable exchange boundary by itself. |
+| `RealtimeSessionFailed` | `RealtimeSessionFailed` | `session_id`, provider id, sanitized error, failure category, failed_at_ms | Logs provider failure without raw audio or secrets. |
+
+### Phase 0 `SessionConfig` Split
+
+`SessionConfig` currently contains `model_id`, `max_turns`, `warm_threshold`,
+`allow_over_limit`, and `memory_source`. For the shared core, keep this as the
+modality-neutral session contract until an implementation need proves otherwise.
+
+Shared session fields:
+
+- `model_id`: QSF-owned model used for text and text-owned voice responses. If Phase 5
+  stores provider-owned realtime model metadata, that belongs on provider events or
+  `ExchangeModelUse`, not as a replacement for this field.
+- `max_turns`: rename mentally to an exchange limit; implementation can keep the field
+  name until a schema migration is already required.
+- `warm_threshold`: shared prompt/summarization pressure threshold for completed
+  exchanges.
+- `allow_over_limit`: shared limit override behavior.
+- `memory_source`: shared retrieval source for text and voice once voice joins
+  continuity.
+
+Modality/provider runtime config stays outside `SessionConfig` unless it affects
+resume compatibility:
+
+- Text input source details such as stdin/scripted input.
+- Transcript provider selection and local input details:
+  `QSF_TRANSCRIPT_PROVIDER`, `QSF_TRANSCRIPT_INPUT_SOURCE`, WAV path, microphone
+  device/duration, language, and prompt.
+- Speech output selection: provider, mode, speech model, and voice.
+- Realtime voice session details: provider, realtime model, voice, reasoning effort,
+  instructions, output modalities, input transcription model, and realtime input source.
+
+Resume compatibility should compare shared session fields first. Provider config drift
+should only force a cold start if persisted live provider state would otherwise be
+misinterpreted; normal provider selection changes should be allowed because providers
+are adapters around QSF-owned session state.
+
+### Phase 0 Fixed Payload Fields
+
+Phase 1 should add these fields when the corresponding event or structure appears, so
+Phase 4 and Phase 5 do not need another payload reshaping pass:
+
+- `session_id`: every reducer event.
+- `exchange_index`: every event that mutates or annotates an exchange. Allocate before
+  final input enters model context; partial transcript events may carry `None` only
+  before an exchange exists.
+- `utterance_id`: stable string id for voice input. Keep provider
+  `utterance_index` as metadata, but do not use it as the durable id.
+- `revision_index`: monotonic counter for partial transcript revisions within an
+  utterance.
+- `response_id`: every output, realtime response lifecycle, playback, interruption,
+  and provider preamble event.
+- `provider_id`: stable adapter/provider label for audio and realtime provider facts.
+- `received_at_ms`, `started_at_ms`, `completed_at_ms`, or `detected_at_ms`: relative
+  session timestamps for event ordering and latency reconstruction.
+- `runtime_phase`: persisted live state value such as idle/listening/thinking/speaking;
+  awake continuation must clear listening/speaking provider handles.
+- `stop_outcome`: interruption result, with values such as `stopped`, `ignored`,
+  `already_complete`, or `not_supported`.
+- `status`: response/playback/exchange status, using QSF-owned values instead of raw
+  provider-specific status strings where reducer behavior depends on it.
+- Sanitized `error_summary` / `failure_category` on failure events.
+- Text fields that may enter memory or prompts must be explicitly categorized as
+  `final_transcript`, `output_text`, `provider_preamble`, or `partial_text`.
+  `provider_preamble` and `partial_text` are never prompt inputs by default.
+
+### Phase 0 Review Notes
+
+Ratified:
+
+- `Exchange` remains the right durable unit for the shared live loop.
+- Boot-time consolidated brief loading remains before the first finalized input for
+  the early implementation.
+- `state/session/` remains the planned modality-neutral default, with read-only
+  fallback from `state/text-loop/`.
+- Provider preambles are first-class provider output events on the active exchange,
+  not QSF-owned assistant output.
+- Persisted-state compatibility uses serde defaults first, then explicit
+  `schema_version`, then a one-shot upgrader when the state directory moves.
+
+Human review still recommended before Phase 1 code lands: confirm the `Exchange`
+payload shape and the boot-time brief-loading latency tradeoff. No open Phase 0
+ambiguity blocks implementation.
 
 ## Phase 1: Extract Shared Live-Session State
 
