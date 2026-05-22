@@ -1544,3 +1544,25 @@ What changed:
 
 Refs: README.md, docs/Plans/Plan.MemoryAssociationBrowser.md,
 docs/Plans/Plan.PowerShellLauncher.md, docs/DecisionLog.md
+
+## 2026-05-22 - Launch script review follow-up
+
+The PowerShell launcher and supporting scripts were tightened after launch-script
+review without changing the underlying Cargo or npm command surface.
+
+What changed:
+- Renamed the primary profile-selection parameter to `-LaunchProfile` while keeping
+  `-Profile` as a compatibility alias, avoiding a clash with PowerShell's automatic
+  `$Profile` variable.
+- Required checked-in profile definitions to include explicit `clear_env` and
+  `requires` arrays, and documented the file-memory profile's coupling to
+  `-VoiceMemoryFile` in the launcher.
+- Made `workbench` print the spawned UI PID and try to close that process when the API
+  foreground process exits.
+- Bounded and briefly cached JSON store-path completion, kept profile completion for
+  the alias, renamed completion-test variables away from `$matches`, and updated
+  project-stats helper verbs to approved PowerShell names.
+
+Refs: scripts/qsf.ps1, scripts/qsf-completion.ps1,
+scripts/qsf-completion.Tests.ps1, scripts/project-stats.ps1, README.md,
+docs/Plans/Plan.PowerShellLauncher.md

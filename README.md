@@ -125,7 +125,7 @@ pwsh -NoProfile -File .\scripts\qsf.ps1 help
 .\scripts\qsf.ps1 help
 .\scripts\qsf.ps1 list experiments
 .\scripts\qsf.ps1 app -Experiment multi-turn-text-loop
-.\scripts\qsf.ps1 app -Experiment multi-turn-text-loop -Profile mock
+.\scripts\qsf.ps1 app -Experiment multi-turn-text-loop -LaunchProfile mock
 .\scripts\qsf.ps1 doctor
 ```
 
@@ -147,12 +147,13 @@ List the checked-in launch profiles:
 
 Profiles apply environment variables only to the launched child process and print the
 effective environment changes before running Cargo. Checked-in profiles do not contain
-secrets. For example:
+secrets. `-Profile` remains accepted as a compatibility alias, but new examples use
+`-LaunchProfile`:
 
 ```powershell
-.\scripts\qsf.ps1 app -Experiment multi-turn-text-loop -Profile mock
-.\scripts\qsf.ps1 app -Experiment multi-turn-text-loop -Profile openai-text
-.\scripts\qsf.ps1 app -Experiment text-owned-voice-loop -Profile file-memory -VoiceMemoryFile docs/Experiments/Fixtures/voice-memory.example.json
+.\scripts\qsf.ps1 app -Experiment multi-turn-text-loop -LaunchProfile mock
+.\scripts\qsf.ps1 app -Experiment multi-turn-text-loop -LaunchProfile openai-text
+.\scripts\qsf.ps1 app -Experiment text-owned-voice-loop -LaunchProfile file-memory -VoiceMemoryFile docs/Experiments/Fixtures/voice-memory.example.json
 ```
 
 `openai-text` and `openai-transcription-mic` require `OPENAI_API_KEY` to already exist
@@ -163,7 +164,7 @@ Check local prerequisites without starting Cargo, Vite, or the API server:
 
 ```powershell
 .\scripts\qsf.ps1 doctor
-.\scripts\qsf.ps1 doctor -Profile openai-text
+.\scripts\qsf.ps1 doctor -LaunchProfile openai-text
 .\scripts\qsf.ps1 doctor -Workbench
 ```
 
@@ -204,8 +205,8 @@ To start the API in the current terminal and the UI in a separate PowerShell win
 .\scripts\qsf.ps1 workbench
 ```
 
-To stop the workbench, press Ctrl+C in the API terminal and close the separate Vite
-PowerShell window.
+To stop the workbench, press Ctrl+C in the API terminal. The launcher prints the Vite
+UI process ID and attempts to close that process when the API exits.
 
 #### Launcher troubleshooting
 

@@ -4,6 +4,8 @@ Set-StrictMode -Version Latest
 $script:QsfCompletionScriptRoot = $PSScriptRoot
 $script:QsfCompletionProjectRoot = Split-Path -Parent $script:QsfCompletionScriptRoot
 $script:QsfCompletionProfilesPath = Join-Path $script:QsfCompletionScriptRoot "qsf.profiles.json"
+$script:QsfCompletionStorePathCache = $null
+$script:QsfCompletionStorePathCacheExpiresAt = [datetime]::MinValue
 
 $script:QsfCompletionCommands = @(
     "app",
@@ -95,6 +97,10 @@ function Get-QsfCompletionProfiles {
 }
 
 function Get-QsfCompletionStorePaths {
+    if ($null -ne $script:QsfCompletionStorePathCache -and (Get-Date) -lt $script:QsfCompletionStorePathCacheExpiresAt) {
+        return $script:QsfCompletionStorePathCache
+    }
+
     $roots = @(
         "state",
         "runs",
@@ -108,14 +114,16 @@ function Get-QsfCompletionStorePaths {
             continue
         }
 
-        Get-ChildItem -LiteralPath $fullRoot -Recurse -File -Filter "*.json" -ErrorAction SilentlyContinue |
+        Get-ChildItem -LiteralPath $fullRoot -Recurse -Depth 3 -File -Filter "*.json" -ErrorAction SilentlyContinue |
             ForEach-Object {
                 $relativePath = [System.IO.Path]::GetRelativePath($script:QsfCompletionProjectRoot, $_.FullName)
                 $paths.Add(($relativePath -replace '\\', '/'))
             }
     }
 
-    return @($paths | Sort-Object -Unique)
+    $script:QsfCompletionStorePathCache = @($paths | Sort-Object -Unique)
+    $script:QsfCompletionStorePathCacheExpiresAt = (Get-Date).AddSeconds(15)
+    return $script:QsfCompletionStorePathCache
 }
 
 function Get-QsfCompletionNativeContext {
@@ -168,6 +176,10 @@ $qsfCompleter = {
     try {
         $nativeContext = Get-QsfCompletionNativeContext -CommandAst $commandAst -WordToComplete $wordToComplete
         switch ($nativeContext.PreviousArgument) {
+            "-LaunchProfile" {
+                Select-QsfCompletionMatches -Values (Get-QsfCompletionProfiles) -WordToComplete $wordToComplete
+                return
+            }
             "-Profile" {
                 Select-QsfCompletionMatches -Values (Get-QsfCompletionProfiles) -WordToComplete $wordToComplete
                 return

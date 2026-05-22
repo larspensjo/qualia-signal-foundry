@@ -20,59 +20,65 @@ BeforeAll {
 
 Describe "qsf.ps1 argument completion" {
     It "completes launcher commands" {
-        $matches = Complete-QsfInput -InputText ".\scripts\qsf.ps1 "
+        $completions = Complete-QsfInput -InputText ".\scripts\qsf.ps1 "
 
-        $matches | Should -Contain "app"
-        $matches | Should -Contain "browser"
-        $matches | Should -Contain "ui"
-        $matches | Should -Contain "workbench"
-        $matches | Should -Contain "doctor"
-        $matches | Should -Contain "list"
-        $matches | Should -Contain "help"
+        $completions | Should -Contain "app"
+        $completions | Should -Contain "browser"
+        $completions | Should -Contain "ui"
+        $completions | Should -Contain "workbench"
+        $completions | Should -Contain "doctor"
+        $completions | Should -Contain "list"
+        $completions | Should -Contain "help"
     }
 
     It "completes list targets" {
-        $matches = Complete-QsfInput -InputText ".\scripts\qsf.ps1 list "
+        $completions = Complete-QsfInput -InputText ".\scripts\qsf.ps1 list "
 
-        $matches | Should -Contain "experiments"
-        $matches | Should -Contain "profiles"
+        $completions | Should -Contain "experiments"
+        $completions | Should -Contain "profiles"
     }
 
     It "completes profiles from the checked-in profile file" {
-        $matches = Complete-QsfInput -InputText ".\scripts\qsf.ps1 app -Profile "
+        $completions = Complete-QsfInput -InputText ".\scripts\qsf.ps1 app -LaunchProfile "
 
-        $matches | Should -Contain "mock"
-        $matches | Should -Contain "openai-text"
-        $matches | Should -Contain "file-memory"
-        $matches | Should -Contain "openai-transcription-mic"
+        $completions | Should -Contain "mock"
+        $completions | Should -Contain "openai-text"
+        $completions | Should -Contain "file-memory"
+        $completions | Should -Contain "openai-transcription-mic"
+    }
+
+    It "keeps profile completion for the compatibility alias" {
+        $completions = Complete-QsfInput -InputText ".\scripts\qsf.ps1 app -Profile "
+
+        $completions | Should -Contain "mock"
     }
 
     It "filters profile completions by the current word" {
-        $matches = Complete-QsfInput -InputText ".\scripts\qsf.ps1 app -Profile open"
+        $completions = Complete-QsfInput -InputText ".\scripts\qsf.ps1 app -LaunchProfile open"
 
-        $matches | Should -Contain "openai-text"
-        $matches | Should -Contain "openai-transcription-mic"
-        $matches | Should -Not -Contain "mock"
+        $completions | Should -Contain "openai-text"
+        $completions | Should -Contain "openai-transcription-mic"
+        $completions | Should -Not -Contain "mock"
     }
 
     It "completes static experiment names without invoking Cargo" {
-        $matches = Complete-QsfInput -InputText ".\scripts\qsf.ps1 app -Experiment "
+        $completions = Complete-QsfInput -InputText ".\scripts\qsf.ps1 app -Experiment "
 
-        $matches | Should -Contain "multi-turn-text-loop"
-        $matches | Should -Contain "text-owned-voice-loop"
-        $matches | Should -Contain "streaming-transcription-mvp"
+        $completions | Should -Contain "multi-turn-text-loop"
+        $completions | Should -Contain "text-owned-voice-loop"
+        $completions | Should -Contain "streaming-transcription-mvp"
     }
 
     It "completes likely JSON store paths" {
-        $matches = Complete-QsfInput -InputText ".\scripts\qsf.ps1 browser -Store "
+        $completions = Complete-QsfInput -InputText ".\scripts\qsf.ps1 browser -Store "
 
-        $matches | Should -Contain "crates/qsf_browser_server/tests/fixtures/small-store.json"
+        $completions | Should -Contain "crates/qsf_browser_server/tests/fixtures/small-store.json"
     }
 
     It "completes bind host values" {
-        $matches = Complete-QsfInput -InputText ".\scripts\qsf.ps1 browser -BindHost "
+        $completions = Complete-QsfInput -InputText ".\scripts\qsf.ps1 browser -BindHost "
 
-        $matches | Should -Contain "127.0.0.1"
-        $matches | Should -Contain "0.0.0.0"
+        $completions | Should -Contain "127.0.0.1"
+        $completions | Should -Contain "0.0.0.0"
     }
 }

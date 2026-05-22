@@ -35,7 +35,7 @@ function Format-Number {
 }
 
 
-function Count-Lines {
+function Measure-LineCount {
     param(
         [System.IO.FileInfo[]]$Files = @()
     )
@@ -56,7 +56,7 @@ function Count-Lines {
     return $totalLines
 }
 
-function Count-RustTests {
+function Measure-RustTestCount {
     param(
         [System.IO.FileInfo[]]$Files = @()
     )
@@ -173,8 +173,8 @@ function Get-RustStats {
         }
 
         if ($allFiles.Count -gt 0) {
-            $lineCount = Count-Lines -Files $allFiles
-            $testCount = Count-RustTests -Files $allFiles
+            $lineCount = Measure-LineCount -Files $allFiles
+            $testCount = Measure-RustTestCount -Files $allFiles
             $stats[$module.Name] = @{
                 Lines = $lineCount
                 Files = $allFiles.Count
@@ -220,11 +220,11 @@ function Get-FrontendStats {
             -not (Test-GeneratedOrVendorPath -Path $_.FullName)
         })
 
-        $stats.TypeScript.Lines += Count-Lines -Files $tsFiles
+        $stats.TypeScript.Lines += Measure-LineCount -Files $tsFiles
         $stats.TypeScript.Files += $tsFiles.Count
-        $stats.Css.Lines += Count-Lines -Files $cssFiles
+        $stats.Css.Lines += Measure-LineCount -Files $cssFiles
         $stats.Css.Files += $cssFiles.Count
-        $stats.Html.Lines += Count-Lines -Files $htmlFiles
+        $stats.Html.Lines += Measure-LineCount -Files $htmlFiles
         $stats.Html.Files += $htmlFiles.Count
     }
 
@@ -251,7 +251,7 @@ function Get-ConfigDataStats {
     $jsonLockFiles = @($jsonFiles | Where-Object { $_.Name -match 'lock' })
     $jsonCountedFiles = @($jsonFiles | Where-Object { $_.Name -notmatch 'lock' })
 
-    $stats.Json.Lines = Count-Lines -Files $jsonCountedFiles
+    $stats.Json.Lines = Measure-LineCount -Files $jsonCountedFiles
     $stats.Json.Files = $jsonCountedFiles.Count
     $stats.Json.Lockfiles = $jsonLockFiles.Count
 
@@ -277,21 +277,21 @@ function Get-DocumentationStats {
         $planFiles = @($allDocs | Where-Object {
             $_.Name -match "^(Plan|Design|Idea)\."
         })
-        $stats.Planning.Lines = Count-Lines -Files $planFiles
+        $stats.Planning.Lines = Measure-LineCount -Files $planFiles
         $stats.Planning.Files = $planFiles.Count
 
         # Other documentation (everything else in docs/)
         $otherDocs = @($allDocs | Where-Object {
             $_.Name -notmatch "^(Plan|Design|Idea)\."
         })
-        $stats.Other.Lines = Count-Lines -Files $otherDocs
+        $stats.Other.Lines = Measure-LineCount -Files $otherDocs
         $stats.Other.Files = $otherDocs.Count
     }
 
     # Include README.md and other top-level docs (e.g. Agents.md, CLAUDE.md)
     $topLevelDocs = @(Get-ChildItem -Path $RootPath -Filter "*.md" -File -ErrorAction SilentlyContinue)
     if ($topLevelDocs) {
-        $stats.Other.Lines += Count-Lines -Files $topLevelDocs
+        $stats.Other.Lines += Measure-LineCount -Files $topLevelDocs
         $stats.Other.Files += $topLevelDocs.Count
     }
 
@@ -314,7 +314,7 @@ function Get-PowerShellStats {
     }
 
     return @{
-        Lines = Count-Lines -Files $allPsFiles
+        Lines = Measure-LineCount -Files $allPsFiles
         Files = $allPsFiles.Count
     }
 }

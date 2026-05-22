@@ -8,7 +8,8 @@ param(
     [string]$Subject = "",
 
     [string]$Experiment = "",
-    [string]$Profile = "",
+    [Alias("Profile")]
+    [string]$LaunchProfile = "",
     [string]$VoiceMemoryFile = "",
     [string]$Store = "state/text-loop/memory-store.json",
     [string]$BindHost = "127.0.0.1",
@@ -126,6 +127,12 @@ function Get-ProfileDefinitions {
         if ($null -eq $profileDefinition.env) {
             Write-Error "Profile '$($profileDefinition.name)' must have an env object."
         }
+        if ($null -eq $profileDefinition.PSObject.Properties["clear_env"]) {
+            Write-Error "Profile '$($profileDefinition.name)' must have a clear_env array; use [] when there is nothing to clear."
+        }
+        if ($null -eq $profileDefinition.PSObject.Properties["requires"]) {
+            Write-Error "Profile '$($profileDefinition.name)' must have a requires array; use [] when there are no requirements."
+        }
     }
 
     return $document.profiles
@@ -175,18 +182,18 @@ function Get-ProfileEnvironmentDelta {
     $envSets = [ordered]@{}
     $clearEnv = @()
 
-    if (-not [string]::IsNullOrWhiteSpace($Profile)) {
-        $profileDefinition = Get-ProfileDefinition -Name $Profile
+    if (-not [string]::IsNullOrWhiteSpace($LaunchProfile)) {
+        $profileDefinition = Get-ProfileDefinition -Name $LaunchProfile
         foreach ($required in @($profileDefinition.requires)) {
             if ($null -eq $required) {
                 continue
             }
             if ($required.kind -ne "env") {
-                Write-Error "Profile '$Profile' has unsupported requirement kind '$($required.kind)'."
+                Write-Error "Profile '$LaunchProfile' has unsupported requirement kind '$($required.kind)'."
             }
             $requiredValue = [System.Environment]::GetEnvironmentVariable($required.name, "Process")
             if ([string]::IsNullOrEmpty($requiredValue)) {
-                Write-Error "Profile '$Profile' requires environment variable '$($required.name)' to be set before launch."
+                Write-Error "Profile '$LaunchProfile' requires environment variable '$($required.name)' to be set before launch."
             }
         }
 
@@ -203,7 +210,10 @@ function Get-ProfileEnvironmentDelta {
         $envSets["QSF_VOICE_MEMORY_FILE"] = $VoiceMemoryFile
     }
 
-    if (-not [string]::IsNullOrWhiteSpace($Profile) -and $Profile -eq "file-memory" -and [string]::IsNullOrWhiteSpace($VoiceMemoryFile)) {
+    # The checked-in file-memory profile sets QSF_VOICE_MEMORY_SOURCE=file; this
+    # companion path is still modeled as a launcher flag until profile flag
+    # requirements become a real schema need.
+    if (-not [string]::IsNullOrWhiteSpace($LaunchProfile) -and $LaunchProfile -eq "file-memory" -and [string]::IsNullOrWhiteSpace($VoiceMemoryFile)) {
         Write-Error "Profile 'file-memory' requires -VoiceMemoryFile <path>."
     }
 
@@ -329,11 +339,11 @@ QSF launcher
 
 Usage:
   .\scripts\qsf.ps1 help
-  .\scripts\qsf.ps1 app [-Experiment <name>] [-Profile <name>] [-VoiceMemoryFile <path>]
+  .\scripts\qsf.ps1 app [-Experiment <name>] [-LaunchProfile <name>] [-VoiceMemoryFile <path>]
   .\scripts\qsf.ps1 browser [-Store <path>] [-BindHost <ip>] [-Port <port>]
   .\scripts\qsf.ps1 ui
   .\scripts\qsf.ps1 workbench [-Store <path>] [-BindHost <ip>] [-Port <port>]
-  .\scripts\qsf.ps1 doctor [-Profile <name>] [-Workbench]
+  .\scripts\qsf.ps1 doctor [-LaunchProfile <name>] [-Workbench]
   .\scripts\qsf.ps1 list experiments
   .\scripts\qsf.ps1 list profiles
 
@@ -345,8 +355,8 @@ Defaults:
 
 Examples:
   .\scripts\qsf.ps1 app -Experiment multi-turn-text-loop
-  .\scripts\qsf.ps1 app -Experiment multi-turn-text-loop -Profile mock
-  .\scripts\qsf.ps1 app -Experiment text-owned-voice-loop -Profile file-memory -VoiceMemoryFile docs/Experiments/Fixtures/voice-memory.example.json
+  .\scripts\qsf.ps1 app -Experiment multi-turn-text-loop -LaunchProfile mock
+  .\scripts\qsf.ps1 app -Experiment text-owned-voice-loop -LaunchProfile file-memory -VoiceMemoryFile docs/Experiments/Fixtures/voice-memory.example.json
   .\scripts\qsf.ps1 browser -Store $sampleStore -BindHost 127.0.0.1 -Port 3939
   .\scripts\qsf.ps1 ui
   .\scripts\qsf.ps1 workbench
@@ -534,13 +544,13 @@ function Invoke-Doctor {
         Add-DoctorCheck $checks (New-DoctorCheck -Status "ok" -Name "OPENAI_API_KEY" -Message "Set in process environment; value not shown.")
     }
 
-    if (-not [string]::IsNullOrWhiteSpace($Profile)) {
+    if (-not [string]::IsNullOrWhiteSpace($LaunchProfile)) {
         try {
             [void](Get-ProfileEnvironmentDelta)
-            Add-DoctorCheck $checks (New-DoctorCheck -Status "ok" -Name "Profile '$Profile'" -Message "Prerequisites satisfied.")
+            Add-DoctorCheck $checks (New-DoctorCheck -Status "ok" -Name "Profile '$LaunchProfile'" -Message "Prerequisites satisfied.")
         }
         catch {
-            Add-DoctorCheck $checks (New-DoctorCheck -Status "fail" -Name "Profile '$Profile'" -Message $_.Exception.Message)
+            Add-DoctorCheck $checks (New-DoctorCheck -Status "fail" -Name "Profile '$LaunchProfile'" -Message $_.Exception.Message)
         }
     }
 
@@ -549,7 +559,7 @@ function Invoke-Doctor {
     if ($Workbench) {
         Write-Host "Mode: workbench prerequisites"
     }
-    elseif (-not [string]::IsNullOrWhiteSpace($Profile)) {
+    elseif (-not [string]::IsNullOrWhiteSpace($LaunchProfile)) {
         Write-Host "Mode: profile prerequisites"
     }
     else {
@@ -596,8 +606,8 @@ function Test-BrowserStore {
 function Invoke-App {
     $delta = Get-ProfileEnvironmentDelta
     if ([string]::IsNullOrWhiteSpace($Experiment)) {
-        if (-not [string]::IsNullOrWhiteSpace($Profile) -or -not [string]::IsNullOrWhiteSpace($VoiceMemoryFile)) {
-            Write-Error "-Profile and -VoiceMemoryFile require app -Experiment <name>."
+        if (-not [string]::IsNullOrWhiteSpace($LaunchProfile) -or -not [string]::IsNullOrWhiteSpace($VoiceMemoryFile)) {
+            Write-Error "-LaunchProfile and -VoiceMemoryFile require app -Experiment <name>."
         }
         Show-Help
         Write-Host ""
@@ -652,9 +662,20 @@ function Invoke-Workbench {
         "ui"
     )
     Write-Host "Starting UI process: $(Format-Command -Executable $psExe -Arguments $argumentList)"
-    Start-Process -FilePath $psExe -ArgumentList $argumentList -WorkingDirectory $projectRoot
+    $uiProcess = Start-Process -FilePath $psExe -ArgumentList $argumentList -WorkingDirectory $projectRoot -PassThru
+    Write-Host "UI process PID: $($uiProcess.Id)"
 
-    Invoke-Browser
+    try {
+        Invoke-Browser
+    }
+    finally {
+        if ($null -ne $uiProcess -and -not $uiProcess.HasExited) {
+            Write-Host "Stopping UI process PID $($uiProcess.Id)"
+            if (-not $uiProcess.CloseMainWindow()) {
+                Stop-Process -Id $uiProcess.Id -ErrorAction SilentlyContinue
+            }
+        }
+    }
 }
 
 switch ($Command.ToLowerInvariant()) {
