@@ -116,7 +116,9 @@ cargo test
 
 ### PowerShell launcher
 
-On Windows, common local launches can use the repository launcher:
+On Windows, the documented happy path for common local launches is the repository
+launcher. It is a thin wrapper over Cargo and npm: it prints the underlying command
+and any child-process environment changes before execution.
 
 ```powershell
 pwsh -NoProfile -File .\scripts\qsf.ps1 help
@@ -202,8 +204,30 @@ To start the API in the current terminal and the UI in a separate PowerShell win
 .\scripts\qsf.ps1 workbench
 ```
 
-The launcher prints the underlying Cargo or npm command before execution. Raw
-commands still work and remain useful when debugging.
+To stop the workbench, press Ctrl+C in the API terminal and close the separate Vite
+PowerShell window.
+
+#### Launcher troubleshooting
+
+- **Blocked port:** `doctor` reports whether `127.0.0.1:3939` appears occupied. Stop
+  the existing process or launch with another port, for example
+  `.\scripts\qsf.ps1 browser -Port 3940`.
+- **Missing API key:** OpenAI-backed profiles require `OPENAI_API_KEY` in the current
+  shell before launch. The launcher checks presence but never prints the value.
+- **Missing UI dependencies:** If `ui` or `workbench` reports missing dependencies,
+  run `cd crates/qsf_browser_server/ui; npm install`.
+- **Execution policy:** If the script is blocked by local PowerShell policy, use the
+  one-shot bypass form:
+
+```powershell
+pwsh -NoProfile -ExecutionPolicy Bypass -File scripts\qsf.ps1 help
+```
+
+- **Stale completion:** Completion currently reads checked-in profiles and static
+  experiment names from `scripts/qsf-completion.ps1`. If those change, dot-source the
+  completion script again in the current shell.
+
+Raw Cargo and npm commands still work and remain useful when debugging.
 
 List the experiments available in this build:
 
@@ -219,6 +243,37 @@ cargo run -p qsf_app -- experiment <name>
 ```
 
 Each run writes its artifacts into a fresh directory under `runs/`.
+
+### Memory Association Browser
+
+The Memory Association Browser is a read-only local workbench for inspecting a
+persisted memory store through `qsf_browser_server` and the Vite UI.
+
+Launcher path:
+
+```powershell
+.\scripts\qsf.ps1 browser
+.\scripts\qsf.ps1 ui
+.\scripts\qsf.ps1 workbench
+```
+
+Raw fallback/reference commands:
+
+```powershell
+# Shell 1: API server on 127.0.0.1:3939
+cargo run -p qsf_browser_server -- --store state/text-loop/memory-store.json --host 127.0.0.1 --port 3939
+
+# Shell 2: Vite UI
+cd crates/qsf_browser_server/ui
+npm install
+npm run dev
+```
+
+The tracked sample store is useful before a local continuity store exists:
+
+```powershell
+.\scripts\qsf.ps1 browser -Store crates/qsf_browser_server/tests/fixtures/small-store.json
+```
 
 ### OpenAI-backed providers
 

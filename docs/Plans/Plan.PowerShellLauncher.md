@@ -89,13 +89,11 @@ Not in scope for the first implementation:
 
 - Should `scripts/qsf.profiles.local.json` be supported for private machine-specific
   profiles in addition to checked-in safe profiles?
-- Should argument completion be loaded manually by dot-sourcing a script, or should
-  the launcher install a completion registration into the user's PowerShell profile?
 - Should `workbench` automatically open the browser after both processes start?
 
-The local-profile and completion-install questions should be answered before Phase 3
-or Phase 5. Browser auto-open can remain optional until the `workbench` command has
-real operator feedback.
+The local-profile question remains deferred until checked-in profiles show real
+operator pressure. Browser auto-open can remain optional until the `workbench` command
+has real operator feedback.
 
 ## Resolved Implementation Choices
 
@@ -118,6 +116,8 @@ real operator feedback.
   failure.
 - Profiles use the JSON schema defined in Phase 2 before completion or diagnostics
   depend on them.
+- Completion is opt-in by manually dot-sourcing `scripts/qsf-completion.ps1`; the
+  launcher does not mutate the user's PowerShell profile.
 
 ## Documents To Update
 
@@ -543,12 +543,12 @@ Make the launcher the documented happy path while preserving raw commands.
 
 ### Tasks
 
-- [ ] Add a README section for the launcher.
-- [ ] Keep raw Cargo and npm commands in README as fallback/reference commands.
-- [ ] Update Memory Association Browser plan snippets that describe starting API and
+- [x] Add a README section for the launcher.
+- [x] Keep raw Cargo and npm commands in README as fallback/reference commands.
+- [x] Update Memory Association Browser plan snippets that describe starting API and
   UI together.
-- [ ] Decide whether the launcher convention is durable enough for a DecisionLog entry.
-- [ ] Add troubleshooting notes for:
+- [x] Decide whether the launcher convention is durable enough for a DecisionLog entry.
+- [x] Add troubleshooting notes for:
   - blocked ports
   - missing `OPENAI_API_KEY`
   - missing `npm install`
@@ -559,16 +559,16 @@ Make the launcher the documented happy path while preserving raw commands.
 pwsh -NoProfile -ExecutionPolicy Bypass -File scripts\qsf.ps1 help
 ```
 
-  - stale completion cache, if caching is implemented
+  - stale completion state after profiles or static experiment names change
 
 ### Verification
 
-- [ ] Follow README instructions from a fresh PowerShell session.
-- [ ] Confirm raw commands still work.
-- [ ] Confirm launcher commands still work.
-- [ ] Run `cargo build`.
-- [ ] Run `cargo clippy --all-targets -- -D warnings`.
-- [ ] Run `cargo fmt`.
+- [x] Follow README instructions from a fresh PowerShell session.
+- [x] Confirm raw commands still work.
+- [x] Confirm launcher commands still work.
+- [x] Run `cargo build`.
+- [x] Run `cargo clippy --all-targets -- -D warnings`.
+- [x] Run `cargo fmt`.
 
 ## Acceptance Criteria
 

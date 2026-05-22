@@ -2888,8 +2888,10 @@ slots.statusbar.textContent = "loading…";
 
 - [x] **Step 4: Verify**
 
-Run: `npm run build`, then `npm run dev` and open `http://127.0.0.1:5173`.
-Expected: the workbench shell renders with placeholders. Vite dev proxies `/api/*` to the running `cargo run -p qsf_browser_server` instance; both should be running to exercise the next tasks.
+Run `.\scripts\qsf.ps1 workbench` from the repository root, or use the raw fallback
+commands (`cargo run -p qsf_browser_server` in one shell and `npm run dev` from
+`crates/qsf_browser_server/ui` in another). Then open `http://127.0.0.1:5173`.
+Expected: the workbench shell renders with placeholders. Vite dev proxies `/api/*` to the running API instance; both should be running to exercise the next tasks.
 
 ### Task 3.6: Components — toolbar, filters, list, inspector
 
@@ -3219,7 +3221,12 @@ let storePath = "";
 
 - [ ] **Step 2: Build + manual verification**
 
-Run:
+Run the documented launcher path:
+```bash
+.\scripts\qsf.ps1 workbench
+```
+
+Raw fallback commands:
 ```bash
 cargo run -p qsf_browser_server         # in shell 1
 cd crates/qsf_browser_server/ui && npm run dev   # in shell 2
@@ -3502,7 +3509,7 @@ async function reload() {
 
 - [ ] **Step 3: Verify**
 
-Run: `npm run build`, then `npm run dev` and select a memory. Expected: the canvas shows the focal hub with up to 8 neighbors. Broken edges render dashed with the truncated `other_id`. Clicking a non-broken neighbor changes the selection and updates list, inspector, canvas, and URL.
+Run `npm run build`, then start the browser workbench with `.\scripts\qsf.ps1 workbench` or the raw API + Vite commands and select a memory. Expected: the canvas shows the focal hub with up to 8 neighbors. Broken edges render dashed with the truncated `other_id`. Clicking a non-broken neighbor changes the selection and updates list, inspector, canvas, and URL.
 
 - [ ] **Step 4: External human verification**
 
@@ -3669,7 +3676,13 @@ Append a new section:
 `qsf_browser_server` is a read-only HTTP workbench for inspecting the persisted
 memory store.
 
-Default development loop (Rust dev server + Vite dev proxy):
+Default development loop:
+
+```bash
+.\scripts\qsf.ps1 workbench
+```
+
+Raw fallback/reference commands:
 
 ```bash
 # Shell 1

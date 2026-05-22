@@ -495,3 +495,19 @@ Refs: docs/Plans/Design.MemoryAssociationBrowser.md,
 docs/Plans/Idea.MemoryAssociationBrowser.md,
 docs/Plans/Design.LiveActivationDashboard.md,
 docs/RustBackendBrowserFrontend.md
+
+## 2026-05-22 - PowerShell launcher is the Windows development entry point
+Decision: Windows local-development documentation presents `scripts/qsf.ps1` as the
+happy path for common launches, while raw Cargo and npm commands remain documented as
+fallback and debugging references. Checked-in, non-secret launcher profiles live under
+`scripts/`, and argument completion is opt-in by dot-sourcing
+`scripts/qsf-completion.ps1`.
+Context: Starting experiments, the browser API, and the Vite UI required repeated
+Cargo, npm, and environment-variable setup. A thin PowerShell entry point now makes
+defaults and profile environment changes visible without changing the Rust CLIs or
+mutating the caller's shell permanently.
+Consequences: New Windows operator workflows should prefer extending the launcher when
+they compose existing commands, but underlying binaries must stay independently
+runnable and documented. Completion setup must not silently edit user shell profiles.
+Refs: scripts/qsf.ps1, scripts/qsf.profiles.json, scripts/qsf-completion.ps1,
+README.md, docs/Plans/Plan.PowerShellLauncher.md

@@ -1526,3 +1526,21 @@ Observed:
 
 Refs: scripts/qsf.ps1, scripts/qsf-completion.ps1, scripts/qsf-completion.Tests.ps1,
 README.md
+
+## 2026-05-22 - PowerShell launcher documentation consolidation
+
+The launcher is now documented as the Windows happy path for common local development
+launches while preserving the raw Cargo and npm commands as fallback references.
+
+What changed:
+- Expanded README launcher guidance with workbench usage, Memory Association Browser
+  launch commands, raw command equivalents, and troubleshooting for blocked ports,
+  missing API keys, missing UI dependencies, execution policy restrictions, and
+  completion refresh.
+- Updated the Memory Association Browser plan snippets that start the API and Vite UI
+  together to point at `.\scripts\qsf.ps1 workbench` first.
+- Recorded the durable launcher convention in the decision log and marked the
+  documentation-polish tasks complete.
+
+Refs: README.md, docs/Plans/Plan.MemoryAssociationBrowser.md,
+docs/Plans/Plan.PowerShellLauncher.md, docs/DecisionLog.md
