@@ -1472,3 +1472,37 @@ Observed:
   list the valid checked-in profiles.
 
 Refs: scripts/qsf.ps1, scripts/qsf.profiles.json, README.md
+
+## 2026-05-22 - PowerShell launcher argument completion
+
+Added opt-in PowerShell tab completion for the launcher command surface so common
+development launches are easier to discover from an interactive shell.
+
+What changed:
+- Added `scripts/qsf-completion.ps1` with native argument completion for launcher
+  commands, `list` targets, checked-in profile names, static experiment IDs, likely
+  browser store JSON files, and bind host values.
+- Documented dot-sourcing the completion script in the README.
+
+Observed:
+- Programmatic completion checks return the checked-in profile names, static
+  experiment IDs, command names, and JSON store path candidates without shelling out
+  to Cargo.
+
+Refs: scripts/qsf-completion.ps1, README.md
+
+## 2026-05-22 - PowerShell launcher completion tests
+
+Added Pester coverage for the launcher completion script so the interactive command
+surface can be checked without manual tab-completion testing.
+
+What changed:
+- Added `scripts/qsf-completion.Tests.ps1` with programmatic completion checks for
+  launcher commands, `list` targets, profiles, experiment names, store paths, and bind
+  host values.
+
+Observed:
+- `Invoke-Pester -Path .\scripts\qsf-completion.Tests.ps1 -CI` passes with seven
+  tests.
+
+Refs: scripts/qsf-completion.Tests.ps1, scripts/qsf-completion.ps1

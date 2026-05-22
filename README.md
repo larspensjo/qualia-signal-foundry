@@ -128,6 +128,14 @@ pwsh -NoProfile -File .\scripts\qsf.ps1 help
 
 The launcher requires PowerShell 7.6 or newer.
 
+Argument completion is opt-in per shell session. Dot-source the completion script
+before using tab completion for launcher commands, profiles, experiment names, browser
+store paths, and bind hosts:
+
+```powershell
+. .\scripts\qsf-completion.ps1
+```
+
 List the checked-in launch profiles:
 
 ```powershell

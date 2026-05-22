@@ -2,7 +2,7 @@
 
 ## Status
 
-Phase 2 launch profiles are implemented.
+Phase 3 argument completion is implemented.
 
 ## Goal
 
@@ -437,7 +437,7 @@ Add PowerShell completion for common launcher arguments.
 
 ### Completion Targets
 
-- [ ] Complete launcher commands:
+- [x] Complete launcher commands:
   - `app`
   - `browser`
   - `ui`
@@ -445,17 +445,17 @@ Add PowerShell completion for common launcher arguments.
   - `list`
   - `help`
 
-- [ ] Complete `list` values:
+- [x] Complete `list` values:
   - `experiments`
   - `profiles`
 
-- [ ] Leave `doctor` completion for Phase 4, when the command exists.
+- [x] Leave `doctor` completion for Phase 4, when the command exists.
 
-- [ ] Complete `-Profile` from `scripts/qsf.profiles.json`.
-- [ ] Complete `-Experiment` from `qsf_app` experiment names.
-- [ ] Complete `-Store` from likely JSON files under `state/`, `runs/`, and
+- [x] Complete `-Profile` from `scripts/qsf.profiles.json`.
+- [x] Complete `-Experiment` from `qsf_app` experiment names.
+- [x] Complete `-Store` from likely JSON files under `state/`, `runs/`, and
   `crates/qsf_browser_server/tests/fixtures/`.
-- [ ] Complete `-BindHost` with `127.0.0.1` and `0.0.0.0`.
+- [x] Complete `-BindHost` with `127.0.0.1` and `0.0.0.0`.
 
 ### Implementation Notes
 
@@ -472,11 +472,11 @@ Add PowerShell completion for common launcher arguments.
 
 ### Verification
 
-- [ ] Dot-source `scripts/qsf-completion.ps1`.
-- [ ] Confirm tab completion works for command names.
-- [ ] Confirm tab completion works for `-Profile`.
-- [ ] Confirm tab completion works for `-Store` path candidates.
-- [ ] Run a programmatic completion check:
+- [x] Dot-source `scripts/qsf-completion.ps1`.
+- [x] Confirm tab completion works for command names.
+- [x] Confirm tab completion works for `-Profile`.
+- [x] Confirm tab completion works for `-Store` path candidates.
+- [x] Run a programmatic completion check:
 
 ```powershell
 $result = [System.Management.Automation.CommandCompletion]::CompleteInput(
@@ -489,9 +489,9 @@ $result.CompletionMatches.CompletionText
 
 Expected: the output includes profile names from `scripts/qsf.profiles.json`.
 
-- [ ] Run `cargo build`.
-- [ ] Run `cargo clippy --all-targets -- -D warnings`.
-- [ ] Run `cargo fmt`.
+- [x] Run `cargo build`.
+- [x] Run `cargo clippy --all-targets -- -D warnings`.
+- [x] Run `cargo fmt`.
 
 ## Phase 4: Doctor And Diagnostics
 
