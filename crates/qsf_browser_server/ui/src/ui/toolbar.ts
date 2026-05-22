@@ -1,4 +1,5 @@
 import type { Action, ViewState } from "../state";
+import { mustQuery } from "./html";
 
 const inputStyle =
   "background:rgba(7,18,32,0.4);border:1px solid var(--qsf-border-subtle);color:var(--qsf-signal-context);padding:4px 8px";
@@ -26,7 +27,7 @@ export function renderToolbar(
       </select>
       <button id="toggle-filters" style="${controlStyle};cursor:pointer">filters</button>
     `;
-    const q = el.querySelector<HTMLInputElement>("#q")!;
+    const q = mustQuery<HTMLInputElement>(el, "#q");
     q.addEventListener("change", () =>
       dispatch({ type: "setQuery", query: { q: q.value || undefined } }),
     );
@@ -35,29 +36,29 @@ export function renderToolbar(
         dispatch({ type: "setQuery", query: { q: q.value || undefined } });
       }
     });
-    const sort = el.querySelector<HTMLSelectElement>("#sort")!;
+    const sort = mustQuery<HTMLSelectElement>(el, "#sort");
     sort.addEventListener("change", () =>
       dispatch({ type: "setQuery", query: { sort: sort.value } }),
     );
-    el.querySelector<HTMLButtonElement>("#toggle-filters")!.addEventListener(
+    mustQuery<HTMLButtonElement>(el, "#toggle-filters").addEventListener(
       "click",
       () => dispatch({ type: "toggleFilters" }),
     );
     el.dataset.built = "true";
   }
 
-  const storeEl = el.querySelector<HTMLElement>("#store-path")!;
+  const storeEl = mustQuery(el, "#store-path");
   if (storeEl.textContent !== storePath) storeEl.textContent = storePath;
 
-  const q = el.querySelector<HTMLInputElement>("#q")!;
+  const q = mustQuery<HTMLInputElement>(el, "#q");
   const desiredQ = state.query.q ?? "";
   if (document.activeElement !== q && q.value !== desiredQ) q.value = desiredQ;
 
-  const sort = el.querySelector<HTMLSelectElement>("#sort")!;
+  const sort = mustQuery<HTMLSelectElement>(el, "#sort");
   const desiredSort = state.query.sort ?? "newest";
   if (sort.value !== desiredSort) sort.value = desiredSort;
 
-  const toggle = el.querySelector<HTMLButtonElement>("#toggle-filters")!;
+  const toggle = mustQuery<HTMLButtonElement>(el, "#toggle-filters");
   const desiredLabel = state.filtersExpanded ? "hide filters" : "filters";
   if (toggle.textContent !== desiredLabel) toggle.textContent = desiredLabel;
 }

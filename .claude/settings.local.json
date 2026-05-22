@@ -1,7 +1,8 @@
 {
   "permissions": {
     "allow": [
-      "Bash(cargo fmt *)"
+      "Bash(cargo fmt *)",
+      "Bash(npx biome *)"
     ]
   }
 }

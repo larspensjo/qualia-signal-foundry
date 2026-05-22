@@ -3,6 +3,7 @@
 ## Workflow
 - Build with `cargo build`.
 - When a task is complete, run `cargo clippy --all-targets -- -D warnings` and then `cargo fmt`.
+- For changes under `crates/qsf_browser_server/ui/`, run `npm run check` and then `npm run fmt` from that directory. `npm run check` covers both `tsc --noEmit` and Biome lint.
 - When implementing changes, document them in EngineeringDiary.md. But first look up Instructions how to use in the beginning of the document.
 - When creating complex plans, they should be divided into incremental phases that can be tested.
 

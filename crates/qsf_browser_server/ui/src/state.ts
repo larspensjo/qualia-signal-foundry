@@ -50,8 +50,11 @@ export function stateToUrl(state: ViewState): string {
   if (selectedId) sp.set("id", selectedId);
   for (const [key, value] of Object.entries(query)) {
     if (value === undefined || value === null || value === "") continue;
-    if (Array.isArray(value)) value.forEach((x) => sp.append(key, String(x)));
-    else sp.set(key, String(value));
+    if (Array.isArray(value)) {
+      for (const x of value) sp.append(key, String(x));
+    } else {
+      sp.set(key, String(value));
+    }
   }
   const s = sp.toString();
   return s ? `?${s}` : "";

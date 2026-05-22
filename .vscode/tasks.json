@@ -54,6 +54,61 @@
       "command": "cargo clean",
       "group": "none",
       "problemMatcher": []
+    },
+    {
+      "label": "UI build",
+      "type": "shell",
+      "command": "npm run build",
+      "options": {
+        "cwd": "${workspaceFolder}/crates/qsf_browser_server/ui"
+      },
+      "group": "build",
+      "problemMatcher": [
+        "$tsc"
+      ]
+    },
+    {
+      "label": "UI dev",
+      "type": "shell",
+      "command": "npm run dev",
+      "options": {
+        "cwd": "${workspaceFolder}/crates/qsf_browser_server/ui"
+      },
+      "isBackground": true,
+      "group": "none",
+      "problemMatcher": []
+    },
+    {
+      "label": "UI test",
+      "type": "shell",
+      "command": "npm test",
+      "options": {
+        "cwd": "${workspaceFolder}/crates/qsf_browser_server/ui"
+      },
+      "group": "test",
+      "problemMatcher": []
+    },
+    {
+      "label": "UI check",
+      "type": "shell",
+      "command": "npm run check",
+      "options": {
+        "cwd": "${workspaceFolder}/crates/qsf_browser_server/ui"
+      },
+      "group": "build",
+      "problemMatcher": [
+        "$tsc"
+      ]
+    },
+    {
+      "label": "UI format",
+      "type": "shell",
+      "command": "npm run fmt",
+      "options": {
+        "cwd": "${workspaceFolder}/crates/qsf_browser_server/ui"
+      },
+      "group": "none",
+      "problemMatcher": []
     }
   ]
 }

@@ -2,20 +2,21 @@ import "./tokens.css";
 import "./ui/layout.css";
 import { api } from "./api";
 import {
+  type Action,
   reduce,
   stateToUrl,
   urlToState,
-  type Action,
   type ViewState,
 } from "./state";
 import { renderFilters } from "./ui/filters";
+import { mustQuery } from "./ui/html";
 import { renderInspector } from "./ui/inspector";
 import { renderList } from "./ui/list";
 import { renderLoadError } from "./ui/loadError";
 import { getSlots, renderShell } from "./ui/shell";
 import { renderToolbar } from "./ui/toolbar";
 
-const root = document.getElementById("app")!;
+const root = mustQuery(document, "#app");
 let state: ViewState = urlToState(window.location.search);
 let storePath = "";
 let reloadSeq = 0;
@@ -53,7 +54,11 @@ let inspectorSeq = 0;
       ++inspectorSeq;
       slots.inspector.innerHTML = `<div style="color:var(--qsf-text-muted)">Select a memory to inspect.</div>`;
     }
-    history.replaceState(null, "", window.location.pathname + stateToUrl(state));
+    history.replaceState(
+      null,
+      "",
+      window.location.pathname + stateToUrl(state),
+    );
   }
 
   function dispatch(action: Action) {

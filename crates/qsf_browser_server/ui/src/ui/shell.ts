@@ -1,3 +1,5 @@
+import { mustQuery } from "./html";
+
 export function renderShell(root: HTMLElement) {
   root.className = "workbench";
   root.innerHTML = `
@@ -17,12 +19,12 @@ export function renderShell(root: HTMLElement) {
 
 export function getSlots(root: HTMLElement) {
   return {
-    top: root.querySelector<HTMLElement>("#top")!,
-    toolbar: root.querySelector<HTMLElement>("#toolbar")!,
-    list: root.querySelector<HTMLElement>("#list")!,
-    canvasSlot: root.querySelector<HTMLElement>("#canvas-slot")!,
-    inspector: root.querySelector<HTMLElement>("#inspector")!,
-    statusbar: root.querySelector<HTMLElement>("#statusbar")!,
+    top: mustQuery(root, "#top"),
+    toolbar: mustQuery(root, "#toolbar"),
+    list: mustQuery(root, "#list"),
+    canvasSlot: mustQuery(root, "#canvas-slot"),
+    inspector: mustQuery(root, "#inspector"),
+    statusbar: mustQuery(root, "#statusbar"),
   };
 }
 

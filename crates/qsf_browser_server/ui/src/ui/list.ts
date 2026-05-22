@@ -12,9 +12,11 @@ export function renderList(
     page.items.map((m) => rowHtml(m, m.id === selectedId)).join("") ||
     `<div style="padding:12px;color:var(--qsf-text-muted)">No memories match the current filters.</div>`;
   el.querySelectorAll<HTMLElement>(".row").forEach((row) => {
-    row.addEventListener("click", () =>
-      dispatch({ type: "select", id: row.dataset.id! }),
-    );
+    row.addEventListener("click", () => {
+      const id = row.dataset.id;
+      if (!id) throw new Error("row missing data-id");
+      dispatch({ type: "select", id });
+    });
   });
 }
 

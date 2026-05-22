@@ -1,5 +1,5 @@
 import type { Action, ViewState } from "../state";
-import { escapeHtml } from "./html";
+import { escapeHtml, mustQuery } from "./html";
 
 const filterInputStyle =
   "background:transparent;color:var(--qsf-text-primary);border:1px solid var(--qsf-border-subtle);padding:2px 6px";
@@ -33,36 +33,38 @@ export function renderFilters(
     <label><input type="checkbox" id="f-missing-lr" ${state.query.missingLastReinforced ? "checked" : ""} /> missing last_reinforced</label>
   `;
 
+  const filterRow = row;
   const sync = () => {
-    const minImportance = row.querySelector<HTMLInputElement>("#f-min-imp")!
-      .value;
+    const minImportance = mustQuery<HTMLInputElement>(
+      filterRow,
+      "#f-min-imp",
+    ).value;
     dispatch({
       type: "setQuery",
       query: {
         kind:
-          row.querySelector<HTMLInputElement>("#f-kind")!.value || undefined,
-        tag: row
-          .querySelector<HTMLInputElement>("#f-tag")!
+          mustQuery<HTMLInputElement>(filterRow, "#f-kind").value || undefined,
+        tag: mustQuery<HTMLInputElement>(filterRow, "#f-tag")
           .value.split(",")
           .map((s) => s.trim())
           .filter(Boolean),
         createdFrom:
-          row.querySelector<HTMLInputElement>("#f-created-from")!.value ||
+          mustQuery<HTMLInputElement>(filterRow, "#f-created-from").value ||
           undefined,
         deltaSince:
-          row.querySelector<HTMLInputElement>("#f-delta-since")!.value ||
+          mustQuery<HTMLInputElement>(filterRow, "#f-delta-since").value ||
           undefined,
         minImportance: minImportance === "" ? undefined : Number(minImportance),
         orphaned:
-          row.querySelector<HTMLInputElement>("#f-orphaned")!.checked ||
+          mustQuery<HTMLInputElement>(filterRow, "#f-orphaned").checked ||
           undefined,
         missingLastReinforced:
-          row.querySelector<HTMLInputElement>("#f-missing-lr")!.checked ||
+          mustQuery<HTMLInputElement>(filterRow, "#f-missing-lr").checked ||
           undefined,
       },
     });
   };
-  row.querySelectorAll("input").forEach((input) =>
-    input.addEventListener("change", sync),
-  );
+  for (const input of row.querySelectorAll("input")) {
+    input.addEventListener("change", sync);
+  }
 }

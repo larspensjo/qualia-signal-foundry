@@ -30,7 +30,7 @@ function qs(params: Record<string, unknown>): string {
   for (const [key, value] of Object.entries(params)) {
     if (value === undefined || value === null || value === "") continue;
     if (Array.isArray(value)) {
-      value.forEach((item) => sp.append(key, String(item)));
+      for (const item of value) sp.append(key, String(item));
     } else {
       sp.set(key, String(value));
     }

@@ -1,7 +1,7 @@
 import { api } from "../api";
 import type { Action } from "../state";
 import type { AssociationDisplay, MemoryDetail } from "../types";
-import { escapeHtml } from "./html";
+import { escapeHtml, mustQuery } from "./html";
 
 export async function renderInspector(
   el: HTMLElement,
@@ -48,16 +48,20 @@ export async function renderInspector(
       }
     });
   });
-  el.querySelector<HTMLButtonElement>("#view-raw")!.addEventListener("click", () =>
+  mustQuery<HTMLButtonElement>(el, "#view-raw").addEventListener("click", () =>
     openRawOverlay(id),
   );
 }
 
 function assocRow(a: AssociationDisplay): string {
-  const broken = a.other_title === null;
+  const titleHtml =
+    a.other_title === null
+      ? `<span class="broken">broken -> ${escapeHtml(a.other_id)}</span>`
+      : escapeHtml(a.other_title);
+  const brokenClass = a.other_title === null ? " broken" : "";
   return `
-    <div class="assoc ${broken ? "broken" : ""}" data-other-id="${escapeHtml(a.other_id)}">
-      <div>${broken ? `<span class="broken">broken -> ${escapeHtml(a.other_id)}</span>` : escapeHtml(a.other_title!)}</div>
+    <div class="assoc${brokenClass}" data-other-id="${escapeHtml(a.other_id)}">
+      <div>${titleHtml}</div>
       <div class="weight">${a.weight.toFixed(2)}</div>
       <div style="color:var(--qsf-text-muted);font-size:12px">${a.last_reinforced_at.slice(0, 10)}</div>
     </div>
@@ -69,7 +73,7 @@ async function openRawOverlay(id: string) {
   overlay.style.cssText =
     "position:fixed;inset:0;background:rgba(5,8,18,0.85);display:flex;align-items:center;justify-content:center;z-index:1000";
   overlay.innerHTML = `<pre style="background:var(--qsf-bg-panel-elevated);padding:24px;max-width:90vw;max-height:90vh;overflow:auto;color:var(--qsf-text-primary);border:1px solid var(--qsf-border-subtle);border-radius:8px">loading...</pre>`;
-  const pre = overlay.querySelector("pre")!;
+  const pre = mustQuery<HTMLPreElement>(overlay, "pre");
   const close = () => {
     document.removeEventListener("keydown", onKeydown);
     overlay.remove();
