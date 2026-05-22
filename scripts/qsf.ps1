@@ -26,6 +26,7 @@ $sampleStore = "crates/qsf_browser_server/tests/fixtures/small-store.json"
 $uiDir = Join-Path $projectRoot "crates/qsf_browser_server/ui"
 $profilesPath = Join-Path $PSScriptRoot "qsf.profiles.json"
 $script:QsfExitCode = 0
+$script:QsfScriptBoundParameters = @{} + $PSBoundParameters
 
 function Format-Command {
     param(
@@ -340,9 +341,9 @@ QSF launcher
 Usage:
   .\scripts\qsf.ps1 help
   .\scripts\qsf.ps1 app [-Experiment <name>] [-LaunchProfile <name>] [-VoiceMemoryFile <path>]
-  .\scripts\qsf.ps1 browser [-Store <path>] [-BindHost <ip>] [-Port <port>]
+  .\scripts\qsf.ps1 browser [<store>] [-Store <path>] [-BindHost <ip>] [-Port <port>]
   .\scripts\qsf.ps1 ui
-  .\scripts\qsf.ps1 workbench [-Store <path>] [-BindHost <ip>] [-Port <port>]
+  .\scripts\qsf.ps1 workbench [<store>] [-Store <path>] [-BindHost <ip>] [-Port <port>]
   .\scripts\qsf.ps1 doctor [-LaunchProfile <name>] [-Workbench]
   .\scripts\qsf.ps1 list experiments
   .\scripts\qsf.ps1 list profiles
@@ -359,7 +360,7 @@ Examples:
   .\scripts\qsf.ps1 app -Experiment text-owned-voice-loop -LaunchProfile file-memory -VoiceMemoryFile docs/Experiments/Fixtures/voice-memory.example.json
   .\scripts\qsf.ps1 browser -Store $sampleStore -BindHost 127.0.0.1 -Port 3939
   .\scripts\qsf.ps1 ui
-  .\scripts\qsf.ps1 workbench
+  .\scripts\qsf.ps1 workbench $sampleStore
   .\scripts\qsf.ps1 doctor -Workbench
   .\scripts\qsf.ps1 list experiments
   .\scripts\qsf.ps1 list profiles
@@ -603,6 +604,18 @@ function Test-BrowserStore {
     }
 }
 
+function Get-BrowserStoreArgument {
+    if ([string]::IsNullOrWhiteSpace($Subject)) {
+        return $Store
+    }
+
+    if ($script:QsfScriptBoundParameters.ContainsKey("Store")) {
+        Write-Error "Specify the browser store either positionally or with -Store, not both."
+    }
+
+    return $Subject
+}
+
 function Invoke-App {
     $delta = Get-ProfileEnvironmentDelta
     if ([string]::IsNullOrWhiteSpace($Experiment)) {
@@ -622,14 +635,24 @@ function Invoke-App {
 }
 
 function Invoke-Browser {
-    Test-BrowserStore -StorePath $Store
+    $storePath = Get-BrowserStoreArgument
+    Test-BrowserStore -StorePath $storePath
+    Invoke-BrowserServer -StorePath $storePath
+}
+
+function Invoke-BrowserServer {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$StorePath
+    )
+
     Invoke-LoggedCommand -Executable "cargo" -Arguments @(
         "run",
         "-p",
         "qsf_browser_server",
         "--",
         "--store",
-        $Store,
+        $StorePath,
         "--host",
         $BindHost,
         "--port",
@@ -643,7 +666,8 @@ function Invoke-Ui {
 }
 
 function Invoke-Workbench {
-    Test-BrowserStore -StorePath $Store
+    $storePath = Get-BrowserStoreArgument
+    Test-BrowserStore -StorePath $storePath
     Test-UiDependencies
 
     $apiUrl = "http://${BindHost}:$Port"
@@ -666,7 +690,7 @@ function Invoke-Workbench {
     Write-Host "UI process PID: $($uiProcess.Id)"
 
     try {
-        Invoke-Browser
+        Invoke-BrowserServer -StorePath $storePath
     }
     finally {
         if ($null -ne $uiProcess -and -not $uiProcess.HasExited) {

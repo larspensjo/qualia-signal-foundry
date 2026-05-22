@@ -184,6 +184,7 @@ The browser defaults are `state/text-loop/memory-store.json`, `127.0.0.1`, and
 
 ```powershell
 .\scripts\qsf.ps1 browser -Store crates/qsf_browser_server/tests/fixtures/small-store.json -BindHost 127.0.0.1 -Port 3939
+.\scripts\qsf.ps1 browser crates/qsf_browser_server/tests/fixtures/small-store.json
 ```
 
 Start the Vite UI from `crates/qsf_browser_server/ui`:
@@ -203,6 +204,7 @@ To start the API in the current terminal and the UI in a separate PowerShell win
 
 ```powershell
 .\scripts\qsf.ps1 workbench
+.\scripts\qsf.ps1 workbench crates/qsf_browser_server/tests/fixtures/small-store.json
 ```
 
 To stop the workbench, press Ctrl+C in the API terminal. The launcher prints the Vite
@@ -274,6 +276,7 @@ The tracked sample store is useful before a local continuity store exists:
 
 ```powershell
 .\scripts\qsf.ps1 browser -Store crates/qsf_browser_server/tests/fixtures/small-store.json
+.\scripts\qsf.ps1 workbench crates/qsf_browser_server/tests/fixtures/small-store.json
 ```
 
 ### OpenAI-backed providers

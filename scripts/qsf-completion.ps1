@@ -208,6 +208,11 @@ $qsfCompleter = {
             return
         }
 
+        if ($nativeContext.Arguments.Count -eq 1 -and $nativeContext.Arguments[0] -in @("browser", "workbench")) {
+            Select-QsfCompletionMatches -Values (Get-QsfCompletionStorePaths) -WordToComplete $wordToComplete
+            return
+        }
+
     }
     catch {
         return

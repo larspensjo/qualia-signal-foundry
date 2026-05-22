@@ -1566,3 +1566,17 @@ What changed:
 Refs: scripts/qsf.ps1, scripts/qsf-completion.ps1,
 scripts/qsf-completion.Tests.ps1, scripts/project-stats.ps1, README.md,
 docs/Plans/Plan.PowerShellLauncher.md
+
+## 2026-05-22 - Positional browser store launcher argument
+
+The PowerShell launcher now accepts the memory-store path as a positional argument
+for browser launches, matching the way the command is commonly typed.
+
+What changed:
+- `browser <store>` and `workbench <store>` now pass the positional store path through
+  to `qsf_browser_server` instead of leaving the default store in place.
+- The launcher rejects ambiguous use of both positional store and `-Store`.
+- Completion and README examples now cover positional store paths.
+
+Refs: scripts/qsf.ps1, scripts/qsf-completion.ps1,
+scripts/qsf-completion.Tests.ps1, README.md

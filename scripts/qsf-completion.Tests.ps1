@@ -75,6 +75,14 @@ Describe "qsf.ps1 argument completion" {
         $completions | Should -Contain "crates/qsf_browser_server/tests/fixtures/small-store.json"
     }
 
+    It "completes positional store paths for browser and workbench" {
+        $browserCompletions = Complete-QsfInput -InputText ".\scripts\qsf.ps1 browser "
+        $workbenchCompletions = Complete-QsfInput -InputText ".\scripts\qsf.ps1 workbench "
+
+        $browserCompletions | Should -Contain "crates/qsf_browser_server/tests/fixtures/small-store.json"
+        $workbenchCompletions | Should -Contain "crates/qsf_browser_server/tests/fixtures/small-store.json"
+    }
+
     It "completes bind host values" {
         $completions = Complete-QsfInput -InputText ".\scripts\qsf.ps1 browser -BindHost "
 
