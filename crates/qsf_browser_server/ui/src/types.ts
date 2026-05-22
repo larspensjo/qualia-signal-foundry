@@ -82,6 +82,22 @@ export interface MemoryPage {
   items: MemoryListItem[];
 }
 
+export interface SessionSearchItem {
+  kind: "turn" | "turn_summary" | "recalled_turn";
+  turn_index: number;
+  title: string;
+  excerpt: string;
+}
+
+export interface SessionSearchResponse {
+  available: boolean;
+  path: string;
+  session_id: string | null;
+  total: number;
+  items: SessionSearchItem[];
+  message: string | null;
+}
+
 export type LoadError =
   | { kind: "missing_file"; path: string; message: string }
   | { kind: "invalid_json"; path: string; message: string }

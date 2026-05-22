@@ -5,6 +5,7 @@ use axum::Router;
 use crate::cli::Args;
 use crate::health;
 use crate::memory::routes;
+use crate::session_context;
 use crate::state::AppState;
 use crate::web;
 
@@ -19,6 +20,7 @@ pub async fn serve(args: Args) -> anyhow::Result<()> {
         .merge(web::router())
         .merge(health::router())
         .merge(routes::router())
+        .merge(session_context::router())
         .with_state(state);
 
     let addr = SocketAddr::new(args.host, args.port);
@@ -30,6 +32,10 @@ pub async fn serve(args: Args) -> anyhow::Result<()> {
 
 fn log_startup_summary(args: &Args, state: &AppState) {
     log::info!("memory store path: {}", state.store_path().display());
+    log::info!(
+        "session state path: {}",
+        state.session_state_path().display()
+    );
     match state.loaded() {
         Ok(loaded) => log::info!(
             "store loaded: {} records, {} associations",

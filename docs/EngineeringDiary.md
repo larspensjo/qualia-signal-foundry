@@ -1620,3 +1620,46 @@ Observed:
   production-limit radial layouts, neighbor deduplication, and edge-width scaling.
 
 Refs: crates/qsf_browser_server/ui
+
+## 2026-05-22 - Memory browser recent activity sort
+
+The memory browser now makes live-session reinforcement visible in the default list
+view instead of showing only creation dates for reused records.
+
+What changed:
+- Added a `recent_activity` memory-list sort based on `last_reinforced_at` with
+  `created_at` fallback.
+- Made the workbench default to recent activity and added row metadata that says
+  `reinforced YYYY-MM-DD` when a memory was touched after creation.
+- Added backend and UI regression coverage for the new sort/default behavior.
+
+Observed:
+- The `2026-05-22-160302-multi-turn-text-loop` run reinforced existing memories in
+  `state\qa-memory-browser-real\memory-store.json`; it did not create accepted new
+  records for the May 22 conversation text.
+
+Refs: crates/qsf_browser_server/src/memory/filters.rs,
+crates/qsf_browser_server/tests/data_endpoints.rs,
+crates/qsf_browser_server/ui
+
+## 2026-05-22 - Session context search in memory browser
+
+The memory browser can now surface text that exists in the adjacent
+`session-state.json` but has not been promoted into accepted cross-session memory.
+
+What changed:
+- Added a read-only `/api/session/search` endpoint that searches session turns,
+  summarized turns, and recalled-turn text from `session-state.json` next to the
+  selected memory store.
+- The workbench search now shows separate "Session context matches" beneath accepted
+  memory results, keeping transient session context visually distinct from durable
+  memory records.
+- Added regression coverage for finding an `Ari` turn summary in session state.
+
+Observed:
+- The `Ari` text from `state\qa-memory-browser-real\session-state.json` is session
+  continuity state, not a record in `memory-store.json`; it will not appear as an
+  accepted memory until a sleep/promotion path creates a store record.
+
+Refs: crates/qsf_browser_server/src/session_context.rs,
+crates/qsf_browser_server/ui, crates/qsf_browser_server/tests/data_endpoints.rs

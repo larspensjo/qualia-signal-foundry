@@ -132,6 +132,17 @@ pub fn sort_records<'a>(
     index: &Index<'a>,
 ) {
     match sort.unwrap_or("newest") {
+        "recent_activity" => records.sort_by(|a, b| {
+            activity_at(b)
+                .cmp(&activity_at(a))
+                .then_with(|| {
+                    b.last_reinforced_at
+                        .is_some()
+                        .cmp(&a.last_reinforced_at.is_some())
+                })
+                .then_with(|| b.created_at.cmp(&a.created_at))
+                .then_with(|| a.id.cmp(&b.id))
+        }),
         "oldest" => records.sort_by_key(|a| a.created_at),
         "most_reinforced" => {
             records.sort_by_key(|b| Reverse(b.reinforcement_count));
@@ -158,6 +169,10 @@ pub fn sort_records<'a>(
         "largest_tokens" => records.sort_by_key(|b| Reverse(b.estimated_tokens)),
         _ => records.sort_by_key(|b| Reverse(b.created_at)),
     }
+}
+
+fn activity_at(record: &MemoryRecord) -> OffsetDateTime {
+    record.last_reinforced_at.unwrap_or(record.created_at)
 }
 
 pub fn paginate<'a>(
@@ -448,6 +463,9 @@ mod tests {
         let mut all = filter_records(&store, &idx, &query);
         sort_records(&mut all, Some("newest"), &idx);
         assert_eq!(ids(&all), vec!["b", "a", "c"]);
+
+        sort_records(&mut all, Some("recent_activity"), &idx);
+        assert_eq!(ids(&all), vec!["a", "b", "c"]);
 
         sort_records(&mut all, Some("oldest"), &idx);
         assert_eq!(ids(&all), vec!["c", "a", "b"]);

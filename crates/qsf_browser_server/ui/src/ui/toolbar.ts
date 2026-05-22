@@ -18,6 +18,7 @@ export function renderToolbar(
       <code id="store-path" style="color:var(--qsf-signal-context)"></code>
       <input id="q" placeholder="search or paste id" style="flex:1;${inputStyle}" />
       <select id="sort" style="${controlStyle}">
+        <option value="recent_activity">recent activity</option>
         <option value="newest">newest</option>
         <option value="oldest">oldest</option>
         <option value="most_reinforced">most reinforced</option>
@@ -55,7 +56,7 @@ export function renderToolbar(
   if (document.activeElement !== q && q.value !== desiredQ) q.value = desiredQ;
 
   const sort = mustQuery<HTMLSelectElement>(el, "#sort");
-  const desiredSort = state.query.sort ?? "newest";
+  const desiredSort = state.query.sort ?? "recent_activity";
   if (sort.value !== desiredSort) sort.value = desiredSort;
 
   const toggle = mustQuery<HTMLButtonElement>(el, "#toggle-filters");

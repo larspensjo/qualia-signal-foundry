@@ -91,6 +91,36 @@
   font-size: 12px;
 }
 
+.session-matches {
+  border-top: 1px solid var(--qsf-border-subtle);
+}
+
+.session-heading {
+  color: var(--qsf-signal-context);
+  font-size: 12px;
+  padding: 8px 10px 4px;
+  text-transform: uppercase;
+}
+
+.session-row {
+  border-bottom: 1px solid rgba(172, 215, 255, 0.08);
+  padding: 6px 10px;
+}
+
+.session-excerpt {
+  color: var(--qsf-text-secondary);
+  font-size: 12px;
+  line-height: 18px;
+  margin-top: 4px;
+  white-space: pre-wrap;
+}
+
+.session-empty {
+  color: var(--qsf-text-muted);
+  font-size: 12px;
+  padding: 4px 10px 10px;
+}
+
 .assoc {
   display: grid;
   grid-template-columns: 1fr 60px 140px;

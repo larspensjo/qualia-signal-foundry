@@ -6,6 +6,7 @@ pub mod cli;
 pub mod health;
 pub mod memory;
 pub mod server;
+pub mod session_context;
 pub mod state;
 pub mod web;
 

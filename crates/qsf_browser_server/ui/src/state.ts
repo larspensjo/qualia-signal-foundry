@@ -8,7 +8,7 @@ export interface ViewState {
 
 export const initialState: ViewState = {
   selectedId: null,
-  query: { sort: "newest", limit: 50 },
+  query: { sort: "recent_activity", limit: 50 },
   filtersExpanded: false,
 };
 
@@ -91,7 +91,7 @@ export function urlToState(search: string): ViewState {
   set("offset", Number);
   return {
     selectedId: sp.get("id"),
-    query: { sort: "newest", limit: 50, ...query },
+    query: { sort: "recent_activity", limit: 50, ...query },
     filtersExpanded: false,
   };
 }

@@ -3,6 +3,7 @@ import type {
   MemoryDetail,
   MemoryPage,
   Neighborhood,
+  SessionSearchResponse,
   StoreSummary,
 } from "./types";
 
@@ -84,4 +85,6 @@ export const api = {
     getJson<Neighborhood>(
       `/api/memories/${encodeURIComponent(id)}/neighborhood?limit=${limit}`,
     ),
+  searchSession: (q: string) =>
+    getJson<SessionSearchResponse>(`/api/session/search${qs({ q })}`),
 };

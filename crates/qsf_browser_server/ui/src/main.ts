@@ -42,9 +42,12 @@ let canvasSeq = 0;
     const seq = ++reloadSeq;
     renderToolbar(slots.toolbar, state, storePath || "(store)", dispatch);
     renderFilters(slots.top, state, dispatch);
-    const page = await api.listMemories(state.query);
+    const [page, sessionSearch] = await Promise.all([
+      api.listMemories(state.query),
+      state.query.q ? api.searchSession(state.query.q) : Promise.resolve(null),
+    ]);
     if (seq !== reloadSeq) return;
-    renderList(slots.list, page, state.selectedId, dispatch);
+    renderList(slots.list, page, state.selectedId, dispatch, sessionSearch);
     if (state.selectedId) {
       const detailSeq = ++inspectorSeq;
       const selectedId = state.selectedId;
