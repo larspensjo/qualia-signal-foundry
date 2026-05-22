@@ -1591,3 +1591,32 @@ What changed:
 - Updated the launcher UI line and README so the Vite workbench URL is explicit.
 
 Refs: crates/qsf_browser_server/src/web.rs, scripts/qsf.ps1, README.md
+
+## 2026-05-22 - Memory browser focal-hub canvas
+
+The browser workbench now renders the selected memory's local neighborhood through
+a PixiJS canvas instead of the Phase 3 placeholder.
+
+What changed:
+- Added PixiJS to the UI dependencies and introduced a pure radial layout helper
+  with focused Vitest coverage.
+- Added a focal-hub scene that draws weighted association edges, dashed broken
+  edges, neighbor labels, hover tooltips, and click-to-select navigation through
+  the existing reducer action flow.
+- Wired the canvas into the existing async reload sequencing and added explicit
+  Pixi scene cleanup when the selection is cleared or neighborhood loading fails.
+- Applied review follow-up for defensive cleanup after Pixi init failures, retained
+  the scene across transient neighborhood-fetch failures, fixed the broken-node
+  cursor, enabled HiDPI canvas density, and extracted tested edge-mapping helpers.
+
+Observed:
+- `npm run build` passes with Vite's expected large-chunk warning after adding PixiJS.
+- The fixture API smoke path returns a neighborhood containing both a normal edge
+  and a broken `ghost` edge for canvas verification.
+- The project owner confirmed the fixture canvas visually renders the focal hub,
+  normal edge, dashed broken edge, and readable `Alpha`, `Beta`, and `ghost`
+  labels. Real-store legibility remains useful to check during regular use.
+- Review follow-up expanded the UI test suite to cover single-neighbor, zero-radius,
+  production-limit radial layouts, neighbor deduplication, and edge-width scaling.
+
+Refs: crates/qsf_browser_server/ui

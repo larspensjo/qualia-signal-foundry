@@ -6,7 +6,7 @@
 
 **Architecture:** A new `qsf_memory` shared crate owns memory record / association types, schema validation, and the two-pass loader. A new `qsf_browser_server` axum binary depends on `qsf_memory`, exposes a read-only visualization API under `/api/*`, and serves a TypeScript/Vite/PixiJS frontend (HTML/CSS workbench + small PixiJS canvas for the selected memory's neighborhood).
 
-**Tech Stack:** Rust (axum, clap, tokio, serde_json, rust-embed behind a feature flag), TypeScript, Vite, PixiJS/WebGL, HTML/CSS.
+**Tech Stack:** Rust (axum, clap, tokio, serde_json), TypeScript, Vite, PixiJS/WebGL, HTML/CSS. A single-binary embedded frontend remains an optional future distribution path, not a required part of this plan.
 
 **Refs:** [Design.MemoryAssociationBrowser.md](Design.MemoryAssociationBrowser.md), [Design.SharedVisualLanguage.md](Design.SharedVisualLanguage.md), [DecisionLog.md](../DecisionLog.md) entry `2026-05-20 - Post-hoc browser tools use Rust backend + browser frontend split`.
 
@@ -14,7 +14,7 @@
 
 ## Status
 
-Active. Phase 3 implementation complete; external human verification pending.
+Active. Phase 4 implementation and external human verification complete; commit pending. Phase 5 has been narrowed to launcher/distribution closeout because `scripts/qsf.ps1` now provides the supported local workbench packaging path.
 
 ## Core Invariants
 
@@ -50,11 +50,11 @@ Then add a single diary entry at the end of the phase (not per task) and commit.
 
 Per [docs/ProjectFrame/ProjectWorkflow.md](../ProjectFrame/ProjectWorkflow.md):
 
-- `docs/EngineeringDiary.md` — one entry per phase (Phases 0–5).
+- `docs/EngineeringDiary.md` — one entry per implementation phase. Plan-only edits do not need diary entries per the diary's own instructions.
 - `docs/DecisionLog.md` — the architecture decision is already in place (`2026-05-20 - Post-hoc browser tools use Rust backend + browser frontend split`). No further entries expected from this plan unless implementation surprises produce a durable rule.
 - `docs/Plans/Idea.MemoryAssociationBrowser.md` — add a one-line note at the top pointing to `Design.MemoryAssociationBrowser.md` once Phase 0 lands.
 - `docs/Architecture/` — optional new entry after Phase 4 describing the `qsf_app` / `qsf_memory` / `qsf_browser_server` boundary, once shipping code exists.
-- `README.md` — usage section updated in Phase 5.
+- `README.md` — launcher-first usage section is already present; Phase 5 verifies it remains accurate.
 
 ---
 
@@ -3265,7 +3265,7 @@ Replace the canvas placeholder with a PixiJS scene showing the selected memory's
 - Modify: `crates/qsf_browser_server/ui/package.json`
 - Create: `crates/qsf_browser_server/ui/src/canvas/radial.ts`
 
-- [ ] **Step 1: Install PixiJS**
+- [x] **Step 1: Install PixiJS**
 
 In `crates/qsf_browser_server/ui/`:
 
@@ -3273,7 +3273,7 @@ In `crates/qsf_browser_server/ui/`:
 npm install pixi.js@8
 ```
 
-- [ ] **Step 2: Write the pure radial layout**
+- [x] **Step 2: Write the pure radial layout**
 
 ```ts
 // src/canvas/radial.ts
@@ -3305,10 +3305,12 @@ export function radialPositions(count: number, radius: number): NeighborLayout[]
 }
 ```
 
-- [ ] **Step 3: Verify**
+- [x] **Step 3: Verify**
 
 Run: `npm run build`
 Expected: typechecks and bundles.
+
+Implementation note: `npm run build`, `npm run check`, and `npm test` pass; the radial helper has focused Vitest coverage, including single-neighbor, zero-radius, and production-limit cases.
 
 ### Task 4.2: PixiJS focal-hub scene
 
@@ -3316,7 +3318,7 @@ Expected: typechecks and bundles.
 - Create: `crates/qsf_browser_server/ui/src/canvas/focalHub.ts`
 - Modify: `crates/qsf_browser_server/ui/src/main.ts`
 
-- [ ] **Step 1: Write the scene**
+- [x] **Step 1: Write the scene**
 
 ```ts
 // src/canvas/focalHub.ts
@@ -3475,7 +3477,7 @@ function drawDashed(g: Graphics, x1: number, y1: number, x2: number, y2: number,
 }
 ```
 
-- [ ] **Step 2: Wire into `main.ts`**
+- [x] **Step 2: Wire into `main.ts`**
 
 In `crates/qsf_browser_server/ui/src/main.ts`, replace the bootstrap body's `reload()` so that on `state.selectedId` change it also fetches the neighborhood and renders into the canvas slot:
 
@@ -3507,216 +3509,107 @@ async function reload() {
 }
 ```
 
-- [ ] **Step 3: Verify**
+- [x] **Step 3: Verify**
 
 Run `npm run build`, then start the browser workbench with `.\scripts\qsf.ps1 workbench` or the raw API + Vite commands and select a memory. Expected: the canvas shows the focal hub with up to 8 neighbors. Broken edges render dashed with the truncated `other_id`. Clicking a non-broken neighbor changes the selection and updates list, inspector, canvas, and URL.
 
-- [ ] **Step 4: External human verification**
+Implementation note: `npm run build`, `npm run check`, and `npm test` pass. The raw API + Vite smoke path was started against `crates/qsf_browser_server/tests/fixtures/small-store.json`; `/api/health`, `/api/memories`, `/api/memories/a/neighborhood?limit=8`, and the Vite root returned successfully, including a fixture neighborhood with one broken `ghost` edge. In-app browser automation was unavailable in this session, so visual canvas interaction remained an external human verification item. Review follow-up fixed Pixi init-failure cleanup, retained the scene across transient neighborhood-fetch failures, fixed the broken-node cursor, enabled HiDPI canvas density, and extracted tested edge-mapping helpers.
+
+Human verification note: The project owner confirmed the fixture canvas renders the focal hub, a normal edge, a dashed broken edge, and readable labels for `Alpha`, `Beta`, and `ghost`.
+
+- [x] **Step 4: External human verification**
 
 Ask the project owner to navigate through several memories in the real store, confirm the focal hub stays legible, and confirm broken edges render distinctly.
 
 ### Task 4.3: Close out Phase 4
 
-- [ ] Standard closing steps.
-- [ ] Diary entry covering the PixiJS focal-hub canvas and broken-edge rendering.
+- [x] Standard closing steps.
+- [x] Diary entry covering the PixiJS focal-hub canvas and broken-edge rendering.
 - [ ] Commit: `feat(qsf_browser_server-ui): PixiJS focal-hub canvas with broken edges`.
 
 ---
 
-## Phase 5: Packaging
+## Phase 5: Launcher and distribution closeout
 
-Make the release binary self-contained without making `cargo build` depend on npm.
+`scripts/qsf.ps1` now covers the supported local workbench packaging path. It starts
+the Rust API and the Vite UI together, checks local prerequisites through `doctor`,
+and documents the underlying commands. That did not exist when the original Phase 5
+was written, so the single-binary `embedded-frontend` work is no longer required for
+this plan.
 
-### Task 5.1: `embedded-frontend` Cargo feature
+Current recommendation:
+- Use `.\scripts\qsf.ps1 workbench` as the default local workbench launch path.
+- Keep `cargo build` and `cargo clippy --all-targets -- -D warnings` independent of
+  Node/npm.
+- Defer embedded static assets until there is a concrete distribution need, such as
+  handing off one executable to a non-developer or producing release artifacts.
+- Do not add a `build.rs` that shells out to npm.
 
-**Files:**
-- Modify: `crates/qsf_browser_server/Cargo.toml` (feature already declared in Phase 1)
-- Create: `crates/qsf_browser_server/src/assets.rs`
-- Modify: `crates/qsf_browser_server/src/lib.rs`
-- Modify: `crates/qsf_browser_server/src/server.rs`
-
-- [ ] **Step 1: Asset module behind the feature**
-
-```rust
-// crates/qsf_browser_server/src/assets.rs
-//! Optional static asset serving for the built frontend.
-//!
-//! Behind the `embedded-frontend` feature. When the feature is off,
-//! the server still runs and serves /api/*; / returns a small text page
-//! pointing the user to either the dev server or the build step.
-
-#[cfg(feature = "embedded-frontend")]
-mod embedded {
-    use axum::body::Body;
-    use axum::http::{Response, StatusCode, header};
-    use axum::response::IntoResponse;
-    use rust_embed::Embed;
-
-    #[derive(Embed)]
-    #[folder = "ui/dist/"]
-    struct Assets;
-
-    pub async fn serve(uri: axum::http::Uri) -> impl IntoResponse {
-        let mut path = uri.path().trim_start_matches('/').to_string();
-        if path.is_empty() {
-            path = "index.html".to_string();
-        }
-        match Assets::get(&path) {
-            Some(content) => {
-                let mime = mime_guess::from_path(&path).first_or_octet_stream();
-                Response::builder()
-                    .header(header::CONTENT_TYPE, mime.as_ref())
-                    .body(Body::from(content.data.into_owned()))
-                    .unwrap()
-            }
-            None => {
-                if path != "index.html" {
-                    // SPA fallback
-                    if let Some(content) = Assets::get("index.html") {
-                        return Response::builder()
-                            .header(header::CONTENT_TYPE, "text/html")
-                            .body(Body::from(content.data.into_owned()))
-                            .unwrap();
-                    }
-                }
-                Response::builder()
-                    .status(StatusCode::NOT_FOUND)
-                    .body(Body::from("not found"))
-                    .unwrap()
-            }
-        }
-    }
-}
-
-#[cfg(not(feature = "embedded-frontend"))]
-mod placeholder {
-    use axum::response::Html;
-    pub async fn serve(_uri: axum::http::Uri) -> Html<&'static str> {
-        Html(r#"
-            <html><body style="background:#050812;color:#eaf6ff;font-family:system-ui;padding:32px">
-              <h2 style="color:#7de3ff">QSF Memory Association Browser — API running</h2>
-              <p>This build does not include the embedded frontend.</p>
-              <p>For development: run <code>npm run dev</code> in <code>crates/qsf_browser_server/ui/</code> and open <a href="http://localhost:5173">http://localhost:5173</a>.</p>
-              <p>For a single-binary build: from <code>crates/qsf_browser_server/ui/</code> run <code>npm install &amp;&amp; npm run build</code>, then rebuild with <code>cargo build --release -p qsf_browser_server --features embedded-frontend</code>.</p>
-            </body></html>
-        "#)
-    }
-}
-
-#[cfg(feature = "embedded-frontend")]
-pub use embedded::serve;
-#[cfg(not(feature = "embedded-frontend"))]
-pub use placeholder::serve;
-```
-
-- [ ] **Step 2: Wire the assets handler into the router**
-
-In `crates/qsf_browser_server/src/lib.rs`:
-
-```rust
-pub mod assets;
-```
-
-In `crates/qsf_browser_server/src/server.rs`, append the static asset fallback at the end of the router chain:
-
-```rust
-use axum::routing::get;
-
-let app = Router::new()
-    .merge(health::router())
-    .merge(routes::router())
-    .fallback(get(crate::assets::serve))
-    .with_state(state);
-```
-
-- [ ] **Step 3: Verify Rust-only build works without npm**
-
-In a clean environment (or after `rm -rf crates/qsf_browser_server/ui/node_modules crates/qsf_browser_server/ui/dist`):
-
-```bash
-cargo build -p qsf_browser_server
-cargo clippy --all-targets -- -D warnings
-```
-
-Expected: both succeed without invoking npm.
-
-### Task 5.2: Verify the embedded build path
-
-- [ ] **Step 1: Build frontend then enable the feature**
-
-```bash
-cd crates/qsf_browser_server/ui
-npm install
-npm run build
-cd ../../..
-cargo build --release -p qsf_browser_server --features embedded-frontend
-./target/release/qsf_browser_server &
-curl -s http://127.0.0.1:3939/api/health
-curl -s http://127.0.0.1:3939/ | head -3
-```
-
-Expected: the single binary serves both `/api/*` and the workbench HTML.
-
-- [ ] **Step 2: External human verification**
-
-Ask the project owner to run the embedded binary against the real store, navigate the workbench, and confirm the canvas and inspector both work.
-
-### Task 5.3: README usage section
+### Task 5.1: Confirm launcher-first usage
 
 **Files:**
-- Modify: `README.md`
+- Read: `scripts/qsf.ps1`
+- Read: `README.md`
 
-- [ ] **Step 1: Add a section near the existing usage docs**
+- [ ] **Step 1: Verify the launcher path**
 
-Append a new section:
+Run:
 
-```markdown
-## Memory Association Browser
-
-`qsf_browser_server` is a read-only HTTP workbench for inspecting the persisted
-memory store.
-
-Default development loop:
-
-```bash
-.\scripts\qsf.ps1 workbench
+```powershell
+.\scripts\qsf.ps1 doctor -Workbench
+.\scripts\qsf.ps1 workbench crates/qsf_browser_server/tests/fixtures/small-store.json
 ```
 
-Raw fallback/reference commands:
+Expected: `doctor -Workbench` reports the relevant local prerequisites, and
+`workbench` starts the API plus Vite UI using the fixture store.
 
-```bash
-# Shell 1
-cargo run -p qsf_browser_server                 # serves /api/* on :3939
+- [ ] **Step 2: Verify README accuracy**
 
-# Shell 2
-cd crates/qsf_browser_server/ui
-npm install                                     # first time only
-npm run dev                                     # opens http://localhost:5173
-```
+Check that the README's Memory Association Browser section points to:
+- `.\scripts\qsf.ps1 browser`
+- `.\scripts\qsf.ps1 ui`
+- `.\scripts\qsf.ps1 workbench`
+- raw Cargo + npm fallback commands
 
-Single-binary release:
+Expected: README presents the launcher as the happy path and keeps raw commands as
+debugging/reference commands.
 
-```bash
-cd crates/qsf_browser_server/ui && npm install && npm run build
-cd -
-cargo build --release -p qsf_browser_server --features embedded-frontend
-./target/release/qsf_browser_server                # serves API + workbench on :3939
-```
+### Task 5.2: Defer the embedded frontend path
 
-Use `--store <path>` to point at a different memory store. The default is
-`state/text-loop/memory-store.json`. The server binds to `127.0.0.1` unless
-`--host <addr>` is passed; non-loopback binds log a disclosure warning.
-```
+**Files:**
+- Read: `crates/qsf_browser_server/Cargo.toml`
 
-- [ ] **Step 2: Verify**
+- [ ] **Step 1: Record current scope**
 
-Render the README in your editor; check that the new section is well-formed and the commands match what was used in Tasks 5.1 and 5.2.
+Confirm that the release-binary embedding work is intentionally deferred. The
+`embedded-frontend` feature may remain predeclared in `Cargo.toml`, but this plan does
+not require `qsf_browser_server` to serve `ui/dist` yet.
 
-### Task 5.4: Close out Phase 5
+Expected: there is no implementation task in this plan for `assets.rs`, router
+fallbacks, or `rust_embed` wiring.
 
-- [ ] Standard closing steps.
-- [ ] Diary entry covering the `embedded-frontend` feature and the README update.
-- [ ] Commit: `feat(qsf_browser_server): embedded-frontend feature and README usage section`.
+- [ ] **Step 2: Capture the future trigger**
+
+If a single executable becomes necessary later, create a small follow-up plan with
+these acceptance criteria:
+- `cargo build -p qsf_browser_server` works without Node/npm or `ui/dist`.
+- `npm run build` creates frontend assets.
+- `cargo build --release -p qsf_browser_server --features embedded-frontend` embeds
+  those assets.
+- The release binary serves both `/api/*` and the workbench HTML.
+- Human verification confirms the embedded workbench works against a real store.
+
+### Task 5.3: Close out Phase 5
+
+- [ ] `cargo build`
+- [ ] `cargo clippy --all-targets -- -D warnings`
+- [ ] `cargo fmt`
+- [ ] From `crates/qsf_browser_server/ui/`: `npm run check`
+- [ ] From `crates/qsf_browser_server/ui/`: `npm run fmt`
+- [ ] External human verification: launch `.\scripts\qsf.ps1 workbench` against the
+      real store and confirm list, inspector, filters, URL state, and focal-hub canvas
+      remain usable.
+- [ ] Commit: `docs(memory-browser): close out launcher-first packaging plan`.
 
 - [ ] **Final step — update `Idea.MemoryAssociationBrowser.md`** with a top-of-file pointer to the design document, e.g.:
 
@@ -3732,7 +3625,7 @@ Render the README in your editor; check that the new section is well-formed and 
 
 ## Open Questions Surfaced During Planning
 
-- The Idea document's "delta-since" filter is included in the API but does not appear in the compact filter row UI in Phase 3 (it is reachable via URL). Decide whether to surface it in the row during Phase 3 or defer to Phase 5 polish.
+- The Idea document's "delta-since" filter is included in the API but does not appear in the compact filter row UI in Phase 3 (it is reachable via URL). Decide whether to surface it in the row in a focused follow-up.
 - The toolbar in Phase 3 currently shows a literal `(store)` label because the API does not yet expose the active store path. Decide whether to add `store_path` to `/api/store/summary` or `/api/health` for the toolbar (small backend change) before Phase 3 closes.
 - Phase 3 does not include automated frontend tests. If Vitest is wanted, add it as a follow-up; the URL state round-trip is the natural first test.
 - The toolbar's id-jump behavior is not yet wired (the `q` field is treated only as keyword search). A small enhancement in `main.ts` should detect an exact id match in the current page and emit `select` instead of leaving it as a search term. Track as Phase 3 follow-up.

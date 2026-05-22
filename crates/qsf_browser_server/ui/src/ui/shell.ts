@@ -9,7 +9,7 @@ export function renderShell(root: HTMLElement) {
     <div class="main">
       <div class="list" id="list"></div>
       <div class="right">
-        <div class="canvas-slot" id="canvas-slot">Canvas placeholder - focal hub lands in Phase 4</div>
+        <div class="canvas-slot" id="canvas-slot">Select a memory to see its neighborhood.</div>
         <div class="inspector" id="inspector">Select a memory to inspect.</div>
       </div>
     </div>
