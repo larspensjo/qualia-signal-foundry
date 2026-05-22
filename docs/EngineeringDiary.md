@@ -1427,3 +1427,29 @@ What changed:
 - Excluded `node_modules`, `dist`, `target`, `runs`, and `state` paths from authored file counts.
 
 Refs: scripts/project-stats.ps1
+
+## 2026-05-22 - PowerShell launcher baseline
+
+Added the first PowerShell launcher for local development commands while keeping the
+underlying Cargo and npm commands visible.
+
+What changed:
+- Added `scripts/qsf.ps1` with `help`, `app`, `browser`, `ui`, `workbench`, and
+  `list experiments` commands.
+- Set the launcher runtime to PowerShell 7.6 and made the workbench UI child
+  process start through `pwsh`.
+- Documented launcher usage in the README alongside the raw Cargo commands.
+- Captured the Phase 0 command inventory used by this baseline: `qsf_app`
+  experiment IDs, runtime `QSF_*` groups for model, transcript, realtime voice,
+  speech output, memory, session, state, and review flow, browser-server
+  `--store` / `--host` / `--port`, and UI `dev` / `build` / `test` / `preview`
+  scripts.
+
+Observed:
+- The default browser store is absent in this checkout, so the launcher correctly
+  points users at the tracked sample store before starting Cargo.
+- The workbench command starts the UI by re-entering the launcher in a separate
+  visible PowerShell process, then runs the API in the current terminal.
+
+Refs: scripts/qsf.ps1, README.md, crates/qsf_browser_server/src/cli.rs,
+crates/qsf_browser_server/ui/package.json

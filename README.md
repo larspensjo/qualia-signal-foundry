@@ -78,7 +78,7 @@ Recommended development environment:
 - Rust
 - Git
 - Visual Studio Code or another Rust-capable editor
-- A terminal such as PowerShell, Windows Terminal, or equivalent
+- PowerShell 7.6 (`pwsh`) in Windows Terminal or an equivalent terminal
 
 Check the Rust installation with:
 
@@ -113,6 +113,54 @@ Run tests:
 ```powershell
 cargo test
 ```
+
+### PowerShell launcher
+
+On Windows, common local launches can use the repository launcher:
+
+```powershell
+pwsh -NoProfile -File .\scripts\qsf.ps1 help
+.\scripts\qsf.ps1 help
+.\scripts\qsf.ps1 list experiments
+.\scripts\qsf.ps1 app -Experiment multi-turn-text-loop
+```
+
+The launcher requires PowerShell 7.6 or newer.
+
+Start the memory browser API with the default store, host, and port:
+
+```powershell
+.\scripts\qsf.ps1 browser
+```
+
+The browser defaults are `state/text-loop/memory-store.json`, `127.0.0.1`, and
+`3939`. To use the tracked sample store instead:
+
+```powershell
+.\scripts\qsf.ps1 browser -Store crates/qsf_browser_server/tests/fixtures/small-store.json -BindHost 127.0.0.1 -Port 3939
+```
+
+Start the Vite UI from `crates/qsf_browser_server/ui`:
+
+```powershell
+.\scripts\qsf.ps1 ui
+```
+
+If UI dependencies are missing, run:
+
+```powershell
+cd crates/qsf_browser_server/ui
+npm install
+```
+
+To start the API in the current terminal and the UI in a separate PowerShell window:
+
+```powershell
+.\scripts\qsf.ps1 workbench
+```
+
+The launcher prints the underlying Cargo or npm command before execution. Raw
+commands still work and remain useful when debugging.
 
 List the experiments available in this build:
 

@@ -2,7 +2,7 @@
 
 ## Status
 
-Planned. No implementation has started yet.
+Phase 1 minimal single-script launcher is implemented.
 
 ## Goal
 
@@ -66,6 +66,7 @@ automatic `$Host` variable. It still forwards to the Rust server's `--host` flag
 - Keep one primary launcher script: `scripts/qsf.ps1`.
 - Keep the Rust CLIs independently runnable.
 - Treat profiles as explicit launch presets, not hidden global defaults.
+- Require PowerShell 7.6 (`pwsh`) for launcher execution.
 - Prefer readable PowerShell over a framework-heavy task runner.
 - Make default commands exercise useful local paths.
 - Keep secret values out of checked-in files.
@@ -106,6 +107,8 @@ real operator feedback.
   pressing Ctrl+C in the API terminal and closing the separate Vite PowerShell window.
 - Phase 1 supports `-BindHost`, not `-Host`, while forwarding to
   `qsf_browser_server --host`.
+- Phase 1 requires PowerShell 7.6 and starts the workbench UI child process with
+  `pwsh`, not Windows PowerShell.
 - Phase 1 `browser` detects a missing default store before starting Cargo and points
   the user at `crates/qsf_browser_server/tests/fixtures/small-store.json` as a known
   sample store.
@@ -136,6 +139,10 @@ Capture the actual launch surface before scripting it.
 
 Fill this subsection before Phase 1 implementation begins. This inventory is the
 durable reference for the first launcher version.
+
+Verified on 2026-05-22 from `cargo run -p qsf_app -- list-experiments`, `QSF_*`
+references under `crates/`, `crates/qsf_browser_server/src/cli.rs`, and
+`crates/qsf_browser_server/ui/package.json`.
 
 - Experiment IDs:
   - `framework-skeleton-mvp`
@@ -207,22 +214,22 @@ durable reference for the first launcher version.
 
 ### Tasks
 
-- [ ] Inventory current `qsf_app` experiment names by running:
+- [x] Inventory current `qsf_app` experiment names by running:
 
 ```powershell
 cargo run -p qsf_app -- list-experiments
 ```
 
-- [ ] Inventory all current `QSF_*` environment variables used by the code.
-- [ ] Inventory `qsf_browser_server` flags from `crates/qsf_browser_server/src/cli.rs`.
-- [ ] Inventory UI commands from `crates/qsf_browser_server/ui/package.json`.
-- [ ] Decide which environment variables belong in named profiles and which should
+- [x] Inventory all current `QSF_*` environment variables used by the code.
+- [x] Inventory `qsf_browser_server` flags from `crates/qsf_browser_server/src/cli.rs`.
+- [x] Inventory UI commands from `crates/qsf_browser_server/ui/package.json`.
+- [x] Decide which environment variables belong in named profiles and which should
   remain one-off command parameters.
 
 ### Verification
 
-- [ ] Fill in the "Phase 0 Inventory" subsection above.
-- [ ] Produce a short implementation note in the eventual Phase 1 diary entry naming
+- [x] Fill in the "Phase 0 Inventory" subsection above.
+- [x] Produce a short implementation note in the eventual Phase 1 diary entry naming
   the commands and environment groups that were captured.
 
 ## Phase 1: Minimal Single-Script Launcher
@@ -237,12 +244,12 @@ Create `scripts/qsf.ps1` with a small, explicit command dispatcher.
 
 ### Required Commands
 
-- [ ] `app`
+- [x] `app`
   - Defaults to showing launcher usage plus available experiments.
   - Supports `-Experiment <name>`.
   - Runs `cargo run -p qsf_app -- experiment <name>` when an experiment is supplied.
 
-- [ ] `browser`
+- [x] `browser`
   - Supports `-Store`, `-BindHost`, and `-Port`.
   - Defaults mirror `qsf_browser_server`: `state/text-loop/memory-store.json`,
     `127.0.0.1`, and `3939`.
@@ -250,23 +257,23 @@ Create `scripts/qsf.ps1` with a small, explicit command dispatcher.
   - If the default store is missing, prints a clear error and suggests
     `crates/qsf_browser_server/tests/fixtures/small-store.json`.
 
-- [ ] `ui`
+- [x] `ui`
   - Runs `npm run dev` in `crates/qsf_browser_server/ui`.
   - Checks that `node_modules` exists first; if not, prints:
     `cd crates/qsf_browser_server/ui; npm install`.
   - Leaves API startup to the user or to `workbench`.
 
-- [ ] `workbench`
+- [x] `workbench`
   - Starts the browser server and Vite UI using the same defaults as `browser` and
     `ui`.
   - Starts the Vite UI in a separate visible PowerShell process.
   - Runs the API server in the current terminal foreground.
   - Prints both local URLs.
 
-- [ ] `list experiments`
+- [x] `list experiments`
   - Runs `cargo run -p qsf_app -- list-experiments`.
 
-- [ ] `help`
+- [x] `help`
   - Prints examples and current defaults.
 
 ### Implementation Notes
@@ -274,6 +281,7 @@ Create `scripts/qsf.ps1` with a small, explicit command dispatcher.
 - Use PowerShell native argument handling with `param(...)`; avoid string-building a
   shell command for execution.
 - Use `$ErrorActionPreference = "Stop"` and `Set-StrictMode -Version Latest`.
+- Use `#Requires -Version 7.6` and verify with `pwsh`.
 - Use `Start-Process` for the `workbench` Vite UI process; run ordinary foreground
   commands inline.
 - Resolve paths relative to the repository root using the existing script pattern:
@@ -283,9 +291,9 @@ Create `scripts/qsf.ps1` with a small, explicit command dispatcher.
 
 ### Verification
 
-- [ ] Run `.\scripts\qsf.ps1 help`.
-- [ ] Verify the script exists with `Test-Path scripts/qsf.ps1`.
-- [ ] Parse-check the script:
+- [x] Run `pwsh -NoProfile -File .\scripts\qsf.ps1 help`.
+- [x] Verify the script exists with `Test-Path scripts/qsf.ps1`.
+- [x] Parse-check the script:
 
 ```powershell
 $tokens = $null
@@ -298,15 +306,15 @@ $errors = $null
 if ($errors) { $errors | Format-List; exit 1 }
 ```
 
-- [ ] Run `.\scripts\qsf.ps1 list experiments`.
-- [ ] Run `.\scripts\qsf.ps1 browser -Store crates/qsf_browser_server/tests/fixtures/small-store.json -BindHost 127.0.0.1 -Port 3939`.
-- [ ] In another shell, verify `http://127.0.0.1:3939/api/health`.
+- [x] Run `pwsh -NoProfile -File .\scripts\qsf.ps1 list experiments`.
+- [x] Run `pwsh -NoProfile -File .\scripts\qsf.ps1 browser -Store crates/qsf_browser_server/tests/fixtures/small-store.json -BindHost 127.0.0.1 -Port 3939`.
+- [x] In another shell, verify `http://127.0.0.1:3939/api/health`.
 - [ ] Run `.\scripts\qsf.ps1 ui` before `npm install` in a clean UI checkout and
   confirm the dependency error points at the install command.
-- [ ] Run `.\scripts\qsf.ps1 app -Experiment multi-turn-text-loop` with mock defaults.
-- [ ] Run `cargo build`.
-- [ ] Run `cargo clippy --all-targets -- -D warnings`.
-- [ ] Run `cargo fmt` as a general Rust regression guard, even though Phase 1's
+- [x] Run `pwsh -NoProfile -File .\scripts\qsf.ps1 app -Experiment multi-turn-text-loop` with mock defaults.
+- [x] Run `cargo build`.
+- [x] Run `cargo clippy --all-targets -- -D warnings`.
+- [x] Run `cargo fmt` as a general Rust regression guard, even though Phase 1's
   primary changes are PowerShell and documentation.
 
 ### External Human Testing
@@ -548,7 +556,7 @@ Make the launcher the documented happy path while preserving raw commands.
   - one-liner execution policy fallback:
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File scripts\qsf.ps1 help
+pwsh -NoProfile -ExecutionPolicy Bypass -File scripts\qsf.ps1 help
 ```
 
   - stale completion cache, if caching is implemented
