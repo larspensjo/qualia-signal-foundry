@@ -1580,3 +1580,14 @@ What changed:
 
 Refs: scripts/qsf.ps1, scripts/qsf-completion.ps1,
 scripts/qsf-completion.Tests.ps1, README.md
+
+## 2026-05-22 - Browser API root guidance
+
+The memory browser backend now responds at `/` with a small guidance page instead
+of a bare 404 when running the split Rust API plus Vite UI development setup.
+
+What changed:
+- Added a root route that points to `http://localhost:5173/` and `/api/health`.
+- Updated the launcher UI line and README so the Vite workbench URL is explicit.
+
+Refs: crates/qsf_browser_server/src/web.rs, scripts/qsf.ps1, README.md

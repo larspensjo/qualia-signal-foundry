@@ -7,6 +7,7 @@ pub mod health;
 pub mod memory;
 pub mod server;
 pub mod state;
+pub mod web;
 
 pub async fn run() -> anyhow::Result<()> {
     let args = cli::Args::parse_from_env();

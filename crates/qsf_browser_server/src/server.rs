@@ -6,6 +6,7 @@ use crate::cli::Args;
 use crate::health;
 use crate::memory::routes;
 use crate::state::AppState;
+use crate::web;
 
 pub async fn serve(args: Args) -> anyhow::Result<()> {
     // `engine_logging::initialize()` wires stderr and ./engine.log logging.
@@ -15,6 +16,7 @@ pub async fn serve(args: Args) -> anyhow::Result<()> {
     log_startup_summary(&args, &state);
 
     let app = Router::new()
+        .merge(web::router())
         .merge(health::router())
         .merge(routes::router())
         .with_state(state);

@@ -673,7 +673,7 @@ function Invoke-Workbench {
     $apiUrl = "http://${BindHost}:$Port"
     Write-Host "API: $apiUrl"
     Write-Host "Health: $apiUrl/api/health"
-    Write-Host "UI: http://127.0.0.1:5173"
+    Write-Host "UI (open this in your browser): http://localhost:5173"
 
     $psExe = (Get-Command "pwsh" -ErrorAction Stop).Source
     $argumentList = @(

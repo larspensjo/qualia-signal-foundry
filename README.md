@@ -209,6 +209,8 @@ To start the API in the current terminal and the UI in a separate PowerShell win
 
 To stop the workbench, press Ctrl+C in the API terminal. The launcher prints the Vite
 UI process ID and attempts to close that process when the API exits.
+Open the workbench at `http://localhost:5173/`; port `3939` is the backend API and
+its root page only points to the Vite UI and `/api/health`.
 
 #### Launcher troubleshooting
 
