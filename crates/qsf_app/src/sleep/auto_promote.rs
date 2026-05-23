@@ -1,3 +1,5 @@
+use std::collections::HashSet;
+
 use serde::Serialize;
 use time::OffsetDateTime;
 
@@ -28,6 +30,7 @@ pub fn build_promotion_plan(
 ) -> PromotionPlan {
     let mut new_records = Vec::new();
     let mut skipped_duplicates = Vec::new();
+    let mut promoted_candidate_ids = vec![None; report.memory_candidates.len()];
 
     for (index, candidate) in report.memory_candidates.iter().enumerate() {
         let summary = candidate.summary.trim().to_string();
@@ -50,8 +53,9 @@ pub fn build_promotion_plan(
             continue;
         }
 
+        let record_id = format!("memory.sleep.{}.{:03}", sanitize(sleep_run_id), index + 1);
         let record = MemoryRecord::new(
-            format!("memory.sleep.{}.{:03}", sanitize(sleep_run_id), index + 1),
+            record_id.clone(),
             MemoryRecordKind::Observation,
             title,
             summary.clone(),
@@ -68,11 +72,18 @@ pub fn build_promotion_plan(
             estimated_tokens(&summary),
         )
         .with_last_reinforced_at(as_of);
+        promoted_candidate_ids[index] = Some(record_id);
         new_records.push(record);
     }
 
-    let (new_associations, strengthened_associations) =
+    let (mut new_associations, strengthened_associations) =
         build_cross_turn_associations(session, current_store, as_of);
+    new_associations.extend(build_sleep_candidate_associations(
+        report,
+        &promoted_candidate_ids,
+        current_store,
+        as_of,
+    ));
 
     PromotionPlan {
         new_records,
@@ -89,6 +100,11 @@ fn build_cross_turn_associations(
 ) -> (Vec<Association>, Vec<(String, String, f64)>) {
     let mut new_associations = Vec::new();
     let mut strengthened_associations = Vec::new();
+    let store_record_ids = current_store
+        .records
+        .iter()
+        .map(|record| record.id.as_str())
+        .collect::<HashSet<_>>();
     let retrievals = session
         .turns
         .iter()
@@ -104,6 +120,11 @@ fn build_cross_turn_associations(
                         continue;
                     }
                     let (left, right) = ordered_pair(from_id, to_id);
+                    if !store_record_ids.contains(left.as_str())
+                        || !store_record_ids.contains(right.as_str())
+                    {
+                        continue;
+                    }
                     if new_associations.iter().any(|association: &Association| {
                         association.from_memory_id == left && association.to_memory_id == right
                     }) || strengthened_associations
@@ -147,6 +168,74 @@ fn build_cross_turn_associations(
         .sort_by(|left, right| left.0.cmp(&right.0).then_with(|| left.1.cmp(&right.1)));
 
     (new_associations, strengthened_associations)
+}
+
+fn build_sleep_candidate_associations(
+    report: &SleepReport,
+    promoted_candidate_ids: &[Option<String>],
+    current_store: &MemoryStoreContents,
+    as_of: OffsetDateTime,
+) -> Vec<Association> {
+    let mut associations = Vec::new();
+
+    for candidate in &report.association_candidates {
+        let Some(from_id) = candidate
+            .from_memory_candidate_index
+            .checked_sub(1)
+            .and_then(|index| promoted_candidate_ids.get(index))
+            .and_then(Option::as_ref)
+        else {
+            continue;
+        };
+        let Some(to_id) = candidate
+            .to_memory_candidate_index
+            .checked_sub(1)
+            .and_then(|index| promoted_candidate_ids.get(index))
+            .and_then(Option::as_ref)
+        else {
+            continue;
+        };
+        if from_id == to_id || association_exists(current_store, &associations, from_id, to_id) {
+            continue;
+        }
+
+        let Some(reason) = candidate
+            .reason
+            .as_deref()
+            .map(str::trim)
+            .filter(|reason| !reason.is_empty())
+        else {
+            continue;
+        };
+        let Some(weight) = candidate.weight else {
+            continue;
+        };
+
+        associations.push(Association::new(
+            from_id.clone(),
+            to_id.clone(),
+            weight.clamp(0.0, 1.0),
+            reason.to_string(),
+            as_of,
+        ));
+    }
+
+    associations
+}
+
+fn association_exists(
+    current_store: &MemoryStoreContents,
+    pending_associations: &[Association],
+    from_id: &str,
+    to_id: &str,
+) -> bool {
+    current_store
+        .associations
+        .iter()
+        .chain(pending_associations.iter())
+        .any(|association| {
+            association.from_memory_id == from_id && association.to_memory_id == to_id
+        })
 }
 
 fn ordered_pair(left: &str, right: &str) -> (String, String) {
@@ -213,7 +302,9 @@ mod tests {
     use super::*;
     use crate::context::{ContextAssembly, ContextBudget, ContextFragment, ContextSelection};
     use crate::session::{MemorySourceConfig, SessionConfig};
-    use crate::sleep::sleep_report::{SleepMemoryCandidate, SleepReport};
+    use crate::sleep::sleep_report::{
+        SleepAssociationCandidate, SleepMemoryCandidate, SleepReport,
+    };
 
     fn ts() -> OffsetDateTime {
         OffsetDateTime::parse("2026-05-19T00:00:00Z", &Rfc3339).unwrap()
@@ -380,7 +471,11 @@ mod tests {
         session.turns.push(turn_with_memories(0, &["memory.a"]));
         session.turns.push(turn_with_memories(1, &["memory.b"]));
         let store = MemoryStoreContents {
-            records: vec![],
+            records: vec![
+                memory_record("memory.a", "A.", "A."),
+                memory_record("memory.b", "B.", "B."),
+                memory_record("memory.c", "C.", "C."),
+            ],
             associations: vec![Association::new(
                 "memory.a",
                 "memory.c",
@@ -406,5 +501,96 @@ mod tests {
             plan.strengthened_associations,
             vec![("memory.a".to_string(), "memory.c".to_string(), 0.45)]
         );
+    }
+
+    #[test]
+    fn cross_turn_retrievals_skip_ids_missing_from_current_store() {
+        let mut session = empty_session();
+        session.turns.push(turn_with_memories(0, &["memory.a"]));
+        session.turns.push(turn_with_memories(1, &["memory.ghost"]));
+        let store = MemoryStoreContents {
+            records: vec![memory_record("memory.a", "A.", "A.")],
+            associations: vec![],
+        };
+
+        let plan = build_promotion_plan(
+            &report_with_candidates(vec![]),
+            &session,
+            &store,
+            ts(),
+            "sleep-1",
+        );
+
+        assert!(plan.new_associations.is_empty());
+        assert!(plan.strengthened_associations.is_empty());
+    }
+
+    #[test]
+    fn promotes_sleep_association_candidates_between_new_records() {
+        let mut report = report_with_candidates(vec![
+            "The assistant's name is Ari.",
+            "The user wants assistant identity work.",
+        ]);
+        report
+            .association_candidates
+            .push(SleepAssociationCandidate {
+                from_memory_candidate_index: 1,
+                to_memory_candidate_index: 2,
+                weight: Some(0.42),
+                reason: Some("Both describe assistant identity context.".to_string()),
+            });
+
+        let plan = build_promotion_plan(
+            &report,
+            &empty_session(),
+            &MemoryStoreContents::default(),
+            ts(),
+            "sleep-1",
+        );
+
+        assert_eq!(plan.new_records.len(), 2);
+        assert_eq!(plan.new_associations.len(), 1);
+        assert_eq!(
+            plan.new_associations[0].from_memory_id,
+            "memory.sleep.sleep-1.001"
+        );
+        assert_eq!(
+            plan.new_associations[0].to_memory_id,
+            "memory.sleep.sleep-1.002"
+        );
+        assert_eq!(plan.new_associations[0].weight, 0.42);
+        assert_eq!(
+            plan.new_associations[0].reason,
+            "Both describe assistant identity context."
+        );
+    }
+
+    #[test]
+    fn skips_sleep_association_when_endpoint_candidate_was_not_promoted() {
+        let mut report = report_with_candidates(vec![
+            "Reducers stay pure.",
+            "Tools are perception extensions.",
+        ]);
+        report
+            .association_candidates
+            .push(SleepAssociationCandidate {
+                from_memory_candidate_index: 1,
+                to_memory_candidate_index: 2,
+                weight: Some(0.7),
+                reason: Some("Both describe runtime architecture.".to_string()),
+            });
+        let store = MemoryStoreContents {
+            records: vec![memory_record(
+                "memory.existing",
+                "Reducers stay pure.",
+                "Reducers stay pure.",
+            )],
+            associations: vec![],
+        };
+
+        let plan = build_promotion_plan(&report, &empty_session(), &store, ts(), "sleep-1");
+
+        assert_eq!(plan.new_records.len(), 1);
+        assert!(plan.new_associations.is_empty());
     }
 }

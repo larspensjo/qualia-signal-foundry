@@ -1678,5 +1678,25 @@ What changed:
   the persisted session as its source.
 - Report artifact links now reflect the configured state directory instead of always
   naming `state/text-loop`.
+- Sleep now auto-promotes valid association candidates between memory candidates that
+  were promoted in the same sleep commit, without a human review step.
 
-Refs: crates/qsf_app/src/experiments/sleep_phase_session_summary.rs
+Refs: crates/qsf_app/src/experiments/sleep_phase_session_summary.rs,
+crates/qsf_app/src/sleep/auto_promote.rs
+
+## 2026-05-23 - Sleep skips dangling co-retrieval associations
+
+Sleep no longer writes cross-turn co-retrieval associations whose endpoint memory IDs
+are absent from the destination memory store, and the QA memory browser state was
+repaired to remove the dangling links from the latest sleep run.
+
+What changed:
+- Filtered sleep co-retrieval association promotion to IDs present in
+  `memory-store.json`.
+- Added regression coverage for skipping retrieved IDs that are not in the current
+  store.
+- Removed 25 dangling associations from `state/qa-memory-browser-real/memory-store.json`
+  and corrected the current consolidated brief association count to `1`.
+
+Refs: crates/qsf_app/src/sleep/auto_promote.rs,
+state/qa-memory-browser-real/memory-store.json

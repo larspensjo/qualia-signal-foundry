@@ -512,3 +512,37 @@ they compose existing commands, but underlying binaries must stay independently
 runnable and documented. Completion setup must not silently edit user shell profiles.
 Refs: scripts/qsf.ps1, scripts/qsf.profiles.json, scripts/qsf-completion.ps1,
 README.md, docs/Plans/Plan.PowerShellLauncher.md
+
+## 2026-05-22 - Sleep auto-promotes candidate associations
+Decision: Sleep automatically promotes valid `SleepReport.association_candidates` into
+the durable memory store when both endpoint memory candidates were promoted in the same
+sleep commit. Association candidates do not require a human review step; invalid links
+will be handled by future reinforcement and decay policy rather than by manual
+approval.
+Context: A real sleep run over persisted session state produced a useful association
+candidate between newly promoted identity memories, but the commit path silently dropped
+it because only co-retrieval associations were persisted. The intended behavior is for
+sleep to shape the association graph directly.
+Consequences: Sleep-generated links can immediately affect memory browsing and
+association-weighted retrieval. The decay algorithm for weak or invalid associations
+remains an open design point and must be handled separately. Decision candidates remain
+outside this rule.
+Refs: crates/qsf_app/src/sleep/auto_promote.rs,
+crates/qsf_app/src/experiments/sleep_phase_session_summary.rs,
+docs/DecisionLog.md#2026-05-20---sleep-auto-promotes-routine-memory-candidates
+
+## 2026-05-23 - Durable associations require present endpoints
+Decision: Sleep commit writes durable associations only when both endpoint memory IDs
+exist in the destination memory store. Co-retrieval IDs from session context that are
+not present in the current store are ignored rather than persisted as broken graph
+edges.
+Context: A sleep run over `state/qa-memory-browser-real` correctly promoted a
+candidate association between newly created sleep memories, but also wrote 25
+co-retrieval associations to fixture-style IDs that were visible in the prior session
+context and absent from the destination store.
+Consequences: Memory browser counts, graph rendering, retrieval, and future decay work
+operate on associations whose endpoints are real store records. If a future workflow
+wants associations to external or archived memories, it must introduce an explicit
+reference model rather than reusing durable in-store associations.
+Refs: crates/qsf_app/src/sleep/auto_promote.rs,
+state/qa-memory-browser-real/memory-store.json
