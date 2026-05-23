@@ -4,6 +4,7 @@ Purpose: durable record of deliberate commitments — the source of truth for wh
 project has agreed to do going forward.
 
 ## How to use
+### How to add new entries
 - One entry per decision. Decisions are commitments, not summaries of work.
 - Implementation summaries and bug-fix postmortems belong in `EngineeringDiary.md`.
   A bug fix earns a decision-log entry only when it produces a durable rule, and the
@@ -13,13 +14,16 @@ project has agreed to do going forward.
 - Keep entries concise and reference concrete artifacts.
 - New entries go to the end of the file.
 
-Use the decision log for:
+### When to add new entries
 - Architecture commitments
 - Technology or library choices
 - Naming, structural, or coding conventions adopted project-wide
 - Safety and scope boundaries
 - Experiment outcomes promoted into accepted design
 - Reusable rules derived from incidents
+
+### How to use the decision log during development
+- 
 
 ## Entry Template
 
