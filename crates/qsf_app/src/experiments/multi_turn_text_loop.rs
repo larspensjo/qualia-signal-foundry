@@ -36,12 +36,14 @@ use super::registry::{Experiment, ExperimentName, ExperimentOutcome};
 const DEFAULT_SESSION_MODEL: &str = "gpt-5.4-mini";
 const DEFAULT_MAX_TURNS: usize = 10;
 const DEFAULT_WARM_THRESHOLD: usize = 6;
+const DEFAULT_TURN_MAX_OUTPUT_TOKENS: u32 = 1024;
 const SESSION_MEMORY_SOURCE_ENV_VAR: &str = "QSF_SESSION_MEMORY_SOURCE";
 const SESSION_MEMORY_FILE_ENV_VAR: &str = "QSF_SESSION_MEMORY_FILE";
 const SESSION_MODEL_ENV_VAR: &str = "QSF_CONVERSATION_MODEL";
 const SESSION_MAX_TURNS_ENV_VAR: &str = "QSF_SESSION_MAX_TURNS";
 const SESSION_ALLOW_OVER_LIMIT_ENV_VAR: &str = "QSF_SESSION_ALLOW_OVER_LIMIT";
 const SESSION_WARM_THRESHOLD_ENV_VAR: &str = "QSF_SESSION_WARM_THRESHOLD";
+const SESSION_TURN_MAX_OUTPUT_TOKENS_ENV_VAR: &str = "QSF_SESSION_TURN_MAX_OUTPUT_TOKENS";
 const SESSION_RETRIEVAL_LIMIT: usize = 8;
 const SESSION_RETRIEVAL_STRATEGY: RetrievalStrategy = RetrievalStrategy::KeywordTag;
 const HOT_HIGH_WATER_FRACTION: f64 = 0.80;
@@ -379,6 +381,7 @@ fn run_with_io_and_components_at_state_dir(
             TurnRequest {
                 user_input: &user_input,
                 boot_brief_fragment,
+                max_output_tokens: turn_max_output_tokens_from_env(),
             },
             TurnConsole { output, color_mode },
         ) {
@@ -440,6 +443,7 @@ fn run_with_io_and_components_at_state_dir(
 struct TurnRequest<'a> {
     user_input: &'a str,
     boot_brief_fragment: Option<String>,
+    max_output_tokens: u32,
 }
 
 struct TurnConsole<'a, W: Write> {
@@ -459,6 +463,7 @@ fn run_one_turn<W: Write>(
     let TurnConsole { output, color_mode } = console;
     let turn_started_at = SystemTime::now();
     let user_input = request.user_input;
+    let max_output_tokens = request.max_output_tokens;
     let retrieval = retrieve_session_memories(context, state, memory_snapshot, user_input)?;
     let fragments = retrieval
         .selected
@@ -542,7 +547,7 @@ fn run_one_turn<W: Write>(
         .with_session_id(context.run_id())
         .with_model_name(&state.config.model_id)
         .with_temperature(0.0)
-        .with_max_output_tokens(240)
+        .with_max_output_tokens(max_output_tokens)
         .with_tools(registry.model_tool_definitions_for(&allowed_tools));
     let model_started_at = Instant::now();
     let mut response = invoke_model_role(context, model_client, &request)?;
@@ -602,7 +607,7 @@ fn run_one_turn<W: Write>(
         .with_session_id(context.run_id())
         .with_model_name(&state.config.model_id)
         .with_temperature(0.0)
-        .with_max_output_tokens(240);
+        .with_max_output_tokens(max_output_tokens);
         let follow_up_started_at = Instant::now();
         response = invoke_model_role(context, model_client, &follow_up_request)?;
         model_latency_ms = model_latency_ms.saturating_add(elapsed_ms(follow_up_started_at));
@@ -716,6 +721,16 @@ fn print_assistant_response<W: Write>(
 
 fn completed_turn_count(state: &SessionState) -> usize {
     state.turns.len()
+}
+
+fn turn_max_output_tokens_from_env() -> u32 {
+    parse_turn_max_output_tokens(std::env::var(SESSION_TURN_MAX_OUTPUT_TOKENS_ENV_VAR).ok())
+}
+
+fn parse_turn_max_output_tokens(raw: Option<String>) -> u32 {
+    raw.and_then(|value| value.parse::<u32>().ok())
+        .filter(|value| *value > 0)
+        .unwrap_or(DEFAULT_TURN_MAX_OUTPUT_TOKENS)
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -2427,6 +2442,38 @@ mod tests {
     }
 
     #[test]
+    fn turn_max_output_tokens_defaults_above_short_response_cap() {
+        const LEGACY_TRUNCATING_TURN_MAX_OUTPUT_TOKENS: u32 = 240;
+        const INVALID_ZERO_TURN_MAX_OUTPUT_TOKENS: &str = "0";
+        const INVALID_TEXT_TURN_MAX_OUTPUT_TOKENS: &str = "nope";
+
+        let custom_turn_max_output_tokens = super::DEFAULT_TURN_MAX_OUTPUT_TOKENS * 2;
+        let default_turn_max_output_tokens = super::parse_turn_max_output_tokens(None);
+
+        assert!(default_turn_max_output_tokens > LEGACY_TRUNCATING_TURN_MAX_OUTPUT_TOKENS);
+        assert_eq!(
+            default_turn_max_output_tokens,
+            super::DEFAULT_TURN_MAX_OUTPUT_TOKENS
+        );
+        assert_eq!(
+            super::parse_turn_max_output_tokens(Some(
+                INVALID_ZERO_TURN_MAX_OUTPUT_TOKENS.to_string()
+            )),
+            super::DEFAULT_TURN_MAX_OUTPUT_TOKENS
+        );
+        assert_eq!(
+            super::parse_turn_max_output_tokens(Some(
+                INVALID_TEXT_TURN_MAX_OUTPUT_TOKENS.to_string()
+            )),
+            super::DEFAULT_TURN_MAX_OUTPUT_TOKENS
+        );
+        assert_eq!(
+            super::parse_turn_max_output_tokens(Some(custom_turn_max_output_tokens.to_string())),
+            custom_turn_max_output_tokens
+        );
+    }
+
+    #[test]
     fn print_memory_blocks_no_color_mode_emits_plain_headers() {
         use crate::console::styling::ColorMode;
 
@@ -2628,6 +2675,7 @@ mod tests {
             super::TurnRequest {
                 user_input: "foozle",
                 boot_brief_fragment: None,
+                max_output_tokens: super::DEFAULT_TURN_MAX_OUTPUT_TOKENS,
             },
             super::TurnConsole {
                 output: &mut output,
@@ -2652,6 +2700,51 @@ mod tests {
         assert!(
             turn.retrieved_memory_block
                 .contains("=== Associated memories (hints - may or may not be relevant) ===")
+        );
+
+        fs::remove_dir_all(base_dir).unwrap();
+    }
+
+    #[test]
+    fn run_one_turn_uses_default_turn_max_output_tokens() {
+        let base_dir = std::env::temp_dir().join(format!("qsf-turn-output-cap-{}", Uuid::new_v4()));
+        let state_dir = base_dir.join("state/text-loop");
+        let mut context = RunContext::create_in(&base_dir, "multi-turn-text-loop").unwrap();
+        let mut state = SessionState::new(test_config_with_warm_threshold(10, 10));
+        let mut memory_snapshot = super::SessionMemorySourceSnapshot::from_fixture(
+            "test",
+            "test",
+            MemoryFixture {
+                records: vec![],
+                associations: vec![],
+            },
+        );
+        let mut output = Vec::new();
+        let client = CapturingOpenAiRecallClient::default();
+
+        run_one_turn(
+            &mut context,
+            &mut state,
+            &state_dir,
+            &mut memory_snapshot,
+            &client,
+            super::TurnRequest {
+                user_input: "tell me about volition system design",
+                boot_brief_fragment: None,
+                max_output_tokens: super::DEFAULT_TURN_MAX_OUTPUT_TOKENS,
+            },
+            super::TurnConsole {
+                output: &mut output,
+                color_mode: crate::console::styling::ColorMode::Disabled,
+            },
+        )
+        .unwrap();
+
+        let calls = client.calls.lock().unwrap();
+        assert_eq!(calls.len(), 1);
+        assert_eq!(
+            calls[0].max_output_tokens,
+            Some(super::DEFAULT_TURN_MAX_OUTPUT_TOKENS)
         );
 
         fs::remove_dir_all(base_dir).unwrap();
@@ -4004,6 +4097,7 @@ mod tests {
     #[derive(Clone, Debug)]
     struct CapturedRequest {
         role_id: ModelRoleId,
+        max_output_tokens: Option<u32>,
         tools: Vec<String>,
         messages: Vec<ModelMessage>,
     }
@@ -4016,6 +4110,7 @@ mod tests {
         fn complete(&self, request: &ModelRequest) -> anyhow::Result<ModelResponse> {
             self.calls.lock().unwrap().push(CapturedRequest {
                 role_id: request.role.role_id,
+                max_output_tokens: request.max_output_tokens,
                 tools: request.tools.iter().map(|tool| tool.name.clone()).collect(),
                 messages: request.messages.clone(),
             });

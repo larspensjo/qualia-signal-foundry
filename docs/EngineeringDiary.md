@@ -1841,3 +1841,24 @@ Observed:
 
 Refs: crates/qsf_app/src/console/styling.rs,
 crates/qsf_app/src/experiments/multi_turn_text_loop.rs
+
+## 2026-05-24 - Multi-turn response token cap raised
+
+Raised the live `multi-turn-text-loop` responder output budget so conversational
+answers are less likely to stop mid-sentence or mid-list, with regression coverage
+kept tied to named expectations instead of repeated numeric literals.
+
+What changed:
+- Replaced the hard-coded 240-token responder cap with a 1024-token default.
+- Added `QSF_SESSION_TURN_MAX_OUTPUT_TOKENS` as a runtime override for both initial
+  responder calls and post-tool follow-up responder calls.
+- Added unit coverage for cap parsing and for the request cap sent by `run_one_turn`.
+- Reworked the parser test to compare invalid values against
+  `DEFAULT_TURN_MAX_OUTPUT_TOKENS` and derive the custom override from that constant.
+- Kept the regression intent explicit with a named legacy truncating cap.
+
+Observed:
+- The prior 240-token cap matched the observed truncation shape: longer structured
+  responses could hit the model limit before reaching a natural stop.
+
+Refs: crates/qsf_app/src/experiments/multi_turn_text_loop.rs
