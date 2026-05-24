@@ -1,5 +1,6 @@
 pub mod audio;
 pub mod cli;
+pub mod console;
 pub mod context;
 pub mod conversation;
 pub mod experiments;

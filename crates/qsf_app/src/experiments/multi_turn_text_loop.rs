@@ -8,6 +8,7 @@ use anyhow::Context;
 use serde::Serialize;
 use serde_json::json;
 
+use crate::console::styling::ColorMode;
 use crate::context::{ContextAssembly, ContextFragment, ContextSourceKind, assemble_context};
 use crate::conversation::prompt::{self, PromptToolMessage, PromptTurn};
 use crate::conversation::{PromptAssembly, PromptTurnSummary};
@@ -279,6 +280,8 @@ fn run_with_io_and_components_at_state_dir(
     )?;
     let mut memory_snapshot = load_session_memory_snapshot(context, memory_source, &state_dir)?;
     write_memory_source_snapshot(context, &memory_snapshot)?;
+    let color_mode = ColorMode::for_stdout();
+    let drop_marker_debug = std::env::var("QSF_DROP_MARKER_DEBUG").is_ok();
     writeln!(output, "multi-turn-text-loop ready; type :quit to exit")?;
 
     let mut line = String::new();
@@ -287,12 +290,18 @@ fn run_with_io_and_components_at_state_dir(
         let bytes_read = input.read_line(&mut line)?;
         if bytes_read == 0 {
             end_session(context, &mut state, SessionEndReason::Eof)?;
+            if drop_marker_debug {
+                print_session_end_flush(output, 0, 0, color_mode)?;
+            }
             break;
         }
 
         let user_input = line.trim_end_matches(['\r', '\n']).to_string();
         if user_input.trim() == ":quit" {
             end_session(context, &mut state, SessionEndReason::QuitCommand)?;
+            if drop_marker_debug {
+                print_session_end_flush(output, 0, 0, color_mode)?;
+            }
             break;
         }
         if user_input.trim().is_empty() {
@@ -343,11 +352,17 @@ fn run_with_io_and_components_at_state_dir(
             &state_dir,
             &mut memory_snapshot,
             model_client,
-            &user_input,
-            boot_brief_fragment,
+            TurnRequest {
+                user_input: &user_input,
+                boot_brief_fragment,
+            },
+            TurnConsole { output, color_mode },
         ) {
             Ok(response) => {
                 writeln!(output, "{response}")?;
+                if drop_marker_debug {
+                    print_drop_marker(output, 0, 0, 0, color_mode)?;
+                }
             }
             Err(error) => {
                 let error_summary = sanitize_error(&error.to_string());
@@ -401,16 +416,27 @@ fn run_with_io_and_components_at_state_dir(
     })
 }
 
-fn run_one_turn(
+struct TurnRequest<'a> {
+    user_input: &'a str,
+    boot_brief_fragment: Option<String>,
+}
+
+struct TurnConsole<'a, W: Write> {
+    output: &'a mut W,
+    color_mode: ColorMode,
+}
+
+fn run_one_turn<W: Write>(
     context: &mut RunContext,
     state: &mut SessionState,
     state_dir: &Path,
     memory_snapshot: &mut SessionMemorySourceSnapshot,
     model_client: &dyn ModelClient,
-    user_input: &str,
-    boot_brief_fragment: Option<String>,
+    request: TurnRequest<'_>,
+    console: TurnConsole<'_, W>,
 ) -> anyhow::Result<String> {
     let turn_started_at = SystemTime::now();
+    let user_input = request.user_input;
     let retrieval = retrieve_session_memories(context, state, memory_snapshot, user_input)?;
     let fragments = retrieval
         .selected
@@ -465,7 +491,7 @@ fn run_one_turn(
     )?;
 
     let retrieved_memory_block = prompt::retrieved_memory_block(&assembly);
-    let retrieved_memory_block = match boot_brief_fragment {
+    let retrieved_memory_block = match request.boot_brief_fragment {
         Some(brief) if retrieved_memory_block.is_empty() => brief,
         Some(brief) => format!("{brief}\n\n{retrieved_memory_block}"),
         None => retrieved_memory_block,
@@ -481,6 +507,7 @@ fn run_one_turn(
             total_bytes: base_prompt.total_bytes,
         },
     )?;
+    print_memory_blocks(console.output, &assembly, console.color_mode)?;
 
     let registry = ToolRegistry::default();
     let responder_role = conversational_responder_role_with_session_tools();
@@ -1541,6 +1568,94 @@ fn record_context_assembly(
     Ok(trace_id)
 }
 
+fn print_memory_blocks<W: Write>(
+    output: &mut W,
+    assembly: &ContextAssembly,
+    color_mode: ColorMode,
+) -> std::io::Result<()> {
+    use crate::console::styling::{
+        STYLE_DIRECT_BODY, STYLE_DIRECT_HEADER, STYLE_HINT_BLOCK, paint,
+    };
+
+    let mut directs: Vec<String> = Vec::new();
+    let mut hints: Vec<String> = Vec::new();
+
+    for selection in &assembly.selected {
+        let line = format!(
+            "- {}: {}",
+            selection.fragment.fragment_id, selection.fragment.summary
+        );
+        match selection.fragment.source_kind {
+            ContextSourceKind::Memory => directs.push(line),
+            ContextSourceKind::MemoryHint => hints.push(line),
+            _ => {}
+        }
+    }
+
+    if !directs.is_empty() {
+        writeln!(
+            output,
+            "{}",
+            paint(
+                color_mode,
+                STYLE_DIRECT_HEADER,
+                "=== Memories retrieved for this turn ===",
+            )
+        )?;
+        for line in &directs {
+            writeln!(output, "{}", paint(color_mode, STYLE_DIRECT_BODY, line))?;
+        }
+    }
+
+    if !hints.is_empty() {
+        writeln!(
+            output,
+            "{}",
+            paint(
+                color_mode,
+                STYLE_HINT_BLOCK,
+                "=== Associated memories (hints - may or may not be relevant) ===",
+            )
+        )?;
+        for line in &hints {
+            writeln!(output, "{}", paint(color_mode, STYLE_HINT_BLOCK, line))?;
+        }
+    }
+
+    Ok(())
+}
+
+fn print_drop_marker<W: Write>(
+    output: &mut W,
+    aged_turn_count: usize,
+    new_associations: usize,
+    strengthened: usize,
+    color_mode: ColorMode,
+) -> std::io::Result<()> {
+    use crate::console::styling::{STYLE_DROP_MARKER, paint};
+
+    let line = format!(
+        "--- aged {} turns from prompt; +{} associations, *{} strengthened ---",
+        aged_turn_count, new_associations, strengthened
+    );
+    writeln!(output, "{}", paint(color_mode, STYLE_DROP_MARKER, &line))
+}
+
+fn print_session_end_flush<W: Write>(
+    output: &mut W,
+    new_associations: usize,
+    strengthened: usize,
+    color_mode: ColorMode,
+) -> std::io::Result<()> {
+    use crate::console::styling::{STYLE_DROP_MARKER, paint};
+
+    let line = format!(
+        "--- session-end flush; +{} associations, *{} strengthened ---",
+        new_associations, strengthened
+    );
+    writeln!(output, "{}", paint(color_mode, STYLE_DROP_MARKER, &line))
+}
+
 fn write_multi_turn_report(
     context: &RunContext,
     state: &SessionState,
@@ -1722,7 +1837,9 @@ mod tests {
         prompt_prefix_status_for_report, reduce_session, run_one_turn, run_with_io_and_components,
         run_with_io_and_components_at_state_dir,
     };
-    use crate::context::{ContextAssembly, ContextBudget, ContextSourceKind};
+    use crate::context::{
+        ContextAssembly, ContextBudget, ContextFragment, ContextSelection, ContextSourceKind,
+    };
     use crate::conversation::ContentHash;
     use crate::conversation::prompt::{
         PromptTurn, PromptTurnSummary, assemble_prompt, assemble_prompt_with_summaries,
@@ -1750,6 +1867,63 @@ mod tests {
             crate::memory::RetrievalStrategy::KeywordTag,
             "Live loop must use KeywordTag so retrieval + hint expansion stay strict single-hop",
         );
+    }
+
+    #[test]
+    fn print_memory_blocks_no_color_mode_emits_plain_headers() {
+        use crate::console::styling::ColorMode;
+
+        let assembly = small_assembly_with_one_direct_one_hint();
+        let mut buf: Vec<u8> = Vec::new();
+
+        super::print_memory_blocks(&mut buf, &assembly, ColorMode::Disabled).unwrap();
+
+        let text = String::from_utf8(buf).unwrap();
+        assert!(text.contains("=== Memories retrieved for this turn ==="));
+        assert!(text.contains("=== Associated memories (hints - may or may not be relevant) ==="));
+        assert!(!text.contains("\x1b["));
+    }
+
+    #[test]
+    fn print_memory_blocks_enabled_mode_wraps_headers_in_escapes() {
+        use crate::console::styling::ColorMode;
+
+        let assembly = small_assembly_with_one_direct_one_hint();
+        let mut buf: Vec<u8> = Vec::new();
+
+        super::print_memory_blocks(&mut buf, &assembly, ColorMode::Enabled).unwrap();
+
+        let text = String::from_utf8(buf).unwrap();
+        assert!(text.contains("\x1b["), "expected ANSI escape codes");
+        assert!(text.ends_with("\x1b[0m\n"));
+    }
+
+    #[test]
+    fn print_drop_marker_renders_expected_format() {
+        use crate::console::styling::ColorMode;
+
+        let mut buf: Vec<u8> = Vec::new();
+
+        super::print_drop_marker(&mut buf, 3, 2, 5, ColorMode::Disabled).unwrap();
+
+        let text = String::from_utf8(buf).unwrap();
+        assert!(text.contains("aged 3 turns from prompt"));
+        assert!(text.contains("+2 associations"));
+        assert!(text.contains("*5 strengthened"));
+    }
+
+    #[test]
+    fn print_session_end_flush_marker_renders_expected_format() {
+        use crate::console::styling::ColorMode;
+
+        let mut buf: Vec<u8> = Vec::new();
+
+        super::print_session_end_flush(&mut buf, 4, 1, ColorMode::Disabled).unwrap();
+
+        let text = String::from_utf8(buf).unwrap();
+        assert!(text.contains("session-end flush"));
+        assert!(text.contains("+4 associations"));
+        assert!(text.contains("*1 strengthened"));
     }
 
     #[test]
@@ -1843,6 +2017,7 @@ mod tests {
                 )],
             },
         );
+        let mut output = Vec::new();
 
         run_one_turn(
             &mut context,
@@ -1850,8 +2025,14 @@ mod tests {
             &state_dir,
             &mut memory_snapshot,
             &MockModelClient::default(),
-            "foozle",
-            None,
+            super::TurnRequest {
+                user_input: "foozle",
+                boot_brief_fragment: None,
+            },
+            super::TurnConsole {
+                output: &mut output,
+                color_mode: crate::console::styling::ColorMode::Disabled,
+            },
         )
         .unwrap();
 
@@ -1902,6 +2083,32 @@ mod tests {
 
         assert!(state.turns.is_empty());
         assert_eq!(state.last_model_error.as_deref(), Some("boom"));
+    }
+
+    #[test]
+    fn model_error_output_still_shows_assembled_memory_blocks() {
+        let base_dir =
+            std::env::temp_dir().join(format!("qsf-model-error-memory-blocks-{}", Uuid::new_v4()));
+        let mut context = RunContext::create_in(&base_dir, "multi-turn-text-loop").unwrap();
+        let input = Cursor::new("associative memory\n:quit\n");
+        let mut output = Vec::new();
+        let memory_source = TestMemorySource;
+
+        run_with_io_and_components(
+            &mut context,
+            input,
+            &mut output,
+            &FailingModelClient,
+            &memory_source,
+            test_config_with_warm_threshold(10, 10),
+        )
+        .unwrap();
+
+        let output = String::from_utf8(output).unwrap();
+        assert!(output.contains("=== Memories retrieved for this turn ==="));
+        assert!(output.contains("model unavailable, try again or :quit"));
+
+        fs::remove_dir_all(base_dir).unwrap();
     }
 
     #[test]
@@ -2857,6 +3064,18 @@ mod tests {
 
     struct RepeatingToolCallClient;
 
+    struct FailingModelClient;
+
+    impl ModelClient for FailingModelClient {
+        fn client_name(&self) -> &str {
+            "failing-model"
+        }
+
+        fn complete(&self, _request: &ModelRequest) -> anyhow::Result<ModelResponse> {
+            anyhow::bail!("intentional model failure")
+        }
+    }
+
     impl ModelClient for RepeatingToolCallClient {
         fn client_name(&self) -> &str {
             "repeating-tool-call"
@@ -3002,6 +3221,45 @@ mod tests {
 
     fn timestamp(value: &str) -> time::OffsetDateTime {
         time::OffsetDateTime::parse(value, &time::format_description::well_known::Rfc3339).unwrap()
+    }
+
+    fn small_assembly_with_one_direct_one_hint() -> ContextAssembly {
+        let direct = ContextFragment {
+            fragment_id: "memory.direct".to_string(),
+            source_kind: ContextSourceKind::Memory,
+            summary: "Direct memory summary.".to_string(),
+            tags: vec!["direct".to_string()],
+            score: 1.0,
+            estimated_tokens: 20,
+            source_reference: "tests".to_string(),
+            selection_reason: "direct test".to_string(),
+        };
+        let hint = ContextFragment {
+            fragment_id: "memory.hint".to_string(),
+            source_kind: ContextSourceKind::MemoryHint,
+            summary: "Hint memory summary.".to_string(),
+            tags: vec!["hint".to_string()],
+            score: 0.5,
+            estimated_tokens: 20,
+            source_reference: "tests".to_string(),
+            selection_reason: "hint test".to_string(),
+        };
+
+        ContextAssembly {
+            budget: ContextBudget::new(4, 100),
+            selected: vec![
+                ContextSelection {
+                    fragment: direct,
+                    cumulative_estimated_tokens: 20,
+                },
+                ContextSelection {
+                    fragment: hint,
+                    cumulative_estimated_tokens: 40,
+                },
+            ],
+            omitted: vec![],
+            used_estimated_tokens: 40,
+        }
     }
 
     fn test_turn(index: usize) -> Turn {

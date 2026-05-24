@@ -7,6 +7,10 @@ use crate::experiments::{self, ExperimentName};
 #[command(about = "Qualia Signal Foundry experiment runner")]
 #[command(version)]
 struct Cli {
+    /// Disable ANSI color in interactive console output.
+    #[arg(long, global = true)]
+    no_color: bool,
+
     #[command(subcommand)]
     command: Option<Command>,
 }
@@ -25,6 +29,7 @@ enum Command {
 
 pub fn run() -> anyhow::Result<()> {
     let cli = Cli::parse();
+    crate::console::styling::set_no_color_flag(cli.no_color);
 
     match cli.command {
         Some(Command::Experiment { name }) => {
@@ -53,12 +58,21 @@ pub fn run() -> anyhow::Result<()> {
 
 #[cfg(test)]
 mod tests {
-    use clap::CommandFactory;
+    use clap::{CommandFactory, Parser};
 
     use super::Cli;
 
     #[test]
     fn cli_help_is_valid() {
         Cli::command().debug_assert();
+    }
+
+    #[test]
+    fn no_color_flag_is_accepted_before_or_after_subcommand() {
+        let before = Cli::try_parse_from(["qsf_app", "--no-color", "list-experiments"]).unwrap();
+        let after = Cli::try_parse_from(["qsf_app", "list-experiments", "--no-color"]).unwrap();
+
+        assert!(before.no_color);
+        assert!(after.no_color);
     }
 }

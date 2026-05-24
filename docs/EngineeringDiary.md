@@ -1730,3 +1730,26 @@ Refs: crates/qsf_app/src/context, crates/qsf_app/src/memory/hint_expansion.rs,
 crates/qsf_app/src/conversation/prompt.rs,
 crates/qsf_app/src/experiments/multi_turn_text_loop.rs,
 crates/qsf_app/src/experiments/text_owned_voice_loop.rs
+
+## 2026-05-24 - Live console memory styling
+
+The interactive text loop now shows retrieved memory context in the terminal before
+the model response, with ANSI styling gated by TTY detection and `NO_COLOR`.
+
+What changed:
+- Added `qsf_app::console::styling` with color-mode detection, the runner-level
+  `--no-color` switch, and reusable paint helpers for direct-memory, hint-memory,
+  and drop-marker text.
+- Printed direct memories and associated hint memories from the selected context
+  assembly before each successful model response.
+- Added drop and session-end flush marker writers behind `QSF_DROP_MARKER_DEBUG`
+  until live drop counts are wired into the loop.
+
+Observed:
+- Unit coverage verifies plain non-color output, forced ANSI output, and marker text
+  formatting. Real terminal light/dark theme legibility still needs human testing.
+- The console hint header follows the prompt formatter's ASCII hyphen wording for
+  stable Windows terminal rendering, even though the early design sketch used an
+  em dash.
+
+Refs: crates/qsf_app/src/console, crates/qsf_app/src/experiments/multi_turn_text_loop.rs
