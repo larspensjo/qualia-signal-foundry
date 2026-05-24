@@ -1862,3 +1862,16 @@ Observed:
   responses could hit the model limit before reaching a natural stop.
 
 Refs: crates/qsf_app/src/experiments/multi_turn_text_loop.rs
+
+## 2026-05-24 - Launcher allows continuing text-loop sessions
+
+Adjusted the PowerShell launcher so manual `multi-turn-text-loop` runs set the
+session override expected after the configured turn limit has been reached.
+
+What changed:
+- `scripts/qsf.ps1 app -Experiment multi-turn-text-loop` now sets
+  `QSF_SESSION_ALLOW_OVER_LIMIT=true` for the child process.
+- Launcher help now documents that text-loop runs allow continuing past the
+  configured session limit.
+
+Refs: scripts/qsf.ps1

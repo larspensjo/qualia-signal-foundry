@@ -285,6 +285,10 @@ function Get-ProfileEnvironmentDelta {
         }
     }
 
+    if ($Experiment -eq "multi-turn-text-loop") {
+        $envSets["QSF_SESSION_ALLOW_OVER_LIMIT"] = "true"
+    }
+
     $clearEnv = @($clearEnv | Where-Object { -not $envSets.Contains($_) } | Sort-Object -Unique)
 
     return [pscustomobject]@{
@@ -422,6 +426,7 @@ Defaults:
   Browser host:  127.0.0.1
   Browser port:  3939
   Text-loop session memory through launcher: empty file source; persisted store wins
+  Text-loop session limit through launcher: allow over limit
   UI directory:  crates/qsf_browser_server/ui
 
 Examples:
