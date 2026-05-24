@@ -73,10 +73,12 @@ pub const STYLE_DIRECT_HEADER: Style = Style::fg(44).dim();
 pub const STYLE_DIRECT_BODY: Style = Style::fg(51);
 pub const STYLE_HINT_BLOCK: Style = Style::fg(214).dim();
 pub const STYLE_DROP_MARKER: Style = Style::fg(240).dim().italic();
+pub const STYLE_USER_INPUT: Style = Style::fg(82);
+pub const STYLE_ASSISTANT_RESPONSE: Style = Style::fg(255);
 
-pub fn paint(mode: ColorMode, style: Style, text: &str) -> String {
+pub fn style_prefix(mode: ColorMode, style: Style) -> String {
     if !mode.is_enabled() {
-        return text.to_string();
+        return String::new();
     }
 
     let mut prefix = String::new();
@@ -89,11 +91,21 @@ pub fn paint(mode: ColorMode, style: Style, text: &str) -> String {
     if let Some(code) = style.fg_256 {
         prefix.push_str(&format!("\x1b[38;5;{code}m"));
     }
+
+    prefix
+}
+
+pub fn style_reset(mode: ColorMode) -> &'static str {
+    if mode.is_enabled() { "\x1b[0m" } else { "" }
+}
+
+pub fn paint(mode: ColorMode, style: Style, text: &str) -> String {
+    let prefix = style_prefix(mode, style);
     if prefix.is_empty() {
         return text.to_string();
     }
 
-    format!("{prefix}{text}\x1b[0m")
+    format!("{prefix}{text}{}", style_reset(mode))
 }
 
 #[cfg(test)]
@@ -143,5 +155,20 @@ mod tests {
         assert!(out.starts_with("\x1b[2m") || out.starts_with("\x1b["));
         assert!(out.contains("hello"));
         assert!(out.ends_with("\x1b[0m"));
+    }
+
+    #[test]
+    fn style_prefix_and_reset_are_empty_when_disabled() {
+        assert_eq!(style_prefix(ColorMode::Disabled, STYLE_USER_INPUT), "");
+        assert_eq!(style_reset(ColorMode::Disabled), "");
+    }
+
+    #[test]
+    fn style_prefix_and_reset_emit_escape_codes_when_enabled() {
+        let prefix = style_prefix(ColorMode::Enabled, STYLE_USER_INPUT);
+
+        assert!(prefix.starts_with("\x1b["));
+        assert!(prefix.contains("38;5;82m"));
+        assert_eq!(style_reset(ColorMode::Enabled), "\x1b[0m");
     }
 }

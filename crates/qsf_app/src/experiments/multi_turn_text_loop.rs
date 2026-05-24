@@ -300,7 +300,10 @@ fn run_with_io_and_components_at_state_dir(
     let mut line = String::new();
     loop {
         line.clear();
-        let bytes_read = input.read_line(&mut line)?;
+        begin_user_input_echo(output, color_mode)?;
+        let bytes_read = input.read_line(&mut line);
+        end_user_input_echo(output, color_mode)?;
+        let bytes_read = bytes_read?;
         if bytes_read == 0 {
             end_session(
                 context,
@@ -380,7 +383,7 @@ fn run_with_io_and_components_at_state_dir(
             TurnConsole { output, color_mode },
         ) {
             Ok(response) => {
-                writeln!(output, "{response}")?;
+                print_assistant_response(output, &response, color_mode)?;
             }
             Err(error) => {
                 let error_summary = sanitize_error(&error.to_string());
@@ -681,6 +684,34 @@ fn run_one_turn<W: Write>(
     )?;
 
     Ok(output_text)
+}
+
+fn begin_user_input_echo<W: Write>(output: &mut W, color_mode: ColorMode) -> std::io::Result<()> {
+    use crate::console::styling::{STYLE_USER_INPUT, style_prefix};
+
+    write!(output, "{}", style_prefix(color_mode, STYLE_USER_INPUT))?;
+    output.flush()
+}
+
+fn end_user_input_echo<W: Write>(output: &mut W, color_mode: ColorMode) -> std::io::Result<()> {
+    use crate::console::styling::style_reset;
+
+    write!(output, "{}", style_reset(color_mode))?;
+    output.flush()
+}
+
+fn print_assistant_response<W: Write>(
+    output: &mut W,
+    response: &str,
+    color_mode: ColorMode,
+) -> std::io::Result<()> {
+    use crate::console::styling::{STYLE_ASSISTANT_RESPONSE, paint};
+
+    writeln!(
+        output,
+        "{}",
+        paint(color_mode, STYLE_ASSISTANT_RESPONSE, response)
+    )
 }
 
 fn completed_turn_count(state: &SessionState) -> usize {
@@ -2422,6 +2453,49 @@ mod tests {
         let text = String::from_utf8(buf).unwrap();
         assert!(text.contains("\x1b["), "expected ANSI escape codes");
         assert!(text.ends_with("\x1b[0m\n"));
+    }
+
+    #[test]
+    fn user_input_echo_enabled_mode_brackets_terminal_input_style() {
+        use crate::console::styling::ColorMode;
+
+        let mut buf: Vec<u8> = Vec::new();
+
+        super::begin_user_input_echo(&mut buf, ColorMode::Enabled).unwrap();
+        super::end_user_input_echo(&mut buf, ColorMode::Enabled).unwrap();
+
+        let text = String::from_utf8(buf).unwrap();
+        assert!(text.starts_with("\x1b[38;5;82m"));
+        assert!(text.ends_with("\x1b[0m"));
+    }
+
+    #[test]
+    fn assistant_response_enabled_mode_wraps_response_in_color() {
+        use crate::console::styling::ColorMode;
+
+        let mut buf: Vec<u8> = Vec::new();
+
+        super::print_assistant_response(&mut buf, "hello\nthere", ColorMode::Enabled).unwrap();
+
+        let text = String::from_utf8(buf).unwrap();
+        assert!(text.starts_with("\x1b[38;5;255m"));
+        assert!(text.contains("hello\nthere"));
+        assert!(text.ends_with("\x1b[0m\n"));
+    }
+
+    #[test]
+    fn conversation_role_color_helpers_are_plain_when_disabled() {
+        use crate::console::styling::ColorMode;
+
+        let mut buf: Vec<u8> = Vec::new();
+
+        super::begin_user_input_echo(&mut buf, ColorMode::Disabled).unwrap();
+        super::end_user_input_echo(&mut buf, ColorMode::Disabled).unwrap();
+        super::print_assistant_response(&mut buf, "hello", ColorMode::Disabled).unwrap();
+
+        let text = String::from_utf8(buf).unwrap();
+        assert_eq!(text, "hello\n");
+        assert!(!text.contains("\x1b["));
     }
 
     #[test]

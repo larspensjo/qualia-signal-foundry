@@ -1822,3 +1822,22 @@ What changed:
 Refs: scripts/qsf.ps1, scripts/qsf.profiles.json, scripts/qsf-completion.ps1,
 scripts/qsf-completion.Tests.ps1, docs/Experiments/Fixtures/session-memory.empty.json,
 README.md, docs/DecisionLog.md
+
+## 2026-05-24 - Multi-turn console role colors
+
+Improved the live `multi-turn-text-loop` console presentation so typed user input and
+assistant responses are visually distinct in ANSI-capable terminals.
+
+What changed:
+- Added reusable console styling helpers for starting and resetting an active style.
+- Bracketed terminal input echo with the user-input color before each `read_line`, then
+  reset before subsequent loop output.
+- Colored completed assistant responses separately from memory and drop-marker output.
+
+Observed:
+- Unit coverage verifies forced-color and no-color rendering for the new role styling
+  helpers. Real terminal contrast still benefits from a manual check in the active
+  PowerShell profile.
+
+Refs: crates/qsf_app/src/console/styling.rs,
+crates/qsf_app/src/experiments/multi_turn_text_loop.rs
