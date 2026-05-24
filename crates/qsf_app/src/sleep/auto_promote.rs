@@ -1,5 +1,3 @@
-use std::collections::HashSet;
-
 use serde::Serialize;
 use time::OffsetDateTime;
 
@@ -8,10 +6,6 @@ use crate::memory::memory_record::{MemoryRecord, MemoryRecordKind};
 use crate::memory::store::MemoryStoreContents;
 use crate::session::SessionState;
 use crate::sleep::sleep_report::SleepReport;
-
-pub const CROSS_TURN_ASSOCIATION_WINDOW: usize = 3;
-pub const SLEEP_ASSOCIATION_INITIAL_WEIGHT: f64 = 0.35;
-pub const SLEEP_ASSOCIATION_STRENGTHEN_DELTA: f64 = 0.05;
 
 #[derive(Clone, Debug, PartialEq, Serialize)]
 pub struct PromotionPlan {
@@ -98,74 +92,53 @@ fn build_cross_turn_associations(
     current_store: &MemoryStoreContents,
     as_of: OffsetDateTime,
 ) -> (Vec<Association>, Vec<(String, String, f64)>) {
-    let mut new_associations = Vec::new();
-    let mut strengthened_associations = Vec::new();
-    let store_record_ids = current_store
+    use crate::memory::co_retrieval::{
+        CROSS_TURN_ASSOCIATION_WINDOW, CoRetrievalDelta, generate_cross_turn_deltas,
+    };
+
+    let known = current_store
         .records
         .iter()
-        .map(|record| record.id.as_str())
-        .collect::<HashSet<_>>();
+        .map(|record| record.id.clone())
+        .collect();
     let retrievals = session
         .turns
         .iter()
         .map(|turn| turn.context_assembly.retrieved_memory_ids())
         .collect::<Vec<_>>();
 
-    for from_turn in 0..retrievals.len() {
-        let last_turn = (from_turn + CROSS_TURN_ASSOCIATION_WINDOW).min(retrievals.len() - 1);
-        for to_turn in (from_turn + 1)..=last_turn {
-            for from_id in &retrievals[from_turn] {
-                for to_id in &retrievals[to_turn] {
-                    if from_id == to_id {
-                        continue;
-                    }
-                    let (left, right) = ordered_pair(from_id, to_id);
-                    if !store_record_ids.contains(left.as_str())
-                        || !store_record_ids.contains(right.as_str())
-                    {
-                        continue;
-                    }
-                    if new_associations.iter().any(|association: &Association| {
-                        association.from_memory_id == left && association.to_memory_id == right
-                    }) || strengthened_associations
-                        .iter()
-                        .any(|(from, to, _)| from == &left && to == &right)
-                    {
-                        continue;
-                    }
+    let deltas = generate_cross_turn_deltas(
+        &retrievals,
+        &current_store.associations,
+        &known,
+        CROSS_TURN_ASSOCIATION_WINDOW,
+        &session.session_id,
+        as_of,
+    );
 
-                    if let Some(existing) = current_store.associations.iter().find(|association| {
-                        association.from_memory_id == left && association.to_memory_id == right
-                    }) {
-                        strengthened_associations.push((
-                            left,
-                            right,
-                            (existing.weight + SLEEP_ASSOCIATION_STRENGTHEN_DELTA).min(1.0),
-                        ));
-                    } else {
-                        new_associations.push(Association::new(
-                            left,
-                            right,
-                            SLEEP_ASSOCIATION_INITIAL_WEIGHT,
-                            format!(
-                                "co-retrieved within {} turns during session {}",
-                                CROSS_TURN_ASSOCIATION_WINDOW, session.session_id
-                            ),
-                            as_of,
-                        ));
-                    }
-                }
+    let mut new_associations = Vec::new();
+    let mut strengthened_associations = Vec::new();
+    for delta in deltas {
+        match delta {
+            CoRetrievalDelta::Create {
+                from,
+                to,
+                weight,
+                reason,
+                at,
+            } => {
+                new_associations.push(Association::new(from, to, weight, reason, at));
+            }
+            CoRetrievalDelta::Strengthen {
+                from,
+                to,
+                new_weight,
+                ..
+            } => {
+                strengthened_associations.push((from, to, new_weight));
             }
         }
     }
-
-    new_associations.sort_by(|left, right| {
-        left.from_memory_id
-            .cmp(&right.from_memory_id)
-            .then_with(|| left.to_memory_id.cmp(&right.to_memory_id))
-    });
-    strengthened_associations
-        .sort_by(|left, right| left.0.cmp(&right.0).then_with(|| left.1.cmp(&right.1)));
 
     (new_associations, strengthened_associations)
 }
@@ -236,14 +209,6 @@ fn association_exists(
         .any(|association| {
             association.from_memory_id == from_id && association.to_memory_id == to_id
         })
-}
-
-fn ordered_pair(left: &str, right: &str) -> (String, String) {
-    if left <= right {
-        (left.to_string(), right.to_string())
-    } else {
-        (right.to_string(), left.to_string())
-    }
 }
 
 fn normalize_for_dedup(title: &str, summary: &str) -> String {
@@ -500,6 +465,40 @@ mod tests {
         assert_eq!(
             plan.strengthened_associations,
             vec![("memory.a".to_string(), "memory.c".to_string(), 0.45)]
+        );
+    }
+
+    #[test]
+    fn cross_turn_retrievals_strengthen_reverse_existing_direction_for_sleep_apply() {
+        let mut session = empty_session();
+        session.turns.push(turn_with_memories(0, &["memory.a"]));
+        session.turns.push(turn_with_memories(1, &["memory.b"]));
+        let store = MemoryStoreContents {
+            records: vec![
+                memory_record("memory.a", "A.", "A."),
+                memory_record("memory.b", "B.", "B."),
+            ],
+            associations: vec![Association::new(
+                "memory.b",
+                "memory.a",
+                0.4,
+                "existing reverse",
+                ts(),
+            )],
+        };
+
+        let plan = build_promotion_plan(
+            &report_with_candidates(vec![]),
+            &session,
+            &store,
+            ts(),
+            "sleep-1",
+        );
+
+        assert!(plan.new_associations.is_empty());
+        assert_eq!(
+            plan.strengthened_associations,
+            vec![("memory.b".to_string(), "memory.a".to_string(), 0.45)]
         );
     }
 

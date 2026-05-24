@@ -1753,3 +1753,23 @@ Observed:
   em dash.
 
 Refs: crates/qsf_app/src/console, crates/qsf_app/src/experiments/multi_turn_text_loop.rs
+
+## 2026-05-24 - Shared cross-turn co-retrieval
+
+Sleep's cross-turn co-retrieval pass now delegates to a pure shared memory helper, with
+a reusable entry point ready for live-loop drop handling.
+
+What changed:
+- Added `generate_cross_turn_deltas` and the sleep cross-turn constants to
+  `memory::co_retrieval`.
+- Kept sleep promotion on a thin adapter in `sleep::auto_promote`.
+- Added unit coverage for missing endpoints, existing-edge strengthening, reverse
+  existing-edge direction, and window boundaries in the shared helper.
+
+Observed:
+- Cross-turn strengthening now treats existing associations as undirected so reverse
+  stored edges are strengthened instead of duplicated; strengthen deltas keep the
+  stored association direction so the sleep commit path can apply them.
+
+Refs: crates/qsf_app/src/memory/co_retrieval.rs,
+crates/qsf_app/src/sleep/auto_promote.rs

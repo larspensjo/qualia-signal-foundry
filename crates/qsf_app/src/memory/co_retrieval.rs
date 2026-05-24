@@ -1,4 +1,4 @@
-use std::collections::BTreeSet;
+use std::collections::{BTreeSet, HashSet};
 
 use time::OffsetDateTime;
 
@@ -6,7 +6,10 @@ use crate::memory::association::Association;
 
 pub const CO_RETRIEVAL_INITIAL_WEIGHT: f64 = 0.3;
 pub const CO_RETRIEVAL_STRENGTHEN_DELTA: f64 = 0.05;
+pub const CROSS_TURN_ASSOCIATION_WINDOW: usize = 3;
 pub const MAX_NEW_ASSOCIATIONS_PER_TURN: usize = 5;
+pub const SLEEP_ASSOCIATION_INITIAL_WEIGHT: f64 = 0.35;
+pub const SLEEP_ASSOCIATION_STRENGTHEN_DELTA: f64 = 0.05;
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum CoRetrievalDelta {
@@ -94,6 +97,90 @@ pub fn generate_deltas(
     }
 
     deltas
+}
+
+/// Generate cross-turn co-retrieval deltas across a window.
+///
+/// `retrievals_per_turn[i]` is the set of memory IDs retrieved in turn `i`
+/// from the call site, usually `ContextAssembly::retrieved_memory_ids()`.
+/// `existing_associations` is the current store's association list.
+/// `known_record_ids` is the set of memory IDs currently present in the
+/// destination store; pairs touching missing endpoints are dropped.
+///
+/// Returns deterministically ordered deltas. `Create` deltas use
+/// `SLEEP_ASSOCIATION_INITIAL_WEIGHT`; `Strengthen` deltas use
+/// `SLEEP_ASSOCIATION_STRENGTHEN_DELTA`.
+pub fn generate_cross_turn_deltas(
+    retrievals_per_turn: &[Vec<String>],
+    existing_associations: &[Association],
+    known_record_ids: &HashSet<String>,
+    window: usize,
+    session_id: &str,
+    now: OffsetDateTime,
+) -> Vec<CoRetrievalDelta> {
+    let mut deltas = Vec::new();
+    let mut seen = BTreeSet::new();
+
+    let turn_count = retrievals_per_turn.len();
+    for from_turn in 0..turn_count {
+        let last_turn = (from_turn + window).min(turn_count.saturating_sub(1));
+        for to_turn in (from_turn + 1)..=last_turn {
+            for from_id in &retrievals_per_turn[from_turn] {
+                for to_id in &retrievals_per_turn[to_turn] {
+                    if from_id == to_id {
+                        continue;
+                    }
+
+                    let (left, right) = ordered_pair(from_id, to_id);
+                    if !known_record_ids.contains(&left) || !known_record_ids.contains(&right) {
+                        continue;
+                    }
+                    if !seen.insert((left.clone(), right.clone())) {
+                        continue;
+                    }
+
+                    if let Some(existing) = existing_associations.iter().find(|association| {
+                        is_same_unordered_pair(
+                            &association.from_memory_id,
+                            &association.to_memory_id,
+                            &left,
+                            &right,
+                        )
+                    }) {
+                        deltas.push(CoRetrievalDelta::Strengthen {
+                            from: existing.from_memory_id.clone(),
+                            to: existing.to_memory_id.clone(),
+                            new_weight: (existing.weight + SLEEP_ASSOCIATION_STRENGTHEN_DELTA)
+                                .min(1.0),
+                            at: now,
+                        });
+                    } else {
+                        deltas.push(CoRetrievalDelta::Create {
+                            from: left,
+                            to: right,
+                            weight: SLEEP_ASSOCIATION_INITIAL_WEIGHT,
+                            reason: format!(
+                                "co-retrieved within {window} turns during session {session_id}"
+                            ),
+                            at: now,
+                        });
+                    }
+                }
+            }
+        }
+    }
+
+    deltas.sort_by(|left, right| left.ordering_key().cmp(&right.ordering_key()));
+    deltas
+}
+
+impl CoRetrievalDelta {
+    fn ordering_key(&self) -> (u8, &str, &str) {
+        match self {
+            CoRetrievalDelta::Create { from, to, .. } => (0, from.as_str(), to.as_str()),
+            CoRetrievalDelta::Strengthen { from, to, .. } => (1, from.as_str(), to.as_str()),
+        }
+    }
 }
 
 fn ordered_pair(left: &str, right: &str) -> (String, String) {
@@ -209,5 +296,107 @@ mod tests {
         let deltas = generate_deltas(&retrieved, &existing, 0, "s", now());
 
         assert!(matches!(deltas[0], CoRetrievalDelta::Strengthen { .. }));
+    }
+
+    #[test]
+    fn cross_turn_deltas_skip_missing_endpoints() {
+        let retrievals = vec![
+            vec!["a".to_string(), "ghost".to_string()],
+            vec!["b".to_string()],
+        ];
+        let mut known = HashSet::new();
+        known.insert("a".to_string());
+        known.insert("b".to_string());
+
+        let deltas = generate_cross_turn_deltas(
+            &retrievals,
+            &[],
+            &known,
+            CROSS_TURN_ASSOCIATION_WINDOW,
+            "s",
+            now(),
+        );
+
+        assert_eq!(deltas.len(), 1);
+        match &deltas[0] {
+            CoRetrievalDelta::Create { from, to, .. } => {
+                assert_eq!(from, "a");
+                assert_eq!(to, "b");
+            }
+            other => panic!("expected Create, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn cross_turn_deltas_strengthen_existing() {
+        let retrievals = vec![vec!["a".to_string()], vec!["b".to_string()]];
+        let existing = vec![Association::new("a", "b", 0.5, "prior", now())];
+        let mut known = HashSet::new();
+        known.insert("a".to_string());
+        known.insert("b".to_string());
+
+        let deltas = generate_cross_turn_deltas(
+            &retrievals,
+            &existing,
+            &known,
+            CROSS_TURN_ASSOCIATION_WINDOW,
+            "s",
+            now(),
+        );
+
+        assert_eq!(deltas.len(), 1);
+        assert!(matches!(
+            deltas[0],
+            CoRetrievalDelta::Strengthen { ref from, ref to, new_weight, .. }
+                if from == "a" && to == "b" && (new_weight - 0.55).abs() < 1e-9
+        ));
+    }
+
+    #[test]
+    fn cross_turn_deltas_strengthen_existing_reverse_direction_uses_stored_direction() {
+        let retrievals = vec![vec!["a".to_string()], vec!["b".to_string()]];
+        let existing = vec![Association::new("b", "a", 0.5, "prior", now())];
+        let mut known = HashSet::new();
+        known.insert("a".to_string());
+        known.insert("b".to_string());
+
+        let deltas = generate_cross_turn_deltas(
+            &retrievals,
+            &existing,
+            &known,
+            CROSS_TURN_ASSOCIATION_WINDOW,
+            "s",
+            now(),
+        );
+
+        assert_eq!(deltas.len(), 1);
+        assert!(matches!(
+            deltas[0],
+            CoRetrievalDelta::Strengthen { ref from, ref to, new_weight, .. }
+                if from == "b" && to == "a" && (new_weight - 0.55).abs() < 1e-9
+        ));
+    }
+
+    #[test]
+    fn cross_turn_deltas_respect_window() {
+        let retrievals = vec![
+            vec!["a".to_string()],
+            vec!["b".to_string()],
+            vec!["c".to_string()],
+            vec!["d".to_string()],
+            vec!["e".to_string()],
+        ];
+        let known: HashSet<String> = ["a", "b", "c", "d", "e"]
+            .iter()
+            .map(|id| id.to_string())
+            .collect();
+
+        let deltas = generate_cross_turn_deltas(&retrievals, &[], &known, 2, "s", now());
+        let creates = deltas
+            .iter()
+            .filter(|delta| matches!(delta, CoRetrievalDelta::Create { .. }))
+            .count();
+
+        assert_eq!(creates, 7);
     }
 }
