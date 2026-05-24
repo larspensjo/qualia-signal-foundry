@@ -35,11 +35,13 @@ Set-StrictMode -Version Latest
 
 $projectRoot = Split-Path -Parent $PSScriptRoot
 
-$planPath = if ([System.IO.Path]::IsPathRooted($Plan)) {
+$rawPlanPath = if ([System.IO.Path]::IsPathRooted($Plan)) {
     $Plan
 } else {
     Join-Path $projectRoot $Plan
 }
+
+$planPath = [System.IO.Path]::GetFullPath($rawPlanPath)
 
 if (-not (Test-Path -LiteralPath $planPath -PathType Leaf)) {
     throw "Plan file not found: $planPath"
@@ -47,27 +49,51 @@ if (-not (Test-Path -LiteralPath $planPath -PathType Leaf)) {
 
 $planLeaf = Split-Path -Leaf $planPath
 $planDir = Split-Path -Parent $planPath
-$reviewPath = Join-Path $planDir "Review.$planLeaf"
+$reviewPath = [System.IO.Path]::GetFullPath((Join-Path $planDir "Review.$planLeaf"))
 
 $prompt = "Please see $Plan Help me review the staged changes where $Task was implemented."
+
+function Format-Invocation {
+    param(
+        [string]$Executable,
+        [string[]]$Arguments
+    )
+    $parts = @($Executable)
+    foreach ($arg in $Arguments) {
+        if ($arg -match '\s' -or $arg -eq '') {
+            $escaped = $arg -replace '"', '\"'
+            $parts += "`"$escaped`""
+        } else {
+            $parts += $arg
+        }
+    }
+    return ($parts -join ' ')
+}
+
+switch ($Cli) {
+    "gemini" {
+        $exe = "gemini"
+        $cliArgs = @("-m", "gemini-3.5-flash", "-p", $prompt)
+    }
+    "claude" {
+        $exe = "claude"
+        $cliArgs = @("-p", "--model", "opus", $prompt)
+    }
+}
 
 Write-Host "CLI:     $Cli"
 Write-Host "Plan:    $planPath"
 Write-Host "Task:    $Task"
 Write-Host "Output:  $reviewPath"
+Write-Host "Command: $(Format-Invocation -Executable $exe -Arguments $cliArgs)"
 Write-Host "Running $Cli..."
+Write-Host ""
 
-switch ($Cli) {
-    "gemini" {
-        & gemini -m gemini-3.5-flash -p $prompt | Set-Content -LiteralPath $reviewPath -Encoding UTF8
-    }
-    "claude" {
-        & claude -p --model opus $prompt | Set-Content -LiteralPath $reviewPath -Encoding UTF8
-    }
-}
+& $exe @cliArgs | Tee-Object -FilePath $reviewPath -Encoding UTF8
 
 if ($LASTEXITCODE -ne 0) {
     throw "$Cli exited with code $LASTEXITCODE"
 }
 
+Write-Host ""
 Write-Host "Review written to $reviewPath"
