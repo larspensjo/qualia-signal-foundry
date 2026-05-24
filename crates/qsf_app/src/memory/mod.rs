@@ -3,6 +3,7 @@
 pub mod association;
 pub mod co_retrieval;
 pub mod fixtures;
+pub mod hint_expansion;
 pub mod memory_record;
 pub mod retrieval;
 pub mod reviewed_memory_draft;

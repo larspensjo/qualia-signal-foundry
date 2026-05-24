@@ -184,23 +184,35 @@ pub fn format_tool_message(tool_message: &PromptToolMessage) -> String {
 }
 
 pub fn retrieved_memory_block(assembly: &ContextAssembly) -> String {
-    assembly
-        .selected
-        .iter()
-        .filter(|selection| {
-            matches!(
-                selection.fragment.source_kind,
-                crate::context::ContextSourceKind::Memory
-            )
-        })
-        .map(|selection| {
-            format!(
-                "- {}: {}",
-                selection.fragment.fragment_id, selection.fragment.summary
-            )
-        })
-        .collect::<Vec<_>>()
-        .join("\n")
+    let mut directs = Vec::new();
+    let mut hints = Vec::new();
+
+    for selection in &assembly.selected {
+        let line = format!(
+            "- {}: {}",
+            selection.fragment.fragment_id, selection.fragment.summary
+        );
+        match selection.fragment.source_kind {
+            crate::context::ContextSourceKind::Memory => directs.push(line),
+            crate::context::ContextSourceKind::MemoryHint => hints.push(line),
+            _ => {}
+        }
+    }
+
+    let mut out = String::new();
+    if !directs.is_empty() {
+        out.push_str("=== Memories retrieved for this turn ===\n");
+        out.push_str(&directs.join("\n"));
+    }
+    if !hints.is_empty() {
+        if !out.is_empty() {
+            out.push_str("\n\n");
+        }
+        // Keep this prompt label ASCII-only for stable terminal rendering on Windows.
+        out.push_str("=== Associated memories (hints - may or may not be relevant) ===\n");
+        out.push_str(&hints.join("\n"));
+    }
+    out
 }
 
 pub fn canonical_hash(messages: &[ModelMessage]) -> ContentHash {
@@ -318,8 +330,82 @@ mod tests {
 
         assert_eq!(
             retrieved_memory_block(&assembly),
-            "- memory.a: A remembered fact."
+            "=== Memories retrieved for this turn ===\n- memory.a: A remembered fact."
         );
+    }
+
+    #[test]
+    fn block_renderer_emits_two_labeled_sections_when_hints_present() {
+        let assembly = ContextAssembly {
+            budget: ContextBudget::new(8, 1024),
+            used_estimated_tokens: 40,
+            omitted: vec![],
+            selected: vec![
+                ContextSelection {
+                    fragment: ContextFragment {
+                        fragment_id: "memory.foo".to_string(),
+                        source_kind: ContextSourceKind::Memory,
+                        summary: "Foo summary".to_string(),
+                        tags: vec![],
+                        score: 1.0,
+                        estimated_tokens: 20,
+                        source_reference: "x".to_string(),
+                        selection_reason: "matched: decay".to_string(),
+                    },
+                    cumulative_estimated_tokens: 20,
+                },
+                ContextSelection {
+                    fragment: ContextFragment {
+                        fragment_id: "memory.baz".to_string(),
+                        source_kind: ContextSourceKind::MemoryHint,
+                        summary: "Baz summary".to_string(),
+                        tags: vec![],
+                        score: 0.4,
+                        estimated_tokens: 20,
+                        source_reference: "x".to_string(),
+                        selection_reason: "via memory.foo: co-retrieved".to_string(),
+                    },
+                    cumulative_estimated_tokens: 40,
+                },
+            ],
+        };
+
+        let block = retrieved_memory_block(&assembly);
+
+        assert!(block.contains("=== Memories retrieved for this turn ==="));
+        assert!(block.contains("- memory.foo: Foo summary"));
+        assert!(block.contains("=== Associated memories (hints - may or may not be relevant) ==="));
+        assert!(block.contains("- memory.baz: Baz summary"));
+        let direct_pos = block.find("memory.foo").unwrap();
+        let hint_pos = block.find("memory.baz").unwrap();
+        assert!(direct_pos < hint_pos);
+    }
+
+    #[test]
+    fn block_renderer_omits_hint_section_when_no_hints() {
+        let assembly = ContextAssembly {
+            budget: ContextBudget::new(8, 1024),
+            used_estimated_tokens: 20,
+            omitted: vec![],
+            selected: vec![ContextSelection {
+                fragment: ContextFragment {
+                    fragment_id: "memory.foo".to_string(),
+                    source_kind: ContextSourceKind::Memory,
+                    summary: "Foo".to_string(),
+                    tags: vec![],
+                    score: 1.0,
+                    estimated_tokens: 20,
+                    source_reference: "x".to_string(),
+                    selection_reason: "matched".to_string(),
+                },
+                cumulative_estimated_tokens: 20,
+            }],
+        };
+
+        let block = retrieved_memory_block(&assembly);
+
+        assert!(block.contains("=== Memories retrieved for this turn ==="));
+        assert!(!block.contains("=== Associated memories"));
     }
 
     #[test]

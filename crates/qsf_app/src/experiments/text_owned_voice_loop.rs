@@ -35,7 +35,7 @@ use super::registry::{Experiment, ExperimentName, ExperimentOutcome};
 
 const VOICE_CONTEXT_ASSEMBLY_LATENCY_MS: u64 = 6;
 const VOICE_MEMORY_RETRIEVAL_LIMIT: usize = 1;
-const VOICE_MEMORY_RETRIEVAL_STRATEGY: RetrievalStrategy = RetrievalStrategy::AssociationWeighted;
+const VOICE_MEMORY_RETRIEVAL_STRATEGY: RetrievalStrategy = RetrievalStrategy::KeywordTag;
 const VOICE_MEMORY_SOURCE_ENV_VAR: &str = "QSF_VOICE_MEMORY_SOURCE";
 const VOICE_MEMORY_FILE_ENV_VAR: &str = "QSF_VOICE_MEMORY_FILE";
 
@@ -1205,6 +1205,14 @@ mod tests {
     use time::format_description::well_known::Rfc3339;
     use uuid::Uuid;
 
+    #[test]
+    fn voice_retrieval_uses_keyword_tag_strategy() {
+        assert_eq!(
+            super::VOICE_MEMORY_RETRIEVAL_STRATEGY,
+            crate::memory::RetrievalStrategy::KeywordTag,
+        );
+    }
+
     struct FailingModelClient;
 
     impl ModelClient for FailingModelClient {
@@ -1363,7 +1371,7 @@ mod tests {
         assert!(report.contains("Response owner: `qsf_model_role`"));
         assert!(report.contains("Memory source: `phase_four_fixture`"));
         assert!(report.contains("Memory records: `10`"));
-        assert!(report.contains("Retrieval strategy: `association-weighted`"));
+        assert!(report.contains("Retrieval strategy: `keyword-tag`"));
         assert!(report.contains("Exact speech handoff: `true`"));
         assert!(report.contains("Raw audio logged: `false`"));
         assert!(context.run_dir().join("voice-memory-source.json").exists());
@@ -1510,7 +1518,7 @@ mod tests {
     }
 
     #[test]
-    fn file_memory_source_retrieval_trace_exposes_association_path() {
+    fn file_memory_source_keyword_retrieval_prefers_direct_match() {
         let base_dir =
             std::env::temp_dir().join(format!("qsf-text-owned-association-{}", Uuid::new_v4()));
         fs::create_dir_all(&base_dir).unwrap();
@@ -1574,11 +1582,10 @@ mod tests {
             fs::read_to_string(context.run_dir().join("text-owned-voice-loop.md")).unwrap();
         let traces = fs::read_to_string(context.run_dir().join("traces.jsonl")).unwrap();
 
-        assert!(report.contains(&format!("Selected memory context: `{associated_id}`")));
-        assert!(traces.contains("\"association_paths\""));
+        assert!(report.contains(&format!("Selected memory context: `{seed_id}`")));
+        assert!(traces.contains("\"association_paths\":[]"));
         assert!(traces.contains(seed_id));
         assert!(traces.contains(associated_id));
-        assert!(traces.contains("Streaming seed points to associated reviewed memory."));
 
         fs::remove_dir_all(base_dir).unwrap();
     }
@@ -1791,7 +1798,7 @@ mod tests {
             .iter()
             .find(|record| record.event_type == EventType::MemoryRetrieved)
             .unwrap();
-        assert_eq!(retrieval.payload["strategy"], "association_weighted");
+        assert_eq!(retrieval.payload["strategy"], "keyword_tag");
         let selected_memories = retrieval.payload["selected"].as_array().unwrap();
         assert_eq!(selected_memories.len(), 1);
         assert!(

@@ -1700,3 +1700,33 @@ What changed:
 
 Refs: crates/qsf_app/src/sleep/auto_promote.rs,
 state/qa-memory-browser-real/memory-store.json
+
+## 2026-05-24 - Live memory hint expansion
+
+Live turns now separate directly retrieved memories from associated hint memories so the
+conversation prompt can show one-hop graph context without making association scoring the
+direct retrieval strategy.
+
+What changed:
+- Added `MemoryHint` context fragments, source-priority assembly, and a pure
+  single-hop neighbor expansion helper.
+- Switched live text and text-owned voice retrieval to keyword/tag scoring while keeping
+  association-weighted retrieval available in the memory/context experiment.
+- Rendered direct memories and associated hints as separate prompt sections.
+- Reloaded the live memory snapshot after persistence so newly written associations can
+  affect later turns in the same process.
+
+Observed:
+- The hint-expansion implementation intentionally keeps the best candidate per neighbor
+  by weight/order, rather than following the first-edge-wins sketch from the planning
+  note; this lets reciprocal edges pick the stronger reason and weight.
+- Prompt labels and hint selection reasons use ASCII hyphens instead of Unicode dashes
+  for stable Windows terminal rendering.
+- Voice-loop association traversal is no longer part of live retrieval by design;
+  association-weighted retrieval remains covered by the memory/context experiment and
+  retrieval unit tests.
+
+Refs: crates/qsf_app/src/context, crates/qsf_app/src/memory/hint_expansion.rs,
+crates/qsf_app/src/conversation/prompt.rs,
+crates/qsf_app/src/experiments/multi_turn_text_loop.rs,
+crates/qsf_app/src/experiments/text_owned_voice_loop.rs

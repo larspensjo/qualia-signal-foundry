@@ -8,7 +8,7 @@ use anyhow::Context;
 use serde::Serialize;
 use serde_json::json;
 
-use crate::context::{ContextAssembly, ContextFragment, assemble_context};
+use crate::context::{ContextAssembly, ContextFragment, ContextSourceKind, assemble_context};
 use crate::conversation::prompt::{self, PromptToolMessage, PromptTurn};
 use crate::conversation::{PromptAssembly, PromptTurnSummary};
 use crate::memory::{
@@ -42,7 +42,7 @@ const SESSION_MAX_TURNS_ENV_VAR: &str = "QSF_SESSION_MAX_TURNS";
 const SESSION_ALLOW_OVER_LIMIT_ENV_VAR: &str = "QSF_SESSION_ALLOW_OVER_LIMIT";
 const SESSION_WARM_THRESHOLD_ENV_VAR: &str = "QSF_SESSION_WARM_THRESHOLD";
 const SESSION_RETRIEVAL_LIMIT: usize = 8;
-const SESSION_RETRIEVAL_STRATEGY: RetrievalStrategy = RetrievalStrategy::AssociationWeighted;
+const SESSION_RETRIEVAL_STRATEGY: RetrievalStrategy = RetrievalStrategy::KeywordTag;
 
 pub struct MultiTurnTextLoopExperiment;
 
@@ -277,7 +277,7 @@ fn run_with_io_and_components_at_state_dir(
         &mut state,
         SessionEvent::SessionStarted(config.clone()),
     )?;
-    let memory_snapshot = load_session_memory_snapshot(context, memory_source, &state_dir)?;
+    let mut memory_snapshot = load_session_memory_snapshot(context, memory_source, &state_dir)?;
     write_memory_source_snapshot(context, &memory_snapshot)?;
     writeln!(output, "multi-turn-text-loop ready; type :quit to exit")?;
 
@@ -341,7 +341,7 @@ fn run_with_io_and_components_at_state_dir(
             context,
             &mut state,
             &state_dir,
-            &memory_snapshot,
+            &mut memory_snapshot,
             model_client,
             &user_input,
             boot_brief_fragment,
@@ -405,7 +405,7 @@ fn run_one_turn(
     context: &mut RunContext,
     state: &mut SessionState,
     state_dir: &Path,
-    memory_snapshot: &SessionMemorySourceSnapshot,
+    memory_snapshot: &mut SessionMemorySourceSnapshot,
     model_client: &dyn ModelClient,
     user_input: &str,
     boot_brief_fragment: Option<String>,
@@ -417,10 +417,34 @@ fn run_one_turn(
         .iter()
         .map(ContextFragment::from)
         .collect::<Vec<_>>();
+    let direct_ids = retrieval
+        .selected
+        .iter()
+        .map(|memory| memory.memory.id.clone())
+        .collect::<Vec<_>>();
+    let hint_candidates = crate::memory::hint_expansion::expand_neighbors(
+        &direct_ids,
+        &memory_snapshot.records,
+        &memory_snapshot.associations,
+        crate::memory::hint_expansion::MAX_HINTS_PER_TURN,
+    );
+    let mut all_fragments = fragments;
+    for hint in &hint_candidates {
+        all_fragments.push(ContextFragment {
+            fragment_id: hint.memory.id.clone(),
+            source_kind: ContextSourceKind::MemoryHint,
+            summary: hint.memory.summary.clone(),
+            tags: hint.memory.tags.clone(),
+            score: hint.weight,
+            estimated_tokens: hint.memory.estimated_tokens,
+            source_reference: hint.memory.source_reference.clone(),
+            selection_reason: format!("via {} - {}", hint.via_direct_id, hint.association_reason),
+        });
+    }
     apply_session_event(context, state, SessionEvent::MemoryRetrieved)?;
 
     let assembly = assemble_context(
-        fragments,
+        all_fragments,
         ModelRole::predefined(ModelRoleId::ConversationalResponder).context_budget,
     );
     let context_trace_id = record_context_assembly(context, state, &assembly)?;
@@ -569,6 +593,12 @@ fn run_one_turn(
         },
     )?;
     apply_live_memory_reinforcement(context, state, state_dir, &retrieval)?;
+    let store_path = state_dir.join("memory-store.json");
+    // Fixture-backed memory has no persisted store to reload. File-backed live
+    // memory refreshes only after persistence creates or updates this store.
+    if store_path.exists() {
+        *memory_snapshot = reload_session_memory_source_snapshot(&store_path)?;
+    }
 
     let turn = Turn {
         index: completed_turn_count(state),
@@ -1264,6 +1294,18 @@ fn load_session_memory_snapshot(
     memory_source.load(context)
 }
 
+/// Reload-on-change snapshot refresh. Called after persistence that may have
+/// introduced or strengthened associations.
+fn reload_session_memory_source_snapshot(
+    memory_store_path: &Path,
+) -> anyhow::Result<SessionMemorySourceSnapshot> {
+    let store = crate::memory::MemoryStore::load_or_empty(memory_store_path)?;
+    Ok(SessionMemorySourceSnapshot::from_memory_store(
+        memory_store_path,
+        store.contents().clone(),
+    ))
+}
+
 struct PhaseFourSessionMemorySource;
 
 impl SessionMemorySource for PhaseFourSessionMemorySource {
@@ -1677,16 +1719,18 @@ mod tests {
 
     use super::{
         DEFAULT_SESSION_MODEL, SessionMemorySource, age_out_warm_turns,
-        prompt_prefix_status_for_report, reduce_session, run_with_io_and_components,
+        prompt_prefix_status_for_report, reduce_session, run_one_turn, run_with_io_and_components,
         run_with_io_and_components_at_state_dir,
     };
-    use crate::context::{ContextAssembly, ContextBudget};
+    use crate::context::{ContextAssembly, ContextBudget, ContextSourceKind};
     use crate::conversation::ContentHash;
     use crate::conversation::prompt::{
         PromptTurn, PromptTurnSummary, assemble_prompt, assemble_prompt_with_summaries,
         prior_request_prefix_hash,
     };
-    use crate::memory::phase_four_fixture;
+    use crate::memory::{
+        Association, MemoryFixture, MemoryRecord, MemoryRecordKind, MemoryStore, phase_four_fixture,
+    };
     use crate::models::{
         MockModelClient, ModelClient, ModelMessage, ModelRequest, ModelResponse, ModelRoleId,
         ModelToolCall, ModelUsage,
@@ -1698,6 +1742,139 @@ mod tests {
         SessionState, Turn, TurnSummary,
     };
     use crate::tools::{CALCULATOR_TOOL_NAME, RECALL_TURN_TOOL_NAME};
+
+    #[test]
+    fn live_retrieval_uses_keyword_tag_strategy() {
+        assert_eq!(
+            super::SESSION_RETRIEVAL_STRATEGY,
+            crate::memory::RetrievalStrategy::KeywordTag,
+            "Live loop must use KeywordTag so retrieval + hint expansion stay strict single-hop",
+        );
+    }
+
+    #[test]
+    fn reload_snapshot_picks_up_freshly_persisted_associations() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let store_path = dir.path().join("memory-store.json");
+
+        let store = MemoryStore::load_or_empty(&store_path).unwrap();
+        store.persist().unwrap();
+
+        let mut store = MemoryStore::load_or_empty(&store_path).unwrap();
+        store.contents_mut().records.push(memory_record(
+            "a",
+            "Alpha",
+            "Alpha summary.",
+            vec!["alpha"],
+            10,
+        ));
+        store.contents_mut().records.push(memory_record(
+            "b",
+            "Beta",
+            "Beta summary.",
+            vec!["beta"],
+            10,
+        ));
+        store.contents_mut().associations.push(Association::new(
+            "a",
+            "b",
+            0.5,
+            "r",
+            time::OffsetDateTime::now_utc(),
+        ));
+        store.persist().unwrap();
+
+        let refreshed = super::reload_session_memory_source_snapshot(&store_path).unwrap();
+        assert_eq!(refreshed.associations.len(), 1);
+    }
+
+    #[test]
+    fn run_one_turn_emits_memory_hints_when_associations_exist() {
+        let base_dir =
+            std::env::temp_dir().join(format!("qsf-memory-hint-turn-{}", Uuid::new_v4()));
+        let state_dir = base_dir.join("state/text-loop");
+        let mut context = RunContext::create_in(&base_dir, "multi-turn-text-loop").unwrap();
+        let mut state = SessionState::new(test_config_with_warm_threshold(10, 10));
+        let foo = memory_record(
+            "memory.foo",
+            "Foo anchor",
+            "Foo summary",
+            vec!["foozle"],
+            20,
+        );
+        let baz = MemoryRecord::new(
+            "memory.baz",
+            MemoryRecordKind::Observation,
+            "Baz hint",
+            "Baz summary",
+            vec!["baz"],
+            timestamp("2026-05-01T00:00:00Z"),
+            0.0,
+            0,
+            "tests",
+            20,
+        );
+        let mut records = vec![foo, baz];
+        records.extend((0..7).map(|i| {
+            MemoryRecord::new(
+                format!("memory.filler.{i}"),
+                MemoryRecordKind::Observation,
+                format!("Filler {i}"),
+                format!("Filler summary {i}"),
+                vec!["filler"],
+                timestamp("2026-05-23T00:00:00Z"),
+                1.0,
+                0,
+                "tests",
+                1_000,
+            )
+        }));
+        let mut memory_snapshot = super::SessionMemorySourceSnapshot::from_fixture(
+            "test",
+            "test",
+            MemoryFixture {
+                records,
+                associations: vec![Association::new(
+                    "memory.foo",
+                    "memory.baz",
+                    0.9,
+                    "foo suggests baz",
+                    timestamp("2026-05-24T00:00:00Z"),
+                )],
+            },
+        );
+
+        run_one_turn(
+            &mut context,
+            &mut state,
+            &state_dir,
+            &mut memory_snapshot,
+            &MockModelClient::default(),
+            "foozle",
+            None,
+        )
+        .unwrap();
+
+        let turn = state.turns.last().unwrap();
+        let hint_ids = turn
+            .context_assembly
+            .selected
+            .iter()
+            .filter(|selection| selection.fragment.source_kind == ContextSourceKind::MemoryHint)
+            .map(|selection| selection.fragment.fragment_id.clone())
+            .collect::<Vec<_>>();
+
+        assert!(
+            hint_ids.contains(&"memory.baz".to_string()),
+            "expected memory.baz as a hint, got: {hint_ids:?}"
+        );
+        assert!(
+            turn.retrieved_memory_block
+                .contains("=== Associated memories (hints - may or may not be relevant) ===")
+        );
+
+        fs::remove_dir_all(base_dir).unwrap();
+    }
 
     #[test]
     fn reducer_appends_turns_in_order() {
@@ -2800,6 +2977,31 @@ mod tests {
                 file: None,
             },
         }
+    }
+
+    fn memory_record(
+        id: &str,
+        title: &str,
+        summary: &str,
+        tags: Vec<&str>,
+        estimated_tokens: usize,
+    ) -> MemoryRecord {
+        MemoryRecord::new(
+            id,
+            MemoryRecordKind::Observation,
+            title,
+            summary,
+            tags,
+            timestamp("2026-05-24T00:00:00Z"),
+            1.0,
+            0,
+            "tests",
+            estimated_tokens,
+        )
+    }
+
+    fn timestamp(value: &str) -> time::OffsetDateTime {
+        time::OffsetDateTime::parse(value, &time::format_description::well_known::Rfc3339).unwrap()
     }
 
     fn test_turn(index: usize) -> Turn {

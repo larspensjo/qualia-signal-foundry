@@ -37,8 +37,10 @@ pub fn assemble_context(fragments: Vec<ContextFragment>, budget: ContextBudget) 
     let mut sorted = fragments;
     sorted.sort_by(|left, right| {
         right
-            .score
-            .total_cmp(&left.score)
+            .source_kind
+            .source_priority()
+            .cmp(&left.source_kind.source_priority())
+            .then_with(|| right.score.total_cmp(&left.score))
             .then_with(|| left.estimated_tokens.cmp(&right.estimated_tokens))
             .then_with(|| left.fragment_id.cmp(&right.fragment_id))
     });
@@ -113,10 +115,32 @@ mod tests {
         assert!(assembly.omitted[0].reason.contains("token budget exceeded"));
     }
 
+    #[test]
+    fn hint_cannot_evict_direct_under_budget_pressure() {
+        let direct = fragment_with_kind("direct.a", 5.0, 60, ContextSourceKind::Memory);
+        let hint = fragment_with_kind("hint.b", 10.0, 60, ContextSourceKind::MemoryHint);
+
+        let assembly = assemble_context(vec![hint, direct], ContextBudget::new(2, 60));
+
+        assert_eq!(assembly.selected.len(), 1);
+        assert_eq!(assembly.selected[0].fragment.fragment_id, "direct.a");
+        assert_eq!(assembly.omitted.len(), 1);
+        assert_eq!(assembly.omitted[0].fragment.fragment_id, "hint.b");
+    }
+
     fn fragment(id: &str, score: f64, estimated_tokens: usize) -> ContextFragment {
+        fragment_with_kind(id, score, estimated_tokens, ContextSourceKind::Memory)
+    }
+
+    fn fragment_with_kind(
+        id: &str,
+        score: f64,
+        estimated_tokens: usize,
+        source_kind: ContextSourceKind,
+    ) -> ContextFragment {
         ContextFragment {
             fragment_id: id.to_string(),
-            source_kind: ContextSourceKind::Memory,
+            source_kind,
             summary: format!("Fragment {id}"),
             tags: vec![],
             score,

@@ -2,7 +2,8 @@
   "permissions": {
     "allow": [
       "Bash(cargo fmt *)",
-      "Bash(npx biome *)"
+      "Bash(npx biome *)",
+      "Bash(git -C c:/Users/larsp/src/qualia-signal-foundry diff --stat HEAD)"
     ]
   }
 }

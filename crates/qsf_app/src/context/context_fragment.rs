@@ -6,9 +6,23 @@ use crate::memory::RetrievedMemory;
 #[serde(rename_all = "snake_case")]
 pub enum ContextSourceKind {
     Memory,
+    MemoryHint,
     ToolObservation,
     RuntimeState,
     ProjectFrame,
+}
+
+impl ContextSourceKind {
+    /// Higher priority kinds win when the assembler must choose under budget pressure.
+    pub fn source_priority(&self) -> u8 {
+        match self {
+            ContextSourceKind::Memory => 100,
+            ContextSourceKind::ToolObservation => 90,
+            ContextSourceKind::RuntimeState => 80,
+            ContextSourceKind::ProjectFrame => 70,
+            ContextSourceKind::MemoryHint => 50,
+        }
+    }
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
@@ -63,5 +77,25 @@ impl From<&RetrievedMemory> for ContextFragment {
             source_reference: retrieved.memory.source_reference.clone(),
             selection_reason: reasons.join("; "),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn memory_outranks_memory_hint_in_priority() {
+        assert!(
+            ContextSourceKind::Memory.source_priority()
+                > ContextSourceKind::MemoryHint.source_priority()
+        );
+    }
+
+    #[test]
+    fn memory_hint_serializes_in_snake_case() {
+        let kind = ContextSourceKind::MemoryHint;
+        let json = serde_json::to_string(&kind).unwrap();
+        assert_eq!(json, "\"memory_hint\"");
     }
 }
