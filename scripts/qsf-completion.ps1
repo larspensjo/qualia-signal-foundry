@@ -22,6 +22,13 @@ $script:QsfCompletionListSubjects = @(
     "profiles"
 )
 
+$script:QsfCompletionSessionMemorySources = @(
+    "auto",
+    "empty",
+    "file",
+    "fixture"
+)
+
 $script:QsfCompletionExperiments = @(
     "framework-skeleton-mvp",
     "audio-preparation-layer",
@@ -104,6 +111,7 @@ function Get-QsfCompletionStorePaths {
     $roots = @(
         "state",
         "runs",
+        "docs/Experiments/Fixtures",
         "crates/qsf_browser_server/tests/fixtures"
     )
 
@@ -194,6 +202,14 @@ $qsfCompleter = {
             }
             "-BindHost" {
                 Select-QsfCompletionMatches -Values @("127.0.0.1", "0.0.0.0") -WordToComplete $wordToComplete
+                return
+            }
+            "-SessionMemorySource" {
+                Select-QsfCompletionMatches -Values $script:QsfCompletionSessionMemorySources -WordToComplete $wordToComplete
+                return
+            }
+            "-SessionMemoryFile" {
+                Select-QsfCompletionMatches -Values (Get-QsfCompletionStorePaths) -WordToComplete $wordToComplete
                 return
             }
         }

@@ -44,6 +44,7 @@ Describe "qsf.ps1 argument completion" {
         $completions | Should -Contain "mock"
         $completions | Should -Contain "openai-text"
         $completions | Should -Contain "file-memory"
+        $completions | Should -Contain "demo-memory"
         $completions | Should -Contain "openai-transcription-mic"
     }
 
@@ -88,5 +89,20 @@ Describe "qsf.ps1 argument completion" {
 
         $completions | Should -Contain "127.0.0.1"
         $completions | Should -Contain "0.0.0.0"
+    }
+
+    It "completes session memory source values" {
+        $completions = Complete-QsfInput -InputText ".\scripts\qsf.ps1 app -Experiment multi-turn-text-loop -SessionMemorySource "
+
+        $completions | Should -Contain "auto"
+        $completions | Should -Contain "empty"
+        $completions | Should -Contain "file"
+        $completions | Should -Contain "fixture"
+    }
+
+    It "completes session memory file paths" {
+        $completions = Complete-QsfInput -InputText ".\scripts\qsf.ps1 app -Experiment multi-turn-text-loop -SessionMemoryFile "
+
+        $completions | Should -Contain "docs/Experiments/Fixtures/session-memory.empty.json"
     }
 }

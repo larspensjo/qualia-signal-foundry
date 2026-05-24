@@ -61,6 +61,17 @@
       "requires": []
     },
     {
+      "name": "demo-memory",
+      "description": "Use the deterministic Phase 4 session-memory demo fixture.",
+      "env": {
+        "QSF_SESSION_MEMORY_SOURCE": "phase_four_fixture"
+      },
+      "clear_env": [
+        "QSF_SESSION_MEMORY_FILE"
+      ],
+      "requires": []
+    },
+    {
       "name": "openai-transcription-mic",
       "description": "Use OpenAI realtime transcription with the default microphone input.",
       "env": {

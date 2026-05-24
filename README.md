@@ -125,6 +125,7 @@ pwsh -NoProfile -File .\scripts\qsf.ps1 help
 .\scripts\qsf.ps1 help
 .\scripts\qsf.ps1 list experiments
 .\scripts\qsf.ps1 app -Experiment multi-turn-text-loop
+.\scripts\qsf.ps1 app -Experiment multi-turn-text-loop -DemoMemory
 .\scripts\qsf.ps1 app -Experiment multi-turn-text-loop -LaunchProfile mock
 .\scripts\qsf.ps1 doctor
 ```
@@ -153,12 +154,20 @@ secrets. `-Profile` remains accepted as a compatibility alias, but new examples 
 ```powershell
 .\scripts\qsf.ps1 app -Experiment multi-turn-text-loop -LaunchProfile mock
 .\scripts\qsf.ps1 app -Experiment multi-turn-text-loop -LaunchProfile openai-text
+.\scripts\qsf.ps1 app -Experiment multi-turn-text-loop -SessionMemorySource file -SessionMemoryFile docs/Experiments/Fixtures/session-memory.empty.json
 .\scripts\qsf.ps1 app -Experiment text-owned-voice-loop -LaunchProfile file-memory -VoiceMemoryFile docs/Experiments/Fixtures/voice-memory.example.json
 ```
 
 `openai-text` and `openai-transcription-mic` require `OPENAI_API_KEY` to already exist
 in the shell environment; the launcher checks this before starting the experiment and
 does not print secret-like values.
+
+For `multi-turn-text-loop`, the launcher passes an empty session-memory source by
+default; the loop still resumes from `state/text-loop/memory-store.json` when that
+store exists. Use `-DemoMemory` or `-LaunchProfile demo-memory` to opt into the
+deterministic Phase 4 fixture, or use `-SessionMemorySource file -SessionMemoryFile
+<path>` for a specific JSON fixture. Raw Cargo runs still use the experiment's
+in-code default.
 
 Check local prerequisites without starting Cargo, Vite, or the API server:
 

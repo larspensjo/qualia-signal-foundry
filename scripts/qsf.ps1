@@ -11,6 +11,10 @@ param(
     [Alias("Profile")]
     [string]$LaunchProfile = "",
     [string]$VoiceMemoryFile = "",
+    [ValidateSet("auto", "empty", "file", "fixture")]
+    [string]$SessionMemorySource = "auto",
+    [string]$SessionMemoryFile = "",
+    [switch]$DemoMemory,
     [string]$Store = "state/text-loop/memory-store.json",
     [string]$BindHost = "127.0.0.1",
     [int]$Port = 3939,
@@ -23,6 +27,7 @@ Set-StrictMode -Version Latest
 $projectRoot = Split-Path -Parent $PSScriptRoot
 $defaultStore = "state/text-loop/memory-store.json"
 $sampleStore = "crates/qsf_browser_server/tests/fixtures/small-store.json"
+$emptySessionMemoryFile = "docs/Experiments/Fixtures/session-memory.empty.json"
 $uiDir = Join-Path $projectRoot "crates/qsf_browser_server/ui"
 $profilesPath = Join-Path $PSScriptRoot "qsf.profiles.json"
 $script:QsfExitCode = 0
@@ -218,6 +223,70 @@ function Get-ProfileEnvironmentDelta {
         Write-Error "Profile 'file-memory' requires -VoiceMemoryFile <path>."
     }
 
+    $sessionSourceProvided = $script:QsfScriptBoundParameters.ContainsKey("SessionMemorySource")
+    if ($DemoMemory -and $sessionSourceProvided) {
+        Write-Error "Use either -DemoMemory or -SessionMemorySource, not both."
+    }
+    if ($DemoMemory -and -not [string]::IsNullOrWhiteSpace($SessionMemoryFile)) {
+        Write-Error "-DemoMemory cannot be combined with -SessionMemoryFile."
+    }
+    if (-not [string]::IsNullOrWhiteSpace($SessionMemoryFile) -and [string]::IsNullOrWhiteSpace($Experiment)) {
+        Write-Error "-SessionMemoryFile is only meaningful with app -Experiment."
+    }
+
+    $effectiveSessionMemorySource = $SessionMemorySource
+    if ($DemoMemory) {
+        $effectiveSessionMemorySource = "fixture"
+    }
+    elseif (-not $sessionSourceProvided -and -not [string]::IsNullOrWhiteSpace($SessionMemoryFile)) {
+        $effectiveSessionMemorySource = "file"
+    }
+    elseif (-not $sessionSourceProvided -and
+        $Experiment -eq "multi-turn-text-loop" -and
+        -not $envSets.Contains("QSF_SESSION_MEMORY_SOURCE")) {
+        $effectiveSessionMemorySource = "empty"
+    }
+
+    switch ($effectiveSessionMemorySource) {
+        "empty" {
+            if ([string]::IsNullOrWhiteSpace($Experiment)) {
+                Write-Error "-SessionMemorySource empty is only meaningful with app -Experiment."
+            }
+            if (-not [string]::IsNullOrWhiteSpace($SessionMemoryFile)) {
+                Write-Error "-SessionMemoryFile requires -SessionMemorySource file."
+            }
+            $envSets["QSF_SESSION_MEMORY_SOURCE"] = "file"
+            $envSets["QSF_SESSION_MEMORY_FILE"] = $emptySessionMemoryFile
+        }
+        "file" {
+            if ([string]::IsNullOrWhiteSpace($Experiment)) {
+                Write-Error "-SessionMemorySource file is only meaningful with app -Experiment."
+            }
+            if ([string]::IsNullOrWhiteSpace($SessionMemoryFile)) {
+                Write-Error "-SessionMemorySource file requires -SessionMemoryFile <path>."
+            }
+            $envSets["QSF_SESSION_MEMORY_SOURCE"] = "file"
+            $envSets["QSF_SESSION_MEMORY_FILE"] = $SessionMemoryFile
+        }
+        "fixture" {
+            if ([string]::IsNullOrWhiteSpace($Experiment)) {
+                Write-Error "-SessionMemorySource fixture is only meaningful with app -Experiment."
+            }
+            if (-not [string]::IsNullOrWhiteSpace($SessionMemoryFile)) {
+                Write-Error "-SessionMemoryFile requires -SessionMemorySource file."
+            }
+            $envSets["QSF_SESSION_MEMORY_SOURCE"] = "phase_four_fixture"
+            $clearEnv += "QSF_SESSION_MEMORY_FILE"
+        }
+        "auto" {
+            if (-not [string]::IsNullOrWhiteSpace($SessionMemoryFile)) {
+                Write-Error "-SessionMemoryFile requires -SessionMemorySource file."
+            }
+        }
+    }
+
+    $clearEnv = @($clearEnv | Where-Object { -not $envSets.Contains($_) } | Sort-Object -Unique)
+
     return [pscustomobject]@{
         Sets = $envSets
         Clears = $clearEnv
@@ -340,7 +409,7 @@ QSF launcher
 
 Usage:
   .\scripts\qsf.ps1 help
-  .\scripts\qsf.ps1 app [-Experiment <name>] [-LaunchProfile <name>] [-VoiceMemoryFile <path>]
+  .\scripts\qsf.ps1 app [-Experiment <name>] [-LaunchProfile <name>] [-VoiceMemoryFile <path>] [-SessionMemorySource <auto|empty|file|fixture>] [-SessionMemoryFile <path>] [-DemoMemory]
   .\scripts\qsf.ps1 browser [<store>] [-Store <path>] [-BindHost <ip>] [-Port <port>]
   .\scripts\qsf.ps1 ui
   .\scripts\qsf.ps1 workbench [<store>] [-Store <path>] [-BindHost <ip>] [-Port <port>]
@@ -352,10 +421,13 @@ Defaults:
   Browser store: $defaultStore
   Browser host:  127.0.0.1
   Browser port:  3939
+  Text-loop session memory through launcher: empty file source; persisted store wins
   UI directory:  crates/qsf_browser_server/ui
 
 Examples:
   .\scripts\qsf.ps1 app -Experiment multi-turn-text-loop
+  .\scripts\qsf.ps1 app -Experiment multi-turn-text-loop -DemoMemory
+  .\scripts\qsf.ps1 app -Experiment multi-turn-text-loop -SessionMemorySource file -SessionMemoryFile docs/Experiments/Fixtures/session-memory.empty.json
   .\scripts\qsf.ps1 app -Experiment multi-turn-text-loop -LaunchProfile mock
   .\scripts\qsf.ps1 app -Experiment text-owned-voice-loop -LaunchProfile file-memory -VoiceMemoryFile docs/Experiments/Fixtures/voice-memory.example.json
   .\scripts\qsf.ps1 browser -Store $sampleStore -BindHost 127.0.0.1 -Port 3939

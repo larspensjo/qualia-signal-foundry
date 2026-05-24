@@ -1804,3 +1804,21 @@ Refs: crates/qsf_memory/src/processed_range.rs,
 crates/qsf_app/src/memory/processed_ranges.rs,
 crates/qsf_app/src/experiments/multi_turn_text_loop.rs,
 crates/qsf_app/src/sleep/auto_promote.rs
+
+## 2026-05-24 - Launcher defaults to empty text-loop memory
+
+Adjusted the PowerShell launcher so manual `multi-turn-text-loop` runs no longer load
+the deterministic demo memory fixture by surprise.
+
+What changed:
+- Added an empty session-memory fixture and made `scripts/qsf.ps1 app -Experiment
+  multi-turn-text-loop` pass it as a file-backed source unless the caller selects
+  another session memory mode.
+- Added `-DemoMemory`, `-SessionMemorySource`, `-SessionMemoryFile`, and a
+  `demo-memory` launch profile for explicit fixture/demo runs.
+- Updated launcher completion, README guidance, and the decision log for the new
+  launcher default.
+
+Refs: scripts/qsf.ps1, scripts/qsf.profiles.json, scripts/qsf-completion.ps1,
+scripts/qsf-completion.Tests.ps1, docs/Experiments/Fixtures/session-memory.empty.json,
+README.md, docs/DecisionLog.md

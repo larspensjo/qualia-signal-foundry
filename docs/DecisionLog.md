@@ -550,3 +550,19 @@ wants associations to external or archived memories, it must introduce an explic
 reference model rather than reusing durable in-store associations.
 Refs: crates/qsf_app/src/sleep/auto_promote.rs,
 state/qa-memory-browser-real/memory-store.json
+
+## 2026-05-24 - Launcher text-loop runs avoid demo memory by default
+Decision: `scripts/qsf.ps1 app -Experiment multi-turn-text-loop` passes an empty
+file-backed session-memory fixture unless the caller explicitly selects demo/fixture
+memory; the text loop still resumes from a persisted `state/text-loop/memory-store.json`
+when that store exists.
+Context: A fresh text-loop state still retrieved project-memory records because the
+Rust experiment's fallback source is the deterministic Phase 4 fixture. That is useful
+for repeatable demos but surprising for launcher-driven manual testing of a new
+session.
+Consequences: Local Windows launcher runs model "new session" as empty memory by
+default. Demo retrieval remains available through `-DemoMemory`,
+`-SessionMemorySource fixture`, or the `demo-memory` launch profile. Raw Cargo runs
+still exercise the experiment's in-code fallback unless configured separately.
+Refs: scripts/qsf.ps1, scripts/qsf.profiles.json, README.md,
+docs/Experiments/Fixtures/session-memory.empty.json
