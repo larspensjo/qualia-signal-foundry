@@ -431,9 +431,10 @@ docs/DecisionLog.md#2026-05-11---model-access-uses-explicit-roles-and-optional-p
 Decision: The multi-turn text loop persists awake continuation under a gitignored
 `state/text-loop/` directory by default. Boot mode is classified from the continuity
 manifest plus the previous `SessionState`; `AwakeContinuation` resumes only when the
-stored `SessionConfig` still matches the current run, otherwise the loop downgrades to
-`ColdStart`. `ConsolidatedBrief` starts a new session with a predecessor id until Stage
-4 wires brief injection.
+resume-breaking parts of `SessionConfig` still match the current run, otherwise the
+loop downgrades to `ColdStart`. Runtime-only limit overrides such as
+`allow_over_limit` do not break awake continuation. `ConsolidatedBrief` starts a new
+session with a predecessor id until Stage 4 wires brief injection.
 Context: Cross-session continuity needs state that survives per-run artifacts without
 promoting every session detail into durable memory. A manifest provides a small commit
 record for the current session state and later sleep outputs while keeping the reducer
@@ -442,6 +443,8 @@ Consequences: Launching from a different process working directory creates a dif
 default `state/text-loop/`; operators can pin continuity with `QSF_STATE_DIR`. Resume
 decisions are visible through `SessionResumed` events, including config-drift downgrades.
 Stage 4 sleep must update or clear sleep metadata as it consumes the manifest.
+Changing runtime limit overrides can continue the same awake session while recomputing
+limit state against the new run configuration.
 Refs: crates/qsf_app/src/session, crates/qsf_app/src/experiments/multi_turn_text_loop.rs,
 crates/qsf_app/src/observability/event_log.rs
 

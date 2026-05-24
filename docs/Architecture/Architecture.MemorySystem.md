@@ -46,6 +46,9 @@ future retrieval backends.
 - Live-loop co-retrieval association formation and retrieved-memory reinforcement
   ([memory/co_retrieval.rs](../../crates/qsf_app/src/memory/co_retrieval.rs),
   [experiments/multi_turn_text_loop.rs](../../crates/qsf_app/src/experiments/multi_turn_text_loop.rs))
+- Narrow live-loop capture of accepted assistant-name assignments into the durable
+  memory store, so simple identity continuity can survive later cold starts
+  ([experiments/multi_turn_text_loop.rs](../../crates/qsf_app/src/experiments/multi_turn_text_loop.rs))
 - Live-loop cross-turn co-retrieval when turns age out through the warm threshold
   or token-budget batch policy, plus a clean-exit session-end flush for remaining
   hot turns

@@ -134,8 +134,10 @@ state/text-loop/continuity-manifest.json
 
 `state/text-loop/` is process-working-directory relative unless `QSF_STATE_DIR` is set.
 `AwakeContinuation` keeps the same `session_id` and carries turns forward only when the
-stored `SessionConfig` matches the new run. `ConsolidatedBrief` starts a fresh session
-with `previous_session_id` set, while Stage 4 owns actual brief injection.
+resume-breaking parts of the stored `SessionConfig` match the new run. Runtime-only
+limit overrides such as `allow_over_limit` are recomputed without forcing a cold start.
+`ConsolidatedBrief` starts a fresh session with `previous_session_id` set, while Stage 4
+owns actual brief injection.
 
 ## Candidate Flow
 

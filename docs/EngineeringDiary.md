@@ -1875,3 +1875,29 @@ What changed:
   configured session limit.
 
 Refs: scripts/qsf.ps1
+
+## 2026-05-24 - Text-loop continuity tolerates limit override changes
+
+Fixed the continuity break observed when a later `multi-turn-text-loop` run changed
+only the session limit override and added a narrow durable-memory capture for accepted
+assistant names.
+
+What changed:
+- Awake continuation now treats `allow_over_limit` as a runtime-only override rather
+  than a resume-breaking `SessionConfig` difference.
+- The live loop now persists an accepted assistant-name assignment, such as "use the
+  name Ari", into `memory-store.json` as an observation when the assistant response
+  includes the assigned name.
+- Added regression coverage for the config compatibility rule, live name-candidate
+  extraction, and creation of a durable name memory record.
+- Updated runtime-loop, memory-system, and decision-log docs to reflect the new
+  continuity behavior.
+
+Observed:
+- The failing QA shape was not a missing warm summary; the second run classified the
+  prior state as awake-continuable and then downgraded to cold start because
+  `allow_over_limit` changed.
+
+Refs: crates/qsf_app/src/experiments/multi_turn_text_loop.rs,
+docs/Architecture/Architecture.RuntimeLoop.md,
+docs/Architecture/Architecture.MemorySystem.md, docs/DecisionLog.md
