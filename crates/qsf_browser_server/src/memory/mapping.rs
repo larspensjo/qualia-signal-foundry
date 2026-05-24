@@ -188,6 +188,7 @@ mod tests {
         MemoryStoreContents {
             records: vec![r("a", "A"), r("b", "B")],
             associations: vec![a("a", "b", 0.9), a("a", "ghost", 0.5), a("b", "a", 0.3)],
+            ..MemoryStoreContents::default()
         }
     }
 

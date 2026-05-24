@@ -1773,3 +1773,34 @@ Observed:
 
 Refs: crates/qsf_app/src/memory/co_retrieval.rs,
 crates/qsf_app/src/sleep/auto_promote.rs
+
+## 2026-05-24 - Live cross-turn aging coverage
+
+The multi-turn text loop now runs cross-turn co-retrieval when turns leave hot
+context and when a clean session exit flushes remaining hot turns.
+
+What changed:
+- Added `processed_ranges` to persisted memory stores as the idempotency ledger for
+  live batch, session-end, and sleep safety-net cross-turn coverage.
+- Added token-budget drop planning, live cross-turn persistence, `TurnsAgedAndCoRetrieved`
+  reducer handling, and real drop/session-end console markers.
+- Made existing count-threshold warm aging persist cross-turn coverage before
+  summarizing turns, and made the current sleep cross-turn adapter skip anchors that
+  live processing already covered.
+- Review follow-up made cross-turn persistence idempotent against already processed
+  anchors, kept session-end flush ranges non-contiguous when coverage has gaps,
+  deduped sleep safety-net pairs across uncovered segments, and added a distinct
+  `TurnsAgedAndCoRetrieved` event type.
+
+Observed:
+- The live drop path uses selected `ContextAssembly` memory IDs and keeps `Turn`
+  records append-only; only `summarized_turns` grows.
+- Sleep still uses the pre-proposer auto-promotion shape, but now behaves as an
+  idempotent safety net against `processed_ranges` until the proposer interface lands.
+- Unknown model ids now use a fallback context window with an event-log warning
+  instead of silently disabling token-budget aging.
+
+Refs: crates/qsf_memory/src/processed_range.rs,
+crates/qsf_app/src/memory/processed_ranges.rs,
+crates/qsf_app/src/experiments/multi_turn_text_loop.rs,
+crates/qsf_app/src/sleep/auto_promote.rs

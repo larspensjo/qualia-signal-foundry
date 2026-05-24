@@ -28,6 +28,12 @@ pub enum CoRetrievalDelta {
     },
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct CrossTurnAnchorRange {
+    pub first_turn: usize,
+    pub last_turn: usize,
+}
+
 /// `retrieved` is a slice of (memory_id, retrieval_score) tuples.
 /// `existing` is the current set of associations in the store.
 /// Returns deterministically ordered deltas. At most MAX_NEW_ASSOCIATIONS_PER_TURN
@@ -118,52 +124,109 @@ pub fn generate_cross_turn_deltas(
     session_id: &str,
     now: OffsetDateTime,
 ) -> Vec<CoRetrievalDelta> {
+    if retrievals_per_turn.is_empty() {
+        return vec![];
+    }
+
+    generate_cross_turn_deltas_for_anchor_range(
+        retrievals_per_turn,
+        existing_associations,
+        known_record_ids,
+        window,
+        session_id,
+        now,
+        CrossTurnAnchorRange {
+            first_turn: 0,
+            last_turn: retrievals_per_turn.len() - 1,
+        },
+    )
+}
+
+pub fn generate_cross_turn_deltas_for_anchor_range(
+    retrievals_per_turn: &[Vec<String>],
+    existing_associations: &[Association],
+    known_record_ids: &HashSet<String>,
+    window: usize,
+    session_id: &str,
+    now: OffsetDateTime,
+    anchor_range: CrossTurnAnchorRange,
+) -> Vec<CoRetrievalDelta> {
+    generate_cross_turn_deltas_for_anchor_ranges(
+        retrievals_per_turn,
+        existing_associations,
+        known_record_ids,
+        window,
+        session_id,
+        now,
+        &[anchor_range],
+    )
+}
+
+pub fn generate_cross_turn_deltas_for_anchor_ranges(
+    retrievals_per_turn: &[Vec<String>],
+    existing_associations: &[Association],
+    known_record_ids: &HashSet<String>,
+    window: usize,
+    session_id: &str,
+    now: OffsetDateTime,
+    anchor_ranges: &[CrossTurnAnchorRange],
+) -> Vec<CoRetrievalDelta> {
     let mut deltas = Vec::new();
     let mut seen = BTreeSet::new();
 
     let turn_count = retrievals_per_turn.len();
-    for from_turn in 0..turn_count {
-        let last_turn = (from_turn + window).min(turn_count.saturating_sub(1));
-        for to_turn in (from_turn + 1)..=last_turn {
-            for from_id in &retrievals_per_turn[from_turn] {
-                for to_id in &retrievals_per_turn[to_turn] {
-                    if from_id == to_id {
-                        continue;
-                    }
+    if turn_count == 0 {
+        return deltas;
+    }
 
-                    let (left, right) = ordered_pair(from_id, to_id);
-                    if !known_record_ids.contains(&left) || !known_record_ids.contains(&right) {
-                        continue;
-                    }
-                    if !seen.insert((left.clone(), right.clone())) {
-                        continue;
-                    }
+    for anchor_range in anchor_ranges {
+        if anchor_range.first_turn >= turn_count {
+            continue;
+        }
+        let last_anchor_turn = anchor_range.last_turn.min(turn_count - 1);
+        for from_turn in anchor_range.first_turn..=last_anchor_turn {
+            let last_turn = (from_turn + window).min(turn_count.saturating_sub(1));
+            for to_turn in (from_turn + 1)..=last_turn {
+                for from_id in &retrievals_per_turn[from_turn] {
+                    for to_id in &retrievals_per_turn[to_turn] {
+                        if from_id == to_id {
+                            continue;
+                        }
 
-                    if let Some(existing) = existing_associations.iter().find(|association| {
-                        is_same_unordered_pair(
-                            &association.from_memory_id,
-                            &association.to_memory_id,
-                            &left,
-                            &right,
-                        )
-                    }) {
-                        deltas.push(CoRetrievalDelta::Strengthen {
-                            from: existing.from_memory_id.clone(),
-                            to: existing.to_memory_id.clone(),
-                            new_weight: (existing.weight + SLEEP_ASSOCIATION_STRENGTHEN_DELTA)
-                                .min(1.0),
-                            at: now,
-                        });
-                    } else {
-                        deltas.push(CoRetrievalDelta::Create {
-                            from: left,
-                            to: right,
-                            weight: SLEEP_ASSOCIATION_INITIAL_WEIGHT,
-                            reason: format!(
-                                "co-retrieved within {window} turns during session {session_id}"
-                            ),
-                            at: now,
-                        });
+                        let (left, right) = ordered_pair(from_id, to_id);
+                        if !known_record_ids.contains(&left) || !known_record_ids.contains(&right) {
+                            continue;
+                        }
+                        if !seen.insert((left.clone(), right.clone())) {
+                            continue;
+                        }
+
+                        if let Some(existing) = existing_associations.iter().find(|association| {
+                            is_same_unordered_pair(
+                                &association.from_memory_id,
+                                &association.to_memory_id,
+                                &left,
+                                &right,
+                            )
+                        }) {
+                            deltas.push(CoRetrievalDelta::Strengthen {
+                                from: existing.from_memory_id.clone(),
+                                to: existing.to_memory_id.clone(),
+                                new_weight: (existing.weight + SLEEP_ASSOCIATION_STRENGTHEN_DELTA)
+                                    .min(1.0),
+                                at: now,
+                            });
+                        } else {
+                            deltas.push(CoRetrievalDelta::Create {
+                                from: left,
+                                to: right,
+                                weight: SLEEP_ASSOCIATION_INITIAL_WEIGHT,
+                                reason: format!(
+                                    "co-retrieved within {window} turns during session {session_id}"
+                                ),
+                                at: now,
+                            });
+                        }
                     }
                 }
             }

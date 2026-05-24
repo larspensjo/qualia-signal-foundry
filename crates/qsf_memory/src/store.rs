@@ -10,12 +10,22 @@ use crate::association::{
     ASSOCIATION_SCHEMA_VERSION, Association, ensure_current_association_schema,
 };
 use crate::errors::{SchemaVersions, ShapeError, StoreLoadError};
+use crate::processed_range::ProcessedRange;
 use crate::record::{MEMORY_RECORD_SCHEMA_VERSION, MemoryRecord, ensure_current_memory_schema};
 
 #[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize)]
 pub struct MemoryStoreContents {
     pub records: Vec<MemoryRecord>,
     pub associations: Vec<Association>,
+    #[serde(default, deserialize_with = "deserialize_processed_ranges")]
+    pub processed_ranges: Vec<ProcessedRange>,
+}
+
+fn deserialize_processed_ranges<'de, D>(deserializer: D) -> Result<Vec<ProcessedRange>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    Ok(Option::<Vec<ProcessedRange>>::deserialize(deserializer)?.unwrap_or_default())
 }
 
 #[derive(Clone, Debug)]
@@ -325,6 +335,49 @@ mod tests {
 
         let reloaded = MemoryStore::load_or_empty(&path).unwrap();
         assert_eq!(reloaded.contents(), store.contents());
+    }
+
+    #[test]
+    fn processed_ranges_roundtrip_through_persist() {
+        let dir = TempDir::new().unwrap();
+        let path = dir.path().join("memory-store.json");
+        let mut store = MemoryStore::load_or_empty(&path).unwrap();
+        store.contents_mut().processed_ranges.push(ProcessedRange {
+            session_id: "s".into(),
+            first_turn_index: 0,
+            last_turn_index: 2,
+            kind: crate::processed_range::ProcessedRangeKind::LiveBatch,
+            at: ts(),
+        });
+        store.persist().unwrap();
+
+        let reloaded = MemoryStore::load_or_empty(&path).unwrap();
+        assert_eq!(reloaded.contents().processed_ranges.len(), 1);
+        assert_eq!(reloaded.contents().processed_ranges[0].session_id, "s");
+    }
+
+    #[test]
+    fn legacy_store_without_processed_ranges_loads_via_serde_default() {
+        let dir = TempDir::new().unwrap();
+        let path = dir.path().join("memory-store.json");
+        std::fs::write(&path, r#"{"records":[],"associations":[]}"#).unwrap();
+
+        let store = MemoryStore::load_or_empty(&path).unwrap();
+        assert!(store.contents().processed_ranges.is_empty());
+    }
+
+    #[test]
+    fn store_with_null_processed_ranges_loads_as_empty() {
+        let dir = TempDir::new().unwrap();
+        let path = dir.path().join("memory-store.json");
+        std::fs::write(
+            &path,
+            r#"{"records":[],"associations":[],"processed_ranges":null}"#,
+        )
+        .unwrap();
+
+        let store = MemoryStore::load_or_empty(&path).unwrap();
+        assert!(store.contents().processed_ranges.is_empty());
     }
 
     #[test]

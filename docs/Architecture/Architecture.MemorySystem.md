@@ -7,9 +7,10 @@ Area: Core Architecture
 ## Implementation Status
 
 The memory system has a working schema, file-backed retrieval, cross-session
-storage, sleep-side promotion, and live-loop reinforcement. The remaining gaps are
-mostly richer semantics around memory types, contradiction/supersession handling,
-and future retrieval backends.
+storage, sleep-side promotion, live-loop reinforcement, and live cross-turn
+association coverage for turns leaving hot context. The remaining gaps are mostly
+richer semantics around memory types, contradiction/supersession handling, and
+future retrieval backends.
 
 **Implemented today:**
 
@@ -25,7 +26,11 @@ and future retrieval backends.
   [memory/memory_record.rs](../../crates/qsf_app/src/memory/memory_record.rs))
 - Cross-session memory store via `MemoryStore`, backed by
   `state/text-loop/memory-store.json` or `QSF_STATE_DIR/memory-store.json`
-  ([memory/store.rs](../../crates/qsf_app/src/memory/store.rs))
+  ([memory/store.rs](../../crates/qsf_app/src/memory/store.rs)); store contents now
+  carry `processed_ranges` as the idempotency ledger for cross-turn association
+  coverage
+  ([processed_range.rs](../../crates/qsf_memory/src/processed_range.rs),
+  [memory/processed_ranges.rs](../../crates/qsf_app/src/memory/processed_ranges.rs))
 - File-backed memory source, opt-in via `QSF_VOICE_MEMORY_SOURCE=file` /
   `QSF_SESSION_MEMORY_SOURCE=file`
 - Reviewed-memory draft workflow that converts a sleep report into a memory file
@@ -33,13 +38,18 @@ and future retrieval backends.
   ([memory/reviewed_memory_draft.rs](../../crates/qsf_app/src/memory/reviewed_memory_draft.rs),
   [experiments/reviewed_memory_draft.rs](../../crates/qsf_app/src/experiments/reviewed_memory_draft.rs),
   [experiments/accept_reviewed_memory.rs](../../crates/qsf_app/src/experiments/accept_reviewed_memory.rs))
-- Sleep-side auto-promotion of routine memory candidates and cross-turn
-  associations into the cross-session store
+- Sleep-side auto-promotion of routine memory candidates and safety-net
+  cross-turn associations for session anchors not already covered by live
+  processing
   ([sleep/auto_promote.rs](../../crates/qsf_app/src/sleep/auto_promote.rs),
   [experiments/sleep_phase_session_summary.rs](../../crates/qsf_app/src/experiments/sleep_phase_session_summary.rs))
 - Live-loop co-retrieval association formation and retrieved-memory reinforcement
   ([memory/co_retrieval.rs](../../crates/qsf_app/src/memory/co_retrieval.rs),
   [experiments/multi_turn_text_loop.rs](../../crates/qsf_app/src/experiments/multi_turn_text_loop.rs))
+- Live-loop cross-turn co-retrieval when turns age out through the warm threshold
+  or token-budget batch policy, plus a clean-exit session-end flush for remaining
+  hot turns
+  ([experiments/multi_turn_text_loop.rs](../../crates/qsf_app/src/experiments/multi_turn_text_loop.rs))
 - Session-local warm summaries and append-only verbatim recall in the multi-turn
   text loop
   ([experiments/multi_turn_text_loop.rs](../../crates/qsf_app/src/experiments/multi_turn_text_loop.rs))
@@ -61,8 +71,7 @@ and future retrieval backends.
   sleep-generated candidates
 - Voice-loop participation in the shared continuity memory store
 
-Last reviewed: 2026-05-20 against the Stage 5 continuity implementation and
-OpenAI golden-path run.
+Last reviewed: 2026-05-24 against Phase 4 live cross-turn association coverage.
 
 ## Purpose
 

@@ -272,6 +272,7 @@ mod tests {
                     last_reinforced_at: datetime!(2026-05-20 0:00 UTC),
                 },
             ],
+            ..MemoryStoreContents::default()
         }
     }
 

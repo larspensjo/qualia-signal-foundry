@@ -25,7 +25,7 @@ use crate::observability::trace::{TraceRecord, elapsed_ms};
 use crate::runtime::run_context::RunContext;
 use crate::session::{
     MemorySourceConfig, RecallRecord, SessionConfig, SessionEndReason, SessionEvent, SessionLimit,
-    SessionState, Turn, TurnSummary, is_turn_summarized,
+    SessionState, Turn, TurnRange, TurnSummary, is_turn_summarized,
 };
 use crate::tools::{
     CALCULATOR_TOOL_NAME, RECALL_TURN_TOOL_NAME, SessionToolContext, ToolRegistry, ToolResult,
@@ -44,6 +44,8 @@ const SESSION_ALLOW_OVER_LIMIT_ENV_VAR: &str = "QSF_SESSION_ALLOW_OVER_LIMIT";
 const SESSION_WARM_THRESHOLD_ENV_VAR: &str = "QSF_SESSION_WARM_THRESHOLD";
 const SESSION_RETRIEVAL_LIMIT: usize = 8;
 const SESSION_RETRIEVAL_STRATEGY: RetrievalStrategy = RetrievalStrategy::KeywordTag;
+const HOT_HIGH_WATER_FRACTION: f64 = 0.80;
+const HOT_LOW_WATER_FRACTION: f64 = 0.50;
 
 pub struct MultiTurnTextLoopExperiment;
 
@@ -150,6 +152,18 @@ fn reduce_session_in_place(state: &mut SessionState, event: SessionEvent) {
         }
         SessionEvent::TurnSummarized(summary) => {
             state.summarized_turns.push(summary);
+            state.prefix_invalidated_since_last_prompt = true;
+        }
+        SessionEvent::TurnsAgedAndCoRetrieved {
+            range, summaries, ..
+        } => {
+            debug_assert!(range.last_index >= range.first_index);
+            assert_eq!(
+                summaries.len(),
+                range.last_index + 1 - range.first_index,
+                "TurnsAgedAndCoRetrieved summaries must match the aged range"
+            );
+            state.summarized_turns.extend(summaries);
             state.prefix_invalidated_since_last_prompt = true;
         }
         SessionEvent::ToolCompleted(_) => {}
@@ -281,7 +295,6 @@ fn run_with_io_and_components_at_state_dir(
     let mut memory_snapshot = load_session_memory_snapshot(context, memory_source, &state_dir)?;
     write_memory_source_snapshot(context, &memory_snapshot)?;
     let color_mode = ColorMode::for_stdout();
-    let drop_marker_debug = std::env::var("QSF_DROP_MARKER_DEBUG").is_ok();
     writeln!(output, "multi-turn-text-loop ready; type :quit to exit")?;
 
     let mut line = String::new();
@@ -289,19 +302,27 @@ fn run_with_io_and_components_at_state_dir(
         line.clear();
         let bytes_read = input.read_line(&mut line)?;
         if bytes_read == 0 {
-            end_session(context, &mut state, SessionEndReason::Eof)?;
-            if drop_marker_debug {
-                print_session_end_flush(output, 0, 0, color_mode)?;
-            }
+            end_session(
+                context,
+                &mut state,
+                &state_dir,
+                output,
+                color_mode,
+                SessionEndReason::Eof,
+            )?;
             break;
         }
 
         let user_input = line.trim_end_matches(['\r', '\n']).to_string();
         if user_input.trim() == ":quit" {
-            end_session(context, &mut state, SessionEndReason::QuitCommand)?;
-            if drop_marker_debug {
-                print_session_end_flush(output, 0, 0, color_mode)?;
-            }
+            end_session(
+                context,
+                &mut state,
+                &state_dir,
+                output,
+                color_mode,
+                SessionEndReason::QuitCommand,
+            )?;
             break;
         }
         if user_input.trim().is_empty() {
@@ -360,9 +381,6 @@ fn run_with_io_and_components_at_state_dir(
         ) {
             Ok(response) => {
                 writeln!(output, "{response}")?;
-                if drop_marker_debug {
-                    print_drop_marker(output, 0, 0, 0, color_mode)?;
-                }
             }
             Err(error) => {
                 let error_summary = sanitize_error(&error.to_string());
@@ -435,6 +453,7 @@ fn run_one_turn<W: Write>(
     request: TurnRequest<'_>,
     console: TurnConsole<'_, W>,
 ) -> anyhow::Result<String> {
+    let TurnConsole { output, color_mode } = console;
     let turn_started_at = SystemTime::now();
     let user_input = request.user_input;
     let retrieval = retrieve_session_memories(context, state, memory_snapshot, user_input)?;
@@ -507,7 +526,7 @@ fn run_one_turn<W: Write>(
             total_bytes: base_prompt.total_bytes,
         },
     )?;
-    print_memory_blocks(console.output, &assembly, console.color_mode)?;
+    print_memory_blocks(output, &assembly, color_mode)?;
 
     let registry = ToolRegistry::default();
     let responder_role = conversational_responder_role_with_session_tools();
@@ -646,13 +665,95 @@ fn run_one_turn<W: Write>(
     };
     let output_text = response.output_text;
     apply_session_event(context, state, SessionEvent::TurnCompleted(turn))?;
-    age_out_warm_turns(context, state, model_client)?;
+    age_out_warm_turns(context, state, state_dir, model_client)?;
+    let store_path = state_dir.join("memory-store.json");
+    if store_path.exists() {
+        *memory_snapshot = reload_session_memory_source_snapshot(&store_path)?;
+    }
+    maybe_run_token_budget_drop(
+        context,
+        state,
+        state_dir,
+        memory_snapshot,
+        model_client,
+        output,
+        color_mode,
+    )?;
 
     Ok(output_text)
 }
 
 fn completed_turn_count(state: &SessionState) -> usize {
     state.turns.len()
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) struct TokenBudgetDropPlan {
+    pub first_turn_index: usize,
+    pub last_turn_index: usize,
+    pub aged_count: usize,
+    pub hot_tokens_before: usize,
+    pub hot_tokens_after: usize,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) struct DropOutcome {
+    pub aged_count: usize,
+    pub new_associations: usize,
+    pub strengthened: usize,
+}
+
+fn turn_verbatim_estimated_tokens(turn: &Turn) -> usize {
+    let total_chars = turn.user_input.chars().count()
+        + turn.retrieved_memory_block.chars().count()
+        + turn.assistant_response.chars().count();
+    total_chars.div_ceil(4).max(1)
+}
+
+pub(crate) fn plan_token_budget_drop(
+    state: &SessionState,
+    model_window: usize,
+    high_water_fraction: f64,
+    low_water_fraction: f64,
+) -> Option<TokenBudgetDropPlan> {
+    let active_start = state.summarized_turns.len();
+    let active_turns = state.turns.iter().skip(active_start).collect::<Vec<_>>();
+    if active_turns.is_empty() {
+        return None;
+    }
+
+    let per_turn = active_turns
+        .iter()
+        .map(|turn| turn_verbatim_estimated_tokens(turn))
+        .collect::<Vec<_>>();
+    let hot_tokens_before = per_turn.iter().sum::<usize>();
+    let high_water = (model_window as f64 * high_water_fraction) as usize;
+    if hot_tokens_before <= high_water {
+        return None;
+    }
+
+    let low_water = (model_window as f64 * low_water_fraction) as usize;
+    let mut tokens = hot_tokens_before;
+    let mut aged_count = 0;
+    for size in &per_turn {
+        if tokens <= low_water {
+            break;
+        }
+        tokens = tokens.saturating_sub(*size);
+        aged_count += 1;
+    }
+
+    if aged_count == 0 {
+        return None;
+    }
+
+    Some(TokenBudgetDropPlan {
+        first_turn_index: active_start,
+        last_turn_index: active_start + aged_count - 1,
+        aged_count,
+        hot_tokens_before,
+        hot_tokens_after: tokens,
+    })
 }
 
 fn apply_live_memory_reinforcement(
@@ -964,12 +1065,45 @@ fn format_tool_result_message(result: &ToolResult) -> String {
 fn age_out_warm_turns(
     context: &mut RunContext,
     state: &mut SessionState,
+    state_dir: &Path,
     model_client: &dyn ModelClient,
 ) -> anyhow::Result<()> {
     while active_turn_count(state) > state.config.warm_threshold {
         let Some(turn) = oldest_unsummarized_turn(state).cloned() else {
             break;
         };
+        if let Err(error) = persist_cross_turn_range(
+            context,
+            state,
+            &state_dir.join("memory-store.json"),
+            CrossTurnPersistRequest {
+                first_turn_index: turn.index,
+                last_turn_index: turn.index,
+                kind: qsf_memory::ProcessedRangeKind::LiveBatch,
+                now: time::OffsetDateTime::now_utc(),
+                event_kind: "live_count_threshold",
+            },
+        ) {
+            let error_summary = sanitize_error(&error.to_string());
+            context.record_event(
+                EventType::ErrorOccurred,
+                json!({
+                    "session_id": state.session_id,
+                    "stage": "live-count-threshold-cross-turn",
+                    "state_dir": state_dir.display().to_string(),
+                    "turn_index": turn.index,
+                    "error": error_summary,
+                }),
+                None,
+            )?;
+            engine_logging::engine_error!(
+                "count-threshold cross-turn persistence failed: session_id={} state_dir={} turn_index={} error={}",
+                state.session_id,
+                state_dir.display(),
+                turn.index,
+                error_summary
+            );
+        }
         let summary = match summarize_turn(context, state, model_client, &turn) {
             Ok(summary) => summary,
             Err(error) => {
@@ -997,6 +1131,366 @@ fn age_out_warm_turns(
     }
 
     Ok(())
+}
+
+fn maybe_run_token_budget_drop<W: Write>(
+    context: &mut RunContext,
+    state: &mut SessionState,
+    state_dir: &Path,
+    memory_snapshot: &mut SessionMemorySourceSnapshot,
+    model_client: &dyn ModelClient,
+    output: &mut W,
+    color_mode: ColorMode,
+) -> anyhow::Result<Option<DropOutcome>> {
+    let (window, known_model_window) =
+        crate::runtime::model_context_window::model_max_tokens_or_default(&state.config.model_id);
+    if !known_model_window {
+        context.record_event(
+            EventType::ErrorOccurred,
+            json!({
+                "session_id": state.session_id,
+                "stage": "token-budget-aging-model-window",
+                "model_id": state.config.model_id,
+                "fallback_max_tokens": window,
+                "message": "unknown model context window; using fallback for token-budget aging",
+            }),
+            None,
+        )?;
+    }
+
+    let Some(plan) = plan_token_budget_drop(
+        state,
+        window,
+        HOT_HIGH_WATER_FRACTION,
+        HOT_LOW_WATER_FRACTION,
+    ) else {
+        return Ok(None);
+    };
+
+    let event = run_token_budget_drop_side_effect(
+        context,
+        state,
+        state_dir,
+        plan,
+        time::OffsetDateTime::now_utc(),
+        model_client,
+    )?;
+    let outcome = drop_outcome_from_event(&event);
+    apply_session_event(context, state, event)?;
+
+    let store_path = state_dir.join("memory-store.json");
+    if store_path.exists() {
+        *memory_snapshot = reload_session_memory_source_snapshot(&store_path)?;
+    }
+
+    if let Some(outcome) = &outcome {
+        print_drop_marker(
+            output,
+            outcome.aged_count,
+            outcome.new_associations,
+            outcome.strengthened,
+            color_mode,
+        )?;
+    }
+
+    Ok(outcome)
+}
+
+fn run_token_budget_drop_side_effect(
+    context: &mut RunContext,
+    state: &SessionState,
+    state_dir: &Path,
+    plan: TokenBudgetDropPlan,
+    now: time::OffsetDateTime,
+    model_client: &dyn ModelClient,
+) -> anyhow::Result<SessionEvent> {
+    let store_path = state_dir.join("memory-store.json");
+    let persist = persist_cross_turn_range(
+        context,
+        state,
+        &store_path,
+        CrossTurnPersistRequest {
+            first_turn_index: plan.first_turn_index,
+            last_turn_index: plan.last_turn_index,
+            kind: qsf_memory::ProcessedRangeKind::LiveBatch,
+            now,
+            event_kind: "live_batch",
+        },
+    )?
+    .unwrap_or_default();
+
+    let mut summaries = Vec::with_capacity(plan.aged_count);
+    for index in plan.first_turn_index..=plan.last_turn_index {
+        let turn = &state.turns[index];
+        summaries.push(summarize_turn(context, state, model_client, turn)?);
+    }
+
+    Ok(SessionEvent::TurnsAgedAndCoRetrieved {
+        range: TurnRange {
+            first_index: plan.first_turn_index,
+            last_index: plan.last_turn_index,
+        },
+        new_associations: persist.new_associations,
+        strengthened_associations: persist.strengthened,
+        persisted_at: SystemTime::now(),
+        summaries,
+    })
+}
+
+fn run_session_end_flush(
+    context: &mut RunContext,
+    state: &SessionState,
+    state_dir: &Path,
+) -> anyhow::Result<Option<DropOutcome>> {
+    use crate::memory::processed_ranges::uncovered_turn_indices;
+
+    let store_path = state_dir.join("memory-store.json");
+    if !store_path.exists() {
+        return Ok(None);
+    }
+
+    let store = crate::memory::MemoryStore::load_or_empty(&store_path)?;
+    let active_start = state.summarized_turns.len();
+    let total = state.turns.len();
+    if total == 0 || active_start >= total {
+        return Ok(None);
+    }
+
+    let uncovered = uncovered_turn_indices(
+        &store.contents().processed_ranges,
+        &state.session_id,
+        active_start,
+        total - 1,
+    );
+    if uncovered.is_empty() {
+        return Ok(None);
+    }
+
+    let now = time::OffsetDateTime::now_utc();
+    let persist = match persist_cross_turn_range(
+        context,
+        state,
+        &store_path,
+        CrossTurnPersistRequest {
+            first_turn_index: active_start,
+            last_turn_index: total - 1,
+            kind: qsf_memory::ProcessedRangeKind::SessionEnd,
+            now,
+            event_kind: "session_end",
+        },
+    ) {
+        Ok(Some(persist)) => persist,
+        Ok(None) => return Ok(None),
+        Err(error) => {
+            let error_summary = sanitize_error(&error.to_string());
+            engine_logging::engine_error!(
+                "session-end flush persist failed; deferring to sleep safety net: session_id={} state_dir={} range={}..={} error={}",
+                state.session_id,
+                state_dir.display(),
+                active_start,
+                total - 1,
+                error_summary
+            );
+            context.record_event(
+                EventType::ErrorOccurred,
+                json!({
+                    "session_id": state.session_id,
+                    "stage": "session-end-cross-turn-flush",
+                    "state_dir": state_dir.display().to_string(),
+                    "first_turn_index": active_start,
+                    "last_turn_index": total - 1,
+                    "error": error_summary,
+                }),
+                None,
+            )?;
+            return Ok(None);
+        }
+    };
+
+    Ok(Some(DropOutcome {
+        aged_count: uncovered.len(),
+        new_associations: persist.new_associations,
+        strengthened: persist.strengthened,
+    }))
+}
+
+#[derive(Clone, Debug, Default, PartialEq)]
+struct CrossTurnPersistOutcome {
+    new_associations: usize,
+    strengthened: usize,
+}
+
+struct CrossTurnPersistRequest<'a> {
+    first_turn_index: usize,
+    last_turn_index: usize,
+    kind: qsf_memory::ProcessedRangeKind,
+    now: time::OffsetDateTime,
+    event_kind: &'a str,
+}
+
+fn persist_cross_turn_range(
+    context: &mut RunContext,
+    state: &SessionState,
+    store_path: &Path,
+    request: CrossTurnPersistRequest<'_>,
+) -> anyhow::Result<Option<CrossTurnPersistOutcome>> {
+    use crate::memory::co_retrieval::{
+        CROSS_TURN_ASSOCIATION_WINDOW, CoRetrievalDelta, CrossTurnAnchorRange,
+        generate_cross_turn_deltas_for_anchor_ranges,
+    };
+    use crate::memory::processed_ranges::{contiguous_ranges, uncovered_turn_indices};
+    use qsf_memory::ProcessedRange;
+
+    if !store_path.exists() || state.turns.is_empty() {
+        return Ok(None);
+    }
+
+    let mut store = crate::memory::MemoryStore::load_or_empty(store_path)?;
+    let last_requested = request
+        .last_turn_index
+        .min(state.turns.len().saturating_sub(1));
+    if request.first_turn_index > last_requested {
+        return Ok(Some(CrossTurnPersistOutcome::default()));
+    }
+    let uncovered = uncovered_turn_indices(
+        &store.contents().processed_ranges,
+        &state.session_id,
+        request.first_turn_index,
+        last_requested,
+    );
+    if uncovered.is_empty() {
+        return Ok(Some(CrossTurnPersistOutcome::default()));
+    }
+    let ranges = contiguous_ranges(&uncovered);
+    let anchor_ranges = ranges
+        .iter()
+        .map(|(first, last)| CrossTurnAnchorRange {
+            first_turn: *first,
+            last_turn: *last,
+        })
+        .collect::<Vec<_>>();
+    let retrievals = state
+        .turns
+        .iter()
+        .map(|turn| turn.context_assembly.retrieved_memory_ids())
+        .collect::<Vec<_>>();
+    let known_record_ids = store
+        .contents()
+        .records
+        .iter()
+        .map(|record| record.id.clone())
+        .collect::<HashSet<_>>();
+    let deltas = generate_cross_turn_deltas_for_anchor_ranges(
+        &retrievals,
+        &store.contents().associations,
+        &known_record_ids,
+        CROSS_TURN_ASSOCIATION_WINDOW,
+        &state.session_id,
+        request.now,
+        &anchor_ranges,
+    );
+
+    let mut outcome = CrossTurnPersistOutcome::default();
+    for delta in deltas {
+        match delta {
+            CoRetrievalDelta::Create {
+                from,
+                to,
+                weight,
+                reason,
+                at,
+            } => {
+                store
+                    .contents_mut()
+                    .associations
+                    .push(crate::memory::Association::new(
+                        from, to, weight, reason, at,
+                    ));
+                outcome.new_associations += 1;
+            }
+            CoRetrievalDelta::Strengthen {
+                from,
+                to,
+                new_weight,
+                at,
+            } => {
+                if let Some(existing) =
+                    store
+                        .contents_mut()
+                        .associations
+                        .iter_mut()
+                        .find(|association| {
+                            (association.from_memory_id == from && association.to_memory_id == to)
+                                || (association.from_memory_id == to
+                                    && association.to_memory_id == from)
+                        })
+                {
+                    existing.weight = new_weight;
+                    existing.last_reinforced_at = at;
+                    outcome.strengthened += 1;
+                }
+            }
+        }
+    }
+
+    store
+        .contents_mut()
+        .processed_ranges
+        .extend(ranges.iter().map(|(first, last)| ProcessedRange {
+            session_id: state.session_id.clone(),
+            first_turn_index: *first,
+            last_turn_index: *last,
+            kind: request.kind.clone(),
+            at: request.now,
+        }));
+    store.persist()?;
+
+    context.record_event(
+        EventType::CoRetrievalAssociationsProposed,
+        json!({
+            "session_id": state.session_id,
+            "kind": request.event_kind,
+            "state_dir": store_path.parent().map(|path| path.display().to_string()),
+            "first_turn_index": request.first_turn_index,
+            "last_turn_index": request.last_turn_index,
+            "processed_ranges": ranges,
+            "processed_anchor_count": uncovered.len(),
+            "new_count": outcome.new_associations,
+            "strengthened_count": outcome.strengthened,
+            "aged_turn_count": request.last_turn_index + 1 - request.first_turn_index,
+        }),
+        None,
+    )?;
+    context.record_event(
+        EventType::MemoryStorePersisted,
+        json!({
+            "session_id": state.session_id,
+            "stage": request.event_kind,
+            "path": store_path.display().to_string(),
+            "records_count": store.contents().records.len(),
+            "associations_count": store.contents().associations.len(),
+            "processed_ranges_count": store.contents().processed_ranges.len(),
+        }),
+        None,
+    )?;
+
+    Ok(Some(outcome))
+}
+
+fn drop_outcome_from_event(event: &SessionEvent) -> Option<DropOutcome> {
+    match event {
+        SessionEvent::TurnsAgedAndCoRetrieved {
+            range,
+            new_associations,
+            strengthened_associations,
+            ..
+        } => Some(DropOutcome {
+            aged_count: range.last_index + 1 - range.first_index,
+            new_associations: *new_associations,
+            strengthened: *strengthened_associations,
+        }),
+        _ => None,
+    }
 }
 
 fn active_turn_count(state: &SessionState) -> usize {
@@ -1224,6 +1718,27 @@ fn record_session_event(context: &mut RunContext, event: &SessionEvent) -> anyho
                 None,
             )?;
         }
+        SessionEvent::TurnsAgedAndCoRetrieved {
+            range,
+            new_associations,
+            strengthened_associations,
+            persisted_at,
+            summaries,
+        } => {
+            context.record_event(
+                EventType::TurnsAgedAndCoRetrieved,
+                json!({
+                    "session_id": context.run_id(),
+                    "range": range,
+                    "new_associations": new_associations,
+                    "strengthened_associations": strengthened_associations,
+                    "persisted_at": persisted_at,
+                    "summary_count": summaries.len(),
+                    "summaries": summaries,
+                }),
+                None,
+            )?;
+        }
         SessionEvent::ToolCompleted(recall) => {
             context.record_event(
                 EventType::ToolCompleted,
@@ -1271,11 +1786,22 @@ fn record_session_event(context: &mut RunContext, event: &SessionEvent) -> anyho
     Ok(())
 }
 
-fn end_session(
+fn end_session<W: Write>(
     context: &mut RunContext,
     state: &mut SessionState,
+    state_dir: &Path,
+    output: &mut W,
+    color_mode: ColorMode,
     reason: SessionEndReason,
 ) -> anyhow::Result<()> {
+    if let Some(outcome) = run_session_end_flush(context, state, state_dir)? {
+        print_session_end_flush(
+            output,
+            outcome.new_associations,
+            outcome.strengthened,
+            color_mode,
+        )?;
+    }
     apply_session_event(context, state, SessionEvent::SessionEnded { reason })
 }
 
@@ -1856,7 +2382,7 @@ mod tests {
     use crate::runtime::run_context::RunContext;
     use crate::session::{
         MemorySourceConfig, RecallRecord, SessionConfig, SessionEndReason, SessionEvent,
-        SessionState, Turn, TurnSummary,
+        SessionState, Turn, TurnRange, TurnSummary,
     };
     use crate::tools::{CALCULATOR_TOOL_NAME, RECALL_TURN_TOOL_NAME};
 
@@ -2068,6 +2594,270 @@ mod tests {
         let state = reduce_session(state, SessionEvent::TurnCompleted(second.clone()));
 
         assert_eq!(state.turns, vec![first, second]);
+    }
+
+    #[test]
+    fn token_budget_drop_plan_ages_oldest_active_block_to_low_water() {
+        let state = synthetic_state_with_verbatim_sizes(&[200, 200, 200, 200, 200, 200]);
+
+        let plan = super::plan_token_budget_drop(&state, 1_000, 0.80, 0.50).unwrap();
+
+        assert_eq!(plan.first_turn_index, 0);
+        assert_eq!(plan.last_turn_index, 3);
+        assert_eq!(plan.aged_count, 4);
+        assert_eq!(plan.hot_tokens_before, 1_200);
+        assert_eq!(plan.hot_tokens_after, 400);
+    }
+
+    #[test]
+    fn token_budget_drop_plan_noops_below_high_water() {
+        let state = synthetic_state_with_verbatim_sizes(&[100, 100, 100]);
+
+        let plan = super::plan_token_budget_drop(&state, 1_000, 0.80, 0.50);
+
+        assert!(plan.is_none());
+    }
+
+    #[test]
+    fn turns_aged_and_co_retrieved_extends_summaries_without_dropping_turns() {
+        let mut state = SessionState::new(test_config(10));
+        state.turns = (0..4).map(test_turn).collect();
+        let turns_before = state.turns.clone();
+        let summary = TurnSummary {
+            turn_index: 0,
+            summarized_after_turn_index: 3,
+            summary: "Turn zero summary.".to_string(),
+            model_id: DEFAULT_SESSION_MODEL.to_string(),
+            model_latency_ms: 0,
+            input_tokens: 0,
+            output_tokens: 0,
+        };
+
+        let state = reduce_session(
+            state,
+            SessionEvent::TurnsAgedAndCoRetrieved {
+                range: TurnRange {
+                    first_index: 0,
+                    last_index: 0,
+                },
+                new_associations: 1,
+                strengthened_associations: 0,
+                persisted_at: std::time::SystemTime::UNIX_EPOCH,
+                summaries: vec![summary],
+            },
+        );
+
+        assert_eq!(state.turns, turns_before);
+        assert_eq!(state.summarized_turns.len(), 1);
+        assert!(state.prefix_invalidated_since_last_prompt);
+    }
+
+    #[test]
+    fn token_budget_drop_persists_associations_and_processed_range() {
+        let base_dir = std::env::temp_dir().join(format!("qsf-token-drop-{}", Uuid::new_v4()));
+        let state_dir = base_dir.join("state/text-loop");
+        let store_path = state_dir.join("memory-store.json");
+        let mut store = MemoryStore::load_or_empty(&store_path).unwrap();
+        store.append_records([
+            memory_record("memory.a", "A", "A summary", vec!["a"], 10),
+            memory_record("memory.b", "B", "B summary", vec!["b"], 10),
+            memory_record("memory.c", "C", "C summary", vec!["c"], 10),
+        ]);
+        store.persist().unwrap();
+        let mut context = RunContext::create_in(&base_dir, "multi-turn-text-loop").unwrap();
+        let mut state = SessionState::new_with_id("session-drop".to_string(), test_config(10));
+        state.turns = vec![
+            test_turn_with_memory_ids(0, &["memory.a"]),
+            test_turn_with_memory_ids(1, &["memory.b"]),
+            test_turn_with_memory_ids(2, &["memory.c"]),
+        ];
+        let plan = super::TokenBudgetDropPlan {
+            first_turn_index: 0,
+            last_turn_index: 1,
+            aged_count: 2,
+            hot_tokens_before: 1_000,
+            hot_tokens_after: 400,
+        };
+
+        let event = super::run_token_budget_drop_side_effect(
+            &mut context,
+            &state,
+            &state_dir,
+            plan,
+            timestamp("2026-05-24T00:00:00Z"),
+            &MockModelClient::default(),
+        )
+        .unwrap();
+        let reloaded = MemoryStore::load_or_empty(&store_path).unwrap();
+
+        assert!(matches!(
+            event,
+            SessionEvent::TurnsAgedAndCoRetrieved {
+                new_associations: 3,
+                ..
+            }
+        ));
+        assert_eq!(reloaded.contents().associations.len(), 3);
+        let range = reloaded
+            .contents()
+            .processed_ranges
+            .iter()
+            .find(|range| range.kind == qsf_memory::ProcessedRangeKind::LiveBatch)
+            .expect("expected live batch range");
+        assert_eq!(range.first_turn_index, 0);
+        assert_eq!(range.last_turn_index, 1);
+
+        fs::remove_dir_all(base_dir).unwrap();
+    }
+
+    #[test]
+    fn session_end_flush_covers_remaining_hot_turns_idempotently() {
+        let base_dir = std::env::temp_dir().join(format!("qsf-session-flush-{}", Uuid::new_v4()));
+        let state_dir = base_dir.join("state/text-loop");
+        let store_path = state_dir.join("memory-store.json");
+        let mut store = MemoryStore::load_or_empty(&store_path).unwrap();
+        store.append_records([
+            memory_record("memory.a", "A", "A summary", vec!["a"], 10),
+            memory_record("memory.b", "B", "B summary", vec!["b"], 10),
+        ]);
+        store.persist().unwrap();
+        let mut context = RunContext::create_in(&base_dir, "multi-turn-text-loop").unwrap();
+        let mut state = SessionState::new_with_id("session-flush".to_string(), test_config(10));
+        state.turns = vec![
+            test_turn_with_memory_ids(0, &["memory.a"]),
+            test_turn_with_memory_ids(1, &["memory.b"]),
+        ];
+
+        let first = super::run_session_end_flush(&mut context, &state, &state_dir)
+            .unwrap()
+            .expect("expected first flush");
+        let second = super::run_session_end_flush(&mut context, &state, &state_dir).unwrap();
+        let reloaded = MemoryStore::load_or_empty(&store_path).unwrap();
+
+        assert_eq!(first.new_associations, 1);
+        assert!(second.is_none());
+        assert!(
+            reloaded
+                .contents()
+                .processed_ranges
+                .iter()
+                .any(
+                    |range| range.kind == qsf_memory::ProcessedRangeKind::SessionEnd
+                        && range.first_turn_index == 0
+                        && range.last_turn_index == 1
+                )
+        );
+
+        fs::remove_dir_all(base_dir).unwrap();
+    }
+
+    #[test]
+    fn session_end_flush_preserves_non_contiguous_processed_ranges() {
+        let base_dir =
+            std::env::temp_dir().join(format!("qsf-session-flush-gaps-{}", Uuid::new_v4()));
+        let state_dir = base_dir.join("state/text-loop");
+        let store_path = state_dir.join("memory-store.json");
+        let mut store = MemoryStore::load_or_empty(&store_path).unwrap();
+        store.append_records([
+            memory_record("memory.a", "A", "A summary", vec!["a"], 10),
+            memory_record("memory.b", "B", "B summary", vec!["b"], 10),
+        ]);
+        store.contents_mut().processed_ranges.extend([
+            qsf_memory::ProcessedRange {
+                session_id: "session-flush-gaps".to_string(),
+                first_turn_index: 1,
+                last_turn_index: 1,
+                kind: qsf_memory::ProcessedRangeKind::LiveBatch,
+                at: timestamp("2026-05-24T00:00:00Z"),
+            },
+            qsf_memory::ProcessedRange {
+                session_id: "session-flush-gaps".to_string(),
+                first_turn_index: 3,
+                last_turn_index: 3,
+                kind: qsf_memory::ProcessedRangeKind::LiveBatch,
+                at: timestamp("2026-05-24T00:00:00Z"),
+            },
+        ]);
+        store.persist().unwrap();
+        let mut context = RunContext::create_in(&base_dir, "multi-turn-text-loop").unwrap();
+        let mut state =
+            SessionState::new_with_id("session-flush-gaps".to_string(), test_config(10));
+        state.turns = vec![
+            test_turn_with_memory_ids(0, &["memory.a"]),
+            test_turn_with_memory_ids(1, &["memory.b"]),
+            test_turn_with_memory_ids(2, &["memory.a"]),
+            test_turn_with_memory_ids(3, &["memory.b"]),
+            test_turn_with_memory_ids(4, &["memory.a"]),
+        ];
+
+        let outcome = super::run_session_end_flush(&mut context, &state, &state_dir)
+            .unwrap()
+            .expect("expected non-contiguous flush");
+        let reloaded = MemoryStore::load_or_empty(&store_path).unwrap();
+        let session_end_ranges = reloaded
+            .contents()
+            .processed_ranges
+            .iter()
+            .filter(|range| range.kind == qsf_memory::ProcessedRangeKind::SessionEnd)
+            .map(|range| (range.first_turn_index, range.last_turn_index))
+            .collect::<Vec<_>>();
+
+        assert_eq!(outcome.aged_count, 3);
+        assert_eq!(session_end_ranges, vec![(0, 0), (2, 2), (4, 4)]);
+        assert!(!session_end_ranges.contains(&(0, 4)));
+
+        fs::remove_dir_all(base_dir).unwrap();
+    }
+
+    #[test]
+    fn cross_turn_persist_skips_already_processed_anchors_on_retry() {
+        let base_dir =
+            std::env::temp_dir().join(format!("qsf-cross-turn-retry-{}", Uuid::new_v4()));
+        let state_dir = base_dir.join("state/text-loop");
+        let store_path = state_dir.join("memory-store.json");
+        let mut store = MemoryStore::load_or_empty(&store_path).unwrap();
+        store.append_records([
+            memory_record("memory.a", "A", "A summary", vec!["a"], 10),
+            memory_record("memory.b", "B", "B summary", vec!["b"], 10),
+        ]);
+        store.persist().unwrap();
+        let mut context = RunContext::create_in(&base_dir, "multi-turn-text-loop").unwrap();
+        let mut state = SessionState::new_with_id("session-retry".to_string(), test_config(10));
+        state.turns = vec![
+            test_turn_with_memory_ids(0, &["memory.a"]),
+            test_turn_with_memory_ids(1, &["memory.b"]),
+        ];
+        let request = super::CrossTurnPersistRequest {
+            first_turn_index: 0,
+            last_turn_index: 0,
+            kind: qsf_memory::ProcessedRangeKind::LiveBatch,
+            now: timestamp("2026-05-24T00:00:00Z"),
+            event_kind: "test_retry",
+        };
+
+        let first =
+            super::persist_cross_turn_range(&mut context, &state, &store_path, request).unwrap();
+        let second = super::persist_cross_turn_range(
+            &mut context,
+            &state,
+            &store_path,
+            super::CrossTurnPersistRequest {
+                first_turn_index: 0,
+                last_turn_index: 0,
+                kind: qsf_memory::ProcessedRangeKind::LiveBatch,
+                now: timestamp("2026-05-24T00:00:00Z"),
+                event_kind: "test_retry",
+            },
+        )
+        .unwrap();
+        let reloaded = MemoryStore::load_or_empty(&store_path).unwrap();
+
+        assert_eq!(first.unwrap().new_associations, 1);
+        assert_eq!(second.unwrap(), super::CrossTurnPersistOutcome::default());
+        assert_eq!(reloaded.contents().associations.len(), 1);
+        assert_eq!(reloaded.contents().processed_ranges.len(), 1);
+
+        fs::remove_dir_all(base_dir).unwrap();
     }
 
     #[test]
@@ -3011,9 +3801,16 @@ mod tests {
             std::env::temp_dir().join(format!("qsf-warm-multi-summary-{}", Uuid::new_v4()));
         let mut context = RunContext::create_in(&base_dir, "multi-turn-text-loop").unwrap();
         let mut state = SessionState::new(test_config_with_warm_threshold(10, 2));
+        let state_dir = base_dir.join("state/text-loop");
         state.turns = (0..5).map(test_turn).collect();
 
-        age_out_warm_turns(&mut context, &mut state, &MockModelClient::default()).unwrap();
+        age_out_warm_turns(
+            &mut context,
+            &mut state,
+            &state_dir,
+            &MockModelClient::default(),
+        )
+        .unwrap();
 
         assert_eq!(
             state
@@ -3264,6 +4061,48 @@ mod tests {
 
     fn test_turn(index: usize) -> Turn {
         test_turn_with_hash(index, ContentHash([index as u8; 32]), 2)
+    }
+
+    fn synthetic_state_with_verbatim_sizes(sizes: &[usize]) -> SessionState {
+        let mut state = SessionState::new(test_config(20));
+        state.turns = sizes
+            .iter()
+            .enumerate()
+            .map(|(index, tokens)| {
+                let mut turn = test_turn(index);
+                turn.user_input = "x".repeat(tokens * 4);
+                turn.retrieved_memory_block.clear();
+                turn.assistant_response.clear();
+                turn
+            })
+            .collect();
+        state
+    }
+
+    fn test_turn_with_memory_ids(index: usize, ids: &[&str]) -> Turn {
+        let mut turn = test_turn(index);
+        turn.context_assembly = ContextAssembly {
+            budget: ContextBudget::new(8, 600),
+            selected: ids
+                .iter()
+                .map(|id| ContextSelection {
+                    fragment: ContextFragment {
+                        fragment_id: (*id).to_string(),
+                        source_kind: ContextSourceKind::Memory,
+                        summary: format!("Summary {id}."),
+                        tags: vec![],
+                        score: 1.0,
+                        estimated_tokens: 10,
+                        source_reference: "tests".to_string(),
+                        selection_reason: "tests".to_string(),
+                    },
+                    cumulative_estimated_tokens: 10,
+                })
+                .collect(),
+            omitted: vec![],
+            used_estimated_tokens: ids.len() * 10,
+        };
+        turn
     }
 
     fn test_turn_with_hash(

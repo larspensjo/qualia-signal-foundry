@@ -109,6 +109,12 @@ pub struct TurnSummary {
     pub output_tokens: u32,
 }
 
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+pub struct TurnRange {
+    pub first_index: usize,
+    pub last_index: usize,
+}
+
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct SessionLimit {
     pub current: usize,
@@ -149,6 +155,13 @@ pub enum SessionEvent {
     },
     TurnCompleted(Turn),
     TurnSummarized(TurnSummary),
+    TurnsAgedAndCoRetrieved {
+        range: TurnRange,
+        new_associations: usize,
+        strengthened_associations: usize,
+        persisted_at: SystemTime,
+        summaries: Vec<TurnSummary>,
+    },
     ToolCompleted(RecallRecord),
     SessionLimitReached {
         current: usize,

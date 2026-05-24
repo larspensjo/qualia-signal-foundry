@@ -5,9 +5,11 @@ pub mod co_retrieval;
 pub mod fixtures;
 pub mod hint_expansion;
 pub mod memory_record;
+pub mod processed_ranges;
 pub mod retrieval;
 pub mod reviewed_memory_draft;
 pub mod store;
+pub mod token_estimate;
 
 pub use association::{ASSOCIATION_SCHEMA_VERSION, Association};
 pub use fixtures::{MemoryFixture, phase_four_fixture};
@@ -22,3 +24,4 @@ pub use reviewed_memory_draft::{
     render_reviewed_memory_draft_markdown, write_reviewed_memory_draft,
 };
 pub use store::{MemoryStore, MemoryStoreContents};
+pub use token_estimate::estimated_tokens;

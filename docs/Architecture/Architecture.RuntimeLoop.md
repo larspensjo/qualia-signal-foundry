@@ -31,6 +31,16 @@ document as a candidate design that real experiments incrementally fill in.
   resume mode, emit `SessionResumed`, then enter the normal reducer-driven loop
   ([session/resume.rs](../../crates/qsf_app/src/session/resume.rs),
   [experiments/multi_turn_text_loop.rs](../../crates/qsf_app/src/experiments/multi_turn_text_loop.rs))
+- Multi-turn hot context aging now composes the existing active-turn warm threshold
+  with a token-budget high-water policy. Aging side effects run cross-turn
+  co-retrieval first, persist association deltas and `processed_ranges`, summarize
+  the aged turns, then feed `TurnsAgedAndCoRetrieved` through the reducer while
+  keeping `state.turns` append-only
+  ([experiments/multi_turn_text_loop.rs](../../crates/qsf_app/src/experiments/multi_turn_text_loop.rs),
+  [session/mod.rs](../../crates/qsf_app/src/session/mod.rs))
+- Clean `:quit` and EOF exits run a session-end cross-turn flush for remaining hot
+  turns before recording `SessionEnded`; flush failures are logged and deferred to
+  the sleep safety-net path rather than blocking exit
 
 **Partial:**
 
@@ -50,7 +60,7 @@ document as a candidate design that real experiments incrementally fill in.
   experiment code
 - Interruption and turn-taking handling in the live loop
 
-Last reviewed: 2026-05-20 against the code on `main`.
+Last reviewed: 2026-05-24 against Phase 4 live aging and session-end flush.
 
 ## Purpose
 

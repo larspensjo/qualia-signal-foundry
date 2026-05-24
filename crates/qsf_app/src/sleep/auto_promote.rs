@@ -3,7 +3,9 @@ use time::OffsetDateTime;
 
 use crate::memory::association::Association;
 use crate::memory::memory_record::{MemoryRecord, MemoryRecordKind};
+use crate::memory::processed_ranges::{contiguous_ranges, uncovered_turn_indices};
 use crate::memory::store::MemoryStoreContents;
+use crate::memory::token_estimate::estimated_tokens;
 use crate::session::SessionState;
 use crate::sleep::sleep_report::SleepReport;
 
@@ -12,6 +14,7 @@ pub struct PromotionPlan {
     pub new_records: Vec<MemoryRecord>,
     pub new_associations: Vec<Association>,
     pub strengthened_associations: Vec<(String, String, f64)>,
+    pub processed_ranges: Vec<qsf_memory::ProcessedRange>,
     pub skipped_duplicates: Vec<String>,
 }
 
@@ -70,8 +73,8 @@ pub fn build_promotion_plan(
         new_records.push(record);
     }
 
-    let (mut new_associations, strengthened_associations) =
-        build_cross_turn_associations(session, current_store, as_of);
+    let cross_turn = build_cross_turn_associations(session, current_store, as_of);
+    let mut new_associations = cross_turn.new_associations;
     new_associations.extend(build_sleep_candidate_associations(
         report,
         &promoted_candidate_ids,
@@ -82,7 +85,8 @@ pub fn build_promotion_plan(
     PromotionPlan {
         new_records,
         new_associations,
-        strengthened_associations,
+        strengthened_associations: cross_turn.strengthened_associations,
+        processed_ranges: cross_turn.processed_ranges,
         skipped_duplicates,
     }
 }
@@ -91,10 +95,25 @@ fn build_cross_turn_associations(
     session: &SessionState,
     current_store: &MemoryStoreContents,
     as_of: OffsetDateTime,
-) -> (Vec<Association>, Vec<(String, String, f64)>) {
+) -> CrossTurnAssociationPlan {
     use crate::memory::co_retrieval::{
-        CROSS_TURN_ASSOCIATION_WINDOW, CoRetrievalDelta, generate_cross_turn_deltas,
+        CROSS_TURN_ASSOCIATION_WINDOW, CoRetrievalDelta, CrossTurnAnchorRange,
+        generate_cross_turn_deltas_for_anchor_ranges,
     };
+
+    if session.turns.is_empty() {
+        return CrossTurnAssociationPlan::default();
+    }
+
+    let uncovered = uncovered_turn_indices(
+        &current_store.processed_ranges,
+        &session.session_id,
+        0,
+        session.turns.len() - 1,
+    );
+    if uncovered.is_empty() {
+        return CrossTurnAssociationPlan::default();
+    }
 
     let known = current_store
         .records
@@ -107,15 +126,23 @@ fn build_cross_turn_associations(
         .map(|turn| turn.context_assembly.retrieved_memory_ids())
         .collect::<Vec<_>>();
 
-    let deltas = generate_cross_turn_deltas(
+    let ranges = contiguous_ranges(&uncovered);
+    let anchor_ranges = ranges
+        .iter()
+        .map(|(first, last)| CrossTurnAnchorRange {
+            first_turn: *first,
+            last_turn: *last,
+        })
+        .collect::<Vec<_>>();
+    let deltas = generate_cross_turn_deltas_for_anchor_ranges(
         &retrievals,
         &current_store.associations,
         &known,
         CROSS_TURN_ASSOCIATION_WINDOW,
         &session.session_id,
         as_of,
+        &anchor_ranges,
     );
-
     let mut new_associations = Vec::new();
     let mut strengthened_associations = Vec::new();
     for delta in deltas {
@@ -140,7 +167,29 @@ fn build_cross_turn_associations(
         }
     }
 
-    (new_associations, strengthened_associations)
+    let processed_ranges = ranges
+        .into_iter()
+        .map(|(first, last)| qsf_memory::ProcessedRange {
+            session_id: session.session_id.clone(),
+            first_turn_index: first,
+            last_turn_index: last,
+            kind: qsf_memory::ProcessedRangeKind::SleepSafetyNet,
+            at: as_of,
+        })
+        .collect();
+
+    CrossTurnAssociationPlan {
+        new_associations,
+        strengthened_associations,
+        processed_ranges,
+    }
+}
+
+#[derive(Clone, Debug, Default, PartialEq)]
+struct CrossTurnAssociationPlan {
+    new_associations: Vec<Association>,
+    strengthened_associations: Vec<(String, String, f64)>,
+    processed_ranges: Vec<qsf_memory::ProcessedRange>,
 }
 
 fn build_sleep_candidate_associations(
@@ -254,10 +303,6 @@ fn first_sentence(text: &str) -> String {
     } else {
         title.trim().to_string()
     }
-}
-
-fn estimated_tokens(text: &str) -> usize {
-    text.chars().count().div_ceil(4).max(1)
 }
 
 #[cfg(test)]
@@ -389,6 +434,7 @@ mod tests {
                 "Reducers stay pure.",
             )],
             associations: vec![],
+            ..MemoryStoreContents::default()
         };
 
         let plan = build_promotion_plan(&report, &empty_session(), &store, ts(), "sleep-1");
@@ -448,6 +494,7 @@ mod tests {
                 "existing",
                 ts(),
             )],
+            ..MemoryStoreContents::default()
         };
 
         session.turns.push(turn_with_memories(2, &["memory.c"]));
@@ -485,6 +532,7 @@ mod tests {
                 "existing reverse",
                 ts(),
             )],
+            ..MemoryStoreContents::default()
         };
 
         let plan = build_promotion_plan(
@@ -510,6 +558,7 @@ mod tests {
         let store = MemoryStoreContents {
             records: vec![memory_record("memory.a", "A.", "A.")],
             associations: vec![],
+            ..MemoryStoreContents::default()
         };
 
         let plan = build_promotion_plan(
@@ -522,6 +571,88 @@ mod tests {
 
         assert!(plan.new_associations.is_empty());
         assert!(plan.strengthened_associations.is_empty());
+    }
+
+    #[test]
+    fn cross_turn_retrievals_skip_processed_anchor_ranges() {
+        let mut session = empty_session();
+        session.turns.push(turn_with_memories(0, &["memory.a"]));
+        session.turns.push(turn_with_memories(1, &["memory.b"]));
+        let store = MemoryStoreContents {
+            records: vec![
+                memory_record("memory.a", "A.", "A."),
+                memory_record("memory.b", "B.", "B."),
+            ],
+            associations: vec![],
+            processed_ranges: vec![qsf_memory::ProcessedRange {
+                session_id: session.session_id.clone(),
+                first_turn_index: 0,
+                last_turn_index: 1,
+                kind: qsf_memory::ProcessedRangeKind::SessionEnd,
+                at: ts(),
+            }],
+        };
+
+        let plan = build_promotion_plan(
+            &report_with_candidates(vec![]),
+            &session,
+            &store,
+            ts(),
+            "sleep-1",
+        );
+
+        assert!(plan.new_associations.is_empty());
+        assert!(plan.strengthened_associations.is_empty());
+        assert!(plan.processed_ranges.is_empty());
+    }
+
+    #[test]
+    fn cross_turn_retrievals_dedupe_pairs_across_uncovered_segments() {
+        let mut session = empty_session();
+        session.turns.push(turn_with_memories(0, &["memory.x"]));
+        session.turns.push(turn_with_memories(1, &[]));
+        session.turns.push(turn_with_memories(2, &["memory.x"]));
+        session.turns.push(turn_with_memories(3, &["memory.y"]));
+        let store = MemoryStoreContents {
+            records: vec![
+                memory_record("memory.x", "X.", "X."),
+                memory_record("memory.y", "Y.", "Y."),
+            ],
+            associations: vec![],
+            processed_ranges: vec![
+                qsf_memory::ProcessedRange {
+                    session_id: session.session_id.clone(),
+                    first_turn_index: 1,
+                    last_turn_index: 1,
+                    kind: qsf_memory::ProcessedRangeKind::LiveBatch,
+                    at: ts(),
+                },
+                qsf_memory::ProcessedRange {
+                    session_id: session.session_id.clone(),
+                    first_turn_index: 3,
+                    last_turn_index: 3,
+                    kind: qsf_memory::ProcessedRangeKind::LiveBatch,
+                    at: ts(),
+                },
+            ],
+        };
+
+        let plan = build_promotion_plan(
+            &report_with_candidates(vec![]),
+            &session,
+            &store,
+            ts(),
+            "sleep-1",
+        );
+
+        let matching = plan
+            .new_associations
+            .iter()
+            .filter(|association| {
+                association.from_memory_id == "memory.x" && association.to_memory_id == "memory.y"
+            })
+            .count();
+        assert_eq!(matching, 1);
     }
 
     #[test]
@@ -585,6 +716,7 @@ mod tests {
                 "Reducers stay pure.",
             )],
             associations: vec![],
+            ..MemoryStoreContents::default()
         };
 
         let plan = build_promotion_plan(&report, &empty_session(), &store, ts(), "sleep-1");

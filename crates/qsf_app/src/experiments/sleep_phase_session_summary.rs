@@ -206,6 +206,10 @@ fn commit_cross_session_sleep(
 
     store.append_records(plan.new_records.clone());
     store.append_associations(plan.new_associations.clone());
+    store
+        .contents_mut()
+        .processed_ranges
+        .extend(plan.processed_ranges.clone());
     for (from_id, to_id, new_weight) in &plan.strengthened_associations {
         if let Some(existing) = store
             .contents_mut()
