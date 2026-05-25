@@ -38,6 +38,10 @@ candidate categories listed below still have no shared module.
   `MemoryReinforced`, and `MemoryStorePersisted`
   ([observability/event_log.rs](../../crates/qsf_app/src/observability/event_log.rs),
   [experiments/multi_turn_text_loop.rs](../../crates/qsf_app/src/experiments/multi_turn_text_loop.rs))
+- Live-memory-capture traces record remembered-topic captures and explicit
+  remember-this skip reasons so the excerpt source turn stays inspectable
+  ([experiments/multi_turn_text_loop.rs](../../crates/qsf_app/src/experiments/multi_turn_text_loop.rs),
+  [memory/live_capture.rs](../../crates/qsf_app/src/memory/live_capture.rs))
 - Memory retrieval traces include selected and omitted candidates, with
   `RetrievedMemory.skip_reason` explaining relevance-gated omissions and retrieval
   limit omissions.
@@ -64,7 +68,7 @@ candidate categories listed below still have no shared module.
   memory-graph view, no cost dashboard)
 - `experiment_id` and `memory_update_id` correlation across runs
 
-Last reviewed: 2026-05-25 against relevance-gated memory retrieval observability.
+Last reviewed: 2026-05-25 against explicit remember-this capture observability.
 
 ## Summary
 

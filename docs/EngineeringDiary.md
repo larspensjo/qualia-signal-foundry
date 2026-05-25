@@ -1960,3 +1960,41 @@ Refs: crates/qsf_app/src/memory/live_capture.rs,
 crates/qsf_app/src/memory/mod.rs,
 crates/qsf_app/src/memory/retrieval.rs,
 crates/qsf_app/src/experiments/multi_turn_text_loop.rs
+
+## 2026-05-25 - Explicit remember-this live capture
+
+Phase 3 of the live memory quality plan landed: the multi-turn text loop now captures
+explicit remember-this turns as bounded remembered-topic memories sourced from the
+prior assistant response and prior user topic. Review fixes were folded in before
+submission so low-value or misleading captures do not enter the durable memory store.
+
+What changed:
+- Added remembered-topic capture to `memory/live_capture.rs` with explicit
+  remember-request detection, topic-term tagging, and bounded source excerpts.
+- Wired `multi_turn_text_loop.rs` to persist remembered-topic candidates, emit
+  live-memory-capture traces, and log a skip trace when a remember request has no
+  usable prior assistant response.
+- Skipped remembered-topic capture when the previous assistant response is missing
+  or whitespace-only, and rejected negated or self-directed remember-this phrases.
+- Added an end-to-end regression that exercises assistant identity, user identity,
+  remembered-topic capture, and follow-up retrievals.
+- Restored user-name false-positive regression tests that had been dropped during
+  the Phase 3 edit.
+- Made duplicate-only live-capture traces generic unless the duplicate candidate was
+  actually a remembered-topic memory.
+- Normalized singular and plural goal topic tags so remembered-topic retrieval can
+  match either query form.
+- Updated memory, runtime, and observability architecture notes to reflect the new
+  capture path and trace coverage.
+
+Observed:
+- The remembered-topic record now stores the previous turn reference plus a bounded
+  excerpt instead of a fabricated semantic summary.
+- Retrieval on the remembered-topic follow-up prefers the remembered memory and does
+  not fall back to the Ari identity memory on unrelated volition queries.
+
+Refs: crates/qsf_app/src/memory/live_capture.rs,
+crates/qsf_app/src/experiments/multi_turn_text_loop.rs,
+docs/Architecture/Architecture.MemorySystem.md,
+docs/Architecture/Architecture.RuntimeLoop.md,
+docs/Architecture/Architecture.StateAndObservability.md

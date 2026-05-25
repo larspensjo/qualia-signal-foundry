@@ -25,6 +25,10 @@ document as a candidate design that real experiments incrementally fill in.
   ([experiments/text_owned_voice_loop.rs](../../crates/qsf_app/src/experiments/text_owned_voice_loop.rs))
 - Memory retrieval before context assembly, then model invocation, then output and
   trace emission
+- Live memory capture after the model response now persists assistant-name,
+  user-name, and remembered-topic candidates before the next turn begins
+  ([memory/live_capture.rs](../../crates/qsf_app/src/memory/live_capture.rs),
+  [experiments/multi_turn_text_loop.rs](../../crates/qsf_app/src/experiments/multi_turn_text_loop.rs))
 - `session_id` propagation through transcript, runtime input, model role, output,
   and speech playback for voice turns
 - Cross-session boot for the multi-turn text loop: load continuity manifest, classify
@@ -60,7 +64,7 @@ document as a candidate design that real experiments incrementally fill in.
   experiment code
 - Interruption and turn-taking handling in the live loop
 
-Last reviewed: 2026-05-24 against Phase 4 live aging and session-end flush.
+Last reviewed: 2026-05-25 against explicit remember-this live capture.
 
 ## Purpose
 

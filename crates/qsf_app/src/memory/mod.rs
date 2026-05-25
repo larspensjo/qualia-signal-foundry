@@ -16,6 +16,7 @@ pub use association::{ASSOCIATION_SCHEMA_VERSION, Association};
 pub use fixtures::{MemoryFixture, phase_four_fixture};
 pub use live_capture::{
     LiveCaptureInput, LiveMemoryCandidate, LiveMemoryCandidateKind, capture_live_memory_candidates,
+    remember_this_skip_reason,
 };
 pub use memory_record::{MEMORY_RECORD_SCHEMA_VERSION, MemoryRecord, MemoryRecordKind};
 pub use retrieval::{

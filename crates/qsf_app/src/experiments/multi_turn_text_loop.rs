@@ -15,7 +15,8 @@ use crate::conversation::{PromptAssembly, PromptTurnSummary};
 use crate::memory::{
     Association, LiveCaptureInput, LiveMemoryCandidate, MemoryFixture, MemoryRecord,
     MemoryRecordKind, RetrievalResult, RetrievalStrategy, capture_live_memory_candidates,
-    estimated_tokens, phase_four_fixture, retrieve_memories, retrieved_memory_ids,
+    estimated_tokens, phase_four_fixture, remember_this_skip_reason, retrieve_memories,
+    retrieved_memory_ids,
 };
 use crate::models::{
     ModelClient, ModelMessage, ModelRequest, ModelRole, ModelRoleId, ModelToolCall, build_client,
@@ -995,25 +996,46 @@ fn apply_live_memory_capture(
     assistant_response: &str,
 ) -> anyhow::Result<()> {
     let previous_turn = state.turns.last();
-    let candidates = capture_live_memory_candidates(&LiveCaptureInput {
+    let capture_input = LiveCaptureInput {
         user_input,
         assistant_response,
         previous_turn_index: previous_turn.map(|turn| turn.index),
         previous_user_input: previous_turn.map(|turn| turn.user_input.as_str()),
         previous_assistant_response: previous_turn.map(|turn| turn.assistant_response.as_str()),
-    });
+    };
+    let remember_skip_reason = remember_this_skip_reason(&capture_input);
+    let candidates = capture_live_memory_candidates(&capture_input);
+    let turn_index = completed_turn_count(state);
 
     if candidates.is_empty() {
+        if let Some(reason) = remember_skip_reason {
+            let trace = TraceRecord::new(
+                context.experiment_id(),
+                "live-memory-capture",
+                format!("turn={} user_input={}", turn_index, user_input),
+                "skipped remember-this capture",
+            )
+            .with_details(json!({
+                "session_id": state.session_id,
+                "turn_index": turn_index,
+                "stage": "remember-this",
+                "reason": reason,
+                "previous_turn_index": capture_input.previous_turn_index,
+                "previous_user_input": capture_input.previous_user_input,
+            }))
+            .with_latency_context("runtime", "live-memory-capture");
+            context.record_trace(trace)?;
+        }
         return Ok(());
     }
 
     let memory_store_path = state_dir.join("memory-store.json");
     let mut store = crate::memory::MemoryStore::load_or_empty(&memory_store_path)?;
-    let turn_index = completed_turn_count(state);
     let now = time::OffsetDateTime::now_utc();
     let mut persisted_records = Vec::new();
     let mut record_ids = Vec::new();
     let mut candidate_kinds = Vec::new();
+    let mut duplicate_ids = Vec::new();
     for candidate in candidates {
         if store
             .contents()
@@ -1024,6 +1046,7 @@ fn apply_live_memory_capture(
                 .iter()
                 .any(|record: &MemoryRecord| live_memory_duplicate(record, &candidate))
         {
+            duplicate_ids.push(candidate.candidate_kind.as_str().to_string());
             continue;
         }
 
@@ -1061,9 +1084,34 @@ fn apply_live_memory_capture(
     }
 
     if persisted_records.is_empty() {
+        if remember_skip_reason.is_none() {
+            let duplicate_intent = if duplicate_ids.iter().any(|kind| kind == "remembered-topic") {
+                "remember-this"
+            } else {
+                "live-memory-capture"
+            };
+            let trace = TraceRecord::new(
+                context.experiment_id(),
+                "live-memory-capture",
+                format!("turn={} user_input={}", turn_index, user_input),
+                "live memory capture matched only duplicates",
+            )
+            .with_details(json!({
+                "session_id": state.session_id,
+                "turn_index": turn_index,
+                "stage": "live_memory_capture",
+                "intent": duplicate_intent,
+                "duplicate_kinds": duplicate_ids,
+                "previous_turn_index": capture_input.previous_turn_index,
+                "previous_user_input": capture_input.previous_user_input,
+            }))
+            .with_latency_context("runtime", "live-memory-capture");
+            context.record_trace(trace)?;
+        }
         return Ok(());
     }
 
+    let persisted_count = persisted_records.len();
     store.append_records(persisted_records);
     store.persist()?;
     context.record_event(
@@ -1074,13 +1122,38 @@ fn apply_live_memory_capture(
             "stage": "live_memory_capture",
             "path": memory_store_path.display().to_string(),
             "candidate_count": record_ids.len(),
-            "candidate_kinds": candidate_kinds,
-            "record_ids": record_ids,
+            "candidate_kinds": candidate_kinds.clone(),
+            "record_ids": record_ids.clone(),
+            "source_turn_index": capture_input.previous_turn_index,
             "records_count": store.contents().records.len(),
             "associations_count": store.contents().associations.len(),
         }),
         None,
     )?;
+    let trace = TraceRecord::new(
+        context.experiment_id(),
+        "live-memory-capture",
+        format!("turn={} user_input={}", turn_index, user_input),
+        format!("captured {} live memory candidate(s)", persisted_count),
+    )
+    .with_details(json!({
+        "session_id": state.session_id,
+        "turn_index": turn_index,
+        "stage": "live_memory_capture",
+        "intent": if candidate_kinds.iter().any(|kind| kind == "remembered-topic") {
+            "remember-this"
+        } else {
+            "live-memory-capture"
+        },
+        "candidate_count": persisted_count,
+        "candidate_kinds": candidate_kinds,
+        "record_ids": record_ids,
+        "source_turn_index": capture_input.previous_turn_index,
+        "remember_skip_reason": remember_skip_reason,
+        "duplicate_kinds": duplicate_ids,
+    }))
+    .with_latency_context("runtime", "live-memory-capture");
+    context.record_trace(trace)?;
 
     Ok(())
 }
@@ -3755,6 +3828,124 @@ mod tests {
     }
 
     #[test]
+    fn live_loop_captures_remembered_topic_and_retrieves_it_end_to_end() {
+        let base_dir = std::env::temp_dir().join(format!("qsf-live-remember-{}", Uuid::new_v4()));
+        let state_dir = base_dir.join("state/text-loop");
+        let memory_store_path = state_dir.join("memory-store.json");
+        let memory_source = EmptyMemorySource;
+        let model_client = MockModelClient::default().with_fixture(
+            ModelRoleId::ConversationalResponder,
+            "Absolutely - you can call me Ari. A good volition system should include needs/drives, goals, arbitration, and continuity.",
+        );
+
+        let mut context =
+            RunContext::create_in(base_dir.join("run"), "multi-turn-text-loop").unwrap();
+        let mut output = Vec::new();
+        run_with_io_and_components_at_state_dir(
+            &mut context,
+            Cursor::new(
+                "I want you to use the name Ari.\nMy name is Lars.\nTell me more what you think how a volition system should work.\nInteresting, please remember this for future discussions!\nWhat is your name?\nWhat is my name?\nWhat did I ask you to remember about volition?\n:quit\n",
+            ),
+            &mut output,
+            &model_client,
+            &memory_source,
+            test_config(10),
+            &state_dir,
+        )
+        .unwrap();
+
+        let store = MemoryStore::load_or_empty(&memory_store_path).unwrap();
+        assert_eq!(store.contents().records.len(), 3);
+        let ari = store
+            .contents()
+            .records
+            .iter()
+            .find(|record| record.title == "Assistant name: Ari")
+            .expect("expected Ari live memory");
+        let lars = store
+            .contents()
+            .records
+            .iter()
+            .find(|record| record.title == "User name: Lars")
+            .expect("expected Lars live memory");
+        let remembered = store
+            .contents()
+            .records
+            .iter()
+            .find(|record| record.title.starts_with("Remembered topic:"))
+            .expect("expected remembered-topic live memory");
+        assert!(remembered.summary.contains("Topic: volition system."));
+        assert!(remembered.summary.contains("Source excerpt:"));
+        assert!(remembered.tags.iter().any(|tag| tag == "remembered_topic"));
+        assert!(remembered.tags.iter().any(|tag| tag == "volition"));
+        assert!(remembered.tags.iter().any(|tag| tag == "system"));
+        assert!(remembered.tags.iter().any(|tag| tag == "volition_system"));
+        assert!(remembered.source_reference.contains("source-turn-002"));
+
+        let assistant = retrieve_memories(
+            &store.contents().records,
+            &store.contents().associations,
+            "What is your name?",
+            RetrievalStrategy::KeywordTag,
+            8,
+        )
+        .unwrap();
+        assert_eq!(assistant.selected.len(), 1);
+        assert_eq!(assistant.selected[0].memory.id, ari.id);
+
+        let user = retrieve_memories(
+            &store.contents().records,
+            &store.contents().associations,
+            "What is my name?",
+            RetrievalStrategy::KeywordTag,
+            8,
+        )
+        .unwrap();
+        assert_eq!(user.selected.len(), 1);
+        assert_eq!(user.selected[0].memory.id, lars.id);
+
+        let volition = retrieve_memories(
+            &store.contents().records,
+            &store.contents().associations,
+            "What did I ask you to remember about volition?",
+            RetrievalStrategy::KeywordTag,
+            8,
+        )
+        .unwrap();
+        assert!(
+            volition
+                .selected
+                .iter()
+                .any(|memory| memory.memory.id == remembered.id)
+        );
+        assert!(
+            !volition
+                .selected
+                .iter()
+                .any(|memory| memory.memory.id == ari.id)
+        );
+
+        let events = fs::read_to_string(context.run_dir().join("events.jsonl")).unwrap();
+        let records = parse_event_records(&events);
+        let persisted = records
+            .iter()
+            .filter(|record| record.event_type == EventType::MemoryStorePersisted)
+            .collect::<Vec<_>>();
+        assert!(persisted.iter().any(|record| {
+            record.payload["candidate_kinds"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|value| value == "remembered-topic")
+        }));
+        let remember_trace = fs::read_to_string(context.run_dir().join("traces.jsonl")).unwrap();
+        assert!(remember_trace.contains("live-memory-capture"));
+        assert!(remember_trace.contains("remember-this"));
+
+        fs::remove_dir_all(base_dir).unwrap();
+    }
+
+    #[test]
     fn live_loop_strengthens_existing_persistent_association() {
         let base_dir =
             std::env::temp_dir().join(format!("qsf-live-memory-strengthen-{}", Uuid::new_v4()));
@@ -4411,6 +4602,24 @@ mod tests {
                 "phase_four_fixture",
                 "test",
                 phase_four_fixture(),
+            ))
+        }
+    }
+
+    struct EmptyMemorySource;
+
+    impl super::SessionMemorySource for EmptyMemorySource {
+        fn load(
+            &self,
+            _context: &mut RunContext,
+        ) -> anyhow::Result<super::SessionMemorySourceSnapshot> {
+            Ok(super::SessionMemorySourceSnapshot::from_fixture(
+                "empty_fixture",
+                "tests",
+                MemoryFixture {
+                    records: vec![],
+                    associations: vec![],
+                },
             ))
         }
     }

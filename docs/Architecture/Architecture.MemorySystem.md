@@ -49,6 +49,11 @@ future retrieval backends.
 - Narrow live-loop capture of accepted assistant-name assignments into the durable
   memory store, so simple identity continuity can survive later cold starts
   ([experiments/multi_turn_text_loop.rs](../../crates/qsf_app/src/experiments/multi_turn_text_loop.rs))
+- Narrow live-loop capture of explicit remember-this turns into remembered-topic
+  memories with bounded source excerpts, prior-user topic tags, and source-turn
+  metadata
+  ([memory/live_capture.rs](../../crates/qsf_app/src/memory/live_capture.rs),
+  [experiments/multi_turn_text_loop.rs](../../crates/qsf_app/src/experiments/multi_turn_text_loop.rs))
 - Live-loop cross-turn co-retrieval when turns age out through the warm threshold
   or token-budget batch policy, plus a clean-exit session-end flush for remaining
   hot turns
@@ -74,7 +79,7 @@ future retrieval backends.
   sleep-generated candidates
 - Voice-loop participation in the shared continuity memory store
 
-Last reviewed: 2026-05-24 against Phase 4 live cross-turn association coverage.
+Last reviewed: 2026-05-25 against explicit remember-this live capture.
 
 ## Purpose
 
