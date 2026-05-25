@@ -33,12 +33,11 @@ param(
 $ErrorActionPreference = "Stop"
 Set-StrictMode -Version Latest
 
-$projectRoot = Split-Path -Parent $PSScriptRoot
-
 $rawPlanPath = if ([System.IO.Path]::IsPathRooted($Plan)) {
     $Plan
-} else {
-    Join-Path $projectRoot $Plan
+}
+else {
+    Join-Path (Get-Location).Path $Plan
 }
 
 $planPath = [System.IO.Path]::GetFullPath($rawPlanPath)
@@ -63,7 +62,8 @@ function Format-Invocation {
         if ($arg -match '\s' -or $arg -eq '') {
             $escaped = $arg -replace '"', '\"'
             $parts += "`"$escaped`""
-        } else {
+        }
+        else {
             $parts += $arg
         }
     }
