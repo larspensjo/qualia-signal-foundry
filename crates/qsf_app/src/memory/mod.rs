@@ -4,6 +4,7 @@ pub mod association;
 pub mod co_retrieval;
 pub mod fixtures;
 pub mod hint_expansion;
+pub mod live_capture;
 pub mod memory_record;
 pub mod processed_ranges;
 pub mod retrieval;
@@ -13,6 +14,9 @@ pub mod token_estimate;
 
 pub use association::{ASSOCIATION_SCHEMA_VERSION, Association};
 pub use fixtures::{MemoryFixture, phase_four_fixture};
+pub use live_capture::{
+    LiveCaptureInput, LiveMemoryCandidate, LiveMemoryCandidateKind, capture_live_memory_candidates,
+};
 pub use memory_record::{MEMORY_RECORD_SCHEMA_VERSION, MemoryRecord, MemoryRecordKind};
 pub use retrieval::{
     AssociationPath, RetrievalResult, RetrievalScore, RetrievalStrategy, RetrievedMemory,

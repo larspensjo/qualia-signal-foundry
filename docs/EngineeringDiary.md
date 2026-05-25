@@ -1928,3 +1928,35 @@ Refs: crates/qsf_app/src/memory/retrieval.rs,
 crates/qsf_app/src/experiments/multi_turn_text_loop.rs,
 docs/Architecture/Architecture.StateAndObservability.md,
 docs/DecisionLog.md
+
+## 2026-05-25 - Live capture module and user identity memory
+
+Extracted live memory capture into a pure helper module and taught the text loop to
+persist both assistant-name and user-name memories.
+
+What changed:
+- Added `crates/qsf_app/src/memory/live_capture.rs` with pure capture helpers and
+  candidate metadata for assistant-name and user-name memories.
+- Switched `multi_turn_text_loop` to capture multiple candidates per turn, build
+  stable `memory.live.<session>.turn-<NNN>.<kind>` ids, and emit richer
+  `MemoryStorePersisted` payloads with candidate counts and kinds.
+- Added an end-to-end text-loop regression that persists Ari and Lars memories and
+  checks that `what is your name` and `what is my name` retrieve the matching
+  record.
+- Tightened identity retrieval so assistant and user identity memories are matched
+  by query direction instead of importance alone.
+- Hardened user-name capture against casual `I am ...`, callback, and embedded
+  `my name is ...` false positives, and added contraction coverage for `What's my
+  name?` / `What's your name?`.
+
+Observed:
+- The live capture path now has a small pure module that can be unit tested without
+  the session runtime.
+- Assistant-name and user-name memories now have distinct tags, ids, and retrieval
+  behavior.
+- Untargeted `profile` records now fail closed for targeted identity queries.
+
+Refs: crates/qsf_app/src/memory/live_capture.rs,
+crates/qsf_app/src/memory/mod.rs,
+crates/qsf_app/src/memory/retrieval.rs,
+crates/qsf_app/src/experiments/multi_turn_text_loop.rs

@@ -249,7 +249,9 @@ fn has_direct_relevance(
             .iter()
             .all(|term| is_generic_identity_term(term))
     {
-        return query_is_identity_shaped(query, query_terms);
+        return identity_query_target(query, query_terms)
+            .map(|target| record_matches_identity_target(record, target))
+            .unwrap_or(false);
     }
 
     true
@@ -260,7 +262,9 @@ fn profile_identity_allowed(
     query: &str,
     query_terms: &HashSet<String>,
 ) -> bool {
-    memory_has_identity_or_profile_tag(record) && query_is_identity_shaped(query, query_terms)
+    identity_query_target(query, query_terms)
+        .map(|target| record_matches_identity_target(record, target))
+        .unwrap_or(false)
 }
 
 fn memory_has_identity_or_profile_tag(record: &MemoryRecord) -> bool {
@@ -273,6 +277,13 @@ fn memory_has_identity_or_profile_tag(record: &MemoryRecord) -> bool {
     })
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum IdentityTarget {
+    Assistant,
+    User,
+    Any,
+}
+
 fn is_generic_identity_term(term: &str) -> bool {
     matches!(
         term,
@@ -280,34 +291,87 @@ fn is_generic_identity_term(term: &str) -> bool {
     )
 }
 
-fn query_is_identity_shaped(query: &str, query_terms: &HashSet<String>) -> bool {
+fn identity_query_target(query: &str, query_terms: &HashSet<String>) -> Option<IdentityTarget> {
     let normalized = normalize_query_for_phrase_match(query);
-    let has_identity_reference = query_terms.contains("you")
-        || query_terms.contains("your")
-        || query_terms.contains("assistant")
-        || query_terms.contains("user")
-        || normalized.contains(" my ")
-        || normalized.contains(" me ")
-        || normalized.contains(" i ");
-    let has_identity_question = query_terms.contains("what") || query_terms.contains("who");
-
-    if query_terms.contains("name") && has_identity_question && has_identity_reference {
-        return true;
+    if normalized.contains(" who are you ")
+        || normalized.contains(" what is your name ")
+        || normalized.contains(" what s your name ")
+        || normalized.contains(" whats your name ")
+        || normalized.contains(" what should i call you ")
+        || normalized.contains(" what are you called ")
+        || (query_terms.contains("assistant") && query_terms.contains("name"))
+    {
+        return Some(IdentityTarget::Assistant);
     }
 
-    if query_terms.contains("called") && has_identity_question && has_identity_reference {
-        return true;
-    }
-
-    if query_terms.contains("who") {
-        return normalized.contains(" who are you ")
-            || normalized.contains(" who am i ")
-            || query_terms.contains("assistant")
-            || query_terms.contains("user");
-    }
-
-    normalized.contains(" what should i call you ")
+    if normalized.contains(" who am i ")
+        || normalized.contains(" what is my name ")
+        || normalized.contains(" what s my name ")
+        || normalized.contains(" whats my name ")
         || normalized.contains(" what should you call me ")
+        || normalized.contains(" what am i called ")
+        || (query_terms.contains("user") && query_terms.contains("name"))
+    {
+        return Some(IdentityTarget::User);
+    }
+
+    if query_terms.contains("name") && (query_terms.contains("what") || query_terms.contains("who"))
+    {
+        if query_terms.contains("your")
+            || query_terms.contains("you")
+            || query_terms.contains("assistant")
+        {
+            return Some(IdentityTarget::Assistant);
+        }
+
+        if normalized.contains(" my ") || normalized.contains(" me ") || normalized.contains(" i ")
+        {
+            return Some(IdentityTarget::User);
+        }
+    }
+
+    if query_terms.contains("who")
+        && query_terms.contains("name")
+        && query_terms.contains("assistant")
+    {
+        return Some(IdentityTarget::Assistant);
+    }
+
+    if query_terms.contains("who") && query_terms.contains("name") && query_terms.contains("user") {
+        return Some(IdentityTarget::User);
+    }
+
+    None
+}
+
+fn record_matches_identity_target(record: &MemoryRecord, target: IdentityTarget) -> bool {
+    match record_identity_target(record) {
+        IdentityTarget::Any => false,
+        record_target => record_target == target,
+    }
+}
+
+fn record_identity_target(record: &MemoryRecord) -> IdentityTarget {
+    if record
+        .tags
+        .iter()
+        .any(|tag| tag.eq_ignore_ascii_case("assistant_identity"))
+        || record
+            .title
+            .to_ascii_lowercase()
+            .starts_with("assistant name:")
+    {
+        IdentityTarget::Assistant
+    } else if record
+        .tags
+        .iter()
+        .any(|tag| tag.eq_ignore_ascii_case("user_identity"))
+        || record.title.to_ascii_lowercase().starts_with("user name:")
+    {
+        IdentityTarget::User
+    } else {
+        IdentityTarget::Any
+    }
 }
 
 fn normalize_query_for_phrase_match(query: &str) -> String {
@@ -554,16 +618,16 @@ mod tests {
     fn profile_query_can_retrieve_identity_memory() {
         let records = vec![test_record(
             "memory.ari",
-            "Assistant handle",
+            "Assistant name: Ari",
             "The assistant accepted Ari.",
-            vec!["assistant_identity", "profile"],
+            vec!["assistant_identity", "profile", "name"],
             0.9,
         )];
 
         let result = retrieve_memories(
             &records,
             &[],
-            "who are you",
+            "what is your name",
             RetrievalStrategy::KeywordTag,
             8,
         )
@@ -571,6 +635,139 @@ mod tests {
 
         assert_eq!(result.selected.len(), 1);
         assert_eq!(result.selected[0].memory.id, "memory.ari");
+    }
+
+    #[test]
+    fn user_name_query_retrieves_user_identity_memory() {
+        let records = vec![
+            test_record(
+                "memory.ari",
+                "Assistant name: Ari",
+                "The assistant accepted Ari.",
+                vec!["assistant_identity", "profile", "name"],
+                0.9,
+            ),
+            test_record(
+                "memory.lars",
+                "User name: Lars",
+                "The user's name is Lars.",
+                vec!["user_identity", "profile", "name"],
+                1.0,
+            ),
+        ];
+
+        let result = retrieve_memories(
+            &records,
+            &[],
+            "what is my name",
+            RetrievalStrategy::KeywordTag,
+            8,
+        )
+        .unwrap();
+
+        assert_eq!(result.selected.len(), 1);
+        assert_eq!(result.selected[0].memory.id, "memory.lars");
+    }
+
+    #[test]
+    fn assistant_name_query_retrieves_assistant_identity_memory() {
+        let records = vec![
+            test_record(
+                "memory.ari",
+                "Assistant name: Ari",
+                "The assistant accepted Ari.",
+                vec!["assistant_identity", "profile", "name"],
+                1.0,
+            ),
+            test_record(
+                "memory.lars",
+                "User name: Lars",
+                "The user's name is Lars.",
+                vec!["user_identity", "profile", "name"],
+                0.9,
+            ),
+        ];
+
+        let result = retrieve_memories(
+            &records,
+            &[],
+            "what is your name",
+            RetrievalStrategy::KeywordTag,
+            8,
+        )
+        .unwrap();
+
+        assert_eq!(result.selected.len(), 1);
+        assert_eq!(result.selected[0].memory.id, "memory.ari");
+    }
+
+    #[test]
+    fn contracted_identity_queries_retrieve_targeted_identity_memories() {
+        let records = vec![
+            test_record(
+                "memory.ari",
+                "Assistant name: Ari",
+                "The assistant accepted Ari.",
+                vec!["assistant_identity", "profile", "name"],
+                1.0,
+            ),
+            test_record(
+                "memory.lars",
+                "User name: Lars",
+                "The user's name is Lars.",
+                vec!["user_identity", "profile", "name"],
+                0.9,
+            ),
+        ];
+
+        let assistant = retrieve_memories(
+            &records,
+            &[],
+            "What's your name?",
+            RetrievalStrategy::KeywordTag,
+            8,
+        )
+        .unwrap();
+        let user = retrieve_memories(
+            &records,
+            &[],
+            "What's my name?",
+            RetrievalStrategy::KeywordTag,
+            8,
+        )
+        .unwrap();
+
+        assert_eq!(assistant.selected.len(), 1);
+        assert_eq!(assistant.selected[0].memory.id, "memory.ari");
+        assert_eq!(user.selected.len(), 1);
+        assert_eq!(user.selected[0].memory.id, "memory.lars");
+    }
+
+    #[test]
+    fn targeted_identity_query_does_not_retrieve_untargeted_profile_memory() {
+        let records = vec![test_record(
+            "memory.profile.markdown",
+            "Profile: prefers Markdown",
+            "The profile prefers concise Markdown.",
+            vec!["profile"],
+            1.0,
+        )];
+
+        let result = retrieve_memories(
+            &records,
+            &[],
+            "what is my name",
+            RetrievalStrategy::KeywordTag,
+            8,
+        )
+        .unwrap();
+
+        assert!(result.selected.is_empty());
+        assert_eq!(result.omitted.len(), 1);
+        assert_eq!(
+            result.omitted[0].skip_reason.as_deref(),
+            Some(super::RELEVANCE_GATE_SKIP_REASON)
+        );
     }
 
     #[test]

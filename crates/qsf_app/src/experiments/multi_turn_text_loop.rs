@@ -13,7 +13,8 @@ use crate::context::{ContextAssembly, ContextFragment, ContextSourceKind, assemb
 use crate::conversation::prompt::{self, PromptToolMessage, PromptTurn};
 use crate::conversation::{PromptAssembly, PromptTurnSummary};
 use crate::memory::{
-    Association, MemoryFixture, MemoryRecord, MemoryRecordKind, RetrievalResult, RetrievalStrategy,
+    Association, LiveCaptureInput, LiveMemoryCandidate, MemoryFixture, MemoryRecord,
+    MemoryRecordKind, RetrievalResult, RetrievalStrategy, capture_live_memory_candidates,
     estimated_tokens, phase_four_fixture, retrieve_memories, retrieved_memory_ids,
 };
 use crate::models::{
@@ -986,14 +987,6 @@ fn apply_live_memory_reinforcement(
     Ok(())
 }
 
-#[derive(Clone, Debug, PartialEq)]
-struct LiveMemoryCandidate {
-    title: String,
-    summary: String,
-    tags: Vec<&'static str>,
-    importance: f64,
-}
-
 fn apply_live_memory_capture(
     context: &mut RunContext,
     state: &SessionState,
@@ -1001,46 +994,77 @@ fn apply_live_memory_capture(
     user_input: &str,
     assistant_response: &str,
 ) -> anyhow::Result<()> {
-    let Some(candidate) = live_memory_candidate_from_turn(user_input, assistant_response) else {
-        return Ok(());
-    };
+    let previous_turn = state.turns.last();
+    let candidates = capture_live_memory_candidates(&LiveCaptureInput {
+        user_input,
+        assistant_response,
+        previous_turn_index: previous_turn.map(|turn| turn.index),
+        previous_user_input: previous_turn.map(|turn| turn.user_input.as_str()),
+        previous_assistant_response: previous_turn.map(|turn| turn.assistant_response.as_str()),
+    });
 
-    let memory_store_path = state_dir.join("memory-store.json");
-    let mut store = crate::memory::MemoryStore::load_or_empty(&memory_store_path)?;
-    if store
-        .contents()
-        .records
-        .iter()
-        .any(|record| live_memory_duplicate(record, &candidate))
-    {
+    if candidates.is_empty() {
         return Ok(());
     }
 
+    let memory_store_path = state_dir.join("memory-store.json");
+    let mut store = crate::memory::MemoryStore::load_or_empty(&memory_store_path)?;
     let turn_index = completed_turn_count(state);
     let now = time::OffsetDateTime::now_utc();
-    let record_id = format!(
-        "memory.live.{}.turn-{:03}.assistant-name",
-        memory_id_segment(&state.session_id),
-        turn_index
-    );
-    let record = MemoryRecord::new(
-        record_id.clone(),
-        MemoryRecordKind::Observation,
-        candidate.title.clone(),
-        candidate.summary.clone(),
-        candidate.tags,
-        now,
-        candidate.importance,
-        0,
-        format!(
-            "session:{}#turn-{:03}:live_memory_capture",
-            state.session_id, turn_index
-        ),
-        estimated_tokens(&candidate.summary),
-    )
-    .with_last_reinforced_at(now);
+    let mut persisted_records = Vec::new();
+    let mut record_ids = Vec::new();
+    let mut candidate_kinds = Vec::new();
+    for candidate in candidates {
+        if store
+            .contents()
+            .records
+            .iter()
+            .any(|record| live_memory_duplicate(record, &candidate))
+            || persisted_records
+                .iter()
+                .any(|record: &MemoryRecord| live_memory_duplicate(record, &candidate))
+        {
+            continue;
+        }
 
-    store.append_records([record]);
+        let record_id = format!(
+            "memory.live.{}.turn-{:03}.{}",
+            memory_id_segment(&state.session_id),
+            turn_index,
+            candidate.id_suffix
+        );
+        let source_turn_index = candidate.source_turn_index.unwrap_or(turn_index);
+        let record = MemoryRecord::new(
+            record_id.clone(),
+            MemoryRecordKind::Observation,
+            candidate.title.clone(),
+            candidate.summary.clone(),
+            candidate
+                .tags
+                .iter()
+                .map(String::as_str)
+                .collect::<Vec<_>>(),
+            now,
+            candidate.importance,
+            0,
+            format!(
+                "session:{}#turn-{:03}:live_memory_capture:source-turn-{:03}",
+                state.session_id, turn_index, source_turn_index
+            ),
+            estimated_tokens(&candidate.summary),
+        )
+        .with_last_reinforced_at(now);
+
+        candidate_kinds.push(candidate.candidate_kind.as_str().to_string());
+        record_ids.push(record_id);
+        persisted_records.push(record);
+    }
+
+    if persisted_records.is_empty() {
+        return Ok(());
+    }
+
+    store.append_records(persisted_records);
     store.persist()?;
     context.record_event(
         EventType::MemoryStorePersisted,
@@ -1049,7 +1073,9 @@ fn apply_live_memory_capture(
             "turn_index": turn_index,
             "stage": "live_memory_capture",
             "path": memory_store_path.display().to_string(),
-            "record_id": record_id,
+            "candidate_count": record_ids.len(),
+            "candidate_kinds": candidate_kinds,
+            "record_ids": record_ids,
             "records_count": store.contents().records.len(),
             "associations_count": store.contents().associations.len(),
         }),
@@ -1059,70 +1085,9 @@ fn apply_live_memory_capture(
     Ok(())
 }
 
-fn live_memory_candidate_from_turn(
-    user_input: &str,
-    assistant_response: &str,
-) -> Option<LiveMemoryCandidate> {
-    let name = extract_assistant_name_assignment(user_input)?;
-    if !contains_case_insensitive(assistant_response, &name) {
-        return None;
-    }
-
-    Some(LiveMemoryCandidate {
-        title: format!("Assistant name: {name}"),
-        summary: format!(
-            "The user asked the assistant to use the name {name}, and the assistant accepted that name."
-        ),
-        tags: vec!["assistant_identity", "preference", "name"],
-        importance: 0.9,
-    })
-}
-
-fn extract_assistant_name_assignment(input: &str) -> Option<String> {
-    const PATTERNS: [&str; 5] = [
-        "use the name ",
-        "use name ",
-        "call you ",
-        "call yourself ",
-        "your name is ",
-    ];
-
-    let lower = input.to_ascii_lowercase();
-    PATTERNS.iter().find_map(|pattern| {
-        lower
-            .find(pattern)
-            .and_then(|index| first_name_token(&input[index + pattern.len()..]))
-    })
-}
-
-fn first_name_token(raw: &str) -> Option<String> {
-    let trimmed = raw.trim_start_matches(|c: char| c.is_whitespace() || c == '"' || c == '\'');
-    let token = trimmed.split_whitespace().next()?.trim_matches(|c: char| {
-        matches!(
-            c,
-            '.' | ',' | ';' | ':' | '!' | '?' | '"' | '\'' | '(' | ')' | '[' | ']'
-        )
-    });
-    if token.is_empty()
-        || token
-            .chars()
-            .any(|c| !(c.is_ascii_alphanumeric() || c == '-' || c == '_'))
-    {
-        return None;
-    }
-
-    Some(token.to_string())
-}
-
-fn contains_case_insensitive(haystack: &str, needle: &str) -> bool {
-    haystack
-        .to_ascii_lowercase()
-        .contains(&needle.to_ascii_lowercase())
-}
-
 fn live_memory_duplicate(record: &MemoryRecord, candidate: &LiveMemoryCandidate) -> bool {
     normalize_memory_text(&record.title) == normalize_memory_text(&candidate.title)
-        || normalize_memory_text(&record.summary) == normalize_memory_text(&candidate.summary)
+        && normalize_memory_text(&record.summary) == normalize_memory_text(&candidate.summary)
 }
 
 fn normalize_memory_text(text: &str) -> String {
@@ -2663,17 +2628,26 @@ mod tests {
 
     #[test]
     fn accepted_assistant_name_assignment_becomes_live_memory_candidate() {
-        let candidate = super::live_memory_candidate_from_turn(
-            "I want you to use the name Ari.",
-            "Absolutely - you can call me Ari.",
-        )
-        .expect("expected assistant name candidate");
+        let candidates = super::capture_live_memory_candidates(&super::LiveCaptureInput {
+            user_input: "I want you to use the name Ari.",
+            assistant_response: "Absolutely - you can call me Ari.",
+            previous_turn_index: None,
+            previous_user_input: None,
+            previous_assistant_response: None,
+        });
+        let candidate = candidates
+            .first()
+            .expect("expected assistant name candidate");
 
         assert_eq!(candidate.title, "Assistant name: Ari");
         assert!(candidate.summary.contains("use the name Ari"));
         assert_eq!(
             candidate.tags,
-            vec!["assistant_identity", "preference", "name"]
+            vec![
+                "assistant_identity".to_string(),
+                "profile".to_string(),
+                "name".to_string()
+            ]
         );
     }
 
@@ -3698,7 +3672,7 @@ mod tests {
     }
 
     #[test]
-    fn live_loop_captures_accepted_assistant_name_to_memory_store() {
+    fn live_loop_captures_identity_names_to_memory_store() {
         let base_dir = std::env::temp_dir().join(format!("qsf-live-name-{}", Uuid::new_v4()));
         let state_dir = base_dir.join("state/text-loop");
         let memory_store_path = state_dir.join("memory-store.json");
@@ -3713,28 +3687,69 @@ mod tests {
         let mut output = Vec::new();
         run_with_io_and_components_at_state_dir(
             &mut context,
-            Cursor::new("I want you to use the name Ari.\n:quit\n"),
+            Cursor::new(
+                "I want you to use the name Ari.\nMy name is Lars.\nWhat is your name?\nWhat is my name?\nTell me about volition goals.\n:quit\n",
+            ),
             &mut output,
             &model_client,
             &memory_source,
-            test_config(5),
+            test_config(6),
             &state_dir,
         )
         .unwrap();
 
         let store = MemoryStore::load_or_empty(&memory_store_path).unwrap();
+        assert_eq!(store.contents().records.len(), 2);
         let ari = store
             .contents()
             .records
             .iter()
             .find(|record| record.title == "Assistant name: Ari")
             .expect("expected Ari live memory");
+        let lars = store
+            .contents()
+            .records
+            .iter()
+            .find(|record| record.title == "User name: Lars")
+            .expect("expected Lars live memory");
         assert_eq!(ari.kind, MemoryRecordKind::Observation);
+        assert_eq!(lars.kind, MemoryRecordKind::Observation);
         assert!(ari.tags.iter().any(|tag| tag == "assistant_identity"));
+        assert!(lars.tags.iter().any(|tag| tag == "user_identity"));
         assert!(ari.source_reference.contains("live_memory_capture"));
+        assert!(lars.source_reference.contains("live_memory_capture"));
 
         let events = fs::read_to_string(context.run_dir().join("events.jsonl")).unwrap();
         assert!(events.contains("\"stage\":\"live_memory_capture\""));
+        assert!(events.contains("\"candidate_count\":1"));
+        let records = parse_event_records(&events);
+        let turn_two_retrieval = records
+            .iter()
+            .find(|record| {
+                record.event_type == EventType::MemoryRetrieved && record.payload["turn_index"] == 2
+            })
+            .expect("expected turn two retrieval event");
+        let turn_three_retrieval = records
+            .iter()
+            .find(|record| {
+                record.event_type == EventType::MemoryRetrieved && record.payload["turn_index"] == 3
+            })
+            .expect("expected turn three retrieval event");
+        let unrelated_retrieval = records
+            .iter()
+            .find(|record| {
+                record.event_type == EventType::MemoryRetrieved && record.payload["turn_index"] == 4
+            })
+            .expect("expected unrelated retrieval event");
+        assert_eq!(
+            turn_two_retrieval.payload["selected"],
+            json!([ari.id.clone()])
+        );
+        assert_eq!(
+            turn_three_retrieval.payload["selected"],
+            json!([lars.id.clone()])
+        );
+        assert_eq!(unrelated_retrieval.payload["selected"], json!([]));
 
         fs::remove_dir_all(base_dir).unwrap();
     }
