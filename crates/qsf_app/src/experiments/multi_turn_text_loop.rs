@@ -827,6 +827,22 @@ fn apply_live_memory_reinforcement(
         .iter()
         .map(|(id, _)| id.clone())
         .collect::<Vec<_>>();
+    let mut relevance_skipped_ids = Vec::new();
+    let mut over_limit_skipped_ids = Vec::new();
+    for memory in &retrieval.omitted {
+        match memory.skip_reason.as_deref() {
+            Some(crate::memory::retrieval::RELEVANCE_GATE_SKIP_REASON) => {
+                relevance_skipped_ids.push(memory.memory.id.clone());
+            }
+            Some(crate::memory::retrieval::RETRIEVAL_LIMIT_SKIP_REASON) => {
+                over_limit_skipped_ids.push(memory.memory.id.clone());
+            }
+            _ => {}
+        }
+    }
+    let relevance_skipped_count = relevance_skipped_ids.len();
+    let over_limit_skipped_count = over_limit_skipped_ids.len();
+    let no_store_skipped_count = retrieved_ids.len();
 
     if !memory_store_path.exists() {
         context.record_event(
@@ -834,8 +850,14 @@ fn apply_live_memory_reinforcement(
             json!({
                 "turn_index": turn_index,
                 "ids": Vec::<String>::new(),
-                "requested_ids": retrieved_ids,
+                "requested_ids": retrieved_ids.clone(),
+                "skipped_relevance_ids": relevance_skipped_ids,
+                "skipped_over_limit_ids": over_limit_skipped_ids,
+                "skipped_no_store_ids": retrieved_ids,
                 "count": 0,
+                "skipped_relevance_count": relevance_skipped_count,
+                "skipped_over_limit_count": over_limit_skipped_count,
+                "skipped_no_store_count": no_store_skipped_count,
                 "timestamp_source": "live_now",
                 "skipped_reason": "no persistent memory store on cold start",
             }),
@@ -935,7 +957,13 @@ fn apply_live_memory_reinforcement(
             "turn_index": turn_index,
             "ids": reinforced_ids.clone(),
             "requested_ids": retrieved_ids,
+            "skipped_relevance_ids": relevance_skipped_ids,
+            "skipped_over_limit_ids": over_limit_skipped_ids,
+            "skipped_no_store_ids": Vec::<String>::new(),
             "count": reinforced_count,
+            "skipped_relevance_count": relevance_skipped_count,
+            "skipped_over_limit_count": over_limit_skipped_count,
+            "skipped_no_store_count": 0,
             "timestamp_source": "live_now",
         }),
         None,
@@ -2576,7 +2604,7 @@ mod tests {
     use std::io::Cursor;
     use std::path::PathBuf;
 
-    use serde_json::Value;
+    use serde_json::{Value, json};
     use uuid::Uuid;
 
     use super::{
@@ -2593,7 +2621,8 @@ mod tests {
         prior_request_prefix_hash,
     };
     use crate::memory::{
-        Association, MemoryFixture, MemoryRecord, MemoryRecordKind, MemoryStore, phase_four_fixture,
+        Association, MemoryFixture, MemoryRecord, MemoryRecordKind, MemoryStore, RetrievalStrategy,
+        phase_four_fixture, retrieve_memories,
     };
     use crate::models::{
         MockModelClient, ModelClient, ModelMessage, ModelRequest, ModelResponse, ModelRoleId,
@@ -3570,6 +3599,100 @@ mod tests {
         assert!(proposed.payload["created_count"].as_u64().unwrap() > 0);
         assert_eq!(reinforced.payload["timestamp_source"], "live_now");
         assert!(reinforced.payload["count"].as_u64().unwrap() > 0);
+
+        fs::remove_dir_all(base_dir).unwrap();
+    }
+
+    #[test]
+    fn live_loop_does_not_reinforce_relevance_skipped_memory() {
+        let base_dir =
+            std::env::temp_dir().join(format!("qsf-live-memory-skip-{}", Uuid::new_v4()));
+        let state_dir = base_dir.join("state/text-loop");
+        let memory_store_path = state_dir.join("memory-store.json");
+        let mut store = crate::memory::MemoryStore::load_or_empty(&memory_store_path).unwrap();
+        let records = vec![
+            MemoryRecord::new(
+                "memory.ari",
+                MemoryRecordKind::Observation,
+                "Assistant name: Ari",
+                "The assistant accepted Ari as its name.",
+                vec!["assistant_identity", "profile", "name"],
+                time::OffsetDateTime::now_utc(),
+                1.0,
+                0,
+                "tests",
+                10,
+            ),
+            MemoryRecord::new(
+                "memory.volition",
+                MemoryRecordKind::Observation,
+                "Volition systems",
+                "Volition systems coordinate goals and arbitration.",
+                vec!["volition", "goals"],
+                time::OffsetDateTime::now_utc(),
+                0.6,
+                0,
+                "tests",
+                10,
+            ),
+        ];
+        store.append_records(records.clone());
+        store.persist().unwrap();
+        let retrieval = retrieve_memories(
+            &records,
+            &[],
+            "tell me about volition goals",
+            RetrievalStrategy::KeywordTag,
+            8,
+        )
+        .unwrap();
+        assert_eq!(
+            crate::memory::retrieved_memory_ids(&retrieval.selected),
+            vec!["memory.volition".to_string()]
+        );
+        assert!(
+            retrieval
+                .omitted
+                .iter()
+                .any(|memory| memory.memory.id == "memory.ari"
+                    && memory.skip_reason.as_deref()
+                        == Some(crate::memory::retrieval::RELEVANCE_GATE_SKIP_REASON))
+        );
+
+        let mut context =
+            RunContext::create_in(base_dir.join("run"), "multi-turn-text-loop").unwrap();
+        let state = SessionState::new(test_config(5));
+        super::apply_live_memory_reinforcement(&mut context, &state, &state_dir, &retrieval)
+            .unwrap();
+
+        let reloaded = crate::memory::MemoryStore::load_or_empty(&memory_store_path).unwrap();
+        let ari = reloaded
+            .contents()
+            .records
+            .iter()
+            .find(|record| record.id == "memory.ari")
+            .unwrap();
+        let volition = reloaded
+            .contents()
+            .records
+            .iter()
+            .find(|record| record.id == "memory.volition")
+            .unwrap();
+        assert_eq!(ari.reinforcement_count, 0);
+        assert_eq!(volition.reinforcement_count, 1);
+
+        let events = fs::read_to_string(context.run_dir().join("events.jsonl")).unwrap();
+        let records = parse_event_records(&events);
+        let reinforced = records
+            .iter()
+            .find(|record| record.event_type == EventType::MemoryReinforced)
+            .unwrap();
+        assert_eq!(reinforced.payload["ids"], json!(["memory.volition"]));
+        assert_eq!(reinforced.payload["skipped_relevance_count"], 1);
+        assert_eq!(
+            reinforced.payload["skipped_relevance_ids"],
+            json!(["memory.ari"])
+        );
 
         fs::remove_dir_all(base_dir).unwrap();
     }

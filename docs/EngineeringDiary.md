@@ -1901,3 +1901,30 @@ Observed:
 Refs: crates/qsf_app/src/experiments/multi_turn_text_loop.rs,
 docs/Architecture/Architecture.RuntimeLoop.md,
 docs/Architecture/Architecture.MemorySystem.md, docs/DecisionLog.md
+
+## 2026-05-25 - Retrieval relevance gate and reinforcement eligibility
+
+Added relevance gating to live keyword/tag memory retrieval so high-importance or
+recent memories with no query signal are omitted rather than selected and reinforced.
+
+What changed:
+- Retrieval results now carry `RetrievedMemory.skip_reason` for omitted candidates,
+  distinguishing relevance-gated skips from retrieval-limit skips.
+- Keyword/tag retrieval requires a keyword, tag, or conservative profile/identity
+  signal; association-weighted retrieval also accepts association paths. Generic
+  identity terms such as `name` only open identity/profile memories for
+  identity-shaped queries.
+- Live memory reinforcement continues to operate only on `retrieval.selected` and now
+  reports relevance, over-limit, and no-store skipped ids/counts in
+  `MemoryReinforced`.
+- Added regression coverage for zero-signal omissions, identity-shaped profile
+  retrieval, and non-reinforcement of relevance-skipped memories.
+
+Observed:
+- The relevance gate is shared by text and voice retrieval because both use the common
+  memory retrieval module.
+
+Refs: crates/qsf_app/src/memory/retrieval.rs,
+crates/qsf_app/src/experiments/multi_turn_text_loop.rs,
+docs/Architecture/Architecture.StateAndObservability.md,
+docs/DecisionLog.md

@@ -11,6 +11,9 @@ use super::association::{Association, ensure_current_association_schema};
 use super::memory_record::{MemoryRecord, ensure_current_memory_schema};
 
 pub(crate) const DECAY_HALFLIFE_DAYS: f64 = 30.0;
+pub(crate) const RELEVANCE_GATE_SKIP_REASON: &str =
+    "relevance gate: no keyword, tag, association, or profile signal";
+pub(crate) const RETRIEVAL_LIMIT_SKIP_REASON: &str = "retrieval limit exceeded";
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -56,6 +59,7 @@ pub struct RetrievedMemory {
     pub score: RetrievalScore,
     pub matched_terms: Vec<String>,
     pub association_paths: Vec<AssociationPath>,
+    pub skip_reason: Option<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize)]
@@ -100,6 +104,7 @@ pub fn retrieve_memories(
                 score,
                 matched_terms,
                 association_paths: paths,
+                skip_reason: None,
             }
         })
         .collect::<Vec<_>>();
@@ -113,9 +118,31 @@ pub fn retrieve_memories(
             .then_with(|| left.memory.id.cmp(&right.memory.id))
     });
 
-    let selected_count = limit.min(candidates.len());
-    let omitted = candidates.split_off(selected_count);
-    let selected = candidates;
+    let mut selected = Vec::new();
+    let mut omitted = Vec::new();
+    for mut candidate in candidates {
+        if !is_relevant_for_strategy(
+            &candidate.memory,
+            strategy,
+            &candidate.score,
+            &candidate.matched_terms,
+            &candidate.association_paths,
+            query,
+            &query_terms,
+        ) {
+            candidate.skip_reason = Some(RELEVANCE_GATE_SKIP_REASON.to_string());
+            omitted.push(candidate);
+            continue;
+        }
+
+        if selected.len() < limit {
+            candidate.skip_reason = None;
+            selected.push(candidate);
+        } else {
+            candidate.skip_reason = Some(RETRIEVAL_LIMIT_SKIP_REASON.to_string());
+            omitted.push(candidate);
+        }
+    }
 
     let elapsed = started_at.elapsed();
 
@@ -181,6 +208,116 @@ fn score_record(
         importance,
         reinforcement,
     }
+}
+
+fn is_relevant_for_strategy(
+    record: &MemoryRecord,
+    strategy: RetrievalStrategy,
+    score: &RetrievalScore,
+    matched_terms: &[String],
+    association_paths: &[AssociationPath],
+    query: &str,
+    query_terms: &HashSet<String>,
+) -> bool {
+    match strategy {
+        RetrievalStrategy::RecencyOnly => true,
+        RetrievalStrategy::KeywordTag => {
+            has_direct_relevance(record, score, matched_terms, query, query_terms)
+                || profile_identity_allowed(record, query, query_terms)
+        }
+        RetrievalStrategy::AssociationWeighted => {
+            has_direct_relevance(record, score, matched_terms, query, query_terms)
+                || !association_paths.is_empty()
+                || profile_identity_allowed(record, query, query_terms)
+        }
+    }
+}
+
+fn has_direct_relevance(
+    record: &MemoryRecord,
+    score: &RetrievalScore,
+    matched_terms: &[String],
+    query: &str,
+    query_terms: &HashSet<String>,
+) -> bool {
+    if score.keyword <= 0.0 && score.tag <= 0.0 {
+        return false;
+    }
+
+    if memory_has_identity_or_profile_tag(record)
+        && matched_terms
+            .iter()
+            .all(|term| is_generic_identity_term(term))
+    {
+        return query_is_identity_shaped(query, query_terms);
+    }
+
+    true
+}
+
+fn profile_identity_allowed(
+    record: &MemoryRecord,
+    query: &str,
+    query_terms: &HashSet<String>,
+) -> bool {
+    memory_has_identity_or_profile_tag(record) && query_is_identity_shaped(query, query_terms)
+}
+
+fn memory_has_identity_or_profile_tag(record: &MemoryRecord) -> bool {
+    record.tags.iter().any(|tag| {
+        let tag = tag.to_ascii_lowercase();
+        tag == "profile"
+            || tag == "identity"
+            || tag.ends_with("_identity")
+            || tag.ends_with("-identity")
+    })
+}
+
+fn is_generic_identity_term(term: &str) -> bool {
+    matches!(
+        term,
+        "assistant" | "called" | "identity" | "name" | "profile" | "user" | "you" | "your"
+    )
+}
+
+fn query_is_identity_shaped(query: &str, query_terms: &HashSet<String>) -> bool {
+    let normalized = normalize_query_for_phrase_match(query);
+    let has_identity_reference = query_terms.contains("you")
+        || query_terms.contains("your")
+        || query_terms.contains("assistant")
+        || query_terms.contains("user")
+        || normalized.contains(" my ")
+        || normalized.contains(" me ")
+        || normalized.contains(" i ");
+    let has_identity_question = query_terms.contains("what") || query_terms.contains("who");
+
+    if query_terms.contains("name") && has_identity_question && has_identity_reference {
+        return true;
+    }
+
+    if query_terms.contains("called") && has_identity_question && has_identity_reference {
+        return true;
+    }
+
+    if query_terms.contains("who") {
+        return normalized.contains(" who are you ")
+            || normalized.contains(" who am i ")
+            || query_terms.contains("assistant")
+            || query_terms.contains("user");
+    }
+
+    normalized.contains(" what should i call you ")
+        || normalized.contains(" what should you call me ")
+}
+
+fn normalize_query_for_phrase_match(query: &str) -> String {
+    let collapsed = query
+        .split(|character: char| !character.is_alphanumeric())
+        .filter(|term| !term.is_empty())
+        .map(|term| term.to_ascii_lowercase())
+        .collect::<Vec<_>>()
+        .join(" ");
+    format!(" {collapsed} ")
 }
 
 pub(crate) fn compute_recency_decay(record: &MemoryRecord, now: OffsetDateTime) -> f64 {
@@ -282,6 +419,8 @@ fn association_paths_by_target(
 mod tests {
     use super::{RetrievalStrategy, retrieve_memories};
     use crate::memory::{MemoryRecord, MemoryRecordKind, phase_four_fixture};
+    use time::OffsetDateTime;
+    use time::format_description::well_known::Rfc3339;
 
     #[test]
     fn recency_only_prefers_newest_records() {
@@ -317,6 +456,171 @@ mod tests {
                 .matched_terms
                 .contains(&"context".to_string())
         );
+    }
+
+    #[test]
+    fn keyword_tag_omits_zero_signal_memory() {
+        let records = vec![test_record(
+            "memory.ari",
+            "Assistant name: Ari",
+            "The assistant accepted Ari as its name.",
+            vec!["assistant_identity", "profile", "name"],
+            1.0,
+        )];
+
+        let result = retrieve_memories(
+            &records,
+            &[],
+            "tell me about volition goals",
+            RetrievalStrategy::KeywordTag,
+            8,
+        )
+        .unwrap();
+
+        assert!(result.selected.is_empty());
+        assert_eq!(result.omitted.len(), 1);
+        assert_eq!(result.omitted[0].memory.id, "memory.ari");
+        assert_eq!(
+            result.omitted[0].skip_reason.as_deref(),
+            Some(super::RELEVANCE_GATE_SKIP_REASON)
+        );
+    }
+
+    #[test]
+    fn keyword_tag_keeps_direct_keyword_or_tag_match() {
+        let records = vec![
+            test_record(
+                "memory.context",
+                "Context budget",
+                "The live loop should select compact context.",
+                vec!["context", "budget"],
+                0.8,
+            ),
+            test_record(
+                "memory.retrieval",
+                "Recall quality",
+                "Useful memories should be inspectable.",
+                vec!["retrieval"],
+                0.7,
+            ),
+        ];
+
+        let result =
+            retrieve_memories(&records, &[], "retrieval", RetrievalStrategy::KeywordTag, 1)
+                .unwrap();
+
+        assert_eq!(result.selected.len(), 1);
+        assert_eq!(result.selected[0].memory.id, "memory.retrieval");
+        assert_eq!(result.selected[0].skip_reason, None);
+        assert!(
+            result.selected[0]
+                .matched_terms
+                .contains(&"retrieval".to_string())
+        );
+    }
+
+    #[test]
+    fn keyword_tag_marks_relevant_omissions_when_limit_is_reached() {
+        let records = vec![
+            test_record(
+                "memory.alpha",
+                "Context alpha",
+                "Context alpha.",
+                vec!["context"],
+                0.9,
+            ),
+            test_record(
+                "memory.beta",
+                "Context beta",
+                "Context beta.",
+                vec!["context"],
+                0.8,
+            ),
+        ];
+
+        let result =
+            retrieve_memories(&records, &[], "context", RetrievalStrategy::KeywordTag, 1).unwrap();
+
+        assert_eq!(result.selected.len(), 1);
+        assert_eq!(result.omitted.len(), 1);
+        assert_eq!(result.omitted[0].memory.id, "memory.beta");
+        assert_eq!(
+            result.omitted[0].skip_reason.as_deref(),
+            Some(super::RETRIEVAL_LIMIT_SKIP_REASON)
+        );
+    }
+
+    #[test]
+    fn profile_query_can_retrieve_identity_memory() {
+        let records = vec![test_record(
+            "memory.ari",
+            "Assistant handle",
+            "The assistant accepted Ari.",
+            vec!["assistant_identity", "profile"],
+            0.9,
+        )];
+
+        let result = retrieve_memories(
+            &records,
+            &[],
+            "who are you",
+            RetrievalStrategy::KeywordTag,
+            8,
+        )
+        .unwrap();
+
+        assert_eq!(result.selected.len(), 1);
+        assert_eq!(result.selected[0].memory.id, "memory.ari");
+    }
+
+    #[test]
+    fn name_verb_query_does_not_retrieve_identity_memory() {
+        let records = vec![test_record(
+            "memory.lars",
+            "User name: Lars",
+            "The user's name is Lars.",
+            vec!["user_identity", "profile", "name"],
+            1.0,
+        )];
+
+        let result = retrieve_memories(
+            &records,
+            &[],
+            "Could you name three popular operating systems?",
+            RetrievalStrategy::KeywordTag,
+            8,
+        )
+        .unwrap();
+
+        assert!(result.selected.is_empty());
+        assert_eq!(result.omitted.len(), 1);
+        assert_eq!(
+            result.omitted[0].skip_reason.as_deref(),
+            Some(super::RELEVANCE_GATE_SKIP_REASON)
+        );
+    }
+
+    #[test]
+    fn unrelated_query_does_not_retrieve_identity_memory_by_importance_only() {
+        let records = vec![test_record(
+            "memory.ari",
+            "Assistant handle",
+            "The assistant accepted Ari.",
+            vec!["assistant_identity", "profile"],
+            1.0,
+        )];
+
+        let result = retrieve_memories(
+            &records,
+            &[],
+            "tell me about volition goals",
+            RetrievalStrategy::KeywordTag,
+            8,
+        )
+        .unwrap();
+
+        assert!(result.selected.is_empty());
+        assert_eq!(result.omitted.len(), 1);
     }
 
     #[test]
@@ -357,9 +661,6 @@ mod tests {
 
     #[test]
     fn recency_uses_time_based_decay_from_last_reinforced_at() {
-        use time::OffsetDateTime;
-        use time::format_description::well_known::Rfc3339;
-
         let now = OffsetDateTime::parse("2026-06-01T00:00:00Z", &Rfc3339).unwrap();
         let recent = MemoryRecord::new(
             "memory.recent",
@@ -397,9 +698,6 @@ mod tests {
 
     #[test]
     fn recency_falls_back_to_created_at_when_last_reinforced_at_is_none() {
-        use time::OffsetDateTime;
-        use time::format_description::well_known::Rfc3339;
-
         let now = OffsetDateTime::parse("2026-06-01T00:00:00Z", &Rfc3339).unwrap();
         let record = MemoryRecord::new(
             "memory.legacy",
@@ -421,9 +719,6 @@ mod tests {
 
     #[test]
     fn recency_decay_halves_at_configured_halflife() {
-        use time::OffsetDateTime;
-        use time::format_description::well_known::Rfc3339;
-
         let now = OffsetDateTime::parse("2026-06-01T00:00:00Z", &Rfc3339).unwrap();
         let record = MemoryRecord::new(
             "memory.halflife",
@@ -440,5 +735,26 @@ mod tests {
 
         let score = super::compute_recency_decay(&record, now);
         assert!((score - 0.5).abs() < 0.001, "half-life score was {score}");
+    }
+
+    fn test_record(
+        id: &str,
+        title: &str,
+        summary: &str,
+        tags: Vec<&str>,
+        importance: f64,
+    ) -> MemoryRecord {
+        MemoryRecord::new(
+            id,
+            MemoryRecordKind::Observation,
+            title,
+            summary,
+            tags,
+            OffsetDateTime::parse("2026-05-25T00:00:00Z", &Rfc3339).unwrap(),
+            importance,
+            0,
+            "tests",
+            10,
+        )
     }
 }

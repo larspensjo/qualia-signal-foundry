@@ -38,6 +38,9 @@ candidate categories listed below still have no shared module.
   `MemoryReinforced`, and `MemoryStorePersisted`
   ([observability/event_log.rs](../../crates/qsf_app/src/observability/event_log.rs),
   [experiments/multi_turn_text_loop.rs](../../crates/qsf_app/src/experiments/multi_turn_text_loop.rs))
+- Memory retrieval traces include selected and omitted candidates, with
+  `RetrievedMemory.skip_reason` explaining relevance-gated omissions and retrieval
+  limit omissions.
 - `engine.log` initialization redirected to `runs/<run-id>/engine.log` per run
 
 **Partial:**
@@ -61,8 +64,7 @@ candidate categories listed below still have no shared module.
   memory-graph view, no cost dashboard)
 - `experiment_id` and `memory_update_id` correlation across runs
 
-Last reviewed: 2026-05-20 against the Stage 5 continuity implementation and
-OpenAI golden-path run.
+Last reviewed: 2026-05-25 against relevance-gated memory retrieval observability.
 
 ## Summary
 

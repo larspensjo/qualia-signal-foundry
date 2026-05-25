@@ -569,3 +569,19 @@ default. Demo retrieval remains available through `-DemoMemory`,
 still exercise the experiment's in-code fallback unless configured separately.
 Refs: scripts/qsf.ps1, scripts/qsf.profiles.json, README.md,
 docs/Experiments/Fixtures/session-memory.empty.json
+
+## 2026-05-25 - Zero-signal memories are not retrieved by default
+Decision: Keyword/tag live retrieval does not select durable memories that have no
+query keyword, tag, association, or explicit profile/identity relevance signal.
+Only selected memories are eligible for live reinforcement.
+Context: A live QA run showed that a high-importance assistant-name memory could be
+retrieved and reinforced on unrelated volition turns because retrieval always selected
+the top scored records, even when score came only from importance and recency.
+Consequences: `RetrievalResult.omitted` now includes relevance-gated records with
+`RetrievedMemory.skip_reason`, traces can explain why a candidate was skipped, and
+reinforcement events report relevance, over-limit, and no-store skipped ids.
+Profile/identity queries keep a narrow phrase-shaped allowance for identity-tagged
+memories.
+Refs: crates/qsf_app/src/memory/retrieval.rs,
+crates/qsf_app/src/experiments/multi_turn_text_loop.rs,
+docs/Architecture/Architecture.StateAndObservability.md
