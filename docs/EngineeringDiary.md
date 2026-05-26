@@ -1998,3 +1998,34 @@ crates/qsf_app/src/experiments/multi_turn_text_loop.rs,
 docs/Architecture/Architecture.MemorySystem.md,
 docs/Architecture/Architecture.RuntimeLoop.md,
 docs/Architecture/Architecture.StateAndObservability.md
+
+## 2026-05-26 - Warm summary truncation guard
+
+Warm summaries now retry once when the summarizer hits a truncation finish reason,
+and the aging path leaves the turn unsummarized if the retry truncates again.
+
+What changed:
+- Split warm-turn summarization into a retry-aware helper in
+  `multi_turn_text_loop.rs` that inspects `ModelResponse.finish_reason`.
+- The retry uses a larger output cap and an explicit retry prompt so deterministic
+  summarizer calls are not repeated with identical parameters.
+- Added fail-closed handling for truncation in the warm-threshold aging path and
+  the token-budget aging path so a second truncation logs an error and does not
+  commit `TurnSummarized`.
+- Kept live cross-turn persistence ahead of summary generation, so association
+  deltas and processed ranges are still recorded even when summary generation
+  later fails closed.
+- Added regression tests for retry-success and double-truncation failure cases.
+- Hardened summary range handling for inverted ranges and fixed the final
+  truncation error to report the actual session id.
+- Updated the runtime-loop architecture note to reflect the retry-and-fail-closed
+  behavior.
+
+Observed:
+- A first `max_tokens` summary response now retries cleanly and persists the retry
+  result.
+- A second `max_tokens` response leaves the turn hot and emits an error event with
+  the session and turn metadata.
+
+Refs: crates/qsf_app/src/experiments/multi_turn_text_loop.rs,
+docs/Architecture/Architecture.RuntimeLoop.md

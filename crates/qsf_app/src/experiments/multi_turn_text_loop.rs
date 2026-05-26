@@ -50,6 +50,8 @@ const SESSION_RETRIEVAL_LIMIT: usize = 8;
 const SESSION_RETRIEVAL_STRATEGY: RetrievalStrategy = RetrievalStrategy::KeywordTag;
 const HOT_HIGH_WATER_FRACTION: f64 = 0.80;
 const HOT_LOW_WATER_FRACTION: f64 = 0.50;
+const WARM_SUMMARY_MAX_OUTPUT_TOKENS: u32 = 80;
+const WARM_SUMMARY_RETRY_MAX_OUTPUT_TOKENS: u32 = 240;
 
 pub struct MultiTurnTextLoopExperiment;
 
@@ -1391,13 +1393,15 @@ fn age_out_warm_turns(
                 error_summary
             );
         }
-        let summary = match summarize_turn(context, state, model_client, &turn) {
+
+        let summary = match summarize_turn_with_retry(context, state, model_client, &turn) {
             Ok(summary) => summary,
             Err(error) => {
                 let error_summary = sanitize_error(&error.to_string());
                 context.record_event(
                     EventType::ErrorOccurred,
                     json!({
+                        "session_id": state.session_id,
                         "stage": "session-turn-summarization",
                         "turn_index": turn.index,
                         "error": error_summary,
@@ -1405,7 +1409,8 @@ fn age_out_warm_turns(
                     None,
                 )?;
                 engine_logging::engine_error!(
-                    "multi-turn summarization failed: run_id={} turn_index={} error={}",
+                    "multi-turn summarization failed: session_id={} run_id={} turn_index={} error={}",
+                    state.session_id,
                     context.run_id(),
                     turn.index,
                     error_summary
@@ -1453,15 +1458,43 @@ fn maybe_run_token_budget_drop<W: Write>(
     ) else {
         return Ok(None);
     };
+    let first_turn_index = plan.first_turn_index;
+    let last_turn_index = plan.last_turn_index;
 
-    let event = run_token_budget_drop_side_effect(
+    let event = match run_token_budget_drop_side_effect(
         context,
         state,
         state_dir,
         plan,
         time::OffsetDateTime::now_utc(),
         model_client,
-    )?;
+    ) {
+        Ok(event) => event,
+        Err(error) => {
+            let error_summary = sanitize_error(&error.to_string());
+            context.record_event(
+                EventType::ErrorOccurred,
+                json!({
+                    "session_id": state.session_id,
+                    "stage": "token-budget-aging-summary",
+                    "state_dir": state_dir.display().to_string(),
+                    "first_turn_index": first_turn_index,
+                    "last_turn_index": last_turn_index,
+                    "error": error_summary,
+                }),
+                None,
+            )?;
+            engine_logging::engine_error!(
+                "token-budget aging summary failed: session_id={} state_dir={} range={}..={} error={}",
+                state.session_id,
+                state_dir.display(),
+                first_turn_index,
+                last_turn_index,
+                error_summary
+            );
+            return Ok(None);
+        }
+    };
     let outcome = drop_outcome_from_event(&event);
     apply_session_event(context, state, event)?;
 
@@ -1492,6 +1525,13 @@ fn run_token_budget_drop_side_effect(
     model_client: &dyn ModelClient,
 ) -> anyhow::Result<SessionEvent> {
     let store_path = state_dir.join("memory-store.json");
+    anyhow::ensure!(
+        plan.first_turn_index <= plan.last_turn_index,
+        "token-budget aging received inverted range: first_turn_index={} last_turn_index={}",
+        plan.first_turn_index,
+        plan.last_turn_index
+    );
+
     let persist = persist_cross_turn_range(
         context,
         state,
@@ -1506,11 +1546,13 @@ fn run_token_budget_drop_side_effect(
     )?
     .unwrap_or_default();
 
-    let mut summaries = Vec::with_capacity(plan.aged_count);
-    for index in plan.first_turn_index..=plan.last_turn_index {
-        let turn = &state.turns[index];
-        summaries.push(summarize_turn(context, state, model_client, turn)?);
-    }
+    let summaries = summarize_aged_turns(
+        context,
+        state,
+        plan.first_turn_index,
+        plan.last_turn_index,
+        model_client,
+    )?;
 
     Ok(SessionEvent::TurnsAgedAndCoRetrieved {
         range: TurnRange {
@@ -1791,40 +1833,116 @@ fn oldest_unsummarized_turn(state: &SessionState) -> Option<&Turn> {
     state.turns.get(state.summarized_turns.len())
 }
 
-fn summarize_turn(
+fn summarize_turn_with_retry(
     context: &mut RunContext,
     state: &SessionState,
     model_client: &dyn ModelClient,
     turn: &Turn,
 ) -> anyhow::Result<TurnSummary> {
+    let (summary, finish_reason) = summarize_turn_once(
+        context,
+        state,
+        model_client,
+        turn,
+        WARM_SUMMARY_MAX_OUTPUT_TOKENS,
+        false,
+    )?;
+    if is_summary_truncated_finish_reason(finish_reason.as_deref()) {
+        let (retry_summary, retry_finish_reason) = summarize_turn_once(
+            context,
+            state,
+            model_client,
+            turn,
+            WARM_SUMMARY_RETRY_MAX_OUTPUT_TOKENS,
+            true,
+        )?;
+        if is_summary_truncated_finish_reason(retry_finish_reason.as_deref()) {
+            anyhow::bail!(
+                "session turn summarizer truncated after retry: session_id={} turn_index={} finish_reason={:?}",
+                state.session_id,
+                turn.index,
+                retry_finish_reason
+            );
+        }
+        return Ok(retry_summary);
+    }
+
+    Ok(summary)
+}
+
+fn summarize_turn_once(
+    context: &mut RunContext,
+    state: &SessionState,
+    model_client: &dyn ModelClient,
+    turn: &Turn,
+    max_output_tokens: u32,
+    is_retry: bool,
+) -> anyhow::Result<(TurnSummary, Option<String>)> {
+    let mut messages = vec![ModelMessage::system(
+        "Summarize exactly one aged-out conversation turn in one sentence. Preserve concrete user intent, assistant commitments, and project-specific facts. Do not add new facts.",
+    )];
+    if is_retry {
+        messages.push(ModelMessage::system(
+            "This is a retry because the previous summary was truncated. Produce a complete concise sentence that fits the available output budget and does not end mid-thought.",
+        ));
+    }
+    messages.push(ModelMessage::user(format!(
+        "[Turn {}]\n[User]\n{}\n\n[Assistant]\n{}",
+        turn.index, turn.user_input, turn.assistant_response
+    )));
+
     let request = ModelRequest::new(
         ModelRole::predefined(ModelRoleId::SessionTurnSummarizer),
-        vec![
-            ModelMessage::system(
-                "Summarize exactly one aged-out conversation turn in one sentence. Preserve concrete user intent, assistant commitments, and project-specific facts. Do not add new facts.",
-            ),
-            ModelMessage::user(format!(
-                "[Turn {}]\n[User]\n{}\n\n[Assistant]\n{}",
-                turn.index, turn.user_input, turn.assistant_response
-            )),
-        ],
+        messages,
     )
     .with_session_id(context.run_id())
     .with_temperature(0.0)
-    .with_max_output_tokens(80);
+    .with_max_output_tokens(max_output_tokens);
     let started_at = Instant::now();
     let response = invoke_model_role(context, model_client, &request)?;
     let usage = response.usage.as_ref();
 
-    Ok(TurnSummary {
-        turn_index: turn.index,
-        summarized_after_turn_index: completed_turn_count(state) - 1,
-        summary: normalize_summary(&response.output_text),
-        model_id: response.model_name,
-        model_latency_ms: elapsed_ms(started_at),
-        input_tokens: usage.map(|usage| usage.input_tokens).unwrap_or(0),
-        output_tokens: usage.map(|usage| usage.output_tokens).unwrap_or(0),
-    })
+    Ok((
+        TurnSummary {
+            turn_index: turn.index,
+            summarized_after_turn_index: completed_turn_count(state) - 1,
+            summary: normalize_summary(&response.output_text),
+            model_id: response.model_name,
+            model_latency_ms: elapsed_ms(started_at),
+            input_tokens: usage.map(|usage| usage.input_tokens).unwrap_or(0),
+            output_tokens: usage.map(|usage| usage.output_tokens).unwrap_or(0),
+        },
+        response.finish_reason,
+    ))
+}
+
+fn is_summary_truncated_finish_reason(finish_reason: Option<&str>) -> bool {
+    matches!(finish_reason, Some("max_tokens" | "length"))
+}
+
+fn summarize_aged_turns(
+    context: &mut RunContext,
+    state: &SessionState,
+    first_turn_index: usize,
+    last_turn_index: usize,
+    model_client: &dyn ModelClient,
+) -> anyhow::Result<Vec<TurnSummary>> {
+    if last_turn_index < first_turn_index {
+        return Ok(Vec::new());
+    }
+
+    let mut summaries = Vec::with_capacity(last_turn_index + 1 - first_turn_index);
+    for index in first_turn_index..=last_turn_index {
+        let turn = &state.turns[index];
+        summaries.push(summarize_turn_with_retry(
+            context,
+            state,
+            model_client,
+            turn,
+        )?);
+    }
+
+    Ok(summaries)
 }
 
 fn normalize_summary(summary: &str) -> String {
@@ -3161,6 +3279,63 @@ mod tests {
     }
 
     #[test]
+    fn token_budget_drop_persists_processed_range_before_summary_failure() {
+        let base_dir =
+            std::env::temp_dir().join(format!("qsf-token-drop-summary-fail-{}", Uuid::new_v4()));
+        let state_dir = base_dir.join("state/text-loop");
+        let store_path = state_dir.join("memory-store.json");
+        let mut store = MemoryStore::load_or_empty(&store_path).unwrap();
+        store.append_records([
+            memory_record("memory.a", "A", "A summary", vec!["a"], 10),
+            memory_record("memory.b", "B", "B summary", vec!["b"], 10),
+        ]);
+        store.persist().unwrap();
+        let mut context = RunContext::create_in(&base_dir, "multi-turn-text-loop").unwrap();
+        let mut state = SessionState::new_with_id("session-drop-fail".to_string(), test_config(10));
+        state.turns = vec![
+            test_turn_with_memory_ids(0, &["memory.a"]),
+            test_turn_with_memory_ids(1, &["memory.b"]),
+        ];
+        let plan = super::TokenBudgetDropPlan {
+            first_turn_index: 0,
+            last_turn_index: 1,
+            aged_count: 2,
+            hot_tokens_before: 1_000,
+            hot_tokens_after: 400,
+        };
+        let client = SequencedSummarizerClient::new(vec![
+            SummaryReply::new("Partial warm summary.", "max_tokens"),
+            SummaryReply::new("Still truncated.", "max_tokens"),
+        ]);
+
+        let error = super::run_token_budget_drop_side_effect(
+            &mut context,
+            &state,
+            &state_dir,
+            plan,
+            timestamp("2026-05-24T00:00:00Z"),
+            &client,
+        )
+        .unwrap_err();
+        let reloaded = MemoryStore::load_or_empty(&store_path).unwrap();
+
+        assert!(error.to_string().contains("truncated after retry"));
+        assert!(
+            reloaded
+                .contents()
+                .processed_ranges
+                .iter()
+                .any(
+                    |range| range.kind == qsf_memory::ProcessedRangeKind::LiveBatch
+                        && range.first_turn_index == 0
+                        && range.last_turn_index == 1
+                )
+        );
+
+        fs::remove_dir_all(base_dir).unwrap();
+    }
+
+    #[test]
     fn session_end_flush_covers_remaining_hot_turns_idempotently() {
         let base_dir = std::env::temp_dir().join(format!("qsf-session-flush-{}", Uuid::new_v4()));
         let state_dir = base_dir.join("state/text-loop");
@@ -4210,6 +4385,178 @@ mod tests {
     }
 
     #[test]
+    fn warm_summary_retry_succeeds_after_truncation() {
+        let base_dir =
+            std::env::temp_dir().join(format!("qsf-warm-summary-retry-{}", Uuid::new_v4()));
+        let mut context = RunContext::create_in(&base_dir, "multi-turn-text-loop").unwrap();
+        let input = Cursor::new("one\ntwo\nthree\n:quit\n");
+        let mut output = Vec::new();
+        let memory_source = TestMemorySource;
+        let client = SequencedSummarizerClient::new(vec![
+            SummaryReply::new("Partial warm summary.", "max_tokens"),
+            SummaryReply::new(
+                "The user and assistant discussed QSF session continuity in one aged-out turn.",
+                "stop",
+            ),
+        ]);
+
+        run_with_io_and_components(
+            &mut context,
+            input,
+            &mut output,
+            &client,
+            &memory_source,
+            test_config_with_warm_threshold(10, 2),
+        )
+        .unwrap();
+
+        let state = crate::session::persistence::load_session_state(
+            context.run_dir().join("state/text-loop/session-state.json"),
+        )
+        .unwrap();
+        assert_eq!(state.summarized_turns.len(), 1);
+        assert_eq!(
+            state.summarized_turns[0].summary,
+            "The user and assistant discussed QSF session continuity in one aged-out turn."
+        );
+
+        let traces = fs::read_to_string(context.run_dir().join("traces.jsonl")).unwrap();
+        assert!(traces.contains("\"finish_reason\":\"max_tokens\""));
+        assert!(traces.contains("\"finish_reason\":\"stop\""));
+
+        let events = fs::read_to_string(context.run_dir().join("events.jsonl")).unwrap();
+        let records = parse_event_records(&events);
+        assert_eq!(
+            records
+                .iter()
+                .filter(|record| {
+                    record.event_type == EventType::ModelRoleRequested
+                        && record.payload["role_id"] == "session_turn_summarizer"
+                })
+                .count(),
+            2
+        );
+        assert_eq!(
+            client.summarizer_max_output_tokens(),
+            vec![
+                Some(super::WARM_SUMMARY_MAX_OUTPUT_TOKENS),
+                Some(super::WARM_SUMMARY_RETRY_MAX_OUTPUT_TOKENS)
+            ]
+        );
+        assert_eq!(
+            records
+                .iter()
+                .filter(|record| record.event_type == EventType::ErrorOccurred)
+                .count(),
+            0
+        );
+
+        fs::remove_dir_all(base_dir).unwrap();
+    }
+
+    #[test]
+    fn warm_summary_double_truncation_leaves_turn_unsummarized() {
+        let base_dir =
+            std::env::temp_dir().join(format!("qsf-warm-summary-fail-{}", Uuid::new_v4()));
+        let mut context = RunContext::create_in(&base_dir, "multi-turn-text-loop").unwrap();
+        let input = Cursor::new("one\ntwo\nthree\n:quit\n");
+        let mut output = Vec::new();
+        let memory_source = TestMemorySource;
+        let store_path = context.run_dir().join("state/text-loop/memory-store.json");
+        MemoryStore::load_or_empty(&store_path)
+            .unwrap()
+            .persist()
+            .unwrap();
+        let client = SequencedSummarizerClient::new(vec![
+            SummaryReply::new("Partial warm summary.", "max_tokens"),
+            SummaryReply::new("Still truncated.", "max_tokens"),
+        ]);
+
+        run_with_io_and_components(
+            &mut context,
+            input,
+            &mut output,
+            &client,
+            &memory_source,
+            test_config_with_warm_threshold(10, 2),
+        )
+        .unwrap();
+
+        let state = crate::session::persistence::load_session_state(
+            context.run_dir().join("state/text-loop/session-state.json"),
+        )
+        .unwrap();
+        assert_eq!(state.summarized_turns.len(), 0);
+        let store = MemoryStore::load_or_empty(&store_path).unwrap();
+        assert!(
+            store
+                .contents()
+                .processed_ranges
+                .iter()
+                .any(
+                    |range| range.kind == qsf_memory::ProcessedRangeKind::LiveBatch
+                        && range.first_turn_index == 0
+                        && range.last_turn_index == 0
+                )
+        );
+
+        let events = fs::read_to_string(context.run_dir().join("events.jsonl")).unwrap();
+        let records = parse_event_records(&events);
+        assert_eq!(
+            records
+                .iter()
+                .filter(|record| record.event_type == EventType::TurnSummarized)
+                .count(),
+            0
+        );
+        assert_eq!(
+            records
+                .iter()
+                .filter(|record| {
+                    record.event_type == EventType::ModelRoleRequested
+                        && record.payload["role_id"] == "session_turn_summarizer"
+                })
+                .count(),
+            2
+        );
+
+        let error_event = records
+            .iter()
+            .find(|record| {
+                record.event_type == EventType::ErrorOccurred
+                    && record.payload["stage"] == "session-turn-summarization"
+            })
+            .unwrap();
+        assert_eq!(error_event.payload["session_id"], state.session_id);
+        assert_eq!(error_event.payload["turn_index"], 0);
+        assert!(
+            error_event.payload["error"]
+                .as_str()
+                .unwrap()
+                .contains("truncated after retry")
+        );
+
+        fs::remove_dir_all(base_dir).unwrap();
+    }
+
+    #[test]
+    fn summarize_aged_turns_returns_empty_for_inverted_range() {
+        let base_dir =
+            std::env::temp_dir().join(format!("qsf-inverted-summary-range-{}", Uuid::new_v4()));
+        let mut context = RunContext::create_in(&base_dir, "multi-turn-text-loop").unwrap();
+        let mut state = SessionState::new(test_config(10));
+        state.turns = vec![test_turn(0), test_turn(1)];
+
+        let summaries =
+            super::summarize_aged_turns(&mut context, &state, 1, 0, &MockModelClient::default())
+                .unwrap();
+
+        assert!(summaries.is_empty());
+
+        fs::remove_dir_all(base_dir).unwrap();
+    }
+
+    #[test]
     fn recall_tool_expands_summarized_turn_and_freezes_tool_message() {
         let base_dir = std::env::temp_dir().join(format!("qsf-recall-tool-{}", Uuid::new_v4()));
         let mut context = RunContext::create_in(&base_dir, "multi-turn-text-loop").unwrap();
@@ -4621,6 +4968,74 @@ mod tests {
                     associations: vec![],
                 },
             ))
+        }
+    }
+
+    #[derive(Clone)]
+    struct SummaryReply {
+        output_text: String,
+        finish_reason: String,
+    }
+
+    impl SummaryReply {
+        fn new(output_text: impl Into<String>, finish_reason: impl Into<String>) -> Self {
+            Self {
+                output_text: output_text.into(),
+                finish_reason: finish_reason.into(),
+            }
+        }
+    }
+
+    struct SequencedSummarizerClient {
+        base: MockModelClient,
+        replies: Vec<SummaryReply>,
+        summarizer_calls: std::sync::Mutex<usize>,
+        summarizer_max_output_tokens: std::sync::Mutex<Vec<Option<u32>>>,
+    }
+
+    impl SequencedSummarizerClient {
+        fn new(replies: Vec<SummaryReply>) -> Self {
+            Self {
+                base: MockModelClient::default(),
+                replies,
+                summarizer_calls: std::sync::Mutex::new(0),
+                summarizer_max_output_tokens: std::sync::Mutex::new(Vec::new()),
+            }
+        }
+
+        fn summarizer_max_output_tokens(&self) -> Vec<Option<u32>> {
+            self.summarizer_max_output_tokens.lock().unwrap().clone()
+        }
+    }
+
+    impl ModelClient for SequencedSummarizerClient {
+        fn client_name(&self) -> &str {
+            "sequenced-summarizer"
+        }
+
+        fn complete(&self, request: &ModelRequest) -> anyhow::Result<ModelResponse> {
+            if request.role.role_id == ModelRoleId::SessionTurnSummarizer {
+                self.summarizer_max_output_tokens
+                    .lock()
+                    .unwrap()
+                    .push(request.max_output_tokens);
+                let mut summarizer_calls = self.summarizer_calls.lock().unwrap();
+                let reply_index = (*summarizer_calls).min(self.replies.len().saturating_sub(1));
+                let reply = self.replies[reply_index].clone();
+                *summarizer_calls += 1;
+                let usage = ModelUsage::new(12, 4).with_estimated_cost_usd(0.0);
+
+                return Ok(ModelResponse::from_text(
+                    request,
+                    self.client_name(),
+                    request.model_name.clone(),
+                    reply.output_text,
+                )
+                .with_usage(usage)
+                .with_finish_reason(reply.finish_reason));
+            }
+
+            self.base.complete(request)
         }
     }
 
