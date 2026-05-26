@@ -99,7 +99,7 @@ mod tests {
                 .session_summary
                 .contains("Mock sleep summarizer")
         );
-        assert_eq!(result.report.memory_candidates.len(), 1);
+        assert!(result.report.memory_candidates.is_empty());
         assert_eq!(context.event_count(), 2);
         assert_eq!(context.trace_count(), 1);
 

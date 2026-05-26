@@ -2049,3 +2049,30 @@ Observed:
 
 Refs: crates/qsf_app/src/experiments/multi_turn_text_loop.rs,
 docs/Experiments/Experiment.LiveMemoryCaptureQuality.md
+
+## 2026-05-26 - Default sleep mock stops emitting fake candidates
+
+The default `sleep-phase-session-summary` path still runs the full sleep commit
+flow, but the deterministic mock sleep summarizer no longer emits fabricated
+memory candidates that can be promoted into the shared store.
+
+What changed:
+- Removed the static `Model roles now flow through the same event and trace
+  artifacts...` memory candidate from the mock `SleepSummarizer` fixture.
+- Restored provider-agnostic sleep promotion so default runs still execute the
+  normal commit path, including continuity brief writes and cross-turn
+  association persistence.
+- Added regressions for both empty mock memory candidates and mock sleep
+  cross-turn association persistence.
+
+Observed:
+- The prior smoke candidate `Model roles now flow through the same event and
+  trace artifacts as other subsystems.` no longer appears in the committed
+  memory store after a default mock sleep run.
+- Mock sleep still persists valid associations that are grounded in previous
+  session retrievals and existing memory-store endpoints.
+
+Refs: crates/qsf_app/src/models/mock_model.rs,
+crates/qsf_app/src/sleep/session_summary.rs,
+crates/qsf_app/src/experiments/sleep_phase_session_summary.rs;
+implements: Default sleep runs execute full side effects without synthetic memory

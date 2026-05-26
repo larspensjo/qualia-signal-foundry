@@ -23,7 +23,7 @@ project has agreed to do going forward.
 - Reusable rules derived from incidents
 
 ### How to use the decision log during development
-- 
+-
 
 ## Entry Template
 
@@ -585,3 +585,19 @@ memories.
 Refs: crates/qsf_app/src/memory/retrieval.rs,
 crates/qsf_app/src/experiments/multi_turn_text_loop.rs,
 docs/Architecture/Architecture.StateAndObservability.md
+
+## 2026-05-26 - Default sleep runs execute full side effects without synthetic memory
+Decision: `sleep-phase-session-summary` keeps the normal sleep commit path active
+for the default command, including continuity brief writes, processed-range
+tracking, cross-turn association persistence, and promotion of any memory
+candidates present in the sleep report. The deterministic mock sleep summarizer
+must not emit fabricated memory candidates.
+Context: The mock sleep fixture had a static memory candidate about model-role
+events. Because the normal sleep commit path promotes routine memory candidates,
+that fixture output became a durable memory even when it was not grounded in the
+actual prior session.
+Consequences: The default command remains a full sleep-session exercise, while
+the mock provider no longer injects fake memories. Real or custom providers can
+still produce memory candidates that flow through the existing promotion path.
+Refs: crates/qsf_app/src/models/mock_model.rs,
+crates/qsf_app/src/experiments/sleep_phase_session_summary.rs

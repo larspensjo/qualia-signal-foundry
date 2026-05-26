@@ -66,13 +66,7 @@ impl Default for MockModelClient {
             MockFixture {
                 output_text: json!({
                     "session_summary": "Mock sleep summarizer reviewed the session and preserved explicit follow-up fields.",
-                    "memory_candidates": [
-                        {
-                            "summary": "Model roles now flow through the same event and trace artifacts as other subsystems.",
-                            "importance": 0.88,
-                            "source_reference": "session-transcript:model-role-smoke"
-                        }
-                    ],
+                    "memory_candidates": [],
                     "open_questions": [
                         "Should future sleep consolidation split extraction and summarization into separate roles?"
                     ],
@@ -88,7 +82,7 @@ impl Default for MockModelClient {
                 })
                 .to_string(),
                 input_tokens: 64,
-                output_tokens: 73,
+                output_tokens: 49,
             },
         );
         fixtures.insert(
@@ -282,6 +276,13 @@ mod tests {
 
         assert_eq!(response.provider_name, "mock");
         assert!(response.structured_output.is_some());
+        assert_eq!(
+            response.structured_output.unwrap()["memory_candidates"]
+                .as_array()
+                .unwrap()
+                .len(),
+            0
+        );
         assert_eq!(response.usage.unwrap().cached_input_tokens, 21);
     }
 }

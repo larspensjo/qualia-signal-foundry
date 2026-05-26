@@ -452,10 +452,13 @@ mod tests {
     use std::path::PathBuf;
 
     use super::{SleepPhaseSessionSummaryExperiment, build_sleep_input};
+    use crate::context::{ContextAssembly, ContextBudget, ContextFragment, ContextSelection};
+    use crate::memory::{MemoryRecord, MemoryRecordKind, MemoryStore};
     use crate::runtime::run_context::RunContext;
     use crate::session::manifest::{ContinuityManifest, ResumeMode};
     use crate::session::resume::ResumeInputs;
     use crate::session::{MemorySourceConfig, SessionConfig, SessionState, TurnSummary};
+    use time::OffsetDateTime;
 
     #[test]
     fn sleep_experiment_writes_sleep_report_artifacts() {
@@ -552,8 +555,11 @@ mod tests {
             .run_with_provider_at_state_dir(&mut context, "mock", &state_dir)
             .unwrap();
         let sleep_report = fs::read_to_string(context.run_dir().join("sleep-report.md")).unwrap();
+        let store = MemoryStore::load_or_empty(state_dir.join("memory-store.json")).unwrap();
 
         assert!(sleep_report.contains("Source: `session-to-sleep` (session_state)"));
+        assert!(store.contents().records.is_empty());
+        assert!(store.contents().associations.is_empty());
         assert!(
             outcome.extra_artifacts.contains(
                 &state_dir
@@ -571,6 +577,50 @@ mod tests {
         fs::remove_dir_all(base_dir).unwrap();
     }
 
+    #[test]
+    fn mock_sleep_run_still_persists_cross_turn_associations() {
+        let base_dir =
+            std::env::temp_dir().join(format!("qsf-mock-sleep-full-{}", uuid::Uuid::new_v4()));
+        let state_dir = base_dir.join("state/text-loop");
+        let mut previous = SessionState::new_with_id("session-to-sleep".to_string(), config());
+        previous
+            .turns
+            .push(turn_with_retrieved_memory(0, "memory.a"));
+        previous
+            .turns
+            .push(turn_with_retrieved_memory(1, "memory.b"));
+        crate::session::persistence::persist_session_state(&previous, &state_dir).unwrap();
+
+        let mut store = MemoryStore::load_or_empty(state_dir.join("memory-store.json")).unwrap();
+        store.contents_mut().records.push(memory_record("memory.a"));
+        store.contents_mut().records.push(memory_record("memory.b"));
+        store.persist().unwrap();
+
+        ContinuityManifest {
+            current_session_id: Some(previous.session_id.clone()),
+            current_session_state_path: Some(PathBuf::from("session-state.json")),
+            sleep_pending: true,
+            resume_mode: ResumeMode::AwakeContinuation,
+            ..ContinuityManifest::default()
+        }
+        .persist(state_dir.join("continuity-manifest.json"))
+        .unwrap();
+
+        let mut context = RunContext::create_in(&base_dir, "mock-sleep-full-test").unwrap();
+        let experiment = SleepPhaseSessionSummaryExperiment;
+        experiment
+            .run_with_provider_at_state_dir(&mut context, "mock", &state_dir)
+            .unwrap();
+
+        let store = MemoryStore::load_or_empty(state_dir.join("memory-store.json")).unwrap();
+        assert_eq!(store.contents().records.len(), 2);
+        assert!(store.contents().associations.iter().any(|association| {
+            association.from_memory_id == "memory.a" && association.to_memory_id == "memory.b"
+        }));
+
+        fs::remove_dir_all(base_dir).unwrap();
+    }
+
     fn config() -> SessionConfig {
         SessionConfig {
             model_id: "mock".to_string(),
@@ -582,5 +632,43 @@ mod tests {
                 file: None,
             },
         }
+    }
+
+    fn memory_record(id: &str) -> MemoryRecord {
+        MemoryRecord::new(
+            id,
+            MemoryRecordKind::Observation,
+            format!("{id} title"),
+            format!("{id} summary"),
+            vec![],
+            OffsetDateTime::now_utc(),
+            0.5,
+            0,
+            "tests",
+            10,
+        )
+    }
+
+    fn turn_with_retrieved_memory(index: usize, memory_id: &str) -> crate::session::Turn {
+        let mut turn = crate::session::tests::fake_turn(index);
+        turn.context_assembly = ContextAssembly {
+            budget: ContextBudget::new(4, 600),
+            selected: vec![ContextSelection {
+                fragment: ContextFragment {
+                    fragment_id: memory_id.to_string(),
+                    source_kind: crate::context::ContextSourceKind::Memory,
+                    summary: format!("{memory_id} summary"),
+                    tags: vec![],
+                    score: 1.0,
+                    estimated_tokens: 10,
+                    source_reference: "tests".to_string(),
+                    selection_reason: "tests".to_string(),
+                },
+                cumulative_estimated_tokens: 10,
+            }],
+            omitted: vec![],
+            used_estimated_tokens: 10,
+        };
+        turn
     }
 }
