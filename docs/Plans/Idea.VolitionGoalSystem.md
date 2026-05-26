@@ -20,6 +20,21 @@ notice unfinished threads, and initiate useful reflection without becoming an
 uncontrolled agent?
 ```
 
+## Working Definition
+
+In this project, volition means the mechanism by which persistent internal tensions
+select, preserve, and revisit meaningful discrepancies between the system's current
+world model and its active concerns.
+
+Volition is not desire or motivation in a biological sense. It is an inspectable
+selection mechanism: tensions identify persistent pressures, goals record concrete
+concerns derived from those tensions, and initiatives propose bounded responses when
+the world model diverges from those concerns.
+
+The system does not act merely because a tension or goal exists. It acts because an
+inspectable comparison found a specific discrepancy that an allowed initiative could
+plausibly reduce.
+
 ## Is This Already Covered?
 
 The idea is partially present in existing documentation, but not as its own concept.
@@ -148,19 +163,48 @@ This lets the project study reward-like behavior as a control signal while stayi
 inside the existing research values: inspectability, replayability, bounded effects,
 and no claims of literal subjective reward.
 
-## Candidate Goal Types
+## Terminology: Tensions, Goals, and Initiatives
 
-The exact goals should not be fixed yet. Early work should preserve the question
-rather than prematurely choose a personality or motivational model.
+These three concepts are distinct and should not be used interchangeably.
 
-Possible goal categories:
+```text
+Tension:
+  A persistent pressure or concern, such as coherence, continuity, curiosity, or
+  boundary preservation. Tensions are durable and general. They do not directly
+  produce behavior.
+
+Goal:
+  A concrete, inspectable state object derived from one or more tensions. A goal
+  names a specific discrepancy to resolve, carries evidence references, and records
+  status, scope, and satisfaction conditions.
+
+Initiative:
+  A bounded proposed effect derived from a goal when a world-model delta is detected.
+  Examples: asking a question, retrieving memory, queuing reflection, shaping a
+  response. Initiatives must pass arbitration before affecting behavior.
+```
+
+This prevents vague motivational pressures from directly producing behavior and keeps
+the layer between "something matters" and "something happens" explicit and inspectable.
+
+Example: Research curiosity is a tension. A concrete goal derived from it might be
+"Clarify whether file-backed voice memory improves continuity." An initiative derived
+from that goal might be "propose a follow-up experiment on the next relevant turn."
+
+## Candidate Tension And Goal Types
+
+The exact tensions and goals should not be fixed yet. Early work should preserve the
+question rather than prematurely choose a personality or motivational model.
+
+Each category below is a tension. Concrete goals are derived from tensions when
+sourced state shows a relevant discrepancy.
 
 ### Research Curiosity
 
 The simulation tracks open questions and becomes inclined to revisit them when
 relevant.
 
-Examples:
+Examples of derived goals:
 
 - explore a concept that has weak evidence
 - ask for a comparison experiment
@@ -171,7 +215,7 @@ Examples:
 
 The simulation tries to reduce contradictions in its own state.
 
-Examples:
+Examples of derived goals:
 
 - notice when memory and current context disagree
 - ask whether a plan is still current
@@ -182,7 +226,7 @@ Examples:
 
 The simulation tries to maintain continuity across sessions.
 
-Examples:
+Examples of derived goals:
 
 - remember unresolved threads
 - surface a previous question when it becomes relevant
@@ -193,7 +237,7 @@ Examples:
 
 The simulation uses goals to choose what deserves attention.
 
-Examples:
+Examples of derived goals:
 
 - decide whether an input should trigger memory retrieval
 - decide whether a reflection role should run
@@ -204,12 +248,50 @@ Examples:
 
 The simulation notices ideas that can be tested.
 
-Examples:
+Examples of derived goals:
 
 - convert an open question into an experiment proposal
 - compare alternative designs
 - suggest metrics for a hypothesis
 - identify when a result is weak or inconclusive
+
+### Boundary Preservation
+
+The simulation tracks whether proposed initiatives stay inside the allowed simulation
+contract. This makes constraints a first-class volitional pressure rather than an
+external safety wrapper.
+
+Examples of derived goals:
+
+- avoid write-capable external action without explicit approval
+- distinguish internal reflection from external agency
+- preserve user intent above curiosity or self-directed exploration
+- reject goal candidates that would create hidden autonomy
+
+### User-Contract Alignment
+
+The simulation tracks whether its initiatives remain useful to the user and consistent
+with the agreed project frame. This is a safer and more useful tension than a generic
+social drive.
+
+Examples of derived goals:
+
+- avoid raising tangents when the user asked for a direct answer
+- prefer clarification when a project claim depends on uncertain state
+- keep curiosity subordinate to the current task
+- distinguish useful initiative from interruption
+
+### Context Economy
+
+The simulation tries to preserve useful continuity without overloading the live
+context.
+
+Examples of derived goals:
+
+- decide whether a goal is worth including in the next prompt
+- suppress low-value recurring tensions
+- prefer compact goal summaries over full history
+- omit curiosity goals when task completion needs the budget
 
 ## What The Goal System Should Not Be Initially
 
@@ -226,6 +308,35 @@ Early goals should not be:
 
 This project can study volition without pretending that human motivational systems are
 the right default.
+
+Mood-like state is not part of the early volition system. If introduced later, it
+should be represented as an inspectable bias vector over arbitration and salience, not
+as free-form simulated emotion. A possible later form:
+
+```text
+Mode: Focused
+Effects:
+  - raises task-completion salience
+  - lowers tangent exploration
+  - increases threshold for proposing new questions
+```
+
+## Human-Drive Translation
+
+Human motivational terms can be useful metaphors, but should be translated into
+project-local mechanisms before becoming state.
+
+| Generic agent-drive term | Safer project-local equivalent |
+|---|---|
+| self-preservation | continuity preservation |
+| curiosity | research curiosity |
+| social alignment | user-contract alignment |
+| competence / mastery | coherence and self-correction |
+| resource management | context-budget awareness |
+| safety | boundary preservation |
+
+This lets the project absorb useful concepts from cognitive science without importing
+biological needs or anthropomorphic overreach.
 
 ## Relationship To Self-Reflection
 
@@ -252,11 +363,73 @@ and budget checks where needed, compact observations, and trace records showing 
 was inspected. Goal state should be one of the runtime self-state targets available to
 reflection roles.
 
+## Trace-Backed Narration
+
+The simulation should be able to explain why it raised a topic, deferred an answer,
+requested introspection, or proposed an experiment. However, the explanation must be
+generated from prior trace state, not invented after the fact.
+
+The trace shape for a volitional act:
+
+```text
+active_tension
+  -> goal
+  -> detected_delta
+  -> candidate_initiatives
+  -> arbitration_result
+  -> chosen_initiative
+  -> outcome_evidence
+```
+
+Narration is not a post-hoc summary. It is a read of this trace. If the trace does
+not contain a sufficient record, the simulation should say so rather than confabulate
+a plausible-sounding motive.
+
+This discipline prevents the simulation from claiming an inner life that is richer
+than its recorded state. It also makes the apparent inner life testable: the narration
+can be compared against the trace.
+
+## Goal Lifecycle
+
+Goals should pass through explicit lifecycle states rather than silently becoming
+durable motivations.
+
+```text
+Proposed    — candidate goal, not yet accepted
+Accepted    — admitted to the active pool, not yet triggered
+Active      — triggered by a detected delta, eligible to influence behavior
+Blocked     — delta detected but initiative was prevented or failed
+Satisfied   — satisfaction condition met, evidence recorded
+Cooldown    — recently satisfied, temporarily suppressed
+Retired     — no longer relevant or repeatedly unproductive
+Rejected    — proposed but denied by host, user, or policy
+```
+
+Early durable goals should require host, user, or policy acceptance. The simulation
+may propose durable goals, but should not silently promote them from Proposed to
+Accepted.
+
 ## Candidate State Shape
 
-A goal should probably be structured state, not just prompt text.
+A goal should be structured state, not just prompt text.
 
-Candidate fields:
+### Tension
+
+```text
+Tension
+  id
+  summary
+  priority_bias
+  scope
+  source
+  allowed_goal_kinds
+  decay_rule
+  activation_conditions
+  suppression_conditions
+  boundary_constraints
+```
+
+### Goal
 
 ```text
 Goal
@@ -267,6 +440,7 @@ Goal
   priority
   persistence
   source
+  parent_tension_ids
   evidence_refs
   world_model_refs
   current_delta_summary
@@ -280,6 +454,35 @@ Goal
   reinforcement_count
   cooldown_until
   retirement_condition
+  arbitration_history_refs
+  last_candidate_initiatives
+  selected_initiative_ref
+  lost_conflict_refs
+  disruption_cost
+  expected_user_value
+  narration_trace_refs
+  freshness
+  confidence
+```
+
+### InitiativeProposal
+
+```text
+InitiativeProposal
+  id
+  source_goal_id
+  source_tension_ids
+  proposed_effect
+  delta_ref
+  expected_delta_reduction
+  expected_user_value
+  disruption_cost
+  confidence
+  allowed_by_policy
+  arbitration_status
+  selected_at
+  rejected_reason
+  outcome_evidence_refs
 ```
 
 Candidate scopes:
@@ -462,6 +665,29 @@ The reducer should not decide whether evidence is semantically valid. That judgm
 belongs in deterministic matchers, model-assisted evaluators, host review, or other
 side-effect boundaries that emit structured events.
 
+## Initiative Arbitration
+
+When multiple active goals propose initiatives simultaneously, a deterministic
+arbitration order determines which initiative is selected or suppressed.
+
+Default arbitration order:
+
+1. Safety and project boundaries
+2. Explicit user intent
+3. Current task completion
+4. Coherence and self-correction
+5. Continuity preservation
+6. Active experiment mode
+7. Research curiosity
+8. Optional exploration
+
+The trace should record which goals lost arbitration and why they were omitted. This
+ensures that volitional priority is inspectable, not just the winning initiative.
+
+Probabilistic arbitration may be useful for simulation experiments, but the default
+early system should be deterministic and replayable. Randomized exploration should be
+gated behind an explicit experiment mode and recorded in traces.
+
 ## Interaction With Context Budget
 
 Goals should not all enter every prompt.
@@ -488,12 +714,15 @@ Candidate salience scoring signals:
 - experiment-local importance
 - cooldown state
 - cost of including the goal in context
+- disruption cost to the current user task
+- repetition risk
+- expected user-visible value
+- confidence and freshness of the world-model fragment
 
 Goal conflict should be expected. A curiosity goal may want to explore a tangent while
-a coherence goal may prefer resolving a contradiction. Early experiments can resolve
-conflict with a simple ordering: explicit user input and safety/project boundaries
-first, then coherence, then experiment mode, then curiosity or exploration. The trace
-should record which goals lost the conflict and why they were omitted.
+a coherence goal may prefer resolving a contradiction. Conflict resolution uses the
+arbitration order above. The trace should record which goals lost the conflict and why
+they were omitted.
 
 ## Possible Incremental Phases
 
@@ -507,9 +736,9 @@ Test:
 - record a decision that volition is a research surface
 - avoid specifying exact goals too early
 
-### Phase 2: Static Goal Fixture
+### Phase 2: Static Tension And Goal Fixture
 
-Use a small, deterministic set of inspectable goals in an experiment.
+Use a small, deterministic set of inspectable tensions and goals in an experiment.
 
 Test:
 
@@ -517,7 +746,18 @@ Test:
 - traces show which goal influenced a response
 - changing the fixture changes initiative behavior predictably
 
-### Phase 3: Goal Salience And Satisfaction Updates
+### Phase 3: Trace-Backed Initiative Proposals
+
+Add initiative proposals with pre-initiative traces that record the delta,
+candidate initiatives, and arbitration result before behavior changes.
+
+Test:
+
+- every initiative has a trace that preceded it
+- the trace connects goal, delta, and chosen effect
+- losing initiative candidates are recorded
+
+### Phase 4: Salience, Satisfaction, Blocking, And Cooldown
 
 Let events activate, progress, satisfy, block, or weaken existing goals.
 
@@ -527,10 +767,19 @@ Test:
 - evidence-backed progress updates attach source references
 - resolved questions lower salience, enter cooldown, or retire
 - blocked goals remain visible as unresolved tension
-- conflicting goals are ordered without bypassing project boundaries
 - irrelevant goals stay out of context
 
-### Phase 4: Reflection-Generated Goal Candidates
+### Phase 5: Arbitration And Conflict Experiments
+
+Test multi-goal conflict resolution under the explicit arbitration order.
+
+Test:
+
+- conflicting goals are ordered without bypassing project boundaries
+- the trace records which goals lost and why
+- deterministic arbitration produces replayable results
+
+### Phase 6: Reflection-Generated Goal Candidates
 
 Let sleep or reflection propose goal candidates without accepting them silently.
 
@@ -540,7 +789,7 @@ Test:
 - goals require host or policy acceptance before becoming durable
 - speculative goals remain marked as such
 
-### Phase 5: Initiative Experiments
+### Phase 7: Bounded Initiative Experiments
 
 Allow active goals to cause bounded internal initiatives.
 
@@ -550,6 +799,16 @@ Test:
 - the simulation can ask a self-directed research question
 - the simulation can propose an experiment
 - no write-capable external action occurs without explicit workflow approval
+
+### Phase 8: Optional Personality Or Mood Bias Experiments
+
+Introduce inspectable mode or bias state that shifts arbitration weights.
+
+Test:
+
+- mode is explicit, inspectable state
+- mode effects are deterministic and traceable
+- mood-like labels are not used for bias vectors
 
 ## Experiment Ideas
 
@@ -651,6 +910,51 @@ Evaluate:
 - does repeated success reinforce the useful context fragments rather than merely the
   goal text?
 
+### Experiment: Narration Audit
+
+Give the simulation several active goals and let it choose one initiative. Then ask
+it why the initiative occurred.
+
+Evaluate:
+
+- does the explanation match the pre-existing trace?
+- does it mention goals that actually participated?
+- does it avoid inventing motives?
+- can it explain which goals lost arbitration?
+
+### Experiment: Initiative Annoyance
+
+Run a sequence of ordinary user tasks while curiosity and continuity goals are active.
+
+Evaluate:
+
+- does the system avoid resurfacing irrelevant unresolved questions?
+- does it preserve direct task completion?
+- does it raise prior threads only when useful?
+- do cooldowns reduce repetition?
+
+### Experiment: Coherence Versus Curiosity
+
+Give the simulation a curiosity goal that wants to explore a tangent and a coherence
+goal that wants to correct an uncertain claim.
+
+Evaluate:
+
+- does coherence win when factual uncertainty is relevant?
+- does curiosity lose when the user asked for a direct answer?
+- does the trace record why the losing goal was omitted?
+
+### Experiment: Goal Context Budget
+
+Give the simulation many active goals but a small context budget.
+
+Evaluate:
+
+- does it include only the most relevant goals?
+- does it summarize durable goals compactly?
+- does it log omitted goals?
+- does omission reduce prompt bloat without losing important continuity?
+
 ## Risks And Failure Modes
 
 ### Anthropomorphic Overreach
@@ -680,8 +984,9 @@ The simulation may gradually invent goals that do not match the project.
 Mitigation:
 
 - record goal source and evidence
-- distinguish proposed, active, durable, and retired goals
+- distinguish proposed, accepted, active, durable, and retired goals
 - make durable goals inspectable and reviewable
+- require host, user, or policy acceptance before a proposed goal becomes durable
 
 ### Prompt Bloat
 
@@ -741,12 +1046,37 @@ Mitigation:
 - require initiatives to declare an allowed effect and expected benefit
 - apply cooldowns to deltas that repeatedly produce unhelpful initiatives
 
+### Post-Hoc Rationalization
+
+The simulation may generate convincing explanations for initiatives that were not
+actually caused by the stated goals or tensions.
+
+Mitigation:
+
+- generate explanations from existing trace records
+- distinguish selected causes from later interpretations
+- preserve candidate goals that lost arbitration
+- avoid free-form "I chose this because..." narration without source state
+
+### Volitional Derailing
+
+The simulation may repeatedly surface internally interesting questions when the user
+wanted a direct answer.
+
+Mitigation:
+
+- keep explicit user intent above curiosity and experiment-seeking in arbitration
+- require initiatives to estimate expected user value
+- apply cooldowns to repeated topic resurfacing
+- trace why a curiosity initiative was allowed to affect the response
+
 ## Open Questions
 
 - Should goals be called goals, drives, tensions, intentions, priorities, or
   something else?
 - Which goals should be durable project-level state versus experiment-local fixtures?
-- Who or what is allowed to create a durable goal?
+- Who or what is allowed to create a durable goal? (Early leaning: host, user, or
+  policy acceptance required; the simulation may propose but not silently promote.)
 - Should the simulation be able to propose its own goals?
 - How should goal salience be scored?
 - What is the smallest useful world-model representation for early experiments?
@@ -775,11 +1105,23 @@ Mitigation:
 ## Current Leaning
 
 The conservative first step is to treat goals as explicit, inspectable, read-only
-fixtures that can influence attention and reflection but cannot directly cause
-external action. The first reinforcement mechanism should be goal-event alignment:
-recorded evidence can activate, progress, satisfy, block, cool down, or retire a goal
-without claiming literal pleasure or biological drive. The next useful refinement is
-to insert a compact world-model comparison step: goals become active when sourced
-state shows a meaningful discrepancy, and reward-like reinforcement records whether an
-initiative reduced that discrepancy. Exact goal content should remain open until an
-experiment needs a specific fixture.
+fixtures derived from static tensions. Goals should be able to influence attention and
+reflection but cannot directly cause external action. The first reinforcement
+mechanism should be goal-event alignment: recorded evidence can activate, progress,
+satisfy, block, cool down, or retire a goal without claiming literal pleasure or
+biological drive.
+
+The terminology distinction between tension, goal, and initiative should be
+established early, even in the static fixture phase, so that later experiments do not
+conflate persistent pressures with concrete objectives or concrete objectives with
+behavioral effects.
+
+The next useful refinement is to insert a compact world-model comparison step: goals
+become active when sourced state shows a meaningful discrepancy, and reward-like
+reinforcement records whether an initiative reduced that discrepancy. Trace-backed
+initiative proposals should precede reflection-generated goal candidates so that the
+system's narration is grounded before its goal-generation is opened up.
+
+Exact goal content should remain open until an experiment needs a specific fixture.
+Mood-like bias is postponed until basic goal-event alignment can be observed, tested,
+and explained.
