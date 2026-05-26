@@ -68,7 +68,7 @@ candidate categories listed below still have no shared module.
   memory-graph view, no cost dashboard)
 - `experiment_id` and `memory_update_id` correlation across runs
 
-Last reviewed: 2026-05-25 against explicit remember-this capture observability.
+Last reviewed: 2026-05-26 against explicit remember-this capture observability and retrieval skip reasons.
 
 ## Summary
 

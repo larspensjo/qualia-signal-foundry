@@ -4019,7 +4019,7 @@ mod tests {
         run_with_io_and_components_at_state_dir(
             &mut context,
             Cursor::new(
-                "I want you to use the name Ari.\nMy name is Lars.\nTell me more what you think how a volition system should work.\nInteresting, please remember this for future discussions!\nWhat is your name?\nWhat is my name?\nWhat did I ask you to remember about volition?\n:quit\n",
+                "I want you to use the name Ari.\nMy name is Lars.\nTell me more what you think how a volition system should work.\nInteresting, please remember this for future discussions!\nWhat is your name?\nWhat is my name?\nWhat did I ask you to remember about volition?\nTell me about volition goals.\n:quit\n",
             ),
             &mut output,
             &model_client,
@@ -4100,8 +4100,32 @@ mod tests {
                 .any(|memory| memory.memory.id == ari.id)
         );
 
+        let state =
+            crate::session::persistence::load_session_state(state_dir.join("session-state.json"))
+                .unwrap();
+        assert_eq!(state.turns.len(), 8);
+        assert!(
+            state.summarized_turns.is_empty(),
+            "the QA fixture should not persist warm summaries"
+        );
+
         let events = fs::read_to_string(context.run_dir().join("events.jsonl")).unwrap();
         let records = parse_event_records(&events);
+        let unrelated_retrieval = records
+            .iter()
+            .find(|record| {
+                record.event_type == EventType::MemoryRetrieved && record.payload["turn_index"] == 7
+            })
+            .expect("expected unrelated volition retrieval event");
+        assert!(
+            !unrelated_retrieval.payload["selected"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|value| value == &json!(ari.id)),
+            "unrelated volition query must not select Ari"
+        );
+
         let persisted = records
             .iter()
             .filter(|record| record.event_type == EventType::MemoryStorePersisted)

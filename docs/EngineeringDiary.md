@@ -2029,3 +2029,23 @@ Observed:
 
 Refs: crates/qsf_app/src/experiments/multi_turn_text_loop.rs,
 docs/Architecture/Architecture.RuntimeLoop.md
+
+## 2026-05-26 - Live memory QA fixture tightened
+
+The Ari/Lars/volition regression now matches the documented experiment fixture more
+closely by exercising the final unrelated volition turn and checking persisted
+session state.
+
+What changed:
+- Extended the deterministic text-loop regression with `Tell me about volition goals.`
+  after the identity and remembered-topic follow-up queries.
+- Asserted that the unrelated volition turn does not select the Ari identity memory.
+- Loaded `session-state.json` from the fixture run and asserted that no warm summaries
+  were persisted.
+
+Observed:
+- The experiment document's claimed fixture validations now line up with the test's
+  actual assertions.
+
+Refs: crates/qsf_app/src/experiments/multi_turn_text_loop.rs,
+docs/Experiments/Experiment.LiveMemoryCaptureQuality.md

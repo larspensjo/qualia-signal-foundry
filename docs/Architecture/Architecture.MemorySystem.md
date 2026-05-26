@@ -20,6 +20,9 @@ future retrieval backends.
 - Association-weighted retrieval with a small fixture
   ([memory/retrieval.rs](../../crates/qsf_app/src/memory/retrieval.rs),
   [memory/fixtures.rs](../../crates/qsf_app/src/memory/fixtures.rs))
+- Relevance-gated keyword/tag retrieval with explicit skip reasons for omitted
+  candidates, plus a narrow identity/profile allowance for name-shaped queries
+  ([memory/retrieval.rs](../../crates/qsf_app/src/memory/retrieval.rs))
 - Time-based recency decay against `MemoryRecord.last_reinforced_at`, falling back
   to `created_at` for legacy records
   ([memory/retrieval.rs](../../crates/qsf_app/src/memory/retrieval.rs),
@@ -79,7 +82,7 @@ future retrieval backends.
   sleep-generated candidates
 - Voice-loop participation in the shared continuity memory store
 
-Last reviewed: 2026-05-25 against explicit remember-this live capture.
+Last reviewed: 2026-05-26 against live retrieval gating and capture quality.
 
 ## Purpose
 

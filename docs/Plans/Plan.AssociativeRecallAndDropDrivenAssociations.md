@@ -2975,6 +2975,10 @@ Record observations in the diary follow-up.
 
 ## Phase 5 — Proposer Interface And Sleep Prompt Rewording
 
+Note: complete `Plan.LiveMemoryCaptureAndRetrievalQuality.md` first, because the
+proposer QA is much more useful once live memory capture and relevance-gated
+retrieval are already producing meaningful endpoints.
+
 ### Task 5.1: `AssociationProposer` trait and `ProposedAssociation`
 
 **Files:**

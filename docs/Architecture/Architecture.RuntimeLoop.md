@@ -29,6 +29,10 @@ document as a candidate design that real experiments incrementally fill in.
   user-name, and remembered-topic candidates before the next turn begins
   ([memory/live_capture.rs](../../crates/qsf_app/src/memory/live_capture.rs),
   [experiments/multi_turn_text_loop.rs](../../crates/qsf_app/src/experiments/multi_turn_text_loop.rs))
+- Retrieval traces now surface omitted candidate skip reasons, so unrelated
+  identity memories can be observed rather than silently reinforced
+- Warm-turn summarization retries once on truncation and fails closed on a second
+  truncation instead of persisting a truncated continuity summary
 - `session_id` propagation through transcript, runtime input, model role, output,
   and speech playback for voice turns
 - Cross-session boot for the multi-turn text loop: load continuity manifest, classify
@@ -66,7 +70,7 @@ document as a candidate design that real experiments incrementally fill in.
   experiment code
 - Interruption and turn-taking handling in the live loop
 
-Last reviewed: 2026-05-26 against warm-summary truncation guarding.
+Last reviewed: 2026-05-26 against warm-summary truncation guarding and retrieval gating.
 
 ## Purpose
 
