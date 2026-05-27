@@ -82,7 +82,9 @@ future retrieval backends.
   sleep-generated candidates
 - Voice-loop participation in the shared continuity memory store
 
-Last reviewed: 2026-05-26 against live retrieval gating and capture quality.
+Last reviewed: 2026-05-27 against the Phase 5 live/sleep split — live-loop
+co-retrieval handles mechanical edges, and sleep contributes safety-net and
+LLM-candidate associations through the proposer interface.
 
 ## Purpose
 

@@ -70,7 +70,9 @@ document as a candidate design that real experiments incrementally fill in.
   experiment code
 - Interruption and turn-taking handling in the live loop
 
-Last reviewed: 2026-05-26 against warm-summary truncation guarding and retrieval gating.
+Last reviewed: 2026-05-27 against the Phase 5 live/sleep split — drop-driven and
+session-end cross-turn association work runs in the live loop here, while sleep
+handles non-obvious associations through the proposer interface.
 
 ## Purpose
 
