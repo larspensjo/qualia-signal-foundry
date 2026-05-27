@@ -146,8 +146,11 @@ Evaluation criteria:
 - Measure whether direction-aware expansion changes the hint set in a
   way that improves precision; if not, the schema cost is not
   justified.
-- Coordinate with `docs/Plans/Design.MemorySchemaVersioning.md` if a
-  versioned migration is required.
+- If a versioned migration is required, coordinate with the schema
+  versioning rules in `docs/DecisionLog.md` (entry `2026-05-10 - Memory
+  schema versioning is per record type and run artifacts are sealed`)
+  and the bump-policy comments next to `MEMORY_RECORD_SCHEMA_VERSION` /
+  `ASSOCIATION_SCHEMA_VERSION` in `crates/qsf_memory`.
 
 ## Notes
 

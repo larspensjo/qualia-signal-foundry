@@ -746,7 +746,6 @@ Per `docs/ProjectFrame/ProjectWorkflow.md`:
 - docs/Plans/Design.LiveActivationDashboard.md
 - docs/Plans/Idea.LiveActivationDashboard.md
 - docs/Plans/Design.SharedVisualLanguage.md
-- docs/Plans/Design.MemorySchemaVersioning.md
 - docs/RustBackendBrowserFrontend.md
 - docs/ProjectFrame/ProjectWorkflow.md
 - docs/DecisionLog.md

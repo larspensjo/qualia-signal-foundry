@@ -23,7 +23,7 @@ project has agreed to do going forward.
 - Reusable rules derived from incidents
 
 ### How to use the decision log during development
--
+- Do not modify older entries if they were commited.
 
 ## Entry Template
 

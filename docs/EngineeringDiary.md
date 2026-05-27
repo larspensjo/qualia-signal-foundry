@@ -15,6 +15,7 @@ experiments, or decisions.
 - If a change implements a prior decision, note it in the Refs line.
 - Don't reference planning documents. Entries shall stand on their own, even after plans are archived.
 - There is no need for entries when meta documents are created. E.g. plans or ideas. Only changes to the application.
+- Do not modify older entries if they were commited.
 
 Entry template (only the topic line and summary are mandatory; add other sections when
 they apply):
