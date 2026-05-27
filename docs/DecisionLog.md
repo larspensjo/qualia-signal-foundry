@@ -601,3 +601,26 @@ the mock provider no longer injects fake memories. Real or custom providers can
 still produce memory candidates that flow through the existing promotion path.
 Refs: crates/qsf_app/src/models/mock_model.rs,
 crates/qsf_app/src/experiments/sleep_phase_session_summary.rs
+
+## 2026-05-27 - Live/sleep split for association work
+Decision: Mechanical association work — drop-driven and session-end co-retrieval
+edges — runs in the live loop. Sleep hosts pluggable proposers for non-obvious
+associations, exposed through a `SleepAssociationProposer` interface. The sleep
+prompt is reworded accordingly to target non-obvious connections rather than
+mechanical co-occurrence.
+Context: Before this split, sleep duplicated cross-turn co-retrieval work the
+live loop could already do deterministically, and the sleep prompt asked the
+model for associations it had no advantage producing. Phase 5 of
+`Plan.AssociativeRecallAndDropDrivenAssociations.md` moved the mechanical work
+into the live loop and introduced the proposer interface with two initial
+proposers (`LlmCandidateProposer`, `SafetyNetCoRetrievalProposer`).
+Consequences: Mechanical association edges land deterministically without
+waiting for sleep; sleep work focuses on signals the model is actually suited to
+provide. New proposer ideas must enter through `Ideas.AssociationProposers.md`
+with a measurable signal before promotion. The sleep prompt rewording is part of
+this same commitment, not a separate decision.
+Refs: crates/qsf_app/src/sleep/proposers/llm_candidate.rs,
+crates/qsf_app/src/sleep/proposers/safety_net_co_retrieval.rs,
+docs/Architecture/Architecture.SleepPhase.md,
+docs/Plans/Plan.AssociativeRecallAndDropDrivenAssociations.md,
+docs/Plans/Ideas.AssociationProposers.md
