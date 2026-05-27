@@ -8,6 +8,18 @@
 
 **Tech Stack:** Rust workspace (`crates/qsf_app`, `crates/qsf_memory`), `time::OffsetDateTime`, `serde` for persistence, `engine_logging` for runtime logging, ANSI escape codes for console color.
 
+## Review-Pass Adjustments (2026-05-27)
+
+Notable findings from `docs/Reviews/Review.AssociativeRecallAndDropDrivenAssociations.2026-05-27.md` applied to this plan:
+
+- Phases 1 through 4 are now marked implemented with the review-identified commits.
+- The Phase 5 gate note now records that `Plan.LiveMemoryCaptureAndRetrievalQuality.md` has landed, so proposer work can proceed against relevance-gated live memory endpoints.
+- Task 5.0 adds the LiveMemory input-quality preflight directly to this plan so proposer work does not start from empty or low-signal memory fixtures.
+- Task 5.2 notes the post-`91d3775` sleep-mock behavior: tests must explicitly configure mock association-candidate payloads.
+- Task 5.3 now calls out that safety-net proposer input is limited to relevance-gated `ContextAssembly::retrieved_memory_ids()`.
+- Task 5.5 human-testing notes now include the durable memory candidate kinds introduced by LiveMemory (`assistant-identity`, `user-identity`, `remembered-topic`).
+- Task 6.2 now pins the DecisionLog date to the current implementation date (`2026-05-27`) instead of the older endpoint-validation date.
+
 ## Review-Pass Adjustments (2026-05-24)
 
 Notable findings from `docs/Plans/Review.AssociativeRecallAndDropDrivenAssociations.md` applied to this plan:
@@ -88,7 +100,7 @@ Suggested defaults adopted from the design (call-outs in plan tasks):
 
 ---
 
-## Phase 1 — Hint Expansion In Retrieval
+## Phase 1 — Hint Expansion In Retrieval  ✅ Implemented in 57948e9
 
 Self-contained. Ends with hints appearing in prompts and a snapshot test demonstrating both blocks.
 
@@ -983,7 +995,7 @@ Run a multi-turn session against a fixture with at least one persisted associati
 
 ---
 
-## Phase 2 — Console Color And Drop Marker
+## Phase 2 — Console Color And Drop Marker  ✅ Implemented in fb5922f
 
 Ships independently. The drop marker prints with zero counts at this point (Phase 4 wires real drops); the line proves the rendering path is in place.
 
@@ -1411,7 +1423,7 @@ Run a session in a real terminal (Windows Terminal and a Linux terminal if avail
 
 ---
 
-## Phase 3 — Extract Cross-Turn Variant Into Shared Module
+## Phase 3 — Extract Cross-Turn Variant Into Shared Module  ✅ Implemented in b5eb303
 
 No behavior change. Sleep continues to call the cross-turn pass on the whole session; only the function location changes.
 
@@ -1717,7 +1729,7 @@ git commit -m "docs: log Phase 3 (cross-turn co-retrieval extracted)"
 
 ---
 
-## Phase 4 — Aging Policy, Live Cross-Turn Co-Retrieval, Session-End Flush
+## Phase 4 — Aging Policy, Live Cross-Turn Co-Retrieval, Session-End Flush  ✅ Implemented in 7723f81
 
 The largest phase. Implements the event/reducer/effect flow from the design.
 
@@ -2975,9 +2987,17 @@ Record observations in the diary follow-up.
 
 ## Phase 5 — Proposer Interface And Sleep Prompt Rewording
 
-Note: complete `Plan.LiveMemoryCaptureAndRetrievalQuality.md` first, because the
-proposer QA is much more useful once live memory capture and relevance-gated
-retrieval are already producing meaningful endpoints.
+Status: `Plan.LiveMemoryCaptureAndRetrievalQuality.md` landed in commits
+`6ea9906` through `4e19f6d`. The proposer pipeline now has relevance-gated
+live memory endpoints to work with.
+
+### Task 5.0: Preflight — verify input quality (no code)
+
+- [ ] Start from a clean `QSF_STATE_DIR`.
+- [ ] Run the Ari/Lars/volition transcript through `multi_turn_text_loop`.
+- [ ] Confirm the persisted store contains the assistant-identity, user-identity, and remembered-topic memories.
+- [ ] Confirm `ContextAssembly::retrieved_memory_ids()` is non-empty across the follow-up turns.
+- [ ] If any of the above is missing, stop and reopen LiveMemory before continuing.
 
 ### Task 5.1: `AssociationProposer` trait and `ProposedAssociation`
 
@@ -3210,6 +3230,11 @@ First inspect the actual constructors for `SleepReport`, `SessionState`, and the
 grep -n "pub struct SleepReport\|pub struct AssociationCandidate\|impl SleepReport\|impl SessionState" c:/Users/larsp/src/qualia-signal-foundry/crates/qsf_app/src/sleep/sleep_report.rs c:/Users/larsp/src/qualia-signal-foundry/crates/qsf_app/src/session/mod.rs | head -20
 ```
 
+Test scaffolding note (post-`91d3775`): the default sleep mock now returns zero
+candidates. Tests for `LlmCandidateProposer` must configure the mock with at
+least one fake `association_candidate` payload, otherwise the proposer can
+trivially return `Vec::new()` without exercising the path under review.
+
 Then add to `proposers/llm_candidate.rs`:
 
 ```rust
@@ -3348,6 +3373,11 @@ git commit -m "feat: wrap LLM-candidate flow behind AssociationProposer"
 **Files:**
 - Create: `crates/qsf_app/src/sleep/proposers/safety_net_co_retrieval.rs`
 - Modify: `crates/qsf_app/src/sleep/auto_promote.rs` — wire safety net into proposer registry
+
+Input scope reminder: `retrieved_memory_ids()` now reflects relevance-gated
+selections only. Zero-signal memories filtered by the gate (with
+`RetrievedMemory.skip_reason = Some("relevance gate: ...")`) do not reach the
+proposer and cannot be linked by the safety net.
 
 - [ ] **Step 1: Write failing test**
 
@@ -3603,6 +3633,10 @@ git commit -m "docs: log Phase 5 (proposer interface + sleep prompt)"
 - Run sleep on a session with no live drops (short session). Confirm the safety net fires and persists associations.
 - Run sleep on a session with multiple drops. Confirm the safety net is a no-op (no new associations beyond what proposers like LLM-candidate added).
 - Inspect the sleep prompt to confirm the rewording landed.
+- Expected observations with LiveMemory candidate kinds:
+  - Safety-net links appear between assistant-identity and remembered-topic memories when they co-retrieved on a single turn.
+  - LLM-candidate proposer surfaces non-obvious cross-kind links such as user-identity to remembered-topic.
+  - No links are proposed where one endpoint failed the relevance gate; those memories should not have entered `retrieved_memory_ids()`.
 
 ---
 
@@ -3650,6 +3684,8 @@ head -30 c:/Users/larsp/src/qualia-signal-foundry/docs/DecisionLog.md
 ```
 
 - [ ] **Step 2: Append a dated decision**
+
+Use date `2026-05-27`.
 
 Content (per the design):
 *Mechanical association work runs in the live loop on drop and session-end; sleep hosts pluggable proposers for non-obvious associations. The sleep prompt is reworded accordingly.*
