@@ -3,10 +3,12 @@ use time::OffsetDateTime;
 
 use crate::memory::association::Association;
 use crate::memory::memory_record::{MemoryRecord, MemoryRecordKind};
-use crate::memory::processed_ranges::{contiguous_ranges, uncovered_turn_indices};
 use crate::memory::store::MemoryStoreContents;
 use crate::memory::token_estimate::estimated_tokens;
 use crate::session::SessionState;
+use crate::sleep::proposer::{AssociationProposer, merge_and_dedupe, sort_by_priority_descending};
+use crate::sleep::proposers::llm_candidate::LlmCandidateProposer;
+use crate::sleep::proposers::safety_net_co_retrieval::SafetyNetCoRetrievalProposer;
 use crate::sleep::sleep_report::SleepReport;
 
 #[derive(Clone, Debug, PartialEq, Serialize)]
@@ -73,191 +75,52 @@ pub fn build_promotion_plan(
         new_records.push(record);
     }
 
-    let cross_turn = build_cross_turn_associations(session, current_store, as_of);
-    let mut new_associations = cross_turn.new_associations;
-    new_associations.extend(build_sleep_candidate_associations(
+    let llm = LlmCandidateProposer {
         report,
-        &promoted_candidate_ids,
-        current_store,
-        as_of,
-    ));
-
-    PromotionPlan {
-        new_records,
-        new_associations,
-        strengthened_associations: cross_turn.strengthened_associations,
-        processed_ranges: cross_turn.processed_ranges,
-        skipped_duplicates,
-    }
-}
-
-fn build_cross_turn_associations(
-    session: &SessionState,
-    current_store: &MemoryStoreContents,
-    as_of: OffsetDateTime,
-) -> CrossTurnAssociationPlan {
-    use crate::memory::co_retrieval::{
-        CROSS_TURN_ASSOCIATION_WINDOW, CoRetrievalDelta, CrossTurnAnchorRange,
-        generate_cross_turn_deltas_for_anchor_ranges,
+        promoted_candidate_ids: &promoted_candidate_ids,
     };
-
-    if session.turns.is_empty() {
-        return CrossTurnAssociationPlan::default();
+    let safety = SafetyNetCoRetrievalProposer;
+    let safety_output = safety.propose_with_bookkeeping(current_store, session, as_of);
+    let mut tagged = Vec::new();
+    for proposal in llm.propose(current_store, session, as_of) {
+        tagged.push((llm.priority(), proposal));
     }
-
-    let uncovered = uncovered_turn_indices(
-        &current_store.processed_ranges,
-        &session.session_id,
-        0,
-        session.turns.len() - 1,
-    );
-    if uncovered.is_empty() {
-        return CrossTurnAssociationPlan::default();
+    for proposal in safety_output.proposals {
+        tagged.push((safety.priority(), proposal));
     }
+    sort_by_priority_descending(&mut tagged);
 
-    let known = current_store
+    let mut known_record_ids: std::collections::HashSet<String> = current_store
         .records
         .iter()
         .map(|record| record.id.clone())
         .collect();
-    let retrievals = session
-        .turns
-        .iter()
-        .map(|turn| turn.context_assembly.retrieved_memory_ids())
-        .collect::<Vec<_>>();
-
-    let ranges = contiguous_ranges(&uncovered);
-    let anchor_ranges = ranges
-        .iter()
-        .map(|(first, last)| CrossTurnAnchorRange {
-            first_turn: *first,
-            last_turn: *last,
-        })
-        .collect::<Vec<_>>();
-    let deltas = generate_cross_turn_deltas_for_anchor_ranges(
-        &retrievals,
+    known_record_ids.extend(new_records.iter().map(|record| record.id.clone()));
+    let merged = merge_and_dedupe(
+        tagged.into_iter().map(|(_, proposal)| proposal).collect(),
         &current_store.associations,
-        &known,
-        CROSS_TURN_ASSOCIATION_WINDOW,
-        &session.session_id,
-        as_of,
-        &anchor_ranges,
+        &known_record_ids,
     );
-    let mut new_associations = Vec::new();
-    let mut strengthened_associations = Vec::new();
-    for delta in deltas {
-        match delta {
-            CoRetrievalDelta::Create {
-                from,
-                to,
-                weight,
-                reason,
-                at,
-            } => {
-                new_associations.push(Association::new(from, to, weight, reason, at));
-            }
-            CoRetrievalDelta::Strengthen {
-                from,
-                to,
-                new_weight,
-                ..
-            } => {
-                strengthened_associations.push((from, to, new_weight));
-            }
-        }
-    }
-
-    let processed_ranges = ranges
+    let new_associations = merged
         .into_iter()
-        .map(|(first, last)| qsf_memory::ProcessedRange {
-            session_id: session.session_id.clone(),
-            first_turn_index: first,
-            last_turn_index: last,
-            kind: qsf_memory::ProcessedRangeKind::SleepSafetyNet,
-            at: as_of,
+        .map(|proposal| {
+            Association::new(
+                proposal.from_id,
+                proposal.to_id,
+                proposal.weight,
+                proposal.reason,
+                as_of,
+            )
         })
         .collect();
 
-    CrossTurnAssociationPlan {
+    PromotionPlan {
+        new_records,
         new_associations,
-        strengthened_associations,
-        processed_ranges,
+        strengthened_associations: safety_output.strengthened_associations,
+        processed_ranges: safety_output.processed_ranges,
+        skipped_duplicates,
     }
-}
-
-#[derive(Clone, Debug, Default, PartialEq)]
-struct CrossTurnAssociationPlan {
-    new_associations: Vec<Association>,
-    strengthened_associations: Vec<(String, String, f64)>,
-    processed_ranges: Vec<qsf_memory::ProcessedRange>,
-}
-
-fn build_sleep_candidate_associations(
-    report: &SleepReport,
-    promoted_candidate_ids: &[Option<String>],
-    current_store: &MemoryStoreContents,
-    as_of: OffsetDateTime,
-) -> Vec<Association> {
-    let mut associations = Vec::new();
-
-    for candidate in &report.association_candidates {
-        let Some(from_id) = candidate
-            .from_memory_candidate_index
-            .checked_sub(1)
-            .and_then(|index| promoted_candidate_ids.get(index))
-            .and_then(Option::as_ref)
-        else {
-            continue;
-        };
-        let Some(to_id) = candidate
-            .to_memory_candidate_index
-            .checked_sub(1)
-            .and_then(|index| promoted_candidate_ids.get(index))
-            .and_then(Option::as_ref)
-        else {
-            continue;
-        };
-        if from_id == to_id || association_exists(current_store, &associations, from_id, to_id) {
-            continue;
-        }
-
-        let Some(reason) = candidate
-            .reason
-            .as_deref()
-            .map(str::trim)
-            .filter(|reason| !reason.is_empty())
-        else {
-            continue;
-        };
-        let Some(weight) = candidate.weight else {
-            continue;
-        };
-
-        associations.push(Association::new(
-            from_id.clone(),
-            to_id.clone(),
-            weight.clamp(0.0, 1.0),
-            reason.to_string(),
-            as_of,
-        ));
-    }
-
-    associations
-}
-
-fn association_exists(
-    current_store: &MemoryStoreContents,
-    pending_associations: &[Association],
-    from_id: &str,
-    to_id: &str,
-) -> bool {
-    current_store
-        .associations
-        .iter()
-        .chain(pending_associations.iter())
-        .any(|association| {
-            association.from_memory_id == from_id && association.to_memory_id == to_id
-        })
 }
 
 fn normalize_for_dedup(title: &str, summary: &str) -> String {

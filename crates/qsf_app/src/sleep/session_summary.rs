@@ -9,7 +9,7 @@ use crate::runtime::run_context::RunContext;
 use super::sleep_report::{SleepInputBundle, SleepReport, parse_sleep_report};
 
 const SLEEP_SUMMARY_MAX_OUTPUT_TOKENS: u32 = 1536;
-const SLEEP_PHASE_SYSTEM_PROMPT: &str = "You are the Qualia Signal Foundry sleep-phase summarizer. Return compact valid JSON only, with no markdown and no prose outside the JSON object. The object must contain these fields: session_summary, memory_candidates, open_questions, decision_candidates, future_context_hints, review_notes. You may include association_candidates with from_memory_candidate_index, to_memory_candidate_index, weight, and reason when a provisional link is clearly grounded. Association candidate indexes are 1-based: the first memory candidate is index 1, and index 0 is invalid. Keep memory_candidates to at most 4 items, open_questions to at most 3, decision_candidates to at most 2, future_context_hints to at most 3, and review_notes to at most 3. memory_candidates may be strings or objects; when an object includes importance, importance must be a numeric value from 0.0 to 1.0, never labels like low, medium, or high. Keep decision_candidates and association_candidates explicitly provisional and do not invent accepted decisions.";
+const SLEEP_PHASE_SYSTEM_PROMPT: &str = "You are the Qualia Signal Foundry sleep-phase summarizer. Return compact valid JSON only, with no markdown and no prose outside the JSON object. The object must contain these fields: session_summary, memory_candidates, open_questions, decision_candidates, future_context_hints, review_notes. You may include association_candidates with from_memory_candidate_index, to_memory_candidate_index, weight, and reason when you can justify a non-obvious connection between memories. Association candidate indexes are 1-based: the first memory candidate is index 1, and index 0 is invalid. Keep memory_candidates to at most 4 items, open_questions to at most 3, decision_candidates to at most 2, future_context_hints to at most 3, and review_notes to at most 3. memory_candidates may be strings or objects; when an object includes importance, importance must be a numeric value from 0.0 to 1.0, never labels like low, medium, or high. Keep decision_candidates and association_candidates explicitly provisional and do not invent accepted decisions.";
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct SleepSummaryResult {
@@ -75,7 +75,7 @@ fn build_sleep_user_prompt(input: &SleepInputBundle) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{SLEEP_SUMMARY_MAX_OUTPUT_TOKENS, summarize_session};
+    use super::{SLEEP_PHASE_SYSTEM_PROMPT, SLEEP_SUMMARY_MAX_OUTPUT_TOKENS, summarize_session};
     use crate::models::{MockModelClient, ModelClient, ModelRequest, ModelResponse};
     use crate::runtime::run_context::RunContext;
     use crate::sleep::SleepInputBundle;
@@ -120,6 +120,13 @@ mod tests {
         summarize_session(&mut context, &AssertingSleepClient, &input).unwrap();
 
         std::fs::remove_dir_all(base_dir).unwrap();
+    }
+
+    #[test]
+    fn sleep_prompt_references_non_obvious_connections() {
+        assert!(SLEEP_PHASE_SYSTEM_PROMPT.contains("non-obvious connection"));
+        assert!(!SLEEP_PHASE_SYSTEM_PROMPT.contains("co-retrieved"));
+        assert!(!SLEEP_PHASE_SYSTEM_PROMPT.contains("mechanically link"));
     }
 
     struct AssertingSleepClient;

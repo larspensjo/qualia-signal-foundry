@@ -1,5 +1,7 @@
 pub mod auto_promote;
 pub mod commit;
+pub mod proposer;
+pub mod proposers;
 mod session_summary;
 mod sleep_report;
 

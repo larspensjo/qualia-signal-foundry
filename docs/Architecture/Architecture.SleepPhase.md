@@ -29,7 +29,16 @@ the boundary for decision-kind candidates.
 - Sleep-side auto-promotion of routine memory candidates into `Observation`
   records, with normalized-string deduplication
   ([sleep/auto_promote.rs](../../crates/qsf_app/src/sleep/auto_promote.rs))
-- Cross-turn association creation and strengthening from session retrieval history
+- Pluggable sleep association proposers. `LlmCandidateProposer` accepts
+  reviewable model-suggested links between newly promoted memory candidates, and
+  `SafetyNetCoRetrievalProposer` performs the idempotent cross-turn safety net
+  against unprocessed retrieval-history ranges
+  ([sleep/proposer.rs](../../crates/qsf_app/src/sleep/proposer.rs),
+  [sleep/proposers/llm_candidate.rs](../../crates/qsf_app/src/sleep/proposers/llm_candidate.rs),
+  [sleep/proposers/safety_net_co_retrieval.rs](../../crates/qsf_app/src/sleep/proposers/safety_net_co_retrieval.rs))
+- Cross-turn association strengthening from session retrieval history remains
+  part of the sleep commit plan, but creation flows through the safety-net
+  proposer pipeline
   ([sleep/auto_promote.rs](../../crates/qsf_app/src/sleep/auto_promote.rs))
 - Manifest-last sleep commit protocol for `memory-store.json`,
   `consolidated-brief.json`, archived briefs, and `continuity-manifest.json`
@@ -43,6 +52,9 @@ the boundary for decision-kind candidates.
   compact prompt guidance, and association-index normalization
   ([sleep/session_summary.rs](../../crates/qsf_app/src/sleep/session_summary.rs),
   [sleep/sleep_report.rs](../../crates/qsf_app/src/sleep/sleep_report.rs))
+- Sleep summarization prompt wording now asks for justified non-obvious
+  connections rather than mechanical co-retrieval links
+  ([sleep/session_summary.rs](../../crates/qsf_app/src/sleep/session_summary.rs))
 
 **Partial:**
 
@@ -62,8 +74,8 @@ the boundary for decision-kind candidates.
 - Replay UI or report view for deterministic sleep comparison
 - Voice-loop session consumption by the sleep phase
 
-Last reviewed: 2026-05-20 against the Stage 5 continuity implementation and
-OpenAI golden-path run.
+Last reviewed: 2026-05-27 against the Phase 5 associative-recall proposer
+implementation.
 
 ## Summary
 

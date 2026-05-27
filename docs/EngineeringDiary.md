@@ -2076,3 +2076,42 @@ Refs: crates/qsf_app/src/models/mock_model.rs,
 crates/qsf_app/src/sleep/session_summary.rs,
 crates/qsf_app/src/experiments/sleep_phase_session_summary.rs;
 implements: Default sleep runs execute full side effects without synthetic memory
+
+## 2026-05-27 - Sleep proposer interface and prompt rewording
+
+Phase 5 of the associative recall plan landed: sleep now routes association
+generation through pluggable proposers, and the sleep prompt asks for
+non-obvious connections instead of mechanical co-retrieval language. Review
+follow-up consolidated the safety-net cross-turn work so create proposals,
+strengthen deltas, and processed ranges are computed together.
+
+What changed:
+- Added `sleep::proposer` with `AssociationProposer`, `ProposedAssociation`, and
+  priority-aware merge/dedupe helpers.
+- Added `LlmCandidateProposer` and `SafetyNetCoRetrievalProposer` under
+  `sleep::proposers`, with coverage tests for both paths.
+- Refactored sleep promotion to merge proposer output before creating
+  associations, while keeping the cross-turn strengthening and processed-range
+  bookkeeping intact.
+- Moved safety-net create proposals, strengthen deltas, and `SleepSafetyNet`
+  processed ranges into one `propose_with_bookkeeping` path.
+- Removed duplicated cross-turn delta computation and the stale cross-turn plan
+  helper from `auto_promote.rs`.
+- Reworded the sleep summarizer prompt to emphasize non-obvious connections and
+  added a regression test to pin the new wording.
+- Updated the sleep architecture note to describe the proposer pipeline and the
+  non-obvious-connection prompt wording.
+
+Observed:
+- `cargo test -p qsf_app sleep` passes after the refactor.
+- Follow-up addresses the review findings about duplicate computation,
+  misleading naming, split processed-range ownership, and stale architecture
+  docs.
+
+Refs: crates/qsf_app/src/sleep/proposer.rs,
+crates/qsf_app/src/sleep/proposers/llm_candidate.rs,
+crates/qsf_app/src/sleep/proposers/safety_net_co_retrieval.rs,
+crates/qsf_app/src/sleep/auto_promote.rs,
+crates/qsf_app/src/sleep/session_summary.rs,
+docs/Architecture/Architecture.SleepPhase.md;
+implements: Phase 5 - Proposer Interface And Sleep Prompt Rewording
