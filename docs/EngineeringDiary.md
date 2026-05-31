@@ -2116,3 +2116,22 @@ crates/qsf_app/src/sleep/auto_promote.rs,
 crates/qsf_app/src/sleep/session_summary.rs,
 docs/Architecture/Architecture.SleepPhase.md;
 implements: Phase 5 - Proposer Interface And Sleep Prompt Rewording
+
+## 2026-05-31 - Shared live-session state extraction and review follow-up
+
+Extracted reusable live-session state types so the session layer can represent text and voice exchanges through one shared model while preserving existing persisted `SessionState` files, then applied the Phase 1 review follow-up to tighten compatibility and state handling.
+
+What changed:
+- Added `session/exchange.rs` with shared `Exchange`, input/output, utterance, interruption, and model-use types plus `Turn` conversion.
+- Added `session/live_state.rs` with reusable live state, runtime phase, partial transcript, active response, live capture, and processed-range tracking.
+- Added defaulted `SessionState.live` storage and cleared volatile live state during awake continuation.
+- Added regression coverage for the new live state reducer, awake-continuation cleanup, and loading a pre-migration session-state fixture.
+- Added `ExchangesAgedAndCoRetrieved` state and reducer support so the shared live slice can represent aging/co-retrieval outcomes alongside `processed_ranges`.
+- Replaced the infallible `From<&Exchange> for Turn` with `TryFrom<&Exchange>` and an explicit conversion error type.
+- Tightened `UserInterrupted` and `MemoryContextRecorded` handling so mismatched events no longer rewrite unrelated live state.
+- Expanded the compatibility fixture to include one real `Turn` and one real `TurnSummary`, and updated the regression assertion to verify both load.
+
+Observed:
+- `cargo build`, `cargo test session --lib`, `cargo test multi_turn_text_loop --lib`, `cargo clippy --all-targets -- -D warnings`, and `cargo fmt` all passed after the extraction and follow-up.
+
+Refs: crates/qsf_app/src/session/exchange.rs, crates/qsf_app/src/session/live_state.rs, crates/qsf_app/src/session/mod.rs, crates/qsf_app/src/session/continuation.rs, crates/qsf_app/tests/fixtures/pre_migration_session_state.json, docs/Architecture/Architecture.RuntimeLoop.md, docs/Reviews/Review.VoiceLoopUnification.Phase1.md

@@ -1,0 +1,101 @@
+{
+  "session_id": "legacy-session",
+  "previous_session_id": null,
+  "started_at": {
+    "secs_since_epoch": 1779800369,
+    "nanos_since_epoch": 764486700
+  },
+  "config": {
+    "model_id": "gpt-5.4-mini",
+    "max_turns": 12,
+    "warm_threshold": 3,
+    "allow_over_limit": false,
+    "memory_source": {
+      "source": "phase_four_fixture",
+      "file": null
+    }
+  },
+  "turns": [
+    {
+      "index": 0,
+      "started_at": {
+        "secs_since_epoch": 1779800369,
+        "nanos_since_epoch": 764486700
+      },
+      "completed_at": {
+        "secs_since_epoch": 1779800369,
+        "nanos_since_epoch": 765426800
+      },
+      "user_input": "I want you to use the name Ari.",
+      "context_assembly": {
+        "budget": {
+          "max_fragments": 4,
+          "max_estimated_tokens": 600
+        },
+        "selected": [],
+        "omitted": [],
+        "used_estimated_tokens": 0
+      },
+      "retrieved_memory_block": "",
+      "assistant_response": "I am a QSF runtime voice loop. I turn your speech into events, assemble context, and answer through the framework before speech playback.",
+      "recalled_turns": [],
+      "model_id": "gpt-5.4-mini",
+      "model_latency_ms": 0,
+      "input_tokens": 58,
+      "cached_input_tokens": 19,
+      "output_tokens": 28,
+      "full_request_hash": [
+        133,
+        213,
+        87,
+        255,
+        70,
+        208,
+        64,
+        171,
+        173,
+        135,
+        42,
+        5,
+        137,
+        161,
+        219,
+        213,
+        178,
+        23,
+        170,
+        8,
+        5,
+        160,
+        77,
+        225,
+        101,
+        175,
+        50,
+        196,
+        190,
+        114,
+        215,
+        19
+      ],
+      "message_count": 2
+    }
+  ],
+  "summarized_turns": [
+    {
+      "turn_index": 0,
+      "summarized_after_turn_index": 6,
+      "summary": "The user asked to use the name \"Ari,\" and the assistant responded that it is a QSF runtime voice loop that converts speech into events, assembles context, and answers through the framework before playback.",
+      "model_id": "gpt-5.4-nano-2026-03-17",
+      "model_latency_ms": 941,
+      "input_tokens": 90,
+      "output_tokens": 45
+    }
+  ],
+  "ended_reason": null,
+  "last_input": null,
+  "last_prompt_hash": null,
+  "prefix_invalidated_since_last_prompt": false,
+  "last_model_error": null,
+  "limit_reached": null
+}

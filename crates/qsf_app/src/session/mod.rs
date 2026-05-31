@@ -6,9 +6,21 @@ use crate::context::ContextAssembly;
 use crate::conversation::ContentHash;
 
 pub mod continuation;
+pub mod exchange;
+pub mod live_state;
 pub mod manifest;
 pub mod persistence;
 pub mod resume;
+
+pub use exchange::{
+    Exchange, ExchangeInput, ExchangeModelUse, ExchangeOutput, ExchangeRange, ExchangeStatus,
+    ExchangeTurnConversionError, InterruptionAction, InterruptionRecord, InterruptionStopOutcome,
+    UtteranceRecord,
+};
+pub use live_state::{
+    ActiveResponseState, AgedCoRetrievalRecord, LiveCaptureContext, LiveSessionEvent,
+    LiveSessionState, PartialTranscript, ResponseStatus, RuntimePhase,
+};
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 pub struct SessionState {
@@ -22,6 +34,8 @@ pub struct SessionState {
     pub config: SessionConfig,
     pub turns: Vec<Turn>,
     pub summarized_turns: Vec<TurnSummary>,
+    #[serde(default)]
+    pub live: LiveSessionState,
     pub ended_reason: Option<SessionEndReason>,
     pub last_input: Option<String>,
     pub last_prompt_hash: Option<ContentHash>,
@@ -43,6 +57,7 @@ impl SessionState {
             config,
             turns: vec![],
             summarized_turns: vec![],
+            live: LiveSessionState::default(),
             ended_reason: None,
             last_input: None,
             last_prompt_hash: None,
@@ -203,6 +218,23 @@ pub(crate) mod tests {
         let parsed: SessionState = serde_json::from_str(&json).unwrap();
         assert_eq!(parsed.session_id, "session-roundtrip");
         assert_eq!(parsed.previous_session_id, None);
+        assert_eq!(parsed.live, LiveSessionState::default());
+    }
+
+    #[test]
+    fn pre_migration_session_state_fixture_loads_with_live_defaults() {
+        let raw = include_str!("../../tests/fixtures/pre_migration_session_state.json");
+        let parsed: SessionState = serde_json::from_str(raw).unwrap();
+
+        assert_eq!(parsed.session_id, "legacy-session");
+        assert_eq!(parsed.turns.len(), 1);
+        assert_eq!(parsed.summarized_turns.len(), 1);
+        assert_eq!(
+            parsed.turns[0].user_input,
+            "I want you to use the name Ari."
+        );
+        assert_eq!(parsed.summarized_turns[0].turn_index, 0);
+        assert_eq!(parsed.live, LiveSessionState::default());
     }
 
     pub(crate) fn fake_turn(index: usize) -> Turn {

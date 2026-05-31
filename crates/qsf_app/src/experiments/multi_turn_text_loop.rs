@@ -2732,6 +2732,7 @@ fn prompt_prefix_status_for_report(state: &SessionState, turn_position: usize) -
             .filter(|summary| summary.summarized_after_turn_index < turn_position)
             .cloned()
             .collect(),
+        live: crate::session::LiveSessionState::default(),
         ..state.clone()
     };
     let turn = &state.turns[turn_position];
@@ -4903,6 +4904,7 @@ mod tests {
         let state = SessionState {
             turns: vec![turn0, turn1, turn2],
             summarized_turns: vec![summary],
+            live: crate::session::LiveSessionState::default(),
             ..SessionState::new(config)
         };
 

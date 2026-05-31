@@ -56,9 +56,14 @@ document as a candidate design that real experiments incrementally fill in.
 
 - "Update Attention and Focus" exists in concept only; there is no `AttentionState`
   structure today
-- "Update Live State" is implemented per-experiment rather than as a shared runtime
-  state module; `SessionState` is the most developed example
-  ([session/mod.rs](../../crates/qsf_app/src/session/mod.rs))
+- Shared live-session state now exists in `session/exchange.rs` and
+  `session/live_state.rs`, including exchange payloads, runtime phase, partial
+  transcript, interruption, response, and processed-range state. The runtime loop
+  still uses the text-loop reducer directly and has not been fully switched to the
+  shared core yet
+  ([session/exchange.rs](../../crates/qsf_app/src/session/exchange.rs),
+  [session/live_state.rs](../../crates/qsf_app/src/session/live_state.rs),
+  [session/mod.rs](../../crates/qsf_app/src/session/mod.rs))
 - Output planning is collapsed into model-role output today; there is no separate
   `OutputPlan` step
 
@@ -70,9 +75,9 @@ document as a candidate design that real experiments incrementally fill in.
   experiment code
 - Interruption and turn-taking handling in the live loop
 
-Last reviewed: 2026-05-27 against the Phase 5 live/sleep split — drop-driven and
-session-end cross-turn association work runs in the live loop here, while sleep
-handles non-obvious associations through the proposer interface.
+Last reviewed: 2026-05-31 against the shared live-session extraction — the
+session module now carries a reusable live exchange state slice, while the text
+loop still owns the concrete reducer path.
 
 ## Purpose
 

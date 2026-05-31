@@ -7,6 +7,7 @@ pub fn prepare_awake_continuation(
 ) -> SessionState {
     let mut state = previous;
     state.config = new_config.clone();
+    state.live.prepare_for_awake_continuation();
     state.ended_reason = None;
     state.last_input = None;
     state.last_model_error = None;
@@ -116,6 +117,33 @@ mod tests {
                 override_active: false,
             })
         );
+    }
+
+    #[test]
+    fn live_state_clears_volatile_audio_on_resume() {
+        let mut prev = previous_with(Some(SessionEndReason::QuitCommand), 1);
+        prev.live.active_response = Some(crate::session::ActiveResponseState {
+            response_id: Some("response-1".to_string()),
+            partial_text: "hello".to_string(),
+            status: crate::session::ResponseStatus::Streaming,
+            observed_at: std::time::SystemTime::UNIX_EPOCH,
+            audio_marker: Some("marker".to_string()),
+        });
+        prev.live.partial_transcript = Some(crate::session::PartialTranscript {
+            exchange_index: 0,
+            utterance_id: "utterance-1".to_string(),
+            revision_index: 1,
+            transcript: "hel".to_string(),
+            received_at: std::time::SystemTime::UNIX_EPOCH,
+            provider_id: Some("provider".to_string()),
+            source_chunk_index: Some(1),
+        });
+
+        let cont = prepare_awake_continuation(prev, &config(10));
+
+        assert!(cont.live.active_response.is_none());
+        assert!(cont.live.partial_transcript.is_none());
+        assert_eq!(cont.live.runtime_phase, crate::session::RuntimePhase::Idle);
     }
 
     #[test]
