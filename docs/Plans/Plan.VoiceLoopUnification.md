@@ -2,10 +2,23 @@
 
 ## Status
 
-Phase 0 complete as a design/inventory pass. No application code has changed for
-this plan yet.
+Phase 0 complete as a design/inventory pass.
 
-Phase 1 is the next implementation step.
+Phase 1 complete (commit 2a20950): shared `Exchange`, `LiveSessionState`,
+`RuntimePhase`, interruption/utterance records, the `reduce_live_session` reducer, a
+`TryFrom<&Exchange> for Turn` adapter, and a pre-migration `SessionState` serde
+fixture landed in `crates/qsf_app/src/session/{exchange,live_state}.rs`, with
+`live: LiveSessionState` added to `SessionState` behind `#[serde(default)]`.
+
+Phase 2 is the next implementation step, and is now the most important phase for the
+project goal (see below).
+
+Important gap to close in Phase 2: as of Phase 1 the shared core is parallel, not
+load-bearing. `reduce_live_session` is `#[cfg_attr(not(test), allow(dead_code))]`,
+and `multi_turn_text_loop` still drives `state.turns` directly — nothing in a
+production build constructs an `Exchange`. The refined goal below only holds if
+Phase 2 puts the text loop on the shared core; otherwise text-loop improvements will
+not propagate to voice.
 
 Code drift reviewed on 2026-05-31. The main conclusion is that the plan direction
 still holds, but the text-loop baseline is now richer than when the plan was
@@ -14,8 +27,23 @@ co-retrieval, `processed_ranges` idempotency, session-end cross-turn flush, and 
 sleep association proposer boundary while introducing `Exchange`.
 
 This plan promotes `Idea.VoiceLoopUnification.md` into an incremental implementation
-path. The strategic direction is that voice becomes the primary live loop while typed
-text becomes an optional input surface over the same session model.
+path.
+
+Refined goal (2026-05-31): the `multi-turn-text-loop` stays as it is today, both in
+external behavior and as a first-class experiment. It is not renamed, demoted, or
+turned into a mere input mode of a voice loop. Instead, the behavior the text loop
+owns today (reducer-driven session state, prompt assembly, memory read/reinforce,
+live capture, cross-turn co-retrieval, warm summaries, persistence, sleep handoff) is
+extracted into shared code that both the text loop and the voice loop call. The voice
+loop mimics the text loop by reusing that common code, so improving the text loop
+automatically improves the voice loop rather than the two drifting apart.
+
+A voice run and a text run are one continuous session over a single shared
+`state/session/` directory. They are separate entry points, not separate continuity
+universes: a voice run followed by a text run (and vice versa) reads and appends the
+same session history by default. The text loop's persistence directory moves to that
+shared path once (via the read-only fallback below); its status as a first-class
+experiment is unchanged.
 
 ## Background
 
@@ -117,6 +145,14 @@ Not in scope for this plan:
   behavior needed to make state transitions inspectable.
 - Raw audio persistence. Audio observability should continue to record metadata,
   transcripts, timing, and safety markers rather than storing raw audio by default.
+- Renaming, demoting, or behavior-changing the `multi-turn-text-loop`. It stays a
+  first-class experiment with its current behavior; the voice loop reuses shared code
+  rather than absorbing the text loop.
+- Making voice the primary/default loop. Voice is an added surface over the shared
+  core, not a replacement default, and there is no `QSF_PRIMARY_LOOP=voice` default.
+  (Both loops do share one `state/session/` directory and one continuous session; see
+  [Default State Directory](#default-state-directory). That is a shared-continuity
+  decision, not a demotion of the text loop.)
 
 ## Cross-Cutting Acceptance Criteria
 
@@ -240,11 +276,13 @@ input arrives as voice or text, which matches the goal of a single continuity
 universe.
 
 Current drift note, reviewed 2026-05-31: the implemented text-loop default is still
-`state/text-loop` through `session::resume::state_dir_from_env()`. Moving the
-default resolver to `state/session` is still implementation work, not current
-behavior. Phase 3 introduces the neutral resolver for shared voice-session boot;
-Phase 6 finishes the user-visible primary-loop/default transition and removes any
-remaining silent `state/text-loop` defaults.
+`state/text-loop` through `session::resume::state_dir_from_env()`. Moving the default
+resolver to `state/session` is still implementation work, not current behavior. Both
+loops use this one resolver — the `multi-turn-text-loop` and the voice loop share a
+single continuous session. Phase 3 introduces the shared resolver for voice boot;
+Phase 6 routes the text loop onto the same resolver and removes any remaining silent
+`state/text-loop` defaults. The text loop stays a first-class experiment; only its
+persistence directory moves (once, via the read-only fallback below).
 
 Compatibility behavior on boot:
 
@@ -542,13 +580,23 @@ Docs to update:
 
 ## Phase 2: Move Text Loop Onto The Shared Core
 
-Goal: prove the shared model can preserve the mature text behavior before voice uses
-it.
+Goal: make the text loop actually run on the shared core so that voice can later reuse
+the exact same behavior. This is the phase that delivers the "improve once, benefit
+both" property; Phase 1 only created the shared types.
 
 Work:
 
-- Adapt `multi_turn_text_loop` to create completed text `Exchange` records, while
-  preserving existing prompt hash, warm summary, recall, and manifest behavior.
+- Route `multi_turn_text_loop`'s per-turn processing through the shared core so the
+  loop builds an `Exchange` first and derives `Turn` via `TryFrom<&Exchange>`, rather
+  than keeping a second hand-written `Turn` write path. Remove the
+  `#[cfg_attr(not(test), allow(dead_code))]` on `reduce_live_session` once it is on
+  the production path; if it stays dead outside tests, this phase's goal is not met.
+- Factor the behavior the voice loop must mimic (prompt assembly, memory
+  read/reinforce, live capture, cross-turn co-retrieval, warm summaries, persistence,
+  manifest commit) into shared functions/modules that both loops call, instead of
+  leaving that logic private to `multi_turn_text_loop`. Preserve existing prompt hash,
+  warm summary, recall, and manifest behavior; the text loop's external behavior must
+  stay byte-for-byte compatible where tests assert it.
 - Preserve the current live memory side effects around the text exchange:
   retrieved-memory reinforcement, assistant/user-name capture, remember-this
   capture, warm-threshold and token-budget cross-turn co-retrieval, processed-range
@@ -600,8 +648,9 @@ Work:
   experiments when explicitly configured.
 - Use the `state/session` resolution rules from
   [Default State Directory](#default-state-directory) for shared voice-session boot
-  during this phase. Do not introduce a separate `state/voice-loop` directory, and
-  do not leave the voice path on `VoiceLoopMemorySource` as its silent default.
+  during this phase, so a voice run and a text run share one continuous session. Do
+  not introduce a separate `state/voice-loop` directory, and do not leave the voice
+  path on `VoiceLoopMemorySource` as its silent default.
 - Persist session state and update the manifest after a successful exchange.
 - Inject `ConsolidatedBrief` into first voice prompt/context using the same contract
   the text loop uses.
@@ -617,9 +666,9 @@ Verification:
 - Acceptance criterion: with no voice-specific memory env vars set, the simulated
   voice path loads the shared `MemoryStore`, so the default path exercises shared
   continuity.
-- Regression test: a simulated voice run followed by a text run with the same state
-  directory produces one continuous session history rather than two continuity
-  universes.
+- Regression test: a simulated voice run followed by a text run, and a text run
+  followed by a voice run, both read and append the same shared `state/session/`
+  session history by default rather than producing two continuity universes.
 - `cargo test text_owned_voice_loop --lib`
 - `cargo test session --lib`
 - `cargo build`
@@ -722,32 +771,34 @@ Docs to update:
   a follow-up report if the experiment doc does not exist.
 - Add the required diary entry for the realtime bridge.
 
-## Phase 6: Make Voice The Primary Loop Surface
+## Phase 6: Voice Loop As A Peer Surface
 
-Goal: rename and organize runtime entry points so voice is the normal loop and text
-is an optional input mode.
+Goal: give voice its own first-class experiment that reuses the shared core, without
+changing the status of the `multi-turn-text-loop`. Voice is a peer surface, not the
+primary or default loop.
 
 Work:
 
-- Introduce a stable experiment/runtime name such as `live-loop` or `voice-loop`,
-  avoiding temporary phase names.
-- Let the new entry point default to voice-capable behavior with deterministic
-  simulated providers unless real providers are explicitly selected.
-- Add a transition override such as `QSF_PRIMARY_LOOP=voice|text`, with `voice` as
-  the default once Phase 6 lands so the default path exercises the new primary loop.
-- Keep typed text as an input source for the same loop, not a separate continuity
-  universe.
-- Migrate default state directory to `state/session` with the compatibility
-  behavior defined in [Default State Directory](#default-state-directory),
-  and add the `schema_version` upgrader described in
+- Introduce a stable voice experiment name such as `voice-loop` (a stable domain
+  name, not a phase name). Keep `multi-turn-text-loop` registered and unchanged.
+- Let the voice entry point default to deterministic simulated providers unless real
+  providers are explicitly selected, so the default path needs no audio credentials.
+- Do not add a `QSF_PRIMARY_LOOP` default that demotes text. If a selector is useful,
+  it only chooses which experiment to run and defaults to today's behavior.
+- Confirm both loops exercise the same shared behavior code, so a later improvement to
+  the text loop is picked up by the voice loop without duplicate edits.
+- Route both loops onto the single shared resolver so a voice run and a text run
+  continue one session. Move the default to `state/session/` with the read-only
+  fallback from `state/text-loop/` defined in
+  [Default State Directory](#default-state-directory), and add the `schema_version`
+  upgrader described in
   [Persisted State Compatibility](#persisted-state-compatibility).
-- If Phase 3 already moved the shared resolver to `state/session`, Phase 6 should
-  audit and remove remaining compatibility defaults in old text-only entry points
-  rather than performing a second migration.
-- Emit a boot event and `engine_logging` record that names the chosen loop mode,
-  state directory, and whether legacy `state/text-loop` compatibility was used.
-- Keep `multi-turn-text-loop` as a compatibility or focused text experiment until
-  its unique test value is exhausted.
+- If Phase 3 already moved the shared resolver to `state/session/`, Phase 6 only
+  audits and removes any remaining silent `state/text-loop` defaults rather than
+  performing a second migration.
+- Emit a boot event and `engine_logging` record that names the chosen experiment, the
+  resolved state directory, and whether the legacy `state/text-loop` fallback was used.
+- Keep `multi-turn-text-loop` as a first-class experiment indefinitely.
 
 Verification:
 
@@ -761,21 +812,23 @@ Verification:
 
 Docs to update:
 
-- Update `README.md` run instructions if the primary experiment changes.
-- Update `docs/Architecture/Architecture.Overview.md` once the main-loop surface
-  changes.
+- Update `README.md` run instructions when the voice experiment is added as a
+  surfaced experiment.
+- Update `docs/Architecture/Architecture.Overview.md` when the voice loop surface is
+  added alongside the text loop.
 - Update `docs/Architecture/Architecture.AudioLoop.md`,
   `docs/Architecture/Architecture.RuntimeLoop.md`, and
   `docs/Architecture/Architecture.SleepPhase.md` status sections.
-- Add a `docs/DecisionLog.md` entry for the primary-loop rename/default and default
-  state-directory migration if Phase 6 makes those user-visible defaults.
-- Add the required diary entry for the primary-loop surface change.
+- Add a `docs/DecisionLog.md` entry for the shared `state/session/` directory move
+  (one continuous session across both loops), since it changes a user-visible default.
+- Add the required diary entry for the voice loop surface change.
 
 Rollback:
 
-- Keep `QSF_PRIMARY_LOOP=text` and the old experiment registration available during
-  the transition so the primary-loop default can be backed out without losing shared
-  persisted state.
+- The read-only fallback means `state/text-loop/` is never rewritten in place, so the
+  directory move can be backed out by pointing `QSF_STATE_DIR` at the old path. If the
+  voice experiment misbehaves it can be disabled independently while the text loop and
+  shared core stay intact.
 
 ## Phase 7: Sleep Consumes Voice Sessions
 
@@ -826,8 +879,10 @@ detailed rationale lives in [Design Choices For This Plan](#design-choices-for-t
   single source of truth in code, with `Turn` derived via `From<&Exchange>`.
   Phase 3 promotes `Exchange` to the canonical persisted unit. See
   [Session Unit](#session-unit).
-- **Default state directory.** `state/session/` (modality-neutral), with a
-  read-only fallback to `state/text-loop/` until the next sleep commit. See
+- **Default state directory.** One shared `state/session/` directory for both loops,
+  with a read-only fallback to `state/text-loop/` until the next sleep commit. A voice
+  run and a text run are one continuous session over this directory. The text loop
+  stays a first-class experiment; only its persistence path moves. See
   [Default State Directory](#default-state-directory).
 - **Realtime provider preambles.** Separate output category on the active
   `Exchange` (`provider_preamble` / `provider_events`); persisted and
@@ -838,9 +893,12 @@ detailed rationale lives in [Design Choices For This Plan](#design-choices-for-t
   for partial/live state. See
   [Persisted State Compatibility](#persisted-state-compatibility).
 
-Open items remaining (track here as they appear; none at the start of Phase 1):
+Open items remaining:
 
-- _none_
+- **Phase 2 must put the shared reducer on the production path.** Track that the
+  `allow(dead_code)` on `reduce_live_session` is removed and the text loop builds
+  `Exchange` values in production, not only in tests. Without this, the shared core
+  stays a parallel structure and the "improve once, benefit both" goal fails.
 
 ## Human Testing Points
 
@@ -890,8 +948,8 @@ Per `docs/ProjectFrame/ProjectWorkflow.md`, implementation phases should update:
   maturity-tag, or status-section conventions; otherwise follow its existing
   guidance when updating Architecture docs.
 - `docs/DecisionLog.md` only for durable commitments, not for ordinary plan progress.
-  Phase 6's primary-loop/default-state-dir change is expected to need a decision
-  entry if it changes user-visible defaults.
+  Phase 6's shared `state/session/` directory move is a user-visible default change and
+  needs a decision entry.
 
 ## Risks
 
