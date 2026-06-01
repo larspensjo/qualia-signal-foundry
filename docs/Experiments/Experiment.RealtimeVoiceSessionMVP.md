@@ -28,6 +28,15 @@ source selections only affect real provider runs; if they are paired with the si
 provider, the run stays simulated and records the requested source label for
 configuration visibility.
 
+The experiment now also boots through the shared session runtime. Provider facts are
+adapted into live-session reducer events, then persisted in `SessionState.exchanges`
+as a voice `Exchange`. The persisted exchange records the final transcript,
+provider preamble, response lifecycle events, typed interruption records, and
+provider tool-call requests. Exchange-level timestamps use wall-clock time to match
+the other voice paths; provider sub-events keep provider-relative timing facts.
+Provider-owned response text remains adapter output; this experiment does not route
+it into QSF prompt assembly as QSF-owned cognition.
+
 ## Observability
 
 The experiment records:
@@ -41,9 +50,20 @@ The experiment records:
 - provider tool-call requests routed to the QSF tool permission boundary
 - latency measurements for capture, transcript, response start, first audio,
   response completion, and interruption timing
+- a shared persisted voice exchange containing preamble/lifecycle, interruption,
+  and inert tool-request records
 
 Raw audio, API keys, and authorization headers are not written to events, traces, or
 reports.
+
+Provider tool calls are recorded with `auto_executed=false`. They do not append
+`Turn` records, mutate memory, or invoke tool side effects unless a later QSF-owned
+tool route explicitly handles them.
+
+The shared boot path may load continuity metadata and a pending consolidated brief,
+but realtime provider-owned cognition deliberately does not inject that brief into a
+provider prompt. Phase 7 remains responsible for sleep-side consumption of realtime
+voice exchanges.
 
 ## Verification
 

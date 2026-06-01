@@ -26,6 +26,10 @@ pub struct Exchange {
     #[serde(default)]
     pub interruptions: Vec<InterruptionRecord>,
     #[serde(default)]
+    pub provider_events: Vec<ProviderEventRecord>,
+    #[serde(default)]
+    pub tool_requests: Vec<ToolRequestRecord>,
+    #[serde(default)]
     pub status: ExchangeStatus,
 }
 
@@ -44,6 +48,8 @@ impl Exchange {
             recalled_items: vec![],
             model: None,
             interruptions: vec![],
+            provider_events: vec![],
+            tool_requests: vec![],
             status: ExchangeStatus::AwaitingModel,
         }
     }
@@ -63,6 +69,8 @@ impl Exchange {
             recalled_items: vec![],
             model: None,
             interruptions: vec![],
+            provider_events: vec![],
+            tool_requests: vec![],
             status: ExchangeStatus::Listening,
         }
     }
@@ -151,6 +159,45 @@ pub struct InterruptionRecord {
     pub stop_outcome: InterruptionStopOutcome,
     #[serde(default)]
     pub partial_response_text: Option<String>,
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+pub struct ProviderEventRecord {
+    pub exchange_index: usize,
+    pub event_kind: ProviderEventKind,
+    pub provider_id: String,
+    pub received_at: SystemTime,
+    #[serde(default)]
+    pub response_id: Option<String>,
+    #[serde(default)]
+    pub text: Option<String>,
+    #[serde(default)]
+    pub status: Option<String>,
+    #[serde(default)]
+    pub audio_marker: Option<String>,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ProviderEventKind {
+    Preamble,
+    ResponseStarted,
+    ResponseCompleted,
+    SpeechPlaybackStarted,
+    SpeechPlaybackCompleted,
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+pub struct ToolRequestRecord {
+    pub exchange_index: usize,
+    pub call_id: String,
+    pub tool_name: String,
+    pub arguments_summary: String,
+    pub requested_at: SystemTime,
+    pub source: String,
+    #[serde(default)]
+    pub routed_to: Option<String>,
+    pub auto_executed: bool,
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize, Default)]
@@ -312,6 +359,8 @@ mod tests {
                 message_count: 3,
             }),
             interruptions: vec![],
+            provider_events: vec![],
+            tool_requests: vec![],
             status: ExchangeStatus::Completed,
         };
 

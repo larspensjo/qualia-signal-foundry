@@ -20,15 +20,17 @@ document as a candidate design that real experiments incrementally fill in.
   `InputReceived`) and for typed text turns
   ([audio/transcript_provider.rs](../../crates/qsf_app/src/audio/transcript_provider.rs),
   [experiments/multi_turn_text_loop.rs](../../crates/qsf_app/src/experiments/multi_turn_text_loop.rs))
-- Shared live-session exchange state for typed text and text-owned voice: both loops
-  start `Exchange` records through `session/live_state.rs`, record memory context,
-  model completion, output, and completion through the shared reducer, and derive
-  persisted `Turn` records from finalized exchanges while `Turn` remains the durable
-  compatibility shape
+- Shared live-session exchange state for typed text, text-owned voice, and realtime
+  provider voice: loops start `Exchange` records through `session/live_state.rs`;
+  text-owned paths record memory context, model completion, output, and completion
+  through the shared reducer; realtime sessions bridge final transcripts, provider
+  preambles, response lifecycle facts, interruptions, and tool requests into the
+  same reducer before persisting an exchange ledger
   ([session/live_state.rs](../../crates/qsf_app/src/session/live_state.rs),
   [session/exchange.rs](../../crates/qsf_app/src/session/exchange.rs),
   [experiments/multi_turn_text_loop.rs](../../crates/qsf_app/src/experiments/multi_turn_text_loop.rs),
-  [experiments/text_owned_voice_loop.rs](../../crates/qsf_app/src/experiments/text_owned_voice_loop.rs))
+  [experiments/text_owned_voice_loop.rs](../../crates/qsf_app/src/experiments/text_owned_voice_loop.rs),
+  [experiments/realtime_voice_session.rs](../../crates/qsf_app/src/experiments/realtime_voice_session.rs))
 - Shared session boot and manifest-last persistence helpers now live in
   `session/runtime.rs`, so the text loop and text-owned voice loop use the same
   resume classification, `SessionResumed` event shape, live reducer startup, and
@@ -75,9 +77,9 @@ document as a candidate design that real experiments incrementally fill in.
   structure today
 - Shared live-session state now exists in `session/exchange.rs` and
   `session/live_state.rs`, including exchange payloads, runtime phase, partial
-  transcript, interruption, response, and processed-range state. The multi-turn
-  text loop and text-owned voice loop now use that shared core directly; realtime
-  provider-owned voice sessions still need to bridge into it
+  transcript, interruption, response, provider events, tool requests, and
+  processed-range state. The multi-turn text loop, text-owned voice loop, and
+  realtime voice session bridge now use that shared core directly
   ([session/exchange.rs](../../crates/qsf_app/src/session/exchange.rs),
   [session/live_state.rs](../../crates/qsf_app/src/session/live_state.rs),
   [session/mod.rs](../../crates/qsf_app/src/session/mod.rs))
@@ -90,12 +92,12 @@ document as a candidate design that real experiments incrementally fill in.
 - The candidate state categories `AttentionState`, `ToolState` aggregator, and
   `AudioState` as a unified module — equivalents are scattered across audio and
   experiment code
-- Interruption and turn-taking handling in the live loop
+- Full turn-taking policy beyond deterministic interruption recording
 
-Last reviewed: 2026-06-01 against the text-owned voice continuity work — the text
-loop and text-owned voice loop now share session boot, live exchange reduction, and
-manifest-last persistence, while realtime provider-owned sessions still need the
-shared-core bridge.
+Last reviewed: 2026-06-01 against the realtime voice bridge — realtime provider
+sessions now persist shared exchanges for transcript, provider preamble/lifecycle,
+interruption, and tool-request facts while leaving memory retrieval and QSF-owned
+model behavior to the text-owned paths.
 
 ## Purpose
 

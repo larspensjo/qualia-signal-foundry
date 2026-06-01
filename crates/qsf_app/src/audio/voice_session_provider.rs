@@ -105,8 +105,14 @@ pub struct RealtimeResponse {
 pub struct RealtimeInterruption {
     pub detected_at_ms: u64,
     pub source: String,
-    pub action: String,
+    pub action: RealtimeInterruptionAction,
     pub response_id: Option<String>,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RealtimeInterruptionAction {
+    RecordedWithoutBypassingRuntime,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -338,7 +344,7 @@ impl RealtimeSessionProvider for SimulatedRealtimeSessionProvider {
             interruptions: vec![RealtimeInterruption {
                 detected_at_ms: 174,
                 source: "simulated-user-speech-started".to_string(),
-                action: "recorded_without_bypassing_runtime".to_string(),
+                action: RealtimeInterruptionAction::RecordedWithoutBypassingRuntime,
                 response_id: Some("simulated-response-0".to_string()),
             }],
             tool_calls: vec![RealtimeToolCallRequest {
@@ -917,7 +923,7 @@ where
                             interruptions.push(RealtimeInterruption {
                                 detected_at_ms: super::transcript_provider::elapsed_ms(started_at),
                                 source: "input_audio_buffer.speech_started".to_string(),
-                                action: "recorded_without_bypassing_runtime".to_string(),
+                                action: RealtimeInterruptionAction::RecordedWithoutBypassingRuntime,
                                 response_id: Some(response_id.clone()),
                             });
                         }
@@ -1087,6 +1093,10 @@ mod tests {
         assert!(session.preamble.is_some());
         assert_eq!(session.tool_calls.len(), 1);
         assert_eq!(session.interruptions.len(), 1);
+        assert_eq!(
+            session.interruptions[0].action,
+            super::RealtimeInterruptionAction::RecordedWithoutBypassingRuntime
+        );
         assert_eq!(session.first_audio_latency_ms(), Some(20));
         assert_eq!(session.response_latency_ms(), 114);
         assert_eq!(session.total_latency_ms(), 226);

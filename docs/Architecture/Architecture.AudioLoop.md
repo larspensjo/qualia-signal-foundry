@@ -8,9 +8,9 @@ This document captures an early candidate architecture for real-time audio inter
 
 ## Implementation Status
 
-The transcript-first pipeline and the text-owned voice loop described later in this
-document are implemented. Full-duplex realtime audio and most interruption
-handling are not yet built.
+The transcript-first pipeline, text-owned voice loop, and realtime provider bridge
+described later in this document are implemented. Full-duplex turn-taking policy is
+still experimental.
 
 **Implemented today (all under the optional `openai` Cargo feature):**
 
@@ -26,7 +26,8 @@ handling are not yet built.
   `SpeechPlaybackRequested.text` equals `OutputProduced.message`
   ([audio/speech_output_provider.rs](../../crates/qsf_app/src/audio/speech_output_provider.rs))
 - `VoiceSessionProvider` for `gpt-realtime-2` speech-to-speech sessions, with tool
-  requests routed into QSF events rather than executed directly
+  requests routed into QSF events and persisted shared exchange records rather than
+  executed directly
   ([audio/voice_session_provider.rs](../../crates/qsf_app/src/audio/voice_session_provider.rs))
 - Text-owned voice loop where QSF owns interpretation, shared session continuity,
   memory retrieval, context assembly, model-role invocation, and `OutputProduced`
@@ -38,6 +39,12 @@ handling are not yet built.
   transcript runs
   ([session/runtime.rs](../../crates/qsf_app/src/session/runtime.rs),
   [session/live_state.rs](../../crates/qsf_app/src/session/live_state.rs))
+- The realtime voice-session experiment now boots through the shared session
+  runtime, bridges provider final transcript, preamble, response lifecycle,
+  interruption, and tool-call facts into live-session reducer events, and persists
+  the resulting voice `Exchange` in `SessionState.exchanges`
+  ([experiments/realtime_voice_session.rs](../../crates/qsf_app/src/experiments/realtime_voice_session.rs),
+  [session/exchange.rs](../../crates/qsf_app/src/session/exchange.rs))
 - Latency reporting across transcript dispatch, memory retrieval, context assembly,
   model runtime, and speech output
 - `session_id` propagation across the voice turn and across resumed text-owned voice
@@ -51,12 +58,12 @@ handling are not yet built.
 **Not yet implemented:**
 
 - Render-only TTS for live spoken answers (current speech output is metadata-only)
-- Interruption / barge-in handling in either direction
+- Full interruption / barge-in policy beyond persisted provider interruption facts
 - Always-listening or full-duplex realtime mode
 - Translation provider (`gpt-realtime-translate`) integration
 - A live debug UI for audio state
 
-Last reviewed: 2026-06-01 against the text-owned voice shared-continuity path.
+Last reviewed: 2026-06-01 against the realtime voice shared-state bridge.
 
 ## Summary
 

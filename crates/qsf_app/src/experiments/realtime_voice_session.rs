@@ -1,17 +1,23 @@
 use std::fs;
+use std::time::SystemTime;
 
 use anyhow::Context;
 use serde_json::json;
 
 use crate::audio::{
-    AudioRuntimeEntryPoint, AudioSafetyMarkers, RealtimeSessionProvider,
-    RealtimeSessionProviderError, RealtimeSessionRequest, VoiceProviderSession,
-    build_realtime_session_provider, requested_realtime_session_provider_from_env,
-    transcript_provider_to_input_boundary,
+    AudioRuntimeEntryPoint, AudioSafetyMarkers, RealtimeInterruptionAction,
+    RealtimeSessionProvider, RealtimeSessionProviderError, RealtimeSessionRequest,
+    VoiceProviderSession, build_realtime_session_provider, relative_audio_event_time,
+    requested_realtime_session_provider_from_env, transcript_provider_to_input_boundary,
 };
 use crate::observability::event_log::EventType;
 use crate::observability::trace::TraceRecord;
 use crate::runtime::run_context::RunContext;
+use crate::session::{
+    Exchange, ExchangeOutput, InterruptionAction, InterruptionRecord, InterruptionStopOutcome,
+    LiveSessionEvent, ProviderEventKind, ProviderEventRecord, SessionBootRequest, SessionConfig,
+    SessionEndReason, SessionEvent, StateDirectoryResolution, ToolRequestRecord, UtteranceRecord,
+};
 
 use super::failure::{SanitizedFailure, record_sanitized_failure};
 use super::registry::{Experiment, ExperimentName, ExperimentOutcome};
@@ -30,18 +36,49 @@ impl Experiment for RealtimeVoiceSessionExperiment {
     fn run(&self, context: &mut RunContext) -> anyhow::Result<ExperimentOutcome> {
         let provider =
             build_realtime_session_provider(requested_realtime_session_provider_from_env());
-        self.run_with_provider(context, provider.as_ref())
+        let state_resolution = crate::session::resolve_shared_state_directory_from_env();
+        self.run_with_provider_at_state_dirs(context, provider.as_ref(), state_resolution)
     }
 }
 
 impl RealtimeVoiceSessionExperiment {
+    #[cfg(test)]
     fn run_with_provider(
         &self,
         context: &mut RunContext,
         provider: &dyn RealtimeSessionProvider,
     ) -> anyhow::Result<ExperimentOutcome> {
-        let request =
-            RealtimeSessionRequest::from_env(format!("{}-voice-session", context.run_id()));
+        let state_dir = context.run_dir().join("state/session");
+        self.run_with_provider_at_state_dirs(
+            context,
+            provider,
+            StateDirectoryResolution {
+                resume_state_dir: state_dir.clone(),
+                persist_state_dir: state_dir,
+                legacy_fallback_used: false,
+            },
+        )
+    }
+
+    fn run_with_provider_at_state_dirs(
+        &self,
+        context: &mut RunContext,
+        provider: &dyn RealtimeSessionProvider,
+        state_resolution: StateDirectoryResolution,
+    ) -> anyhow::Result<ExperimentOutcome> {
+        let config = SessionConfig::from_env();
+        let boot = crate::session::boot_session(
+            context,
+            SessionBootRequest {
+                resume_state_dir: state_resolution.resume_state_dir.clone(),
+                persist_state_dir: state_resolution.persist_state_dir.clone(),
+                config,
+                legacy_fallback_used: state_resolution.legacy_fallback_used,
+            },
+        )?;
+        let mut state = boot.state;
+        let resume_manifest = boot.resume_inputs.manifest.clone();
+        let request = RealtimeSessionRequest::from_env(state.session_id.clone());
         let session = match provider.run_session(&request) {
             Ok(session) => session,
             Err(error) => {
@@ -131,6 +168,13 @@ impl RealtimeVoiceSessionExperiment {
             runtime_trace_id,
             latency_trace_id,
         )?;
+        bridge_realtime_session_into_shared_state(
+            context,
+            &mut state,
+            &session,
+            &state_resolution,
+            &resume_manifest,
+        )?;
         write_realtime_voice_report(context, &session)?;
 
         Ok(ExperimentOutcome {
@@ -156,6 +200,212 @@ impl RealtimeVoiceSessionExperiment {
             ],
             extra_artifacts: vec!["realtime-voice-session.md".to_string()],
         })
+    }
+}
+
+fn bridge_realtime_session_into_shared_state(
+    context: &mut RunContext,
+    state: &mut crate::session::SessionState,
+    session: &VoiceProviderSession,
+    state_resolution: &StateDirectoryResolution,
+    resume_manifest: &crate::session::manifest::ContinuityManifest,
+) -> anyhow::Result<()> {
+    let exchange_index = state.turns.len() + state.exchanges.len();
+    crate::session::apply_live_session_event(
+        state,
+        LiveSessionEvent::ExchangeStarted(Box::new(Exchange::new_voice_pending(
+            exchange_index,
+            SystemTime::now(),
+        ))),
+    );
+    crate::session::apply_live_session_event(
+        state,
+        LiveSessionEvent::AudioFinalTranscriptCommitted {
+            exchange_index,
+            utterance: UtteranceRecord {
+                utterance_id: format!(
+                    "realtime-utterance-{}",
+                    session.final_transcript.utterance_index
+                ),
+                revision_index: session.final_transcript.utterance_index,
+                transcript: session.final_transcript.transcript.clone(),
+                received_at: relative_audio_event_time(session.final_transcript.received_at_ms),
+                provider_id: Some(session.provider_name.clone()),
+                source_chunk_index: session
+                    .chunks
+                    .last()
+                    .map(|chunk| chunk.chunk_index as usize),
+            },
+            final_transcript: session.final_transcript.transcript.clone(),
+        },
+    );
+    crate::session::apply_session_event(
+        context,
+        state,
+        SessionEvent::InputReceived {
+            input: session.final_transcript.transcript.clone(),
+        },
+    )?;
+
+    if let Some(preamble) = &session.preamble {
+        crate::session::apply_live_session_event(
+            state,
+            LiveSessionEvent::ProviderEventRecorded(ProviderEventRecord {
+                exchange_index,
+                event_kind: ProviderEventKind::Preamble,
+                provider_id: session.provider_name.clone(),
+                received_at: relative_audio_event_time(session.response.started_at_ms),
+                response_id: Some(session.response.response_id.clone()),
+                text: Some(preamble.clone()),
+                status: None,
+                audio_marker: None,
+            }),
+        );
+    }
+    crate::session::apply_live_session_event(
+        state,
+        LiveSessionEvent::ProviderEventRecorded(ProviderEventRecord {
+            exchange_index,
+            event_kind: ProviderEventKind::ResponseStarted,
+            provider_id: session.provider_name.clone(),
+            received_at: relative_audio_event_time(session.response.started_at_ms),
+            response_id: Some(session.response.response_id.clone()),
+            text: None,
+            status: None,
+            audio_marker: Some("speech-playback".to_string()),
+        }),
+    );
+
+    crate::session::apply_live_session_event(
+        state,
+        LiveSessionEvent::OutputProduced(ExchangeOutput {
+            response_id: Some(session.response.response_id.clone()),
+            text: session.response.text.clone(),
+            produced_at: SystemTime::now(),
+            provider_name: Some(session.provider_name.clone()),
+            target: Some("speech-playback".to_string()),
+            audio_marker: Some(format!(
+                "audio_output_bytes={}",
+                session.response.audio_output_bytes
+            )),
+        }),
+    );
+
+    for tool_call in &session.tool_calls {
+        crate::session::apply_live_session_event(
+            state,
+            LiveSessionEvent::ToolRequested(ToolRequestRecord {
+                exchange_index,
+                call_id: tool_call.call_id.clone(),
+                tool_name: tool_call.name.clone(),
+                arguments_summary: tool_call.arguments_summary.clone(),
+                requested_at: relative_audio_event_time(tool_call.requested_at_ms),
+                source: "realtime_provider".to_string(),
+                routed_to: Some("qsf_tool_permission_boundary".to_string()),
+                auto_executed: false,
+            }),
+        );
+    }
+
+    for interruption in &session.interruptions {
+        crate::session::apply_live_session_event(
+            state,
+            LiveSessionEvent::UserInterrupted(InterruptionRecord {
+                exchange_index,
+                response_id: interruption.response_id.clone(),
+                detected_at: relative_audio_event_time(interruption.detected_at_ms),
+                source: interruption.source.clone(),
+                action: realtime_interruption_action(interruption.action),
+                stop_outcome: realtime_interruption_outcome(interruption.action),
+                partial_response_text: None,
+            }),
+        );
+    }
+
+    crate::session::apply_live_session_event(
+        state,
+        LiveSessionEvent::ProviderEventRecorded(ProviderEventRecord {
+            exchange_index,
+            event_kind: ProviderEventKind::ResponseCompleted,
+            provider_id: session.provider_name.clone(),
+            received_at: relative_audio_event_time(session.response.completed_at_ms),
+            response_id: Some(session.response.response_id.clone()),
+            text: Some(session.response.text.clone()),
+            status: Some(session.response.status.clone()),
+            audio_marker: Some(format!(
+                "audio_output_bytes={}",
+                session.response.audio_output_bytes
+            )),
+        }),
+    );
+    crate::session::apply_live_session_event(
+        state,
+        LiveSessionEvent::ExchangeCompleted {
+            completed_at: SystemTime::now(),
+        },
+    );
+    let completed_exchange = state
+        .live
+        .completed_exchanges
+        .last()
+        .cloned()
+        .context("completed realtime voice exchange missing after ExchangeCompleted")?;
+    crate::session::apply_session_event(
+        context,
+        state,
+        SessionEvent::ExchangeRecorded {
+            session_id: state.session_id.clone(),
+            exchange: Box::new(completed_exchange),
+        },
+    )?;
+    crate::session::apply_live_session_event(
+        state,
+        LiveSessionEvent::SessionEnded {
+            reason: SessionEndReason::Eof,
+        },
+    );
+    crate::session::apply_session_event(
+        context,
+        state,
+        SessionEvent::SessionEnded {
+            reason: SessionEndReason::Eof,
+        },
+    )?;
+    crate::session::persist_continuity_state(
+        state,
+        &state_resolution.persist_state_dir,
+        resume_manifest,
+    )?;
+
+    engine_logging::engine_info!(
+        "realtime voice session bridged into shared state: experiment_id={} run_id={} session_id={} exchange_index={} state_dir={} provider={} response_id={} tool_requests={} interruptions={}",
+        context.experiment_id(),
+        context.run_id(),
+        state.session_id,
+        exchange_index,
+        state_resolution.persist_state_dir.display(),
+        session.provider_name,
+        session.response.response_id,
+        session.tool_calls.len(),
+        session.interruptions.len()
+    );
+
+    Ok(())
+}
+
+fn realtime_interruption_action(action: RealtimeInterruptionAction) -> InterruptionAction {
+    match action {
+        RealtimeInterruptionAction::RecordedWithoutBypassingRuntime => {
+            InterruptionAction::MarkInterrupted
+        }
+    }
+}
+
+fn realtime_interruption_outcome(action: RealtimeInterruptionAction) -> InterruptionStopOutcome {
+    match action {
+        RealtimeInterruptionAction::RecordedWithoutBypassingRuntime => {
+            InterruptionStopOutcome::Ignored
+        }
     }
 }
 
@@ -560,6 +810,10 @@ mod tests {
         let traces = fs::read_to_string(context.run_dir().join("traces.jsonl")).unwrap();
         let report =
             fs::read_to_string(context.run_dir().join("realtime-voice-session.md")).unwrap();
+        let persisted_state = crate::session::persistence::load_session_state(
+            context.run_dir().join("state/session/session-state.json"),
+        )
+        .unwrap();
         let event_records = parse_event_records(&events);
 
         assert!(
@@ -599,6 +853,82 @@ mod tests {
         assert!(traces.contains("\"latency_domain\":\"audio\""));
         assert!(report.contains("Realtime Voice Session MVP"));
         assert!(report.contains("Provider tool calls auto-executed: `false`"));
+        assert!(persisted_state.turns.is_empty());
+        assert_eq!(persisted_state.exchanges.len(), 1);
+        let exchange = &persisted_state.exchanges[0];
+        assert_eq!(
+            exchange.final_user_input(),
+            "Can the voice session stay inside the QSF runtime boundaries?"
+        );
+        assert_eq!(exchange.interruptions.len(), 1);
+        assert_eq!(exchange.status, crate::session::ExchangeStatus::Completed);
+        assert!(
+            exchange
+                .started_at
+                .duration_since(std::time::SystemTime::UNIX_EPOCH)
+                .unwrap()
+                .as_secs()
+                > 1_700_000_000
+        );
+        assert_eq!(exchange.tool_requests.len(), 1);
+        assert!(!exchange.tool_requests[0].auto_executed);
+        assert_eq!(
+            exchange.interruptions[0].action,
+            crate::session::InterruptionAction::MarkInterrupted
+        );
+        assert_eq!(
+            exchange.interruptions[0].stop_outcome,
+            crate::session::InterruptionStopOutcome::Ignored
+        );
+        assert!(exchange.interruptions[0].partial_response_text.is_none());
+        assert!(
+            exchange
+                .provider_events
+                .iter()
+                .any(|event| event.event_kind == crate::session::ProviderEventKind::Preamble)
+        );
+        assert!(
+            exchange
+                .provider_events
+                .iter()
+                .any(|event| event.event_kind
+                    == crate::session::ProviderEventKind::ResponseCompleted)
+        );
+
+        fs::remove_dir_all(base_dir).unwrap();
+    }
+
+    #[test]
+    fn provider_tool_request_is_persisted_without_runtime_side_effects() {
+        let base_dir =
+            std::env::temp_dir().join(format!("qsf-voice-tool-boundary-{}", Uuid::new_v4()));
+        let mut context = RunContext::create_in(&base_dir, "realtime-voice-session").unwrap();
+        let experiment = RealtimeVoiceSessionExperiment;
+
+        experiment
+            .run_with_provider(&mut context, &SimulatedRealtimeSessionProvider)
+            .unwrap();
+
+        let events = fs::read_to_string(context.run_dir().join("events.jsonl")).unwrap();
+        let event_records = parse_event_records(&events);
+        let persisted_state = crate::session::persistence::load_session_state(
+            context.run_dir().join("state/session/session-state.json"),
+        )
+        .unwrap();
+
+        assert!(event_records.iter().any(|record| {
+            record.event_type == EventType::ToolRequested
+                && record.payload["source"] == "realtime_provider"
+                && record.payload["auto_executed"] == false
+        }));
+        assert!(!event_records.iter().any(|record| matches!(
+            record.event_type,
+            EventType::ToolCompleted | EventType::ToolFailed
+        )));
+        assert!(persisted_state.turns.is_empty());
+        assert_eq!(persisted_state.exchanges.len(), 1);
+        assert_eq!(persisted_state.exchanges[0].tool_requests.len(), 1);
+        assert!(!persisted_state.exchanges[0].tool_requests[0].auto_executed);
 
         fs::remove_dir_all(base_dir).unwrap();
     }

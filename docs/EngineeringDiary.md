@@ -2193,3 +2193,44 @@ docs/Architecture/Architecture.RuntimeLoop.md,
 docs/Architecture/Architecture.AudioLoop.md,
 docs/Architecture/Architecture.MemorySystem.md,
 docs/Experiments/Experiment.TextOwnedVoiceLoop.md
+
+## 2026-06-01 - Realtime voice bridged into shared exchange state
+
+Realtime voice sessions now boot shared session continuity and persist provider
+facts as shared voice exchanges instead of remaining observability-only.
+
+What changed:
+- Added persisted exchange records to `SessionState` plus realtime-specific
+  provider event and tool-request records on `Exchange`.
+- Added live-session reducer events for provider lifecycle facts and provider tool
+  requests.
+- Routed realtime final transcripts, preambles, response lifecycle, interruptions,
+  and provider tool calls through the shared reducer, then persisted the completed
+  exchange through the manifest-last state path.
+- Aligned realtime exchange-level timestamps with the text-owned voice path by using
+  wall-clock exchange timestamps while keeping provider-relative times on sub-events.
+- Replaced free-form realtime interruption action strings with a typed provider enum
+  and total adapter mapping into shared interruption enums.
+- Hoisted provider-relative audio event timestamp conversion into the shared audio
+  module for both voice experiment paths.
+- Kept provider tool calls inert with `auto_executed=false`; they do not append
+  turns or trigger tool side effects without a QSF-owned route.
+- Added focused regression coverage for the provider tool-call boundary.
+- Updated runtime, audio, and realtime experiment documentation.
+
+Observed:
+- `cargo test session --lib`, `cargo test realtime_voice_session --lib`,
+  `cargo test audio::voice_session_provider --lib`, `cargo test text_owned_voice_loop --lib`,
+  `cargo build`, and `cargo clippy --all-targets -- -D warnings` passed after the
+  bridge and review follow-up.
+
+Refs: crates/qsf_app/src/audio/mod.rs,
+crates/qsf_app/src/audio/voice_session_provider.rs,
+crates/qsf_app/src/session/exchange.rs, crates/qsf_app/src/session/live_state.rs,
+crates/qsf_app/src/session/mod.rs,
+crates/qsf_app/src/experiments/realtime_voice_session.rs,
+crates/qsf_app/src/experiments/text_owned_voice_loop.rs,
+docs/Architecture/Architecture.RuntimeLoop.md,
+docs/Architecture/Architecture.AudioLoop.md,
+docs/Experiments/Experiment.RealtimeVoiceSessionMVP.md,
+docs/Reviews/Review.VoiceLoopUnification.Phase5.2026-06-01.md

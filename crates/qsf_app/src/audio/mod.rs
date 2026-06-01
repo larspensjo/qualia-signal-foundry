@@ -1,3 +1,5 @@
+use std::time::{Duration, SystemTime};
+
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
@@ -35,10 +37,11 @@ pub use voice_session_provider::{
     OpenAiRealtimeSessionProvider, REALTIME_SESSION_INPUT_SOURCE_ENV_VAR,
     REALTIME_SESSION_MIC_DEVICE_ENV_VAR, REALTIME_SESSION_MIC_DURATION_MS_ENV_VAR,
     REALTIME_SESSION_PROVIDER_ENV_VAR, REALTIME_SESSION_WAV_PATH_ENV_VAR, RealtimeInterruption,
-    RealtimeResponse, RealtimeSessionConfig, RealtimeSessionProvider, RealtimeSessionProviderError,
-    RealtimeSessionRequest, RealtimeSessionTranscript, RealtimeToolCallRequest,
-    SimulatedRealtimeSessionProvider, VoiceProviderSession, build_realtime_session_provider,
-    requested_realtime_session_provider, requested_realtime_session_provider_from_env,
+    RealtimeInterruptionAction, RealtimeResponse, RealtimeSessionConfig, RealtimeSessionProvider,
+    RealtimeSessionProviderError, RealtimeSessionRequest, RealtimeSessionTranscript,
+    RealtimeToolCallRequest, SimulatedRealtimeSessionProvider, VoiceProviderSession,
+    build_realtime_session_provider, requested_realtime_session_provider,
+    requested_realtime_session_provider_from_env,
 };
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -354,6 +357,10 @@ pub fn total_latency_ms(measurements: &[AudioLatencyMeasurement]) -> u64 {
         (Some(first), Some(last)) => last.completed_at_ms.saturating_sub(first.started_at_ms),
         _ => 0,
     }
+}
+
+pub fn relative_audio_event_time(offset_ms: u64) -> SystemTime {
+    SystemTime::UNIX_EPOCH + Duration::from_millis(offset_ms)
 }
 
 #[cfg(test)]

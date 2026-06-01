@@ -185,6 +185,9 @@ pub fn reduce_session_in_place(state: &mut SessionState, event: SessionEvent) {
         SessionEvent::TurnCompleted(turn) => {
             state.turns.push(turn);
         }
+        SessionEvent::ExchangeRecorded { exchange, .. } => {
+            state.exchanges.push(*exchange);
+        }
         SessionEvent::TurnSummarized(summary) => {
             state.summarized_turns.push(summary);
             state.prefix_invalidated_since_last_prompt = true;
@@ -293,6 +296,19 @@ pub fn record_session_event(context: &mut RunContext, event: &SessionEvent) -> a
                 }),
                 None,
             )?;
+        }
+        SessionEvent::ExchangeRecorded {
+            session_id,
+            exchange,
+        } => {
+            engine_logging::engine_info!(
+                "exchange recorded: experiment_id={} run_id={} session_id={} exchange_index={} status={:?}",
+                context.experiment_id(),
+                context.run_id(),
+                session_id,
+                exchange.index,
+                exchange.status
+            );
         }
         SessionEvent::TurnSummarized(summary) => {
             context.record_event(

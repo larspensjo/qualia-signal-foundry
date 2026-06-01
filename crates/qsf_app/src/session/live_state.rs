@@ -9,7 +9,8 @@ use super::{
     SessionEndReason, TurnSummary,
     exchange::{
         Exchange, ExchangeInput, ExchangeModelUse, ExchangeOutput, ExchangeRange, ExchangeStatus,
-        InterruptionRecord, InterruptionStopOutcome, UtteranceRecord,
+        InterruptionRecord, InterruptionStopOutcome, ProviderEventRecord, ToolRequestRecord,
+        UtteranceRecord,
     },
 };
 
@@ -142,6 +143,8 @@ pub enum LiveSessionEvent {
         error_summary: String,
     },
     OutputProduced(ExchangeOutput),
+    ProviderEventRecorded(ProviderEventRecord),
+    ToolRequested(ToolRequestRecord),
     UserInterrupted(InterruptionRecord),
     ExchangeCompleted {
         completed_at: SystemTime,
@@ -284,6 +287,20 @@ fn reduce_live_session_in_place(state: &mut LiveSessionState, event: LiveSession
                 exchange.status = ExchangeStatus::Speaking;
             }
         }
+        LiveSessionEvent::ProviderEventRecorded(provider_event) => {
+            if let Some(exchange) = state.active_exchange.as_mut() {
+                if exchange.index == provider_event.exchange_index {
+                    exchange.provider_events.push(provider_event);
+                }
+            }
+        }
+        LiveSessionEvent::ToolRequested(tool_request) => {
+            if let Some(exchange) = state.active_exchange.as_mut() {
+                if exchange.index == tool_request.exchange_index {
+                    exchange.tool_requests.push(tool_request);
+                }
+            }
+        }
         LiveSessionEvent::UserInterrupted(interruption) => {
             let stop_outcome = interruption.stop_outcome;
             let action = interruption.action;
@@ -340,7 +357,8 @@ mod tests {
     use crate::session::TurnSummary;
     use crate::session::exchange::{
         Exchange, ExchangeInput, ExchangeOutput, ExchangeRange, ExchangeStatus, InterruptionAction,
-        InterruptionRecord, InterruptionStopOutcome, UtteranceRecord,
+        InterruptionRecord, InterruptionStopOutcome, ProviderEventKind, ProviderEventRecord,
+        ToolRequestRecord, UtteranceRecord,
     };
 
     #[test]
@@ -397,6 +415,62 @@ mod tests {
         assert_eq!(completed.final_user_input(), "hello");
         assert_eq!(completed.retrieved_memory_block, "memory");
         assert!(completed.output.is_some());
+    }
+
+    #[test]
+    fn provider_events_and_tool_requests_attach_to_active_exchange_only() {
+        let mut state = LiveSessionState::default();
+        reduce_live_session_in_place(
+            &mut state,
+            LiveSessionEvent::ExchangeStarted(Box::new(Exchange::new_voice_pending(
+                4,
+                SystemTime::UNIX_EPOCH,
+            ))),
+        );
+        reduce_live_session_in_place(
+            &mut state,
+            LiveSessionEvent::ProviderEventRecorded(ProviderEventRecord {
+                exchange_index: 4,
+                event_kind: ProviderEventKind::Preamble,
+                provider_id: "provider".to_string(),
+                received_at: SystemTime::UNIX_EPOCH,
+                response_id: Some("response-4".to_string()),
+                text: Some("hello".to_string()),
+                status: None,
+                audio_marker: None,
+            }),
+        );
+        reduce_live_session_in_place(
+            &mut state,
+            LiveSessionEvent::ToolRequested(ToolRequestRecord {
+                exchange_index: 4,
+                call_id: "call-4".to_string(),
+                tool_name: "lookup".to_string(),
+                arguments_summary: "{}".to_string(),
+                requested_at: SystemTime::UNIX_EPOCH,
+                source: "realtime_provider".to_string(),
+                routed_to: Some("qsf_tool_permission_boundary".to_string()),
+                auto_executed: false,
+            }),
+        );
+        reduce_live_session_in_place(
+            &mut state,
+            LiveSessionEvent::ToolRequested(ToolRequestRecord {
+                exchange_index: 99,
+                call_id: "ignored".to_string(),
+                tool_name: "lookup".to_string(),
+                arguments_summary: "{}".to_string(),
+                requested_at: SystemTime::UNIX_EPOCH,
+                source: "realtime_provider".to_string(),
+                routed_to: Some("qsf_tool_permission_boundary".to_string()),
+                auto_executed: false,
+            }),
+        );
+
+        let exchange = state.active_exchange.as_ref().expect("active exchange");
+        assert_eq!(exchange.provider_events.len(), 1);
+        assert_eq!(exchange.tool_requests.len(), 1);
+        assert_eq!(exchange.tool_requests[0].call_id, "call-4");
     }
 
     #[test]

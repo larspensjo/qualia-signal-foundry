@@ -1,6 +1,6 @@
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::time::{Duration, Instant, SystemTime};
+use std::time::{Instant, SystemTime};
 
 use anyhow::Context;
 use serde::Serialize;
@@ -11,7 +11,7 @@ use crate::audio::{
     SpeechOutputProviderError, SpeechOutputRequest, SpeechOutputSession, TranscriptEventEmission,
     TranscriptEventTraceIds, TranscriptProvider, TranscriptProviderError,
     TranscriptProviderRequest, TranscriptProviderSession, build_speech_output_provider,
-    build_transcript_provider, record_transcript_runtime_events,
+    build_transcript_provider, record_transcript_runtime_events, relative_audio_event_time,
     requested_speech_output_provider_from_env, requested_transcript_provider_from_env,
     transcript_provider_to_input_boundary,
 };
@@ -213,7 +213,7 @@ impl TextOwnedVoiceLoopExperiment {
                         utterance_id: voice_utterance_id(&transcript_session),
                         revision_index: partial.revision_index,
                         transcript: partial.transcript.clone(),
-                        received_at: relative_system_time(partial.received_at_ms),
+                        received_at: relative_audio_event_time(partial.received_at_ms),
                         provider_id: Some(transcript_session.provider_name.clone()),
                         source_chunk_index: Some(partial.source_chunk_index as usize),
                     },
@@ -234,7 +234,7 @@ impl TextOwnedVoiceLoopExperiment {
                         .max()
                         .unwrap_or(0),
                     transcript: final_transcript.clone(),
-                    received_at: relative_system_time(
+                    received_at: relative_audio_event_time(
                         transcript_session.final_transcript.received_at_ms,
                     ),
                     provider_id: Some(transcript_session.provider_name.clone()),
@@ -889,10 +889,6 @@ fn voice_utterance_id(session: &TranscriptProviderSession) -> String {
         "{}-utterance-{}",
         session.session_id, session.final_transcript.utterance_index
     )
-}
-
-fn relative_system_time(offset_ms: u64) -> SystemTime {
-    SystemTime::UNIX_EPOCH + Duration::from_millis(offset_ms)
 }
 
 fn record_context_assembly(

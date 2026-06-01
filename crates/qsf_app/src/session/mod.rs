@@ -17,7 +17,7 @@ pub mod state_directory;
 pub use exchange::{
     Exchange, ExchangeInput, ExchangeModelUse, ExchangeOutput, ExchangeRange, ExchangeStatus,
     ExchangeTurnConversionError, InterruptionAction, InterruptionRecord, InterruptionStopOutcome,
-    UtteranceRecord,
+    ProviderEventKind, ProviderEventRecord, ToolRequestRecord, UtteranceRecord,
 };
 pub use live_state::{
     ActiveResponseState, AgedCoRetrievalRecord, LiveCaptureContext, LiveSessionEvent,
@@ -52,6 +52,8 @@ pub struct SessionState {
     pub turns: Vec<Turn>,
     pub summarized_turns: Vec<TurnSummary>,
     #[serde(default)]
+    pub exchanges: Vec<Exchange>,
+    #[serde(default)]
     pub live: LiveSessionState,
     pub ended_reason: Option<SessionEndReason>,
     pub last_input: Option<String>,
@@ -75,6 +77,7 @@ impl SessionState {
             config,
             turns: vec![],
             summarized_turns: vec![],
+            exchanges: vec![],
             live: LiveSessionState::default(),
             ended_reason: None,
             last_input: None,
@@ -193,6 +196,10 @@ pub enum SessionEvent {
         error_summary: String,
     },
     TurnCompleted(Turn),
+    ExchangeRecorded {
+        session_id: String,
+        exchange: Box<Exchange>,
+    },
     TurnSummarized(TurnSummary),
     TurnsAgedAndCoRetrieved {
         range: TurnRange,
