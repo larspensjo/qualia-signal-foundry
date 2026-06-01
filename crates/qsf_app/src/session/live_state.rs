@@ -8,8 +8,8 @@ use crate::memory::processed_ranges::ProcessedRange;
 use super::{
     SessionEndReason, TurnSummary,
     exchange::{
-        Exchange, ExchangeInput, ExchangeOutput, ExchangeRange, ExchangeStatus, InterruptionRecord,
-        InterruptionStopOutcome, UtteranceRecord,
+        Exchange, ExchangeInput, ExchangeModelUse, ExchangeOutput, ExchangeRange, ExchangeStatus,
+        InterruptionRecord, InterruptionStopOutcome, UtteranceRecord,
     },
 };
 
@@ -83,7 +83,7 @@ pub struct LiveSessionState {
     pub runtime_phase: RuntimePhase,
     #[serde(default)]
     pub active_exchange: Option<Exchange>,
-    #[serde(default)]
+    #[serde(skip)]
     pub completed_exchanges: Vec<Exchange>,
     #[serde(default)]
     pub partial_transcript: Option<PartialTranscript>,
@@ -137,6 +137,10 @@ pub enum LiveSessionEvent {
         recalled_items: Vec<super::RecallRecord>,
         live_capture: Option<LiveCaptureContext>,
     },
+    ModelRoleCompleted(ExchangeModelUse),
+    ModelRoleFailed {
+        error_summary: String,
+    },
     OutputProduced(ExchangeOutput),
     UserInterrupted(InterruptionRecord),
     ExchangeCompleted {
@@ -150,7 +154,6 @@ pub enum LiveSessionEvent {
     },
 }
 
-#[cfg_attr(not(test), allow(dead_code))]
 pub fn reduce_live_session(
     mut state: LiveSessionState,
     event: LiveSessionEvent,
@@ -252,6 +255,20 @@ fn reduce_live_session_in_place(state: &mut LiveSessionState, event: LiveSession
                     state.live_capture = live_capture;
                 }
             }
+        }
+        LiveSessionEvent::ModelRoleCompleted(model) => {
+            if let Some(exchange) = state.active_exchange.as_mut() {
+                exchange.model = Some(model);
+            }
+        }
+        LiveSessionEvent::ModelRoleFailed { .. } => {
+            state.runtime_phase = RuntimePhase::Idle;
+            if let Some(exchange) = state.active_exchange.as_mut() {
+                if !matches!(exchange.status, ExchangeStatus::Completed) {
+                    exchange.status = ExchangeStatus::Failed;
+                }
+            }
+            state.active_exchange = None;
         }
         LiveSessionEvent::OutputProduced(output) => {
             state.runtime_phase = RuntimePhase::Speaking;
@@ -626,6 +643,62 @@ mod tests {
                 .and_then(|capture| capture.previous_user_input.as_deref()),
             Some("prev-a")
         );
+    }
+
+    #[test]
+    fn model_role_completion_records_exchange_use() {
+        let mut state = LiveSessionState::default();
+        reduce_live_session_in_place(
+            &mut state,
+            LiveSessionEvent::ExchangeStarted(Box::new(Exchange::new_text(
+                2,
+                "hello",
+                SystemTime::UNIX_EPOCH,
+            ))),
+        );
+        reduce_live_session_in_place(
+            &mut state,
+            LiveSessionEvent::ModelRoleCompleted(ExchangeModelUse {
+                provider_name: Some("mock".to_string()),
+                model_id: "mock-model".to_string(),
+                latency_ms: 11,
+                input_tokens: 7,
+                cached_input_tokens: 2,
+                output_tokens: 3,
+                full_request_hash: crate::conversation::ContentHash([2; 32]),
+                message_count: 5,
+            }),
+        );
+
+        let exchange = state.active_exchange.as_ref().expect("active exchange");
+        assert_eq!(
+            exchange.model.as_ref().map(|model| model.model_id.as_str()),
+            Some("mock-model")
+        );
+    }
+
+    #[test]
+    fn model_role_failure_clears_active_exchange() {
+        let mut state = LiveSessionState::default();
+        reduce_live_session_in_place(
+            &mut state,
+            LiveSessionEvent::ExchangeStarted(Box::new(Exchange::new_text(
+                3,
+                "hello",
+                SystemTime::UNIX_EPOCH,
+            ))),
+        );
+
+        reduce_live_session_in_place(
+            &mut state,
+            LiveSessionEvent::ModelRoleFailed {
+                error_summary: "network failed".to_string(),
+            },
+        );
+
+        assert_eq!(state.runtime_phase, RuntimePhase::Idle);
+        assert!(state.active_exchange.is_none());
+        assert!(state.completed_exchanges.is_empty());
     }
 
     #[test]

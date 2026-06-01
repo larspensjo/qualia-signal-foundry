@@ -26,8 +26,9 @@ use crate::observability::event_log::EventType;
 use crate::observability::trace::{TraceRecord, elapsed_ms};
 use crate::runtime::run_context::RunContext;
 use crate::session::{
-    MemorySourceConfig, RecallRecord, SessionConfig, SessionEndReason, SessionEvent, SessionLimit,
-    SessionState, Turn, TurnRange, TurnSummary, is_turn_summarized,
+    Exchange, ExchangeModelUse, ExchangeOutput, LiveSessionEvent, MemorySourceConfig, RecallRecord,
+    SessionConfig, SessionEndReason, SessionEvent, SessionLimit, SessionState, Turn, TurnRange,
+    TurnSummary, is_turn_summarized, reduce_live_session,
 };
 use crate::tools::{
     CALCULATOR_TOOL_NAME, RECALL_TURN_TOOL_NAME, SessionToolContext, ToolRegistry, ToolResult,
@@ -298,6 +299,17 @@ fn run_with_io_and_components_at_state_dir(
         &mut state,
         SessionEvent::SessionStarted(config.clone()),
     )?;
+    apply_live_session_event(
+        &mut state,
+        if matches!(
+            resume_mode,
+            crate::session::manifest::ResumeMode::AwakeContinuation
+        ) {
+            LiveSessionEvent::SessionResumed
+        } else {
+            LiveSessionEvent::SessionStarted
+        },
+    );
     let mut memory_snapshot = load_session_memory_snapshot(context, memory_source, &state_dir)?;
     write_memory_source_snapshot(context, &memory_snapshot)?;
     let color_mode = ColorMode::for_stdout();
@@ -401,6 +413,12 @@ fn run_with_io_and_components_at_state_dir(
                         error_summary: error_summary.clone(),
                     },
                 )?;
+                apply_live_session_event(
+                    &mut state,
+                    LiveSessionEvent::ModelRoleFailed {
+                        error_summary: error_summary.clone(),
+                    },
+                );
                 writeln!(output, "model unavailable, try again or :quit")?;
                 engine_logging::engine_error!(
                     "multi-turn model call failed: run_id={} error={}",
@@ -475,6 +493,15 @@ fn run_one_turn<W: Write>(
     let turn_started_at = SystemTime::now();
     let user_input = request.user_input;
     let max_output_tokens = request.max_output_tokens;
+    let turn_index = completed_turn_count(state);
+    apply_live_session_event(
+        state,
+        LiveSessionEvent::ExchangeStarted(Box::new(Exchange::new_text(
+            turn_index,
+            user_input.to_string(),
+            turn_started_at,
+        ))),
+    );
     let retrieval = retrieve_session_memories(context, state, memory_snapshot, user_input)?;
     let fragments = retrieval
         .selected
@@ -645,6 +672,16 @@ fn run_one_turn<W: Write>(
         }
     }
 
+    apply_live_session_event(
+        state,
+        LiveSessionEvent::MemoryContextRecorded {
+            exchange_index: turn_index,
+            context_assembly: assembly.clone(),
+            retrieved_memory_block: retrieved_memory_block.clone(),
+            recalled_items: recalled_turns.clone(),
+            live_capture: None,
+        },
+    );
     let final_prompt_assembly = prompt::prompt_assembly_from_messages(final_messages);
     apply_session_event(
         context,
@@ -657,8 +694,31 @@ fn run_one_turn<W: Write>(
             output_tokens,
         },
     )?;
+    let model_use = ExchangeModelUse {
+        provider_name: Some(response.provider_name.clone()),
+        model_id: response.model_name.clone(),
+        latency_ms: model_latency_ms,
+        input_tokens,
+        cached_input_tokens,
+        output_tokens,
+        full_request_hash: final_prompt_assembly.full_request_hash,
+        message_count: final_prompt_assembly.message_count,
+    };
+    apply_live_session_event(state, LiveSessionEvent::ModelRoleCompleted(model_use));
+    let output_text = response.output_text.clone();
+    apply_live_session_event(
+        state,
+        LiveSessionEvent::OutputProduced(ExchangeOutput {
+            response_id: None,
+            text: output_text.clone(),
+            produced_at: SystemTime::now(),
+            provider_name: Some(response.provider_name.clone()),
+            target: Some("text".to_string()),
+            audio_marker: None,
+        }),
+    );
     apply_live_memory_reinforcement(context, state, state_dir, &retrieval)?;
-    apply_live_memory_capture(context, state, state_dir, user_input, &response.output_text)?;
+    apply_live_memory_capture(context, state, state_dir, user_input, &output_text)?;
     let store_path = state_dir.join("memory-store.json");
     // Fixture-backed memory has no persisted store to reload. File-backed live
     // memory refreshes only after persistence creates or updates this store.
@@ -666,24 +726,20 @@ fn run_one_turn<W: Write>(
         *memory_snapshot = reload_session_memory_source_snapshot(&store_path)?;
     }
 
-    let turn = Turn {
-        index: completed_turn_count(state),
-        started_at: turn_started_at,
-        completed_at: SystemTime::now(),
-        user_input: user_input.to_string(),
-        context_assembly: assembly,
-        retrieved_memory_block,
-        assistant_response: response.output_text.clone(),
-        recalled_turns,
-        model_id: response.model_name.clone(),
-        model_latency_ms,
-        input_tokens,
-        cached_input_tokens,
-        output_tokens,
-        full_request_hash: final_prompt_assembly.full_request_hash,
-        message_count: final_prompt_assembly.message_count,
-    };
-    let output_text = response.output_text;
+    let completed_at = SystemTime::now();
+    apply_live_session_event(state, LiveSessionEvent::ExchangeCompleted { completed_at });
+    let completed_exchange = state
+        .live
+        .completed_exchanges
+        .last()
+        .cloned()
+        .context("completed exchange missing after ExchangeCompleted")?;
+    let turn = Turn::try_from(&completed_exchange).with_context(|| {
+        format!(
+            "failed to convert completed exchange {} into a text turn",
+            completed_exchange.index
+        )
+    })?;
     apply_session_event(context, state, SessionEvent::TurnCompleted(turn))?;
     age_out_warm_turns(context, state, state_dir, model_client)?;
     let store_path = state_dir.join("memory-store.json");
@@ -2052,6 +2108,11 @@ fn apply_session_event(
     Ok(())
 }
 
+fn apply_live_session_event(state: &mut SessionState, event: LiveSessionEvent) {
+    let live_state = std::mem::take(&mut state.live);
+    state.live = reduce_live_session(live_state, event);
+}
+
 fn record_session_event(context: &mut RunContext, event: &SessionEvent) -> anyhow::Result<()> {
     match event {
         SessionEvent::SessionStarted(config) => {
@@ -2207,6 +2268,12 @@ fn end_session<W: Write>(
             color_mode,
         )?;
     }
+    apply_live_session_event(
+        state,
+        LiveSessionEvent::SessionEnded {
+            reason: reason.clone(),
+        },
+    );
     apply_session_event(context, state, SessionEvent::SessionEnded { reason })
 }
 
@@ -3744,6 +3811,24 @@ mod tests {
         assert_eq!(second_state.turns[0].index, 0);
         assert_eq!(second_state.turns[1].index, 1);
         assert_eq!(second_state.session_id, first_state.session_id);
+        assert!(second_state.live.completed_exchanges.is_empty());
+        let resumed_prompt = assemble_prompt(
+            &[PromptTurn {
+                user_input: &second_state.turns[0].user_input,
+                retrieved_memory_block: &second_state.turns[0].retrieved_memory_block,
+                recalled_tool_messages: vec![],
+                assistant_response: &second_state.turns[0].assistant_response,
+            }],
+            &second_state.turns[1].user_input,
+            &second_state.turns[1].retrieved_memory_block,
+        );
+        assert_eq!(
+            prior_request_prefix_hash(
+                &resumed_prompt.messages,
+                second_state.turns[0].message_count
+            ),
+            Some(second_state.turns[0].full_request_hash)
+        );
 
         let events = fs::read_to_string(second_context.run_dir().join("events.jsonl")).unwrap();
         let records = parse_event_records(&events);

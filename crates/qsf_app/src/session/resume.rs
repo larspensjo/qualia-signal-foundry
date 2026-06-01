@@ -22,7 +22,18 @@ pub fn load_resume_inputs(state_dir: impl AsRef<Path>) -> anyhow::Result<ResumeI
                 state_dir.join(path)
             };
             if path.exists() {
-                Some(persistence::load_session_state(path)?)
+                let mut previous_session = persistence::load_session_state(path)?;
+                let previous_schema_version = previous_session.schema_version;
+                previous_session.upgrade_schema_version();
+                if previous_session.schema_version != previous_schema_version {
+                    engine_logging::engine_info!(
+                        "session state schema upgraded on resume: session_id={} from={} to={}",
+                        previous_session.session_id,
+                        previous_schema_version,
+                        previous_session.schema_version
+                    );
+                }
+                Some(previous_session)
             } else {
                 None
             }
@@ -57,7 +68,12 @@ pub fn state_dir_from_env() -> PathBuf {
 
 #[cfg(test)]
 mod tests {
+    use std::fs;
+
     use super::*;
+    use tempfile::TempDir;
+
+    use crate::session::manifest::ContinuityManifest;
     use crate::session::{MemorySourceConfig, SessionConfig};
 
     fn config() -> SessionConfig {
@@ -112,5 +128,32 @@ mod tests {
         let r = classify_resume_mode(&inputs(Some(state), false, None));
 
         assert_eq!(r, ResumeMode::ColdStart);
+    }
+
+    #[test]
+    fn load_resume_inputs_upgrades_legacy_session_schema_version() {
+        let dir = TempDir::new().unwrap();
+        fs::write(
+            dir.path().join("session-state.json"),
+            include_str!("../../tests/fixtures/pre_migration_session_state.json"),
+        )
+        .unwrap();
+
+        ContinuityManifest {
+            current_session_state_path: Some("session-state.json".into()),
+            ..ContinuityManifest::default()
+        }
+        .persist(dir.path().join("continuity-manifest.json"))
+        .unwrap();
+
+        let inputs = load_resume_inputs(dir.path()).unwrap();
+
+        assert_eq!(
+            inputs
+                .previous_session
+                .as_ref()
+                .map(|state| state.schema_version),
+            Some(crate::session::SESSION_STATE_SCHEMA_VERSION)
+        );
     }
 }

@@ -2135,3 +2135,21 @@ Observed:
 - `cargo build`, `cargo test session --lib`, `cargo test multi_turn_text_loop --lib`, `cargo clippy --all-targets -- -D warnings`, and `cargo fmt` all passed after the extraction and follow-up.
 
 Refs: crates/qsf_app/src/session/exchange.rs, crates/qsf_app/src/session/live_state.rs, crates/qsf_app/src/session/mod.rs, crates/qsf_app/src/session/continuation.rs, crates/qsf_app/tests/fixtures/pre_migration_session_state.json, docs/Architecture/Architecture.RuntimeLoop.md, docs/Reviews/Review.VoiceLoopUnification.Phase1.md
+
+## 2026-05-31 - Text loop routed through shared live exchange core
+
+The multi-turn text loop now creates and finalizes shared `Exchange` records through the live-session reducer before deriving persisted `Turn` state, with completed exchanges kept in memory only while `Turn` remains the Phase 2 durable shape.
+
+What changed:
+- Routed typed text turns through `session/live_state.rs` so exchange start, memory context, model completion, output, and completion are reduced through the shared live core.
+- Derived persisted `Turn` records from finalized `Exchange` values instead of maintaining a separate hand-built text-only path.
+- Kept `LiveSessionState.completed_exchanges` out of serialized session state to avoid a parallel on-disk write path before `Exchange` becomes canonical.
+- Added `schema_version` to `SessionState`, defaulted legacy files to version 1, rejected newer unsupported session schemas, and logged resume-time schema upgrades before they are written back out.
+- Cleared failed active exchanges after model failure so a clean exit does not persist a dangling failed exchange.
+- Updated the runtime-loop architecture note to reflect that the text loop now uses the shared exchange core in production.
+
+Observed:
+- `cargo build`, `cargo test -p qsf_app session --lib`, `cargo test -p qsf_app multi_turn_text_loop --lib`, `cargo clippy --all-targets -- -D warnings`, and `cargo fmt` passed after the change.
+- Prompt assembly, memory retrieval/reinforcement, live capture, cross-turn co-retrieval, persistence, and manifest commit remain text-loop-private for now; extracting those behavior helpers is deferred to the next phase with a second caller.
+
+Refs: crates/qsf_app/src/experiments/multi_turn_text_loop.rs, crates/qsf_app/src/session/live_state.rs, crates/qsf_app/src/session/mod.rs, crates/qsf_app/src/session/persistence.rs, crates/qsf_app/src/session/resume.rs, docs/Architecture/Architecture.RuntimeLoop.md, docs/Reviews/Review.VoiceLoopUnification.Phase2.md

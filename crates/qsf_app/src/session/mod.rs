@@ -19,11 +19,20 @@ pub use exchange::{
 };
 pub use live_state::{
     ActiveResponseState, AgedCoRetrievalRecord, LiveCaptureContext, LiveSessionEvent,
-    LiveSessionState, PartialTranscript, ResponseStatus, RuntimePhase,
+    LiveSessionState, PartialTranscript, ResponseStatus, RuntimePhase, reduce_live_session,
 };
+
+pub const SESSION_STATE_SCHEMA_VERSION: u32 = 2;
+const LEGACY_SESSION_STATE_SCHEMA_VERSION: u32 = 1;
+
+fn legacy_session_state_schema_version() -> u32 {
+    LEGACY_SESSION_STATE_SCHEMA_VERSION
+}
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 pub struct SessionState {
+    #[serde(default = "legacy_session_state_schema_version")]
+    pub schema_version: u32,
     #[serde(default)]
     pub session_id: String,
     /// Previous session id is set only when a new session is bootstrapped from a consolidated brief.
@@ -51,6 +60,7 @@ impl SessionState {
 
     pub fn new_with_id(session_id: String, config: SessionConfig) -> Self {
         Self {
+            schema_version: SESSION_STATE_SCHEMA_VERSION,
             session_id,
             previous_session_id: None,
             started_at: SystemTime::now(),
@@ -64,6 +74,12 @@ impl SessionState {
             prefix_invalidated_since_last_prompt: false,
             last_model_error: None,
             limit_reached: None,
+        }
+    }
+
+    pub fn upgrade_schema_version(&mut self) {
+        if self.schema_version < SESSION_STATE_SCHEMA_VERSION {
+            self.schema_version = SESSION_STATE_SCHEMA_VERSION;
         }
     }
 }
@@ -206,6 +222,7 @@ pub(crate) mod tests {
     fn new_session_state_carries_session_id_and_no_previous() {
         let state = SessionState::new_with_id("session-abc".to_string(), config());
 
+        assert_eq!(state.schema_version, SESSION_STATE_SCHEMA_VERSION);
         assert_eq!(state.session_id, "session-abc");
         assert_eq!(state.previous_session_id, None);
     }
@@ -216,6 +233,7 @@ pub(crate) mod tests {
 
         let json = serde_json::to_string(&state).unwrap();
         let parsed: SessionState = serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed.schema_version, SESSION_STATE_SCHEMA_VERSION);
         assert_eq!(parsed.session_id, "session-roundtrip");
         assert_eq!(parsed.previous_session_id, None);
         assert_eq!(parsed.live, LiveSessionState::default());
@@ -226,6 +244,7 @@ pub(crate) mod tests {
         let raw = include_str!("../../tests/fixtures/pre_migration_session_state.json");
         let parsed: SessionState = serde_json::from_str(raw).unwrap();
 
+        assert_eq!(parsed.schema_version, LEGACY_SESSION_STATE_SCHEMA_VERSION);
         assert_eq!(parsed.session_id, "legacy-session");
         assert_eq!(parsed.turns.len(), 1);
         assert_eq!(parsed.summarized_turns.len(), 1);

@@ -20,6 +20,13 @@ document as a candidate design that real experiments incrementally fill in.
   `InputReceived`) and for typed text turns
   ([audio/transcript_provider.rs](../../crates/qsf_app/src/audio/transcript_provider.rs),
   [experiments/multi_turn_text_loop.rs](../../crates/qsf_app/src/experiments/multi_turn_text_loop.rs))
+- Shared live-session exchange state for typed text: the multi-turn text loop now
+  starts `Exchange` records through `session/live_state.rs`, records memory context,
+  model completion, output, and completion through the shared reducer, and derives
+  persisted `Turn` records from the finalized exchange
+  ([session/live_state.rs](../../crates/qsf_app/src/session/live_state.rs),
+  [session/exchange.rs](../../crates/qsf_app/src/session/exchange.rs),
+  [experiments/multi_turn_text_loop.rs](../../crates/qsf_app/src/experiments/multi_turn_text_loop.rs))
 - Voice-turn event sequence matching the shape documented under *Runtime Loop and
   Voice Turns* below
   ([experiments/text_owned_voice_loop.rs](../../crates/qsf_app/src/experiments/text_owned_voice_loop.rs))
@@ -58,9 +65,9 @@ document as a candidate design that real experiments incrementally fill in.
   structure today
 - Shared live-session state now exists in `session/exchange.rs` and
   `session/live_state.rs`, including exchange payloads, runtime phase, partial
-  transcript, interruption, response, and processed-range state. The runtime loop
-  still uses the text-loop reducer directly and has not been fully switched to the
-  shared core yet
+  transcript, interruption, response, and processed-range state. The multi-turn
+  text loop now uses that shared core directly, while voice experiments still
+  layer their own orchestration on top of it
   ([session/exchange.rs](../../crates/qsf_app/src/session/exchange.rs),
   [session/live_state.rs](../../crates/qsf_app/src/session/live_state.rs),
   [session/mod.rs](../../crates/qsf_app/src/session/mod.rs))
@@ -75,9 +82,9 @@ document as a candidate design that real experiments incrementally fill in.
   experiment code
 - Interruption and turn-taking handling in the live loop
 
-Last reviewed: 2026-05-31 against the shared live-session extraction — the
-session module now carries a reusable live exchange state slice, while the text
-loop still owns the concrete reducer path.
+Last reviewed: 2026-05-31 against the shared live-session extraction — the text
+loop now drives the shared exchange reducer path in production, while voice
+experiments still adapt around it.
 
 ## Purpose
 
