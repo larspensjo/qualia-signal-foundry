@@ -11,6 +11,8 @@ pub mod live_state;
 pub mod manifest;
 pub mod persistence;
 pub mod resume;
+pub mod runtime;
+pub mod state_directory;
 
 pub use exchange::{
     Exchange, ExchangeInput, ExchangeModelUse, ExchangeOutput, ExchangeRange, ExchangeStatus,
@@ -21,6 +23,12 @@ pub use live_state::{
     ActiveResponseState, AgedCoRetrievalRecord, LiveCaptureContext, LiveSessionEvent,
     LiveSessionState, PartialTranscript, ResponseStatus, RuntimePhase, reduce_live_session,
 };
+pub use runtime::{
+    BootedSession, SessionBootRequest, apply_live_session_event, apply_session_event, boot_session,
+    format_boot_brief_for_context, persist_continuity_state, reduce_session,
+    reduce_session_in_place, resume_breaking_config_changed,
+};
+pub use state_directory::{StateDirectoryResolution, resolve_shared_state_directory_from_env};
 
 pub const SESSION_STATE_SCHEMA_VERSION: u32 = 2;
 const LEGACY_SESSION_STATE_SCHEMA_VERSION: u32 = 1;

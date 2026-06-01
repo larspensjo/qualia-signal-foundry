@@ -28,14 +28,17 @@ future retrieval backends.
   ([memory/retrieval.rs](../../crates/qsf_app/src/memory/retrieval.rs),
   [memory/memory_record.rs](../../crates/qsf_app/src/memory/memory_record.rs))
 - Cross-session memory store via `MemoryStore`, backed by
-  `state/text-loop/memory-store.json` or `QSF_STATE_DIR/memory-store.json`
+  `state/text-loop/memory-store.json`, `state/session/memory-store.json` for the
+  text-owned voice shared-continuity path, or `QSF_STATE_DIR/memory-store.json`
   ([memory/store.rs](../../crates/qsf_app/src/memory/store.rs)); store contents now
   carry `processed_ranges` as the idempotency ledger for cross-turn association
   coverage
   ([processed_range.rs](../../crates/qsf_memory/src/processed_range.rs),
   [memory/processed_ranges.rs](../../crates/qsf_app/src/memory/processed_ranges.rs))
 - File-backed memory source, opt-in via `QSF_VOICE_MEMORY_SOURCE=file` /
-  `QSF_SESSION_MEMORY_SOURCE=file`
+  `QSF_SESSION_MEMORY_SOURCE=file`; the text-owned voice default now reads the shared
+  `MemoryStore`, while `QSF_VOICE_MEMORY_SOURCE=phase_four_fixture` remains an
+  explicit deterministic fixture mode
 - Reviewed-memory draft workflow that converts a sleep report into a memory file
   through an explicit acceptance command for manual review paths
   ([memory/reviewed_memory_draft.rs](../../crates/qsf_app/src/memory/reviewed_memory_draft.rs),
@@ -49,6 +52,12 @@ future retrieval backends.
 - Live-loop co-retrieval association formation and retrieved-memory reinforcement
   ([memory/co_retrieval.rs](../../crates/qsf_app/src/memory/co_retrieval.rs),
   [experiments/multi_turn_text_loop.rs](../../crates/qsf_app/src/experiments/multi_turn_text_loop.rs))
+- Text-owned voice participates in the shared continuity memory store by default:
+  finalized transcripts retrieve from the resolved store, successful responses run
+  live retrieved-memory reinforcement and live memory capture, and the session state
+  is committed through the same manifest-last path used by the text loop
+  ([experiments/text_owned_voice_loop.rs](../../crates/qsf_app/src/experiments/text_owned_voice_loop.rs),
+  [session/runtime.rs](../../crates/qsf_app/src/session/runtime.rs))
 - Narrow live-loop capture of accepted assistant-name assignments into the durable
   memory store, so simple identity continuity can survive later cold starts
   ([experiments/multi_turn_text_loop.rs](../../crates/qsf_app/src/experiments/multi_turn_text_loop.rs))
@@ -80,11 +89,12 @@ future retrieval backends.
 - Vector index, embedding store, or graph store
 - Promotion of session summaries or recall records into durable memory beyond
   sleep-generated candidates
-- Voice-loop participation in the shared continuity memory store
+- Sleep consumption of voice exchanges as first-class voice session material
 
-Last reviewed: 2026-05-27 against the Phase 5 live/sleep split — live-loop
-co-retrieval handles mechanical edges, and sleep contributes safety-net and
-LLM-candidate associations through the proposer interface.
+Last reviewed: 2026-06-01 against the text-owned voice shared-continuity path —
+live-loop co-retrieval handles mechanical edges, sleep contributes safety-net and
+LLM-candidate associations through the proposer interface, and text-owned voice now
+uses the shared memory store by default.
 
 ## Purpose
 

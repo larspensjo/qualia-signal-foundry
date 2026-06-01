@@ -2,8 +2,9 @@
 
 ## Status
 
-Implemented as a deterministic first-pass experiment path. Live microphone input and
-one retrieved memory context fragment now flow through the same QSF-owned answer path.
+Implemented as a deterministic first-pass experiment path. Live microphone input,
+shared session continuity, and shared-store memory retrieval now flow through the same
+QSF-owned answer path.
 
 ## Purpose
 
@@ -22,15 +23,20 @@ QSF owns the transcript-to-context-to-model-to-output path.
   is intentionally unavailable until the simulated exact-text boundary is proven.
 - Empty final transcripts are treated as transcription failures and do not become
   `InputReceived`.
-- Memory retrieval uses the existing Phase 4 fixture and association-weighted
-  retrieval, selecting one memory candidate into the four-fragment voice context
-  budget.
+- Memory retrieval uses the shared continuity `MemoryStore` by default, selecting up
+  to one memory candidate into the four-fragment voice context budget.
 - Voice memory source selection uses `QSF_VOICE_MEMORY_SOURCE`.
-- Default memory source: `phase_four_fixture`.
+- Default memory source: `memory_store`, resolved from the shared session state
+  directory.
+- Optional deterministic fixture source: `QSF_VOICE_MEMORY_SOURCE=phase_four_fixture`.
 - Optional file memory source: `QSF_VOICE_MEMORY_SOURCE=file` with
   `QSF_VOICE_MEMORY_FILE` pointing at a JSON `MemoryFixture`.
 - Repeatable example file source:
   `docs/Experiments/Fixtures/voice-memory.example.json`.
+- Session state boots through the shared session runtime and persists to
+  `state/session/` by default. If `state/session/` is absent and `state/text-loop/`
+  exists, the voice loop reads the legacy text-loop state as a fallback and writes the
+  continued state to `state/session/`.
 
 Default flow:
 
@@ -44,6 +50,7 @@ SimulatedTranscriptProvider
   -> OutputProduced
   -> SimulatedSpeechOutputProvider
   -> SpeechPlaybackStarted / SpeechPlaybackCompleted
+  -> persisted SessionState / continuity-manifest.json
 ```
 
 Live microphone input keeps the same QSF-owned response path:
@@ -75,14 +82,15 @@ The experiment records:
   output stages
 - generated turn reports list final transcript, memory retrieval, context assembly,
   model role, speech output, and total observed turn latency separately
+- `SessionResumed`, `TurnCompleted`, and `SessionEnded` events for the shared session
+  path
 - generated turn reports include a diagnostics section for response ownership,
   selected memory context, exact speech handoff, model latency, total observed latency,
   and raw-audio logging status
 
-Successful runs also print the QSF-owned response text to stdout so live microphone
-tests can be checked without opening the run artifact first. Run artifacts include
-`voice-memory-source.json` and the selected memory context id in
-`text-owned-voice-loop.md`.
+Run artifacts include `voice-memory-source.json`, `text-owned-voice-loop.md`, and the
+persisted `session-state.json` / `continuity-manifest.json` under the resolved session
+state directory.
 
 Raw audio, API keys, and authorization headers are not written to events, traces, or
 reports.
@@ -119,10 +127,17 @@ $env:QSF_TRANSCRIPT_INPUT_SOURCE="mic"
 $env:QSF_TRANSCRIPT_MIC_DEVICE="default"
 $env:QSF_TRANSCRIPT_MIC_DURATION_MS="4000"
 $env:QSF_MODEL_PROVIDER="mock"
-$env:QSF_VOICE_MEMORY_SOURCE="phase_four_fixture"
+$env:QSF_VOICE_MEMORY_SOURCE="memory_store"
 $env:QSF_SPEECH_OUTPUT_PROVIDER="simulated"
 $env:QSF_SPEECH_OUTPUT_MODE="metadata-only"
 cargo run -p qsf_app --features openai -- experiment text-owned-voice-loop
+```
+
+Fixture-backed memory evaluation:
+
+```powershell
+$env:QSF_VOICE_MEMORY_SOURCE="phase_four_fixture"
+cargo run -p qsf_app -- experiment text-owned-voice-loop
 ```
 
 Example file-backed memory evaluation:
@@ -134,12 +149,14 @@ cargo run -p qsf_app --features openai -- experiment text-owned-voice-loop
 ```
 
 The regression tests assert that only final transcripts create `InputReceived`, one
-session id correlates the turn, one retrieved memory fragment participates in selected
-context, `SpeechPlaybackRequested.payload["text"]` equals
-`OutputProduced.payload["message"]`, model failure prevents `OutputProduced`, and
-speech-provider failure sanitizes credential-like errors. A latency regression test
-uses a deliberately delayed mock model to ensure total turn latency includes model-role
-runtime.
+session id correlates the turn, the default path uses the shared `MemoryStore`, a
+populated shared store can drive selected context, explicit fixture/file sources still
+work, repeated voice runs awake-resume the same session, the legacy text-loop fallback
+reads `state/text-loop/` and writes `state/session/`,
+`SpeechPlaybackRequested.payload["text"]` equals `OutputProduced.payload["message"]`,
+model failure prevents `OutputProduced`, and speech-provider failure sanitizes
+credential-like errors. A latency regression test uses a deliberately delayed mock
+model to ensure total turn latency includes model-role runtime.
 
 ## Live Evaluation Notes
 

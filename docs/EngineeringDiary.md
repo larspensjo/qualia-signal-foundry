@@ -2153,3 +2153,43 @@ Observed:
 - Prompt assembly, memory retrieval/reinforcement, live capture, cross-turn co-retrieval, persistence, and manifest commit remain text-loop-private for now; extracting those behavior helpers is deferred to the next phase with a second caller.
 
 Refs: crates/qsf_app/src/experiments/multi_turn_text_loop.rs, crates/qsf_app/src/session/live_state.rs, crates/qsf_app/src/session/mod.rs, crates/qsf_app/src/session/persistence.rs, crates/qsf_app/src/session/resume.rs, docs/Architecture/Architecture.RuntimeLoop.md, docs/Reviews/Review.VoiceLoopUnification.Phase2.md
+
+## 2026-06-01 - Text-owned voice adopts shared session continuity
+
+The text-owned voice loop now boots through the shared session runtime, records a
+voice exchange through the live-session reducer, and persists the resulting session
+state through the same manifest-last protocol used by the text loop.
+
+What changed:
+- Added shared session runtime helpers for boot/resume classification, session event
+  reduction, live reducer application, boot-brief formatting, and continuity manifest
+  persistence.
+- Added a shared `state/session` resolver for the voice path, including a read-only
+  fallback from legacy `state/text-loop` state that writes the continued session to
+  `state/session`.
+- Routed text-owned voice through `Exchange::new_voice_pending`, partial/final
+  transcript live events, memory context recording, model/output completion, derived
+  `Turn` persistence, and `SessionEnded`.
+- Changed the default voice memory source to the shared `MemoryStore`, while keeping
+  fixture and file memory sources as explicit opt-ins.
+- Added regression coverage for shared-store retrieval, explicit fixture/file modes,
+  repeated voice awake continuation, persisted manifest/state files, and text-to-voice
+  legacy fallback.
+- Applied review follow-up by adding pure resolver unit coverage, preserving the
+  existing `ToolCompleted` scope payload, and removing obsolete text-loop wrapper
+  functions from the test path.
+- Updated runtime, audio, memory, and text-owned voice experiment documentation.
+
+Observed:
+- `cargo test text_owned_voice_loop --lib`, `cargo test multi_turn_text_loop --lib`,
+  and `cargo test session --lib` passed after the extraction and voice routing.
+- Full voice-to-text round-trip continuity still waits for the planned text-loop
+  resolver move to `state/session`.
+
+Refs: crates/qsf_app/src/session/runtime.rs, crates/qsf_app/src/session/state_directory.rs,
+crates/qsf_app/src/experiments/text_owned_voice_loop.rs,
+crates/qsf_app/src/experiments/multi_turn_text_loop.rs,
+docs/Architecture/Architecture.RuntimeLoop.md,
+docs/Architecture/Architecture.AudioLoop.md,
+docs/Architecture/Architecture.MemorySystem.md,
+docs/Experiments/Experiment.TextOwnedVoiceLoop.md

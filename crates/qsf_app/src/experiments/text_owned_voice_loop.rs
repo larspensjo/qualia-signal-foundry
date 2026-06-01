@@ -1,6 +1,6 @@
 use std::fs;
-use std::path::PathBuf;
-use std::time::Instant;
+use std::path::{Path, PathBuf};
+use std::time::{Duration, Instant, SystemTime};
 
 use anyhow::Context;
 use serde::Serialize;
@@ -18,6 +18,7 @@ use crate::audio::{
 use crate::context::{
     ContextAssembly, ContextBudget, ContextFragment, ContextSourceKind, assemble_context,
 };
+use crate::conversation::prompt;
 use crate::memory::{
     Association, MemoryFixture, MemoryRecord, RetrievalResult, RetrievalStrategy, RetrievedMemory,
     phase_four_fixture, retrieve_memories, retrieved_memory_ids,
@@ -29,6 +30,10 @@ use crate::models::{
 use crate::observability::event_log::EventType;
 use crate::observability::trace::{TraceRecord, elapsed_ms};
 use crate::runtime::run_context::RunContext;
+use crate::session::{
+    Exchange, ExchangeModelUse, ExchangeOutput, LiveSessionEvent, SessionBootRequest,
+    SessionConfig, SessionEndReason, SessionEvent, StateDirectoryResolution, Turn, UtteranceRecord,
+};
 
 use super::failure::{SanitizedFailure, record_sanitized_failure};
 use super::registry::{Experiment, ExperimentName, ExperimentOutcome};
@@ -56,14 +61,16 @@ impl Experiment for TextOwnedVoiceLoopExperiment {
         let model_client = build_client(requested_provider_from_env())?;
         let speech_provider =
             build_speech_output_provider(requested_speech_output_provider_from_env());
-        let memory_source = build_voice_memory_source_from_env()?;
+        let state_resolution = crate::session::resolve_shared_state_directory_from_env();
+        let memory_source = build_voice_memory_source_from_env(&state_resolution.resume_state_dir)?;
 
-        self.run_with_components_and_memory_source(
+        self.run_with_components_and_memory_source_at_state_dirs(
             context,
             transcript_provider.as_ref(),
             model_client.as_ref(),
             speech_provider.as_ref(),
             memory_source.as_ref(),
+            state_resolution,
         )
     }
 }
@@ -77,15 +84,18 @@ impl TextOwnedVoiceLoopExperiment {
         model_client: &dyn ModelClient,
         speech_provider: &dyn SpeechOutputProvider,
     ) -> anyhow::Result<ExperimentOutcome> {
+        let state_dir = context.run_dir().join("state/session");
+        let memory_source = SharedVoiceMemorySource::new(&state_dir);
         self.run_with_components_and_memory_source(
             context,
             transcript_provider,
             model_client,
             speech_provider,
-            &PhaseFourVoiceMemorySource,
+            &memory_source,
         )
     }
 
+    #[cfg_attr(not(test), allow(dead_code))]
     fn run_with_components_and_memory_source(
         &self,
         context: &mut RunContext,
@@ -94,12 +104,62 @@ impl TextOwnedVoiceLoopExperiment {
         speech_provider: &dyn SpeechOutputProvider,
         memory_source: &dyn VoiceLoopMemorySource,
     ) -> anyhow::Result<ExperimentOutcome> {
-        let session_id = format!("{}-text-owned-voice-loop", context.run_id());
+        let state_dir = context.run_dir().join("state/session");
+        self.run_with_components_and_memory_source_at_state_dirs(
+            context,
+            transcript_provider,
+            model_client,
+            speech_provider,
+            memory_source,
+            StateDirectoryResolution {
+                resume_state_dir: state_dir.clone(),
+                persist_state_dir: state_dir,
+                legacy_fallback_used: false,
+            },
+        )
+    }
+
+    fn run_with_components_and_memory_source_at_state_dirs(
+        &self,
+        context: &mut RunContext,
+        transcript_provider: &dyn TranscriptProvider,
+        model_client: &dyn ModelClient,
+        speech_provider: &dyn SpeechOutputProvider,
+        memory_source: &dyn VoiceLoopMemorySource,
+        state_resolution: StateDirectoryResolution,
+    ) -> anyhow::Result<ExperimentOutcome> {
+        let config = SessionConfig::from_env();
+        let boot = crate::session::boot_session(
+            context,
+            SessionBootRequest {
+                resume_state_dir: state_resolution.resume_state_dir.clone(),
+                persist_state_dir: state_resolution.persist_state_dir.clone(),
+                config,
+                legacy_fallback_used: state_resolution.legacy_fallback_used,
+            },
+        )?;
+        let mut state = boot.state;
+        let resume_manifest = boot.resume_inputs.manifest.clone();
+        let boot_brief_fragment = if state.turns.is_empty() {
+            boot.pending_boot_brief
+                .as_ref()
+                .map(crate::session::format_boot_brief_for_context)
+        } else {
+            None
+        };
+
+        let session_id = state.session_id.clone();
         let transcript_request = TranscriptProviderRequest::from_env(&session_id);
         let transcript_session = match transcript_provider.transcribe(&transcript_request) {
             Ok(session) => session,
             Err(error) => {
                 record_transcript_failure(context, &error)?;
+                crate::session::apply_live_session_event(
+                    &mut state,
+                    LiveSessionEvent::SessionEnded {
+                        reason: SessionEndReason::Error,
+                    },
+                );
                 return Err(error).context("transcript provider failed");
             }
         };
@@ -114,6 +174,12 @@ impl TextOwnedVoiceLoopExperiment {
                 message: "transcript provider returned an empty final transcript".to_string(),
             };
             record_transcript_failure(context, &error)?;
+            crate::session::apply_live_session_event(
+                &mut state,
+                LiveSessionEvent::SessionEnded {
+                    reason: SessionEndReason::Error,
+                },
+            );
             return Err(error).context("transcript provider failed");
         }
 
@@ -130,48 +196,183 @@ impl TextOwnedVoiceLoopExperiment {
             TranscriptEventEmission::new(transcript_to_input_boundary(), "transcription"),
         )?;
 
+        let exchange_index = state.turns.len();
+        crate::session::apply_live_session_event(
+            &mut state,
+            LiveSessionEvent::ExchangeStarted(Box::new(Exchange::new_voice_pending(
+                exchange_index,
+                SystemTime::now(),
+            ))),
+        );
+        for partial in &transcript_session.partials {
+            crate::session::apply_live_session_event(
+                &mut state,
+                LiveSessionEvent::AudioPartialTranscriptRecorded(
+                    crate::session::PartialTranscript {
+                        exchange_index,
+                        utterance_id: voice_utterance_id(&transcript_session),
+                        revision_index: partial.revision_index,
+                        transcript: partial.transcript.clone(),
+                        received_at: relative_system_time(partial.received_at_ms),
+                        provider_id: Some(transcript_session.provider_name.clone()),
+                        source_chunk_index: Some(partial.source_chunk_index as usize),
+                    },
+                ),
+            );
+        }
+        let final_transcript = transcript_session.final_transcript.transcript.clone();
+        crate::session::apply_live_session_event(
+            &mut state,
+            LiveSessionEvent::AudioFinalTranscriptCommitted {
+                exchange_index,
+                utterance: UtteranceRecord {
+                    utterance_id: voice_utterance_id(&transcript_session),
+                    revision_index: transcript_session
+                        .partials
+                        .iter()
+                        .map(|partial| partial.revision_index)
+                        .max()
+                        .unwrap_or(0),
+                    transcript: final_transcript.clone(),
+                    received_at: relative_system_time(
+                        transcript_session.final_transcript.received_at_ms,
+                    ),
+                    provider_id: Some(transcript_session.provider_name.clone()),
+                    source_chunk_index: None,
+                },
+                final_transcript: final_transcript.clone(),
+            },
+        );
+        crate::session::reduce_session_in_place(
+            &mut state,
+            SessionEvent::InputReceived {
+                input: final_transcript.clone(),
+            },
+        );
+
         let memory_snapshot = memory_source.load()?;
         write_voice_memory_source_snapshot(context, &memory_snapshot)?;
         let memory_retrieval = retrieve_voice_memories(
             context,
-            &transcript_session.session_id,
-            &transcript_session.final_transcript.transcript,
+            &state.session_id,
+            &final_transcript,
             &memory_snapshot,
         )?;
 
-        let context_assembly = assemble_voice_context(
-            &transcript_session.final_transcript.transcript,
-            &memory_retrieval.selected,
-        );
+        let context_assembly =
+            assemble_voice_context(&final_transcript, &memory_retrieval.selected);
         let context_trace_id =
-            record_context_assembly(context, &transcript_session.session_id, &context_assembly)?;
+            record_context_assembly(context, &state.session_id, &context_assembly)?;
         record_context_events(
             context,
-            &transcript_session.session_id,
+            &state.session_id,
             &context_assembly,
             context_trace_id,
         )?;
+        let retrieved_memory_block = retrieved_memory_block_with_boot_brief(
+            &context_assembly,
+            boot_brief_fragment.as_deref(),
+        );
+        crate::session::apply_live_session_event(
+            &mut state,
+            LiveSessionEvent::MemoryContextRecorded {
+                exchange_index,
+                context_assembly: context_assembly.clone(),
+                retrieved_memory_block: retrieved_memory_block.clone(),
+                recalled_items: vec![],
+                live_capture: None,
+            },
+        );
 
         let model_request = build_conversational_request(
-            &transcript_session.session_id,
-            &transcript_session.final_transcript.transcript,
+            &state.session_id,
+            &final_transcript,
             &context_assembly,
+            &retrieved_memory_block,
         );
         let model_started_at = Instant::now();
-        let model_response = invoke_model_role(context, model_client, &model_request)?;
+        let model_response = match invoke_model_role(context, model_client, &model_request) {
+            Ok(response) => response,
+            Err(error) => {
+                crate::session::apply_session_event(
+                    context,
+                    &mut state,
+                    SessionEvent::ModelRoleFailed {
+                        error_summary: error.to_string(),
+                    },
+                )?;
+                crate::session::apply_live_session_event(
+                    &mut state,
+                    LiveSessionEvent::ModelRoleFailed {
+                        error_summary: error.to_string(),
+                    },
+                );
+                return Err(error);
+            }
+        };
         let model_latency_ms = elapsed_ms(model_started_at);
         let model_trace_id = record_voice_model_response(
             context,
-            &transcript_session.session_id,
+            &state.session_id,
             &model_request,
             &model_response,
             model_latency_ms,
         )?;
+        let prompt_assembly = prompt::prompt_assembly_from_messages(model_request.messages.clone());
+        crate::session::apply_session_event(
+            context,
+            &mut state,
+            SessionEvent::ModelRoleCompleted {
+                response: model_response.output_text.clone(),
+                latency_ms: model_latency_ms,
+                input_tokens: model_response
+                    .usage
+                    .as_ref()
+                    .map(|usage| usage.input_tokens)
+                    .unwrap_or(0),
+                cached_input_tokens: model_response
+                    .usage
+                    .as_ref()
+                    .map(|usage| usage.cached_input_tokens)
+                    .unwrap_or(0),
+                output_tokens: model_response
+                    .usage
+                    .as_ref()
+                    .map(|usage| usage.output_tokens)
+                    .unwrap_or(0),
+            },
+        )?;
+        crate::session::apply_live_session_event(
+            &mut state,
+            LiveSessionEvent::ModelRoleCompleted(ExchangeModelUse {
+                provider_name: Some(model_response.provider_name.clone()),
+                model_id: model_response.model_name.clone(),
+                latency_ms: model_latency_ms,
+                input_tokens: model_response
+                    .usage
+                    .as_ref()
+                    .map(|usage| usage.input_tokens)
+                    .unwrap_or(0),
+                cached_input_tokens: model_response
+                    .usage
+                    .as_ref()
+                    .map(|usage| usage.cached_input_tokens)
+                    .unwrap_or(0),
+                output_tokens: model_response
+                    .usage
+                    .as_ref()
+                    .map(|usage| usage.output_tokens)
+                    .unwrap_or(0),
+                full_request_hash: prompt_assembly.full_request_hash,
+                message_count: prompt_assembly.message_count,
+            }),
+        );
 
         context.record_event(
             EventType::OutputProduced,
             json!({
-                "session_id": &transcript_session.session_id,
+                "session_id": &state.session_id,
+                "exchange_index": exchange_index,
                 "source": "qsf_model_role",
                 "role_id": model_response.role_id,
                 "provider_name": &model_response.provider_name,
@@ -186,17 +387,40 @@ impl TextOwnedVoiceLoopExperiment {
             "text-owned voice response produced: experiment_id={} run_id={} session_id={}",
             context.experiment_id(),
             context.run_id(),
-            transcript_session.session_id
+            state.session_id
         );
-
-        let speech_request = SpeechOutputRequest::from_env(
-            &transcript_session.session_id,
+        crate::session::apply_live_session_event(
+            &mut state,
+            LiveSessionEvent::OutputProduced(ExchangeOutput {
+                response_id: Some(format!("voice-response-{exchange_index}")),
+                text: model_response.output_text.clone(),
+                produced_at: SystemTime::now(),
+                provider_name: Some(model_response.provider_name.clone()),
+                target: Some("speech-output-provider".to_string()),
+                audio_marker: None,
+            }),
+        );
+        super::multi_turn_text_loop::apply_live_memory_reinforcement(
+            context,
+            &state,
+            &state_resolution.persist_state_dir,
+            &memory_retrieval,
+        )?;
+        super::multi_turn_text_loop::apply_live_memory_capture(
+            context,
+            &state,
+            &state_resolution.persist_state_dir,
+            &final_transcript,
             &model_response.output_text,
-        );
+        )?;
+
+        let speech_request =
+            SpeechOutputRequest::from_env(&state.session_id, &model_response.output_text);
         context.record_event(
             EventType::SpeechPlaybackRequested,
             json!({
-                "session_id": &transcript_session.session_id,
+                "session_id": &state.session_id,
+                "exchange_index": exchange_index,
                 "provider": speech_provider.provider_name(),
                 "model": &speech_request.model,
                 "voice": &speech_request.voice,
@@ -213,7 +437,7 @@ impl TextOwnedVoiceLoopExperiment {
         let speech_session = match speech_provider.synthesize(&speech_request) {
             Ok(session) => session,
             Err(error) => {
-                record_speech_failure(context, &transcript_session.session_id, &error)?;
+                record_speech_failure(context, &state.session_id, &error)?;
                 return Err(error).context("speech output provider failed");
             }
         };
@@ -235,6 +459,54 @@ impl TextOwnedVoiceLoopExperiment {
             &speech_session,
             model_latency_ms,
             latency_trace_id,
+        )?;
+
+        crate::session::apply_live_session_event(
+            &mut state,
+            LiveSessionEvent::ExchangeCompleted {
+                completed_at: SystemTime::now(),
+            },
+        );
+        let completed_exchange = state
+            .live
+            .completed_exchanges
+            .last()
+            .cloned()
+            .context("completed voice exchange missing after ExchangeCompleted")?;
+        let turn = Turn::try_from(&completed_exchange).with_context(|| {
+            format!(
+                "failed to convert completed voice exchange {} into a turn",
+                completed_exchange.index
+            )
+        })?;
+        crate::session::apply_session_event(
+            context,
+            &mut state,
+            SessionEvent::TurnCompleted(turn),
+        )?;
+        super::multi_turn_text_loop::age_out_warm_turns(
+            context,
+            &mut state,
+            &state_resolution.persist_state_dir,
+            model_client,
+        )?;
+        crate::session::apply_live_session_event(
+            &mut state,
+            LiveSessionEvent::SessionEnded {
+                reason: SessionEndReason::Eof,
+            },
+        );
+        crate::session::apply_session_event(
+            context,
+            &mut state,
+            SessionEvent::SessionEnded {
+                reason: SessionEndReason::Eof,
+            },
+        )?;
+        crate::session::persist_continuity_state(
+            &state,
+            &state_resolution.persist_state_dir,
+            &resume_manifest,
         )?;
 
         let report_timing = VoiceLoopReportTiming::new(
@@ -279,6 +551,11 @@ impl TextOwnedVoiceLoopExperiment {
             extra_artifacts: vec![
                 "text-owned-voice-loop.md".to_string(),
                 "voice-memory-source.json".to_string(),
+                state_resolution
+                    .persist_state_dir
+                    .join("session-state.json")
+                    .display()
+                    .to_string(),
             ],
         })
     }
@@ -286,6 +563,29 @@ impl TextOwnedVoiceLoopExperiment {
 
 trait VoiceLoopMemorySource {
     fn load(&self) -> anyhow::Result<VoiceMemorySourceSnapshot>;
+}
+
+struct SharedVoiceMemorySource {
+    state_dir: PathBuf,
+}
+
+impl SharedVoiceMemorySource {
+    fn new(state_dir: impl Into<PathBuf>) -> Self {
+        Self {
+            state_dir: state_dir.into(),
+        }
+    }
+}
+
+impl VoiceLoopMemorySource for SharedVoiceMemorySource {
+    fn load(&self) -> anyhow::Result<VoiceMemorySourceSnapshot> {
+        let memory_store_path = self.state_dir.join("memory-store.json");
+        let store = crate::memory::MemoryStore::load_or_empty(&memory_store_path)?;
+        Ok(VoiceMemorySourceSnapshot::from_memory_store(
+            &memory_store_path,
+            store.contents().clone(),
+        ))
+    }
 }
 
 struct PhaseFourVoiceMemorySource;
@@ -355,6 +655,15 @@ impl VoiceMemorySourceSnapshot {
         }
     }
 
+    fn from_memory_store(path: &Path, contents: crate::memory::MemoryStoreContents) -> Self {
+        Self {
+            source_name: "memory_store".to_string(),
+            source_reference: path.display().to_string(),
+            records: contents.records,
+            associations: contents.associations,
+        }
+    }
+
     fn record_count(&self) -> usize {
         self.records.len()
     }
@@ -364,14 +673,19 @@ impl VoiceMemorySourceSnapshot {
     }
 }
 
-fn build_voice_memory_source_from_env() -> anyhow::Result<Box<dyn VoiceLoopMemorySource>> {
+fn build_voice_memory_source_from_env(
+    state_dir: &Path,
+) -> anyhow::Result<Box<dyn VoiceLoopMemorySource>> {
     match std::env::var(VOICE_MEMORY_SOURCE_ENV_VAR)
-        .unwrap_or_else(|_| "phase_four_fixture".to_string())
+        .unwrap_or_else(|_| "memory_store".to_string())
         .trim()
         .to_ascii_lowercase()
         .as_str()
     {
-        "" | "phase_four_fixture" | "fixture" => Ok(Box::new(PhaseFourVoiceMemorySource)),
+        "" | "memory_store" | "memory-store" | "shared" => {
+            Ok(Box::new(SharedVoiceMemorySource::new(state_dir)))
+        }
+        "phase_four_fixture" | "fixture" => Ok(Box::new(PhaseFourVoiceMemorySource)),
         "file" => {
             let path = std::env::var(VOICE_MEMORY_FILE_ENV_VAR).with_context(|| {
                 format!(
@@ -381,7 +695,7 @@ fn build_voice_memory_source_from_env() -> anyhow::Result<Box<dyn VoiceLoopMemor
             Ok(Box::new(FileVoiceMemorySource::new(path)))
         }
         value => anyhow::bail!(
-            "unsupported voice memory source `{}`; expected `phase_four_fixture` or `file`",
+            "unsupported voice memory source `{}`; expected `memory_store`, `phase_four_fixture`, or `file`",
             value
         ),
     }
@@ -558,6 +872,29 @@ fn assemble_voice_context(
     assemble_context(fragments, ContextBudget::new(4, 600))
 }
 
+fn retrieved_memory_block_with_boot_brief(
+    assembly: &ContextAssembly,
+    boot_brief_fragment: Option<&str>,
+) -> String {
+    let retrieved_memory_block = prompt::retrieved_memory_block(assembly);
+    match (boot_brief_fragment, retrieved_memory_block.is_empty()) {
+        (Some(brief), true) => brief.to_string(),
+        (Some(brief), false) => format!("{brief}\n\n{retrieved_memory_block}"),
+        (None, _) => retrieved_memory_block,
+    }
+}
+
+fn voice_utterance_id(session: &TranscriptProviderSession) -> String {
+    format!(
+        "{}-utterance-{}",
+        session.session_id, session.final_transcript.utterance_index
+    )
+}
+
+fn relative_system_time(offset_ms: u64) -> SystemTime {
+    SystemTime::UNIX_EPOCH + Duration::from_millis(offset_ms)
+}
+
 fn record_context_assembly(
     context: &mut RunContext,
     session_id: &str,
@@ -620,6 +957,7 @@ fn build_conversational_request(
     session_id: &str,
     final_transcript: &str,
     assembly: &ContextAssembly,
+    retrieved_memory_block: &str,
 ) -> ModelRequest {
     let context_summary = assembly
         .selected
@@ -640,7 +978,7 @@ fn build_conversational_request(
                 "Answer as a short spoken QSF-owned response. Do not claim that the speech provider generated the answer.",
             ),
             ModelMessage::user(format!(
-                "Final transcript:\n{final_transcript}\n\nSelected context:\n{context_summary}"
+                "Final transcript:\n{final_transcript}\n\nSelected context:\n{context_summary}\n\nRetrieved memory and session brief:\n{retrieved_memory_block}"
             )),
         ],
     )
@@ -1180,10 +1518,12 @@ fn voice_loop_total_latency_ms(
 #[cfg(test)]
 mod tests {
     use std::fs;
+    use std::path::PathBuf;
     use std::time::Duration;
 
     use super::{
-        FileVoiceMemorySource, TextOwnedVoiceLoopExperiment, VOICE_CONTEXT_ASSEMBLY_LATENCY_MS,
+        FileVoiceMemorySource, PhaseFourVoiceMemorySource, SharedVoiceMemorySource,
+        TextOwnedVoiceLoopExperiment, VOICE_CONTEXT_ASSEMBLY_LATENCY_MS,
     };
     use crate::audio::test_support::{
         assert_events_have_safety_markers, assert_payloads_do_not_contain_raw_audio_fields,
@@ -1196,10 +1536,11 @@ mod tests {
         TranscriptProviderSession,
     };
     use crate::experiments::registry::{Experiment, ExperimentName};
-    use crate::memory::{Association, MemoryFixture, MemoryRecord, MemoryRecordKind};
+    use crate::memory::{Association, MemoryFixture, MemoryRecord, MemoryRecordKind, MemoryStore};
     use crate::models::{MockModelClient, ModelClient, ModelRequest, ModelResponse, ModelUsage};
     use crate::observability::event_log::{EventRecord, EventType};
     use crate::runtime::run_context::RunContext;
+    use crate::session::{SessionConfig, SessionEndReason, StateDirectoryResolution};
     use anyhow::anyhow;
     use time::OffsetDateTime;
     use time::format_description::well_known::Rfc3339;
@@ -1351,7 +1692,7 @@ mod tests {
             ],
         );
         assert_only_final_transcript_commits_runtime_input(&event_records);
-        assert_memory_context_participates_in_model_path(&event_records);
+        assert_default_shared_memory_store_path_is_used(&event_records);
         assert_one_session_id_links_voice_loop_events(&event_records);
         assert_output_text_is_handed_exactly_to_speech_provider(&event_records);
         assert_events_have_safety_markers(&event_records, is_audio_or_speech_event);
@@ -1364,17 +1705,258 @@ mod tests {
         assert!(traces.contains("speech-output-provider"));
         assert!(traces.contains("voice-loop-latency"));
         assert!(report.contains("Text-Owned Voice Loop"));
-        assert!(report.contains("Selected memory context: `memory."));
+        assert!(report.contains("Selected memory context: `none`"));
         assert!(report.contains("Model role latency:"));
         assert!(report.contains("Total observed turn latency:"));
         assert!(report.contains("## Diagnostics"));
         assert!(report.contains("Response owner: `qsf_model_role`"));
-        assert!(report.contains("Memory source: `phase_four_fixture`"));
-        assert!(report.contains("Memory records: `10`"));
+        assert!(report.contains("Memory source: `memory_store`"));
+        assert!(report.contains("Memory records: `0`"));
         assert!(report.contains("Retrieval strategy: `keyword-tag`"));
         assert!(report.contains("Exact speech handoff: `true`"));
         assert!(report.contains("Raw audio logged: `false`"));
         assert!(context.run_dir().join("voice-memory-source.json").exists());
+
+        let state_dir = context.run_dir().join("state/session");
+        let persisted_state =
+            crate::session::persistence::load_session_state(state_dir.join("session-state.json"))
+                .unwrap();
+        assert_eq!(persisted_state.turns.len(), 1);
+        assert_eq!(persisted_state.turns[0].index, 0);
+        assert_eq!(persisted_state.ended_reason, Some(SessionEndReason::Eof));
+        let manifest = crate::session::manifest::ContinuityManifest::load_or_default(
+            state_dir.join("continuity-manifest.json"),
+        )
+        .unwrap();
+        assert_eq!(
+            manifest.current_session_id,
+            Some(persisted_state.session_id)
+        );
+        assert_eq!(
+            manifest.current_session_state_path,
+            Some(PathBuf::from("session-state.json"))
+        );
+
+        fs::remove_dir_all(base_dir).unwrap();
+    }
+
+    #[test]
+    fn default_shared_memory_store_drives_voice_retrieval_when_present() {
+        let base_dir =
+            std::env::temp_dir().join(format!("qsf-text-owned-shared-memory-{}", Uuid::new_v4()));
+        let mut context = RunContext::create_in(&base_dir, "text-owned-voice-loop").unwrap();
+        let state_dir = context.run_dir().join("state/session");
+        let store_path = state_dir.join("memory-store.json");
+        let mut store = MemoryStore::load_or_empty(&store_path).unwrap();
+        store.append_records(vec![MemoryRecord::new(
+            "memory.voice.shared-store",
+            MemoryRecordKind::Observation,
+            "Shared voice memory",
+            "Streaming transcription should enter the runtime as events.",
+            vec!["streaming", "transcription", "runtime", "events"],
+            timestamp("2026-05-15T06:00:00Z"),
+            0.95,
+            0,
+            "tests/shared-memory-store.json",
+            18,
+        )]);
+        store.persist().unwrap();
+        let experiment = TextOwnedVoiceLoopExperiment;
+
+        experiment
+            .run_with_components(
+                &mut context,
+                &SimulatedTranscriptProvider,
+                &MockModelClient::default(),
+                &SimulatedSpeechOutputProvider,
+            )
+            .unwrap();
+
+        let events = fs::read_to_string(context.run_dir().join("events.jsonl")).unwrap();
+        let report =
+            fs::read_to_string(context.run_dir().join("text-owned-voice-loop.md")).unwrap();
+        let event_records = parse_event_records(&events);
+        let retrieval = event_records
+            .iter()
+            .find(|record| record.event_type == EventType::MemoryRetrieved)
+            .unwrap();
+
+        assert_eq!(retrieval.payload["memory_source"], "memory_store");
+        assert_eq!(
+            retrieval.payload["selected"][0],
+            "memory.voice.shared-store"
+        );
+        assert!(report.contains("Memory source: `memory_store`"));
+        assert!(report.contains("Selected memory context: `memory.voice.shared-store`"));
+
+        fs::remove_dir_all(base_dir).unwrap();
+    }
+
+    #[test]
+    fn explicit_fixture_memory_source_remains_supported() {
+        let base_dir =
+            std::env::temp_dir().join(format!("qsf-text-owned-fixture-memory-{}", Uuid::new_v4()));
+        let mut context = RunContext::create_in(&base_dir, "text-owned-voice-loop").unwrap();
+        let experiment = TextOwnedVoiceLoopExperiment;
+
+        experiment
+            .run_with_components_and_memory_source(
+                &mut context,
+                &SimulatedTranscriptProvider,
+                &MockModelClient::default(),
+                &SimulatedSpeechOutputProvider,
+                &PhaseFourVoiceMemorySource,
+            )
+            .unwrap();
+
+        let report =
+            fs::read_to_string(context.run_dir().join("text-owned-voice-loop.md")).unwrap();
+        let source_snapshot =
+            fs::read_to_string(context.run_dir().join("voice-memory-source.json")).unwrap();
+
+        assert!(report.contains("Memory source: `phase_four_fixture`"));
+        assert!(report.contains("Memory records: `10`"));
+        assert!(source_snapshot.contains("phase_four_fixture"));
+
+        fs::remove_dir_all(base_dir).unwrap();
+    }
+
+    #[test]
+    fn second_voice_run_awake_resumes_same_session() {
+        let base_dir =
+            std::env::temp_dir().join(format!("qsf-text-owned-voice-resume-{}", Uuid::new_v4()));
+        let state_dir = base_dir.join("state/session");
+        let memory_source = SharedVoiceMemorySource::new(&state_dir);
+        let experiment = TextOwnedVoiceLoopExperiment;
+
+        let mut first_context =
+            RunContext::create_in(base_dir.join("runs"), "text-owned-voice-loop").unwrap();
+        experiment
+            .run_with_components_and_memory_source_at_state_dirs(
+                &mut first_context,
+                &SimulatedTranscriptProvider,
+                &MockModelClient::default(),
+                &SimulatedSpeechOutputProvider,
+                &memory_source,
+                StateDirectoryResolution {
+                    resume_state_dir: state_dir.clone(),
+                    persist_state_dir: state_dir.clone(),
+                    legacy_fallback_used: false,
+                },
+            )
+            .unwrap();
+        let first_state =
+            crate::session::persistence::load_session_state(state_dir.join("session-state.json"))
+                .unwrap();
+
+        let mut second_context =
+            RunContext::create_in(base_dir.join("runs"), "text-owned-voice-loop").unwrap();
+        experiment
+            .run_with_components_and_memory_source_at_state_dirs(
+                &mut second_context,
+                &SimulatedTranscriptProvider,
+                &MockModelClient::default(),
+                &SimulatedSpeechOutputProvider,
+                &memory_source,
+                StateDirectoryResolution {
+                    resume_state_dir: state_dir.clone(),
+                    persist_state_dir: state_dir.clone(),
+                    legacy_fallback_used: false,
+                },
+            )
+            .unwrap();
+        let second_state =
+            crate::session::persistence::load_session_state(state_dir.join("session-state.json"))
+                .unwrap();
+        let events = fs::read_to_string(second_context.run_dir().join("events.jsonl")).unwrap();
+        let records = parse_event_records(&events);
+        let resumed = records
+            .iter()
+            .find(|record| record.event_type == EventType::SessionResumed)
+            .unwrap();
+
+        assert_eq!(second_state.session_id, first_state.session_id);
+        assert_eq!(second_state.turns.len(), 2);
+        assert_eq!(second_state.turns[0].index, 0);
+        assert_eq!(second_state.turns[1].index, 1);
+        assert_eq!(resumed.payload["mode"], "awake_continuation");
+        assert_eq!(
+            resumed.payload["previous_session_id"].as_str(),
+            Some(first_state.session_id.as_str())
+        );
+
+        fs::remove_dir_all(base_dir).unwrap();
+    }
+
+    #[test]
+    fn voice_reads_legacy_text_loop_state_and_persists_to_shared_session_dir() {
+        let base_dir =
+            std::env::temp_dir().join(format!("qsf-text-owned-legacy-fallback-{}", Uuid::new_v4()));
+        let legacy_state_dir = base_dir.join("state/text-loop");
+        let shared_state_dir = base_dir.join("state/session");
+        let config = SessionConfig::from_env();
+        let mut previous =
+            crate::session::SessionState::new_with_id("legacy-text-session".to_string(), config);
+        previous.turns.push(crate::session::tests::fake_turn(0));
+        crate::session::persistence::persist_session_state(&previous, &legacy_state_dir).unwrap();
+        crate::session::manifest::ContinuityManifest {
+            current_session_id: Some(previous.session_id.clone()),
+            current_session_state_path: Some(PathBuf::from("session-state.json")),
+            sleep_pending: true,
+            resume_mode: crate::session::manifest::ResumeMode::AwakeContinuation,
+            ..crate::session::manifest::ContinuityManifest::default()
+        }
+        .persist(legacy_state_dir.join("continuity-manifest.json"))
+        .unwrap();
+        let memory_source = SharedVoiceMemorySource::new(&legacy_state_dir);
+        let experiment = TextOwnedVoiceLoopExperiment;
+        let mut context =
+            RunContext::create_in(base_dir.join("runs"), "text-owned-voice-loop").unwrap();
+
+        experiment
+            .run_with_components_and_memory_source_at_state_dirs(
+                &mut context,
+                &SimulatedTranscriptProvider,
+                &MockModelClient::default(),
+                &SimulatedSpeechOutputProvider,
+                &memory_source,
+                StateDirectoryResolution {
+                    resume_state_dir: legacy_state_dir.clone(),
+                    persist_state_dir: shared_state_dir.clone(),
+                    legacy_fallback_used: true,
+                },
+            )
+            .unwrap();
+
+        let shared_state = crate::session::persistence::load_session_state(
+            shared_state_dir.join("session-state.json"),
+        )
+        .unwrap();
+        let legacy_state = crate::session::persistence::load_session_state(
+            legacy_state_dir.join("session-state.json"),
+        )
+        .unwrap();
+        let events = fs::read_to_string(context.run_dir().join("events.jsonl")).unwrap();
+        let records = parse_event_records(&events);
+        let resumed = records
+            .iter()
+            .find(|record| record.event_type == EventType::SessionResumed)
+            .unwrap();
+
+        assert_eq!(legacy_state.turns.len(), 1);
+        assert_eq!(shared_state.session_id, previous.session_id);
+        assert_eq!(shared_state.turns.len(), 2);
+        assert_eq!(
+            shared_state.turns[0].user_input,
+            previous.turns[0].user_input
+        );
+        assert!(shared_state_dir.join("continuity-manifest.json").exists());
+        assert_eq!(resumed.payload["mode"], "awake_continuation");
+        assert_eq!(resumed.payload["legacy_fallback_used"], true);
+        assert_eq!(
+            resumed.payload["resume_state_dir"].as_str().unwrap(),
+            legacy_state_dir.display().to_string()
+        );
 
         fs::remove_dir_all(base_dir).unwrap();
     }
@@ -1793,33 +2375,26 @@ mod tests {
         assert_eq!(input_count, 1);
     }
 
-    fn assert_memory_context_participates_in_model_path(records: &[EventRecord]) {
+    fn assert_default_shared_memory_store_path_is_used(records: &[EventRecord]) {
         let retrieval = records
             .iter()
             .find(|record| record.event_type == EventType::MemoryRetrieved)
             .unwrap();
         assert_eq!(retrieval.payload["strategy"], "keyword_tag");
+        assert_eq!(retrieval.payload["memory_source"], "memory_store");
         let selected_memories = retrieval.payload["selected"].as_array().unwrap();
-        assert_eq!(selected_memories.len(), 1);
-        assert!(
-            selected_memories[0]
-                .as_str()
-                .unwrap()
-                .starts_with("memory.")
-        );
+        assert!(selected_memories.is_empty());
 
         let context = records
             .iter()
             .find(|record| record.event_type == EventType::ContextAssembled)
             .unwrap();
         let selected_context = context.payload["selected"].as_array().unwrap();
-        assert!(selected_context.iter().any(|selection| {
-            selection["fragment"]["source_kind"] == "memory"
-                && selection["fragment"]["fragment_id"]
-                    .as_str()
-                    .unwrap()
-                    .starts_with("memory.")
-        }));
+        assert!(
+            selected_context
+                .iter()
+                .all(|selection| { selection["fragment"]["source_kind"] != "memory" })
+        );
     }
 
     fn assert_one_session_id_links_voice_loop_events(records: &[EventRecord]) {

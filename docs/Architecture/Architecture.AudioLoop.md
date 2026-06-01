@@ -28,12 +28,20 @@ handling are not yet built.
 - `VoiceSessionProvider` for `gpt-realtime-2` speech-to-speech sessions, with tool
   requests routed into QSF events rather than executed directly
   ([audio/voice_session_provider.rs](../../crates/qsf_app/src/audio/voice_session_provider.rs))
-- Text-owned voice loop where QSF owns interpretation, memory retrieval, context
-  assembly, model-role invocation, and `OutputProduced` text
+- Text-owned voice loop where QSF owns interpretation, shared session continuity,
+  memory retrieval, context assembly, model-role invocation, and `OutputProduced`
+  text
   ([experiments/text_owned_voice_loop.rs](../../crates/qsf_app/src/experiments/text_owned_voice_loop.rs))
+- The text-owned voice loop now boots through the shared session runtime, records a
+  voice `Exchange` through the live-session reducer, persists a derived `Turn`, and
+  updates the continuity manifest after successful simulated or provider-backed
+  transcript runs
+  ([session/runtime.rs](../../crates/qsf_app/src/session/runtime.rs),
+  [session/live_state.rs](../../crates/qsf_app/src/session/live_state.rs))
 - Latency reporting across transcript dispatch, memory retrieval, context assembly,
   model runtime, and speech output
-- `session_id` propagation across the voice turn
+- `session_id` propagation across the voice turn and across resumed text-owned voice
+  sessions
 
 **Partial:**
 
@@ -48,7 +56,7 @@ handling are not yet built.
 - Translation provider (`gpt-realtime-translate`) integration
 - A live debug UI for audio state
 
-Last reviewed: 2026-05-18 against the code on `main`.
+Last reviewed: 2026-06-01 against the text-owned voice shared-continuity path.
 
 ## Summary
 
@@ -134,7 +142,7 @@ but it should still map provider events back into the same QSF event stream.
 The current text-owned voice-loop experiment adds a second, deterministic boundary:
 speech output is a renderer for QSF-owned `OutputProduced` text, not the owner of the
 answer. The default loop therefore treats audio providers as adapters around a normal
-QSF text turn:
+QSF live-session exchange:
 
 ```text
 TranscriptProvider
@@ -145,6 +153,7 @@ TranscriptProvider
   -> OutputProduced
   -> SpeechOutputProvider
   -> SpeechPlaybackCompleted
+  -> persisted SessionState + continuity manifest
 ```
 
 ## Candidate Runtime Model

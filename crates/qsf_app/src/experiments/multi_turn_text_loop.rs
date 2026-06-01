@@ -27,8 +27,8 @@ use crate::observability::trace::{TraceRecord, elapsed_ms};
 use crate::runtime::run_context::RunContext;
 use crate::session::{
     Exchange, ExchangeModelUse, ExchangeOutput, LiveSessionEvent, MemorySourceConfig, RecallRecord,
-    SessionConfig, SessionEndReason, SessionEvent, SessionLimit, SessionState, Turn, TurnRange,
-    TurnSummary, is_turn_summarized, reduce_live_session,
+    SessionBootRequest, SessionConfig, SessionEndReason, SessionEvent, SessionState, Turn,
+    TurnRange, TurnSummary, is_turn_summarized,
 };
 use crate::tools::{
     CALCULATOR_TOOL_NAME, RECALL_TURN_TOOL_NAME, SessionToolContext, ToolRegistry, ToolResult,
@@ -86,7 +86,7 @@ impl Experiment for MultiTurnTextLoopExperiment {
 }
 
 impl SessionConfig {
-    fn from_env() -> Self {
+    pub(crate) fn from_env() -> Self {
         let model_id = std::env::var(SESSION_MODEL_ENV_VAR)
             .unwrap_or_else(|_| DEFAULT_SESSION_MODEL.to_string());
         let max_turns = std::env::var(SESSION_MAX_TURNS_ENV_VAR)
@@ -115,7 +115,7 @@ impl SessionConfig {
 }
 
 impl MemorySourceConfig {
-    fn from_env() -> Self {
+    pub(crate) fn from_env() -> Self {
         let source = std::env::var(SESSION_MEMORY_SOURCE_ENV_VAR)
             .unwrap_or_else(|_| "phase_four_fixture".to_string());
         let file = std::env::var(SESSION_MEMORY_FILE_ENV_VAR)
@@ -123,71 +123,6 @@ impl MemorySourceConfig {
             .map(PathBuf::from);
 
         Self { source, file }
-    }
-}
-
-#[cfg_attr(not(test), allow(dead_code))]
-pub fn reduce_session(mut state: SessionState, event: SessionEvent) -> SessionState {
-    reduce_session_in_place(&mut state, event);
-    state
-}
-
-fn reduce_session_in_place(state: &mut SessionState, event: SessionEvent) {
-    match event {
-        SessionEvent::SessionStarted(config) => {
-            state.config = config;
-        }
-        SessionEvent::InputReceived { input } => {
-            state.last_input = Some(input);
-            state.last_model_error = None;
-        }
-        SessionEvent::MemoryRetrieved | SessionEvent::ContextAssembled(_) => {}
-        SessionEvent::PromptAssembled {
-            full_request_hash, ..
-        } => {
-            state.last_prompt_hash = Some(full_request_hash);
-            state.prefix_invalidated_since_last_prompt = false;
-        }
-        SessionEvent::ModelRoleCompleted { .. } => {
-            state.last_model_error = None;
-        }
-        SessionEvent::ModelRoleFailed { error_summary } => {
-            state.last_model_error = Some(error_summary);
-        }
-        SessionEvent::TurnCompleted(turn) => {
-            state.turns.push(turn);
-        }
-        SessionEvent::TurnSummarized(summary) => {
-            state.summarized_turns.push(summary);
-            state.prefix_invalidated_since_last_prompt = true;
-        }
-        SessionEvent::TurnsAgedAndCoRetrieved {
-            range, summaries, ..
-        } => {
-            debug_assert!(range.last_index >= range.first_index);
-            assert_eq!(
-                summaries.len(),
-                range.last_index + 1 - range.first_index,
-                "TurnsAgedAndCoRetrieved summaries must match the aged range"
-            );
-            state.summarized_turns.extend(summaries);
-            state.prefix_invalidated_since_last_prompt = true;
-        }
-        SessionEvent::ToolCompleted(_) => {}
-        SessionEvent::SessionLimitReached {
-            current,
-            max,
-            override_active,
-        } => {
-            state.limit_reached = Some(SessionLimit {
-                current,
-                max,
-                override_active,
-            });
-        }
-        SessionEvent::SessionEnded { reason } => {
-            state.ended_reason = Some(reason);
-        }
     }
 }
 
@@ -222,94 +157,18 @@ fn run_with_io_and_components_at_state_dir(
     state_dir: impl AsRef<Path>,
 ) -> anyhow::Result<ExperimentOutcome> {
     let state_dir = state_dir.as_ref().to_path_buf();
-    let resume_inputs = crate::session::resume::load_resume_inputs(&state_dir)?;
-    let classified_resume_mode = crate::session::resume::classify_resume_mode(&resume_inputs);
-    let config_changed = resume_inputs
-        .previous_session
-        .as_ref()
-        .map(|session| awake_resume_breaking_config_changed(&session.config, &config))
-        .unwrap_or(false);
-    let downgraded_for_config = matches!(
-        classified_resume_mode,
-        crate::session::manifest::ResumeMode::AwakeContinuation
-    ) && config_changed;
-    let resume_mode = if downgraded_for_config {
-        crate::session::manifest::ResumeMode::ColdStart
-    } else {
-        classified_resume_mode
-    };
-    let previous_session_id = resume_inputs
-        .previous_session
-        .as_ref()
-        .map(|session| session.session_id.clone());
-    let brief_path = resume_inputs.manifest.last_sleep_brief_path.clone();
-    let mut pending_boot_brief: Option<crate::sleep::commit::ConsolidatedBrief> = None;
-    let mut state = match resume_mode {
-        crate::session::manifest::ResumeMode::ColdStart => SessionState::new(config.clone()),
-        crate::session::manifest::ResumeMode::AwakeContinuation => {
-            let previous = resume_inputs
-                .previous_session
-                .clone()
-                .context("awake continuation requires a previous session")?;
-            crate::session::continuation::prepare_awake_continuation(previous, &config)
-        }
-        crate::session::manifest::ResumeMode::ConsolidatedBrief => {
-            if let Some(path) = &brief_path {
-                let absolute_path = if path.is_absolute() {
-                    path.clone()
-                } else {
-                    state_dir.join(path)
-                };
-                if absolute_path.exists() {
-                    let raw = fs::read_to_string(&absolute_path).with_context(|| {
-                        format!(
-                            "failed to read consolidated brief `{}`",
-                            absolute_path.display()
-                        )
-                    })?;
-                    pending_boot_brief = Some(serde_json::from_str(&raw).with_context(|| {
-                        format!(
-                            "failed to parse consolidated brief `{}`",
-                            absolute_path.display()
-                        )
-                    })?);
-                }
-            }
-
-            let mut fresh = SessionState::new(config.clone());
-            fresh.previous_session_id = previous_session_id.clone();
-            fresh
-        }
-    };
-    context.record_event(
-        EventType::SessionResumed,
-        json!({
-            "mode": resume_mode,
-            "classified_mode": classified_resume_mode,
-            "config_changed": config_changed,
-            "downgraded_for_config": downgraded_for_config,
-            "session_id": state.session_id.clone(),
-            "previous_session_id": previous_session_id,
-            "brief_path": brief_path,
-        }),
-        None,
-    )?;
-    apply_session_event(
+    let boot = crate::session::boot_session(
         context,
-        &mut state,
-        SessionEvent::SessionStarted(config.clone()),
-    )?;
-    apply_live_session_event(
-        &mut state,
-        if matches!(
-            resume_mode,
-            crate::session::manifest::ResumeMode::AwakeContinuation
-        ) {
-            LiveSessionEvent::SessionResumed
-        } else {
-            LiveSessionEvent::SessionStarted
+        SessionBootRequest {
+            resume_state_dir: state_dir.clone(),
+            persist_state_dir: state_dir.clone(),
+            config,
+            legacy_fallback_used: false,
         },
-    );
+    )?;
+    let resume_inputs = boot.resume_inputs;
+    let mut pending_boot_brief = boot.pending_boot_brief;
+    let mut state = boot.state;
     let mut memory_snapshot = load_session_memory_snapshot(context, memory_source, &state_dir)?;
     write_memory_source_snapshot(context, &memory_snapshot)?;
     let color_mode = ColorMode::for_stdout();
@@ -460,13 +319,6 @@ fn run_with_io_and_components_at_state_dir(
             "session-memory-source.json".to_string(),
         ],
     })
-}
-
-fn awake_resume_breaking_config_changed(previous: &SessionConfig, current: &SessionConfig) -> bool {
-    previous.model_id != current.model_id
-        || previous.max_turns != current.max_turns
-        || previous.warm_threshold != current.warm_threshold
-        || previous.memory_source != current.memory_source
 }
 
 struct TurnRequest<'a> {
@@ -870,7 +722,7 @@ pub(crate) fn plan_token_budget_drop(
     })
 }
 
-fn apply_live_memory_reinforcement(
+pub(crate) fn apply_live_memory_reinforcement(
     context: &mut RunContext,
     state: &SessionState,
     state_dir: &Path,
@@ -1046,7 +898,7 @@ fn apply_live_memory_reinforcement(
     Ok(())
 }
 
-fn apply_live_memory_capture(
+pub(crate) fn apply_live_memory_capture(
     context: &mut RunContext,
     state: &SessionState,
     state_dir: &Path,
@@ -1407,7 +1259,7 @@ fn format_tool_result_message(result: &ToolResult) -> String {
     }
 }
 
-fn age_out_warm_turns(
+pub(crate) fn age_out_warm_turns(
     context: &mut RunContext,
     state: &mut SessionState,
     state_dir: &Path,
@@ -2048,30 +1900,7 @@ fn assemble_session_prompt(
 }
 
 fn format_boot_brief_for_context(brief: &crate::sleep::commit::ConsolidatedBrief) -> String {
-    let mut text = String::new();
-    text.push_str("Previous session summary:\n");
-    text.push_str(&brief.previous_session_summary);
-    text.push('\n');
-
-    if !brief.future_context_hints.is_empty() {
-        text.push_str("\nFuture context hints:\n");
-        for hint in &brief.future_context_hints {
-            text.push_str("- ");
-            text.push_str(hint);
-            text.push('\n');
-        }
-    }
-
-    if !brief.open_questions.is_empty() {
-        text.push_str("\nOpen questions:\n");
-        for question in &brief.open_questions {
-            text.push_str("- ");
-            text.push_str(question);
-            text.push('\n');
-        }
-    }
-
-    text
+    crate::session::format_boot_brief_for_context(brief)
 }
 
 fn verify_prompt_prefix(
@@ -2103,153 +1932,11 @@ fn apply_session_event(
     state: &mut SessionState,
     event: SessionEvent,
 ) -> anyhow::Result<()> {
-    reduce_session_in_place(state, event.clone());
-    record_session_event(context, &event)?;
-    Ok(())
+    crate::session::apply_session_event(context, state, event)
 }
 
 fn apply_live_session_event(state: &mut SessionState, event: LiveSessionEvent) {
-    let live_state = std::mem::take(&mut state.live);
-    state.live = reduce_live_session(live_state, event);
-}
-
-fn record_session_event(context: &mut RunContext, event: &SessionEvent) -> anyhow::Result<()> {
-    match event {
-        SessionEvent::SessionStarted(config) => {
-            context.record_event(EventType::SessionStarted, json!({ "config": config }), None)?;
-        }
-        SessionEvent::InputReceived { input } => {
-            context.record_event(
-                EventType::InputReceived,
-                json!({
-                    "session_id": context.run_id(),
-                    "input": input,
-                    "input_chars": input.chars().count(),
-                }),
-                None,
-            )?;
-        }
-        SessionEvent::MemoryRetrieved => {}
-        SessionEvent::ContextAssembled(assembly) => {
-            context.record_event(
-                EventType::ContextAssembled,
-                json!({
-                    "session_id": context.run_id(),
-                    "selected_count": assembly.selected.len(),
-                    "omitted_count": assembly.omitted.len(),
-                    "used_estimated_tokens": assembly.used_estimated_tokens,
-                    "selected": &assembly.selected,
-                    "omitted": &assembly.omitted,
-                }),
-                None,
-            )?;
-        }
-        SessionEvent::PromptAssembled {
-            full_request_hash,
-            message_count,
-            total_bytes,
-        } => {
-            context.record_event(
-                EventType::PromptAssembled,
-                json!({
-                    "session_id": context.run_id(),
-                    "full_request_hash": full_request_hash.hex(),
-                    "message_count": message_count,
-                    "total_bytes": total_bytes,
-                }),
-                None,
-            )?;
-        }
-        SessionEvent::ModelRoleCompleted { .. } => {}
-        SessionEvent::ModelRoleFailed { .. } => {}
-        SessionEvent::TurnCompleted(turn) => {
-            context.record_event(
-                EventType::TurnCompleted,
-                json!({
-                    "session_id": context.run_id(),
-                    "turn": turn,
-                    "full_request_hash": turn.full_request_hash.hex(),
-                }),
-                None,
-            )?;
-        }
-        SessionEvent::TurnSummarized(summary) => {
-            context.record_event(
-                EventType::TurnSummarized,
-                json!({
-                    "session_id": context.run_id(),
-                    "turn_index": summary.turn_index,
-                    "summary": summary,
-                }),
-                None,
-            )?;
-        }
-        SessionEvent::TurnsAgedAndCoRetrieved {
-            range,
-            new_associations,
-            strengthened_associations,
-            persisted_at,
-            summaries,
-        } => {
-            context.record_event(
-                EventType::TurnsAgedAndCoRetrieved,
-                json!({
-                    "session_id": context.run_id(),
-                    "range": range,
-                    "new_associations": new_associations,
-                    "strengthened_associations": strengthened_associations,
-                    "persisted_at": persisted_at,
-                    "summary_count": summaries.len(),
-                    "summaries": summaries,
-                }),
-                None,
-            )?;
-        }
-        SessionEvent::ToolCompleted(recall) => {
-            context.record_event(
-                EventType::ToolCompleted,
-                json!({
-                    "session_id": context.run_id(),
-                    "tool_name": &recall.tool_name,
-                    "call_id": &recall.call_id,
-                    "turn_id": recall.turn_id,
-                    "category": recall.category,
-                    "side_effect_level": recall.side_effect_level,
-                    "latency_ms": recall.latency_ms,
-                    "scope": "multi_turn_text_loop",
-                }),
-                None,
-            )?;
-        }
-        SessionEvent::SessionLimitReached {
-            current,
-            max,
-            override_active,
-        } => {
-            context.record_event(
-                EventType::SessionLimitReached,
-                json!({
-                    "session_id": context.run_id(),
-                    "current": current,
-                    "max": max,
-                    "override_active": override_active,
-                }),
-                None,
-            )?;
-        }
-        SessionEvent::SessionEnded { reason } => {
-            context.record_event(
-                EventType::SessionEnded,
-                json!({
-                    "session_id": context.run_id(),
-                    "reason": reason,
-                }),
-                None,
-            )?;
-        }
-    }
-
-    Ok(())
+    crate::session::apply_live_session_event(state, event);
 }
 
 fn end_session<W: Write>(
@@ -2282,20 +1969,7 @@ fn persist_continuity_state(
     state_dir: &Path,
     previous_manifest: &crate::session::manifest::ContinuityManifest,
 ) -> anyhow::Result<()> {
-    let state_path = crate::session::persistence::persist_session_state(state, state_dir)?;
-    let mut manifest = previous_manifest.clone();
-    manifest.current_session_id = Some(state.session_id.clone());
-    manifest.current_session_state_path = Some(
-        state_path
-            .strip_prefix(state_dir)
-            .unwrap_or(&state_path)
-            .to_path_buf(),
-    );
-    // Stage 4 will decide when stale sleep metadata is cleared or replaced after brief consumption.
-    manifest.sleep_pending = true;
-    manifest.resume_mode = crate::session::manifest::ResumeMode::AwakeContinuation;
-    manifest.persist(state_dir.join("continuity-manifest.json"))?;
-    Ok(())
+    crate::session::persist_continuity_state(state, state_dir, previous_manifest)
 }
 
 trait SessionMemorySource {
@@ -2833,7 +2507,7 @@ mod tests {
 
     use super::{
         DEFAULT_SESSION_MODEL, SessionMemorySource, age_out_warm_turns,
-        prompt_prefix_status_for_report, reduce_session, run_one_turn, run_with_io_and_components,
+        prompt_prefix_status_for_report, run_one_turn, run_with_io_and_components,
         run_with_io_and_components_at_state_dir,
     };
     use crate::context::{
@@ -2856,7 +2530,7 @@ mod tests {
     use crate::runtime::run_context::RunContext;
     use crate::session::{
         MemorySourceConfig, RecallRecord, SessionConfig, SessionEndReason, SessionEvent,
-        SessionState, Turn, TurnRange, TurnSummary,
+        SessionState, Turn, TurnRange, TurnSummary, reduce_session, resume_breaking_config_changed,
     };
     use crate::tools::{CALCULATOR_TOOL_NAME, RECALL_TURN_TOOL_NAME};
 
@@ -2875,14 +2549,10 @@ mod tests {
         let mut current = previous.clone();
         current.allow_over_limit = true;
 
-        assert!(!super::awake_resume_breaking_config_changed(
-            &previous, &current
-        ));
+        assert!(!resume_breaking_config_changed(&previous, &current));
 
         previous.model_id = "changed-model".to_string();
-        assert!(super::awake_resume_breaking_config_changed(
-            &previous, &current
-        ));
+        assert!(resume_breaking_config_changed(&previous, &current));
     }
 
     #[test]
