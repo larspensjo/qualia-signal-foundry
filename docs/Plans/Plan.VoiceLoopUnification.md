@@ -2,29 +2,27 @@
 
 ## Status
 
-Phase 0 complete as a design/inventory pass.
+Phase 0 complete (design/inventory pass). Phase 1 complete (commit 2a20950).
+Phase 2 complete (commit 00a476d). Phase 3 is the next implementation step.
 
-Phase 1 complete (commit 2a20950): shared `Exchange`, `LiveSessionState`,
-`RuntimePhase`, interruption/utterance records, the `reduce_live_session` reducer, a
-`TryFrom<&Exchange> for Turn` adapter, and a pre-migration `SessionState` serde
-fixture landed in `crates/qsf_app/src/session/{exchange,live_state}.rs`, with
-`live: LiveSessionState` added to `SessionState` behind `#[serde(default)]`.
+Phases 0-2 are summarized in place below and marked done. The Phase 0 shared design
+reference (adapter boundary, reducer event inventory, `SessionConfig` split, fixed
+payload fields) is kept verbatim because Phases 3-7 still depend on it.
 
-Phase 2 is the next implementation step, and is now the most important phase for the
-project goal (see below).
+Carried-forward note for Phase 3 (the "second caller"): Phase 2 put the text loop on
+the shared `reduce_live_session` core and derives `Turn` from a finalized `Exchange`,
+but it deliberately left the surrounding behavior helpers (prompt assembly, memory
+read/reinforce, live capture, cross-turn co-retrieval, warm summaries, persistence,
+manifest commit) private to `multi_turn_text_loop`. Extracting those into shared code
+that both loops call was deferred to the first phase that adds a second caller, which
+is Phase 3. Until that extraction happens, the "improve once, benefit both" property
+only covers the reducer/`Exchange` shape, not the behavior around it.
 
-Important gap to close in Phase 2: as of Phase 1 the shared core is parallel, not
-load-bearing. `reduce_live_session` is `#[cfg_attr(not(test), allow(dead_code))]`,
-and `multi_turn_text_loop` still drives `state.turns` directly — nothing in a
-production build constructs an `Exchange`. The refined goal below only holds if
-Phase 2 puts the text loop on the shared core; otherwise text-loop improvements will
-not propagate to voice.
-
-Code drift reviewed on 2026-05-31. The main conclusion is that the plan direction
-still holds, but the text-loop baseline is now richer than when the plan was
-written. Phase 1 and Phase 2 must preserve live memory capture, live cross-turn
-co-retrieval, `processed_ranges` idempotency, session-end cross-turn flush, and the
-sleep association proposer boundary while introducing `Exchange`.
+Code drift reviewed on 2026-05-31; direction still holds. The text-loop baseline is
+richer than when the plan was written, so every phase that introduces `Exchange` must
+preserve live memory capture, live cross-turn co-retrieval, `processed_ranges`
+idempotency, session-end cross-turn flush, and the sleep association proposer
+boundary.
 
 This plan promotes `Idea.VoiceLoopUnification.md` into an incremental implementation
 path.
@@ -217,7 +215,7 @@ enum ExchangeInput {
 Migration shape (resolved in Phase 0): `Turn` stays as the durable serialized
 shape during Phase 1 and Phase 2. `Exchange` is introduced alongside it, and the
 text loop populates both from a single source (an `Exchange` is built first,
-then a `Turn` is derived via `From<&Exchange>`). Phase 3 makes `Exchange` the
+then a `Turn` is derived via `TryFrom<&Exchange>`). Phase 3 makes `Exchange` the
 canonical persisted unit and reduces `Turn` to a read-only adapter for any
 legacy callers. Phase 7 removes the last direct `Turn` consumer.
 
@@ -333,49 +331,19 @@ Rules:
   markers, listening/speaking phase). Those are cleared on awake resume per
   the interruption rules above.
 
-## Phase 0: Design Tightening And Inventory
+## Phase 0: Design Tightening And Inventory — DONE
 
-Goal: remove ambiguities before code moves.
+Done: ambiguities were resolved before code moved. The session unit (`Exchange`),
+migration shape, default state directory and compatibility, provider preambles, and
+persisted-state compatibility / `schema_version` were ratified in
+[Design Choices For This Plan](#design-choices-for-this-plan) and
+[Phase 0 Resolutions](#phase-0-resolutions). No separate
+`docs/Plans/Design.VoiceLoopUnification.md` was needed; the reference subsections
+below were specific enough for implementation.
 
-Work:
-
-- Confirm the resolutions captured in [Design Choices For This Plan](#design-choices-for-this-plan):
-  session unit and migration shape, default state directory and compatibility,
-  provider preambles, and persisted state compatibility / `schema_version`.
-  Record any deviation here before Phase 1 starts.
-- Write `docs/Plans/Design.VoiceLoopUnification.md` if implementation reveals more
-  than this plan should settle.
-- Define an adapter boundary for provider facts before they enter reducers:
-  provider/session data in, shared reducer events out. The reducer must not depend
-  on OpenAI-specific event names, timing quirks, or provider payload structure.
-- Produce a mapping table from existing `SessionEvent` variants in
-  `crates/qsf_app/src/session/mod.rs` (`SessionStarted`, `InputReceived`,
-  `MemoryRetrieved`, `ContextAssembled`, `PromptAssembled`,
-  `ModelRoleCompleted`, `ModelRoleFailed`, `TurnCompleted`, `TurnSummarized`,
-  `ToolCompleted`, `SessionLimitReached`, `SessionEnded`) to the shared
-  reducer event set, plus the new variants needed for voice
-  (`AudioPartialTranscript`, `AudioFinalTranscript`, `OutputProduced`,
-  `SpeechPlayback*`, `UserInterrupted`, realtime response lifecycle).
-- Define which fields in `SessionConfig` are shared and which are modality-specific.
-- Capture event payload fields that Phase 4 / Phase 5 will need (`response_id`,
-  `exchange_index`, `utterance_id`, revision counter) so the shape is fixed once.
-
-Verification:
-
-- No code required.
-- Human review recommended: confirm `Exchange` is the right durable unit and that
-  boot-time brief loading is acceptable for early voice latency experiments.
-- Phase 0 exits only when every item in [Phase 0 Resolutions](#phase-0-resolutions)
-  is either ratified or explicitly overridden in this plan.
-
-Docs to update:
-
-- This plan only, unless a separate design note is created.
-
-Phase 0 outcome: no separate `docs/Plans/Design.VoiceLoopUnification.md` is needed
-yet. The adapter boundary, event mapping, config split, and payload fields below are
-specific enough for Phase 1. Create the design note only if implementation discovers
-a deeper conflict than this plan can carry cleanly.
+The reference material that follows — adapter boundary, reducer event inventory,
+`SessionConfig` split, fixed payload fields, and review notes — is retained as the
+shared design contract that Phases 3-7 build on, not as outstanding work.
 
 ### Phase 0 Adapter Boundary
 
@@ -534,160 +502,157 @@ Human review still recommended before Phase 1 code lands: confirm the `Exchange`
 payload shape and the boot-time brief-loading latency tradeoff. No open Phase 0
 ambiguity blocks implementation.
 
-## Phase 1: Extract Shared Live-Session State
+## Phase 1: Extract Shared Live-Session State — DONE
 
-Goal: create a shared state model that can represent both text and voice without
-changing runtime behavior yet.
+Done (commit 2a20950). Shared `Exchange`, `ExchangeInput`, `ExchangeOutput`,
+`UtteranceRecord`, `InterruptionRecord`, `RuntimePhase`, status enums, the
+`LiveSessionState` slice, the pure `reduce_live_session` reducer, and a
+`TryFrom<&Exchange> for Turn` adapter landed in
+`crates/qsf_app/src/session/{exchange,live_state}.rs`. `live: LiveSessionState` was
+added to `SessionState` behind `#[serde(default)]`. The live slice models
+`processed_ranges`, live-capture context (`LiveCaptureContext`), and aged
+co-retrieval records (`AgedCoRetrievalRecord`) without moving those side effects into
+the reducer. Reducer transitions are unit-tested directly (text exchange completion,
+partial transcript update, final transcript commit, interrupted-response cleanup,
+serde round-trip), and a checked-in pre-migration `SessionState` JSON fixture
+round-trips through serde. At the end of this phase the shared types were still
+parallel (not yet load-bearing). Architecture.RuntimeLoop and the diary were updated;
+see also `docs/Reviews/Review.VoiceLoopUnification.Phase1.md`.
 
-Work:
+## Phase 2: Move Text Loop Onto The Shared Core — DONE
 
-- Add shared structs in `crates/qsf_app/src/session/`, likely in new modules such as
-  `exchange.rs` and `runtime_phase.rs` or `session_state.rs`, while keeping
-  `mod.rs` thin.
-- Add `Exchange`, `ExchangeInput`, `ExchangeOutput`, `UtteranceRecord`,
-  `InterruptionRecord`, `RuntimePhase`, and status enums.
-- Add reducer events for voice-shaped lifecycle facts, or add conversion helpers
-  from existing `EventType` payloads into `SessionEvent` values. Event payloads
-  must include the Phase 0 fields needed later by interruption/realtime work:
-  `exchange_index`, `utterance_id`, revision counter, and `response_id` where
-  relevant.
-- Model live-memory and association-aging compatibility explicitly. The first shared
-  state slice should be able to represent current `TurnsAgedAndCoRetrieved`
-  behavior, retrieved-memory reinforcement context, live-capture source turn
-  references, and `processed_ranges` without moving those side effects into the
-  reducer.
-- Keep reducers pure and unit-test the state transitions directly.
-- Preserve existing text `SessionState` serialization during this phase, or add
-  serde defaults so old state files still load.
+Done (commit 00a476d). `multi_turn_text_loop` now builds an `Exchange` through
+`reduce_live_session` (via `apply_live_session_event` for exchange start, memory
+context, model completion, output, and completion) and derives the persisted `Turn`
+via `Turn::try_from(&Exchange)` instead of hand-building a parallel `Turn`. The
+`allow(dead_code)` on `reduce_live_session` is gone; the reducer is on the production
+path, so the "improve once, benefit both" property now holds for the reducer/`Exchange`
+shape. `schema_version` was added to `SessionState` (legacy files default to 1,
+version 2 going forward), newer-than-known schemas are rejected, and resume-time
+upgrades are logged. Failed active exchanges are cleared after model failure so a
+clean exit does not persist a dangling failed exchange. `completed_exchanges` is held
+in memory only (`#[serde(skip)]`) so `Turn` remains the durable shape until Phase 3+.
+Existing text-loop behavior — prompt hashes, warm summaries, recall, live capture,
+reinforcement, `processed_ranges`, and manifest commits — is unchanged.
 
-Verification:
-
-- `cargo test session --lib`
-- `cargo test multi_turn_text_loop --lib`
-- Regression tests for: text exchange completion, partial transcript update, final
-  transcript commit, interrupted response cleanup, and serde round-trip.
-- Regression test with a checked-in pre-migration `SessionState` JSON fixture that
-  proves existing persisted text state still loads.
-- Regression test or focused compatibility assertion proving the new shared state
-  can describe a current text-loop aging/co-retrieval outcome without losing
-  association counts or processed-range intent.
-
-Docs to update:
-
-- Refresh the Implementation Status section in
-  `docs/Architecture/Architecture.RuntimeLoop.md` if the shared state module lands.
-- Add the required diary entry for the shared-state extraction.
-
-## Phase 2: Move Text Loop Onto The Shared Core
-
-Goal: make the text loop actually run on the shared core so that voice can later reuse
-the exact same behavior. This is the phase that delivers the "improve once, benefit
-both" property; Phase 1 only created the shared types.
-
-Work:
-
-- Route `multi_turn_text_loop`'s per-turn processing through the shared core so the
-  loop builds an `Exchange` first and derives `Turn` via `TryFrom<&Exchange>`, rather
-  than keeping a second hand-written `Turn` write path. Remove the
-  `#[cfg_attr(not(test), allow(dead_code))]` on `reduce_live_session` once it is on
-  the production path; if it stays dead outside tests, this phase's goal is not met.
-- Factor the behavior the voice loop must mimic (prompt assembly, memory
-  read/reinforce, live capture, cross-turn co-retrieval, warm summaries, persistence,
-  manifest commit) into shared functions/modules that both loops call, instead of
-  leaving that logic private to `multi_turn_text_loop`. Preserve existing prompt hash,
-  warm summary, recall, and manifest behavior; the text loop's external behavior must
-  stay byte-for-byte compatible where tests assert it.
-- Preserve the current live memory side effects around the text exchange:
-  retrieved-memory reinforcement, assistant/user-name capture, remember-this
-  capture, warm-threshold and token-budget cross-turn co-retrieval, processed-range
-  persistence, and session-end flush deferral to the sleep safety net on failure.
-- Keep report output stable enough that previous text-loop diagnostics remain useful.
-- Keep `TurnSummary` behavior intact; only rename or reshape it if the shared state
-  model makes the old name actively misleading.
-- Persist through the existing manifest-last state protocol.
-
-Verification:
-
-- Existing multi-turn text tests pass unchanged where possible.
-- Add a resume test proving a completed text exchange survives reload and produces
-  the same prompt prefix behavior as the old `Turn` path.
-- Add or keep regression coverage proving live memory capture still writes the
-  expected `MemoryStore` records and that `processed_ranges` still prevents duplicate
-  cross-turn association work after aging/session-end flush.
-- `cargo test multi_turn_text_loop --lib`
-- `cargo test sleep --lib`
-- `cargo build`
-
-Docs to update:
-
-- Update `docs/Architecture/Architecture.RuntimeLoop.md` with the new shared state
-  shape and any compatibility notes.
-- Add the required diary entry for the text-loop migration.
-
-Rollback:
-
-- Keep the old `Turn` serialization path until Phase 3 promotes `Exchange`, so Phase
-  2 can revert to the previous prompt/session behavior without migrating local state
-  back from a new schema.
+Deferral carried into Phase 3 (see Status note): prompt assembly, memory
+retrieval/reinforcement, live capture, cross-turn co-retrieval, persistence, and
+manifest commit remain `multi_turn_text_loop`-private. Extracting them into shared
+helpers was explicitly deferred to "the next phase with a second caller" (Phase 3).
+Architecture.RuntimeLoop and the diary were updated; see also
+`docs/Reviews/Review.VoiceLoopUnification.Phase2.md`.
 
 ## Phase 3: Give Text-Owned Voice The Shared Session Core
 
-Goal: make the deterministic voice path resumable before tackling full realtime
-complexity.
+Goal: make the deterministic voice path resumable on the same shared core the text
+loop now uses, and — because voice is the first second caller — extract the behavior
+helpers Phase 2 left private so both loops call one implementation. This is where the
+"improve once, benefit both" property extends from the reducer/`Exchange` shape to the
+behavior around it.
+
+Current starting point (verified 2026-06-01):
+
+- `text_owned_voice_loop` is still a one-shot path: it builds a transcript, retrieves
+  from a `VoiceLoopMemorySource` fixture (`phase_four_fixture` default, `file` opt-in
+  via `QSF_VOICE_MEMORY_SOURCE` / `QSF_VOICE_MEMORY_FILE`), invokes the model, emits
+  `OutputProduced`, and synthesizes speech. It does not load a manifest, classify
+  resume, construct `SessionState`/`Exchange`, persist, or commit a manifest.
+- The text loop's boot/resume/persistence/behavior helpers live inside
+  `multi_turn_text_loop::run_with_io_and_components_at_state_dir` and remain private.
+- `session::resume::state_dir_from_env()` still defaults to `state/text-loop`.
 
 Work:
 
+- Extract the behavior helpers Phase 2 deferred into shared modules under
+  `crates/qsf_app/src/session/` (or a sibling runtime module) so both loops call one
+  implementation: boot/resume classification, consolidated-brief load, memory
+  read/reinforce/capture, cross-turn co-retrieval, warm summaries, persistence, and
+  manifest commit. Keep `multi_turn_text_loop` behavior byte-for-byte where tests
+  assert it; the extraction is a move, not a rewrite. Name the modules after stable
+  domain concepts, not phases.
 - Replace the local one-shot session handling in `text_owned_voice_loop` with shared
-  live-session boot: load manifest, classify resume mode, emit `SessionResumed`, and
-  apply `SessionStarted` through the reducer.
-- Convert `AudioFinalTranscript` into a voice `ExchangeInput` through the shared
-  reducer, then complete an `Exchange` after `OutputProduced` and
-  `SpeechPlaybackCompleted`.
-- Load memory from the shared `MemoryStore` under the chosen state directory instead
-  of the voice-only fixture by default. Keep fixture/file options for deterministic
-  experiments when explicitly configured.
-- Use the `state/session` resolution rules from
-  [Default State Directory](#default-state-directory) for shared voice-session boot
-  during this phase, so a voice run and a text run share one continuous session. Do
-  not introduce a separate `state/voice-loop` directory, and do not leave the voice
-  path on `VoiceLoopMemorySource` as its silent default.
-- Persist session state and update the manifest after a successful exchange.
-- Inject `ConsolidatedBrief` into first voice prompt/context using the same contract
-  the text loop uses.
+  live-session boot: load the manifest, classify resume mode, emit `SessionResumed`,
+  and apply `SessionStarted` through the reducer (mirroring the text loop's
+  `apply_live_session_event` usage).
+- Drive a voice exchange through the existing live events: start with
+  `LiveSessionEvent::ExchangeStarted(Exchange::new_voice_pending(..))`, commit the
+  finalized transcript via `LiveSessionEvent::AudioFinalTranscriptCommitted`, record
+  memory/model/output via `MemoryContextRecorded` / `ModelRoleCompleted` /
+  `OutputProduced`, and finalize with `ExchangeCompleted` once `OutputProduced` and
+  speech playback have been recorded. Derive any persisted `Turn` via
+  `Turn::try_from(&Exchange)` as the text loop does.
+- Load memory from the shared `MemoryStore` under the resolved state directory by
+  default instead of the voice-only fixture. Keep the `VoiceLoopMemorySource`
+  fixture/file options as explicit opt-ins for deterministic experiments, but they
+  must no longer be the silent default.
+- Resolve the voice state directory with the `state/session` rules from
+  [Default State Directory](#default-state-directory), including the read-only
+  fallback from `state/text-loop/`. Do not add a separate `state/voice-loop`
+  directory. (The text loop stays on `state_dir_from_env()`'s `state/text-loop`
+  default until Phase 6; see the continuity scope note below.)
+- Persist session state and update the manifest after a successful voice exchange via
+  the shared manifest-last protocol.
+- Inject `ConsolidatedBrief` into the first voice prompt/context using the same
+  contract the text loop uses.
+
+Continuity scope note (open item surfaced 2026-06-01): the refined goal wants a voice
+run and a text run to be one continuous session. In Phase 3 only voice moves to the
+shared `state/session` resolver; the text loop still defaults to `state/text-loop`
+until Phase 6. So in Phase 3:
+
+- voice -> voice continuity over `state/session` holds, and
+- text -> voice continuity holds via the read-only fallback (voice reads an existing
+  `state/text-loop/` session), but
+- voice -> text continuity does NOT hold yet, because the text loop does not read
+  `state/session` until Phase 6 routes it onto the shared resolver.
+
+The full voice <-> text round-trip verification therefore belongs in Phase 6, not
+Phase 3. Recommended resolution: accept this scoping. Alternative: pull the
+text-loop resolver move forward into Phase 3 (more churn in the mature text loop).
 
 Verification:
 
-- Regression test: simulated transcript produces one completed voice exchange and a
-  manifest pointing at the persisted state.
-- Regression test: a second simulated run resumes or starts from consolidated brief
-  according to the manifest.
-- Regression test: voice uses the cross-session memory store by default and still
-  supports explicit fixture mode.
+- Regression test: a simulated transcript produces one completed voice exchange and a
+  manifest pointing at the persisted state under the resolved directory.
+- Regression test: a second simulated voice run resumes or starts from the
+  consolidated brief according to the manifest.
+- Regression test: voice uses the cross-session `MemoryStore` by default and still
+  supports explicit fixture/file mode.
 - Acceptance criterion: with no voice-specific memory env vars set, the simulated
   voice path loads the shared `MemoryStore`, so the default path exercises shared
   continuity.
-- Regression test: a simulated voice run followed by a text run, and a text run
-  followed by a voice run, both read and append the same shared `state/session/`
-  session history by default rather than producing two continuity universes.
+- Regression test: a text run followed by a simulated voice run reads and appends the
+  same shared session history via the `state/text-loop` -> `state/session` read-only
+  fallback. (The voice -> text direction is verified in Phase 6, once the text loop is
+  on the shared resolver.)
+- Regression test or shared assertion proving the extracted behavior helpers still
+  write the expected `MemoryStore` records, preserve `processed_ranges` idempotency,
+  and keep prompt-hash / warm-summary behavior for the text loop unchanged.
 - `cargo test text_owned_voice_loop --lib`
+- `cargo test multi_turn_text_loop --lib`
 - `cargo test session --lib`
 - `cargo build`
 
 Docs to update:
 
+- Update `docs/Architecture/Architecture.RuntimeLoop.md` to record the extracted
+  shared behavior helpers and that both loops call them.
 - Update `docs/Architecture/Architecture.AudioLoop.md` Implementation Status to say
   the text-owned voice loop participates in shared session continuity.
 - Update `docs/Architecture/Architecture.MemorySystem.md` to remove or narrow the
   voice-loop continuity gap.
 - Update `docs/Experiments/Experiment.TextOwnedVoiceLoop.md` if present, or add a
   follow-up report if the experiment doc does not exist.
-- Add the required diary entry for voice adopting shared continuity.
+- Add the required diary entry for voice adopting shared continuity and for the helper
+  extraction.
 
 Rollback:
 
-- Keep fixture/file voice memory sources explicit and tested, so a broken shared-store
-  voice path can be disabled for investigation without removing the shared state
-  structs.
+- Keep the `VoiceLoopMemorySource` fixture/file sources explicit and tested, so a
+  broken shared-store voice path can be disabled for investigation without removing
+  the shared state structs.
+- The helper extraction is a move with unchanged text-loop tests, so a regression in
+  the shared helpers can be bisected against the Phase 2 baseline.
 
 ## Phase 4: Add Live Interruption State
 
@@ -807,6 +772,10 @@ Verification:
 - Simulated default run completes without real audio credentials.
 - Text input mode and voice input mode produce exchanges in the same persisted
   session shape.
+- Regression test (relocated from Phase 3): once the text loop is on the shared
+  resolver, a voice run followed by a text run AND a text run followed by a voice run
+  both read and append the same shared `state/session/` history rather than producing
+  two continuity universes.
 - `cargo build`
 - `cargo test`
 
@@ -876,7 +845,7 @@ detailed rationale lives in [Design Choices For This Plan](#design-choices-for-t
 
 - **`Turn` vs `Exchange` migration.** `Turn` stays as the serialized shape
   during Phase 1 and Phase 2; `Exchange` is added alongside it and is the
-  single source of truth in code, with `Turn` derived via `From<&Exchange>`.
+  single source of truth in code, with `Turn` derived via `TryFrom<&Exchange>`.
   Phase 3 promotes `Exchange` to the canonical persisted unit. See
   [Session Unit](#session-unit).
 - **Default state directory.** One shared `state/session/` directory for both loops,
@@ -895,10 +864,21 @@ detailed rationale lives in [Design Choices For This Plan](#design-choices-for-t
 
 Open items remaining:
 
-- **Phase 2 must put the shared reducer on the production path.** Track that the
+- **Phase 2 reducer-on-production-path: DONE (commit 00a476d).** The
   `allow(dead_code)` on `reduce_live_session` is removed and the text loop builds
-  `Exchange` values in production, not only in tests. Without this, the shared core
-  stays a parallel structure and the "improve once, benefit both" goal fails.
+  `Exchange` values in production. The "improve once, benefit both" property now holds
+  for the reducer/`Exchange` shape.
+- **Phase 3 must extract the deferred behavior helpers.** Phase 2 routed only the
+  reducer/`Exchange` shape through shared code; prompt assembly, memory
+  read/reinforce/capture, cross-turn co-retrieval, warm summaries, persistence, and
+  manifest commit are still private to `multi_turn_text_loop`. Until Phase 3 (the
+  first second caller) extracts them into shared helpers that both loops call, the
+  "improve once, benefit both" goal does not yet cover the behavior around the
+  reducer.
+- **Phase 3 cross-loop continuity scope.** Voice <-> text round-trip continuity over
+  one `state/session/` directory cannot fully hold until Phase 6 moves the text loop
+  off `state/text-loop`. Phase 3 verifies voice -> voice and text -> voice (via the
+  read-only fallback); the voice -> text direction is verified in Phase 6.
 
 ## Human Testing Points
 
