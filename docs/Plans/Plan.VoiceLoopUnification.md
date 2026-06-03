@@ -2,15 +2,26 @@
 
 ## Status
 
-Phases 0-4 are complete. Phase 5 is the next implementation step.
+Phases 0-5 are complete. Phase 6 is the next implementation step.
 
 Completed phase placeholders are intentionally short below; the durable design
 contracts are kept in [Design Choices For This Plan](#design-choices-for-this-plan),
 [Phase 0 Resolutions](#phase-0-resolutions), the architecture docs, and the code.
 
-Phase 4 viability was checked on 2026-06-01 against the current implementation and
-targeted tests. The shared reducer now has first-class interruption state; the
-remaining realtime-provider bridge is still Phase 5 work, not a Phase 4 blocker.
+Phase 5 (commit 673b902) bridged realtime provider facts into the shared
+live-session core: realtime sessions now boot shared continuity, normalize provider
+lifecycle/interruption/tool-call facts through the shared reducer, and persist them
+as durable voice exchanges. Provider tool calls stay inert (`auto_executed=false`)
+unless routed through a QSF-owned path, and provider preambles are persisted as a
+separate output category that never feeds QSF prompt assembly.
+
+Remaining gap before Phase 6: the multi-turn text loop still defaults to
+`state/text-loop` through `session::resume::state_dir_from_env()` and a
+single-directory boot path. Both voice experiments already resolve through the shared
+`session::state_directory::resolve_shared_state_directory_from_env` (with its
+read-only `state/text-loop` -> `state/session` fallback) and boot via
+`session::boot_session`. Phase 6 routes the text loop onto the same resolver so a
+voice run and a text run become one continuous session.
 
 This plan promotes `Idea.VoiceLoopUnification.md` into an incremental implementation
 path.
@@ -42,12 +53,13 @@ separate realtime provider experiment:
   handoff.
 - `text-owned-voice-loop` now reuses the shared session runtime and live reducer for
   durable voice turns.
-- `realtime-voice-session` proves audio provider boundaries, realtime interruption
-  facts, response lifecycle events, and provider tool-call routing, but it does not
-  yet feed those facts into shared durable session state.
+- `realtime-voice-session` now feeds provider boundaries, realtime interruption facts,
+  response lifecycle events, and provider tool-call requests into the shared
+  live-session reducer and persists them as durable voice exchanges (Phase 5).
 
-The next implementation should bridge realtime provider facts into the shared
-live-session core instead of growing a second persistence path.
+The next implementation step gives voice a first-class peer experiment and routes
+both loops onto the single shared `state/session` resolver so a voice run and a text
+run continue one session instead of two continuity universes.
 
 ## Current Anchors
 
@@ -65,11 +77,17 @@ Code anchors:
 - `crates/qsf_app/src/experiments/text_owned_voice_loop.rs` routes finalized speech
   through QSF-owned model behavior, shared session boot, shared memory retrieval,
   live-session exchange reduction, persistence, manifest commit, and speech output.
-- `crates/qsf_app/src/experiments/realtime_voice_session.rs` records realtime
-  provider lifecycle, tool requests, interruptions, and speech playback events. It
-  still needs the Phase 5 bridge into the shared live-session core.
-- `crates/qsf_app/src/audio/voice_session_provider.rs` already represents
-  realtime transcripts, responses, interruptions, and provider tool-call requests.
+- `crates/qsf_app/src/experiments/realtime_voice_session.rs` boots shared session
+  continuity and routes realtime provider lifecycle, tool requests, interruptions,
+  preambles, and speech playback events through the shared reducer into durable voice
+  exchanges (Phase 5).
+- `crates/qsf_app/src/audio/voice_session_provider.rs` represents realtime
+  transcripts, responses, interruptions, and provider tool-call requests, with a
+  typed provider interruption enum mapped into shared interruption enums.
+- `crates/qsf_app/src/session/state_directory.rs` already implements
+  `resolve_shared_state_directory_from_env`, the shared resolver with the read-only
+  `state/text-loop` -> `state/session` fallback. Both voice experiments already use it;
+  Phase 6 routes the multi-turn text loop onto it too.
 - `crates/qsf_app/src/memory/{live_capture,co_retrieval,processed_ranges}.rs` and
   `crates/qsf_memory/src/processed_range.rs` now carry important continuity
   behavior that must survive the `Turn` -> `Exchange` migration.
@@ -201,12 +219,12 @@ enum ExchangeInput {
 }
 ```
 
-Migration shape (updated after Phase 4): `Turn` remains the durable serialized
+Migration shape (updated after Phase 5): `Turn` remains the durable serialized
 compatibility shape for completed text-owned turns. `Exchange` is the shared runtime
 source of truth: text and text-owned voice build an `Exchange` first, then derive a
 `Turn` via `TryFrom<&Exchange>` for current persistence and legacy sleep/report
-readers. Phase 5 should persist realtime-specific exchange details that cannot be
-represented by `Turn`; Phase 7 removes the last direct `Turn` consumer.
+readers. Phase 5 added persisted exchange records that carry realtime-specific details
+which cannot be represented by `Turn`; Phase 7 removes the last direct `Turn` consumer.
 
 This avoids two parallel write paths while keeping the existing text test
 suite, sleep summarization, and persisted state files stable until voice has
@@ -262,14 +280,16 @@ not `state/live-loop`. The state lives in one directory regardless of whether
 input arrives as voice or text, which matches the goal of a single continuity
 universe.
 
-Current drift note, reviewed 2026-05-31: the implemented text-loop default is still
-`state/text-loop` through `session::resume::state_dir_from_env()`. Moving the default
-resolver to `state/session` is still implementation work, not current behavior. Both
-loops use this one resolver — the `multi-turn-text-loop` and the voice loop share a
-single continuous session. Phase 3 introduces the shared resolver for voice boot;
-Phase 6 routes the text loop onto the same resolver and removes any remaining silent
-`state/text-loop` defaults. The text loop stays a first-class experiment; only its
-persistence directory moves (once, via the read-only fallback below).
+Current drift note, reviewed 2026-06-03: the shared resolver now exists as
+`session::state_directory::resolve_shared_state_directory_from_env`, implementing the
+read-only `state/text-loop` -> `state/session` fallback below. Both voice experiments
+already resolve through it and boot via `session::boot_session`. The
+`multi-turn-text-loop` is the one runtime loop still off the resolver: it defaults to
+`state/text-loop` through `session::resume::state_dir_from_env()` on a single-directory
+boot path. Phase 6 routes the text loop through the shared resolver so the
+`multi-turn-text-loop` and the voice loop share a single continuous session. The text
+loop stays a first-class experiment; only its persistence directory moves (once, via
+the read-only fallback below).
 
 Compatibility behavior on boot:
 
@@ -313,9 +333,21 @@ Rules:
 - Phase 2 introduces an explicit `schema_version: u32` on `SessionState`
   (default = 1 for existing files, 2 going forward). Reducers and migration
   code branch on `schema_version`, never on field presence.
-- Phase 6 (default state directory move) adds an `upgrade_state_if_needed()`
-  step at boot that rewrites v1 -> v2 in place and logs the migration. The
-  binary refuses to read schema versions newer than it supports.
+- Already implemented (Phase 2 follow-through): `load_session_state`
+  (`crates/qsf_app/src/session/persistence.rs`) refuses any `schema_version`
+  newer than the binary supports, and `load_resume_inputs`
+  (`crates/qsf_app/src/session/resume.rs`) upgrades a loaded legacy state in
+  memory via `upgrade_schema_version()` and logs the upgrade on resume. The
+  newer-version guard does not need to be newly designed in Phase 6.
+- Phase 6 (default state directory move) only needs to make the in-memory
+  upgrade durable. Do not "rewrite v1 -> v2 in place" unconditionally: a direct
+  rewrite of the loaded file is only allowed when
+  `resume_state_dir == persist_state_dir`. When `legacy_fallback_used` is true
+  (`resume_state_dir == state/text-loop`, `persist_state_dir == state/session`),
+  keep the legacy file untouched and persist the upgraded copy to
+  `persist_state_dir` through the normal manifest-last commit. A regression test
+  must assert the legacy v1 file is byte-for-byte unchanged after such a boot
+  while the new `state/session` copy is v2.
 - No back-compat promise for partial/live state (active transcripts, playback
   markers, listening/speaking phase). Those are cleared on awake resume per
   the interruption rules above.
@@ -371,91 +403,113 @@ Targeted verification passed on 2026-06-01:
 - `cargo test realtime_voice_session --lib`
 - `cargo test text_owned_voice_loop --lib`
 
-## Phase 5: Bridge Realtime Voice Into The Shared Core
+## Phase 5: Bridge Realtime Voice Into The Shared Core — COMPLETE
 
-Goal: keep realtime provider richness while ensuring QSF owns session continuity,
-memory, tools, and durable state.
+Complete (commit 673b902). Realtime voice sessions now boot shared session
+continuity and persist provider facts as durable voice exchanges instead of remaining
+observability-only. New persisted exchange records on `SessionState`, realtime
+provider-event and tool-request records on `Exchange`, and live-session reducer events
+for provider lifecycle facts and provider tool requests route final transcripts,
+preambles, response lifecycle, interruptions, and provider tool calls through the
+shared reducer, then persist the completed exchange through the manifest-last state
+path. Provider interruption actions use a typed provider enum mapped into the shared
+interruption enums, and provider-relative audio timestamp conversion is hoisted into
+the shared audio module. Provider tool calls stay inert (`auto_executed=false`) and do
+not append turns or trigger side effects without a QSF-owned route, with regression
+coverage on that boundary. Provider preambles are persisted as the separate
+`provider_preamble` / `provider_events` output category and never feed QSF prompt
+assembly, satisfying the [Provider Preambles](#provider-preambles) exit criterion.
 
-Work:
-
-- Convert realtime provider session facts into shared reducer events instead of only
-  recording observability events.
-- Keep provider tool calls as `ToolRequested` records routed through QSF permission
-  boundaries; do not auto-execute them from the provider session.
-- Treat provider-owned response text/audio as an adapter output unless an experiment
-  explicitly tests provider-owned cognition.
-- Store final transcript, response lifecycle, interruptions, and tool-call requests
-  in the durable exchange shape.
-- Use the provider adapter boundary defined in Phase 0 so provider-specific quirks
-  remain outside pure reducers.
-- Implement realtime provider preambles as the separate `provider_preamble` /
-  `provider_events` output category on the active `Exchange`, as resolved in
-  [Provider Preambles](#provider-preambles). Preambles are persisted but never
-  fed back into QSF prompt assembly.
-
-Verification:
-
-- Simulated realtime session creates a persisted voice exchange with interruption
-  and tool-request records.
-- Tool-call requests remain non-executed unless routed through the existing QSF tool
-  path.
-- Regression test: a provider-emitted tool call does not mutate session state and
-  does not trigger side effects when no QSF route is configured.
-- Phase exit criterion: provider preambles are implemented as the separate output
-  category described in [Provider Preambles](#provider-preambles), or this plan is
-  updated with the replacement design before Phase 5 is marked complete.
-- `cargo test realtime_voice_session --lib`
-- `cargo build`
-
-Docs to update:
-
-- Update `docs/Architecture/Architecture.AudioLoop.md` and
-  `docs/Architecture/Architecture.RuntimeLoop.md` to reflect realtime participation
-  in shared state.
-- Update `docs/Experiments/Experiment.RealtimeVoiceSessionMVP.md` if present, or add
-  a follow-up report if the experiment doc does not exist.
-- Add the required diary entry for the realtime bridge.
+Targeted verification passed on 2026-06-01: `cargo test session --lib`,
+`cargo test realtime_voice_session --lib`,
+`cargo test audio::voice_session_provider --lib`,
+`cargo test text_owned_voice_loop --lib`, `cargo build`, and
+`cargo clippy --all-targets -- -D warnings`.
 
 ## Phase 6: Voice Loop As A Peer Surface
 
 Goal: give voice its own first-class experiment that reuses the shared core, without
 changing the status of the `multi-turn-text-loop`. Voice is a peer surface, not the
-primary or default loop.
+primary or default loop. Route all loops onto the single shared `state/session`
+resolver so a voice run and a text run continue one session.
 
-Work:
+Current state going in:
 
-- Introduce a stable voice experiment name such as `voice-loop` (a stable domain
-  name, not a phase name). Keep `multi-turn-text-loop` registered and unchanged.
+- The shared resolver `session::state_directory::resolve_shared_state_directory_from_env`
+  already exists with the read-only `state/text-loop` -> `state/session` fallback and
+  unit tests. Both voice experiments already call it from their public `run` entry
+  points (`crates/qsf_app/src/experiments/text_owned_voice_loop.rs:64`,
+  `crates/qsf_app/src/experiments/realtime_voice_session.rs:39`) and boot through
+  `session::boot_session` with separate `resume_state_dir`/`persist_state_dir`. The
+  remaining hardcoded `state/session` paths in those files are `#[cfg(test)]`
+  helpers that build explicit `StateDirectoryResolution` values, not runtime paths.
+- The multi-turn text loop is the one runtime loop still off the resolver: its `run`
+  uses `session::resume::state_dir_from_env()` (default `state/text-loop`) and a
+  single-directory boot path (`crates/qsf_app/src/experiments/multi_turn_text_loop.rs:70`).
+- `boot_session` already emits the `SessionResumed` event and an `engine_info` record
+  naming `resume_state_dir`, `persist_state_dir`, and `legacy_fallback_used`
+  (`crates/qsf_app/src/session/runtime.rs`).
+- `SessionState` already carries `schema_version` with `upgrade_schema_version()`;
+  `load_session_state` refuses newer versions and `load_resume_inputs` upgrades legacy
+  state in memory and logs it. The remaining gap is making that upgrade durable on a
+  legacy-fallback boot (see [Persisted State Compatibility](#persisted-state-compatibility)),
+  not designing the guard.
+- Experiments register through the `ExperimentName` enum in
+  `crates/qsf_app/src/experiments/registry.rs`; `list-experiments` already exists as a
+  CLI subcommand in `crates/qsf_app/src/cli.rs`.
+
+This phase has two separable, independently testable steps. Land and verify them in
+order:
+
+### Phase 6a: Route The Text Loop Onto The Shared Resolver
+
+- Move `multi_turn_text_loop.rs` off `state_dir_from_env()` and its single-directory
+  boot onto `resolve_shared_state_directory_from_env` + `session::boot_session`, so it
+  honors `resume_state_dir` vs `persist_state_dir` from `StateDirectoryResolution`: the
+  legacy `state/text-loop` directory is read-only and the first commit writes
+  `state/session`. The voice public entry points already do this; do not rewrite them.
+- Make the in-memory schema upgrade durable per
+  [Persisted State Compatibility](#persisted-state-compatibility): persist the upgraded
+  state to `persist_state_dir` through the normal manifest-last commit, and never
+  rewrite the legacy file in place when `legacy_fallback_used` is true. (The
+  newer-version guard and the in-memory `upgrade_schema_version()` already exist; this
+  step only makes the upgraded copy land in `state/session`.)
+- Audit for and remove any remaining silent `state/text-loop` default in runtime
+  paths (the resolver, not `state_dir_from_env`, becomes the single source of truth;
+  retire or redirect `state_dir_from_env` if it has no remaining runtime callers).
+  Test helpers and fixtures may still target explicit directories.
+- No new boot event/log is needed for the resolved directory: confirm the text loop
+  now flows through `boot_session`, which already emits it.
+
+### Phase 6b: Add The Voice Loop Peer Experiment
+
+- Add a stable `voice-loop` variant to the `ExperimentName` enum (a stable domain
+  name, not a phase name) with its id, description, and construction wired through the
+  registry. Keep `multi-turn-text-loop`, `text-owned-voice-loop`, and
+  `realtime-voice-session` registered and unchanged.
 - Let the voice entry point default to deterministic simulated providers unless real
   providers are explicitly selected, so the default path needs no audio credentials.
 - Do not add a `QSF_PRIMARY_LOOP` default that demotes text. If a selector is useful,
   it only chooses which experiment to run and defaults to today's behavior.
 - Confirm both loops exercise the same shared behavior code, so a later improvement to
   the text loop is picked up by the voice loop without duplicate edits.
-- Route both loops onto the single shared resolver so a voice run and a text run
-  continue one session. Move the default to `state/session/` with the read-only
-  fallback from `state/text-loop/` defined in
-  [Default State Directory](#default-state-directory), and add the `schema_version`
-  upgrader described in
-  [Persisted State Compatibility](#persisted-state-compatibility).
-- If Phase 3 already moved the shared resolver to `state/session/`, Phase 6 only
-  audits and removes any remaining silent `state/text-loop` defaults rather than
-  performing a second migration.
-- Emit a boot event and `engine_logging` record that names the chosen experiment, the
-  resolved state directory, and whether the legacy `state/text-loop` fallback was used.
+- Emit a boot event and `engine_logging` record naming the chosen experiment.
 - Keep `multi-turn-text-loop` as a first-class experiment indefinitely.
 
 Verification:
 
-- `cargo run -p qsf_app -- list-experiments` shows the new entry point and existing
-  experiments remain discoverable.
-- Simulated default run completes without real audio credentials.
-- Text input mode and voice input mode produce exchanges in the same persisted
-  session shape.
-- Regression test (relocated from Phase 3): once the text loop is on the shared
-  resolver, a voice run followed by a text run AND a text run followed by a voice run
-  both read and append the same shared `state/session/` history rather than producing
-  two continuity universes.
+- Phase 6a: `cargo test session --lib` and a new regression test proving a voice run
+  followed by a text run AND a text run followed by a voice run both read and append
+  the same shared `state/session/` history rather than producing two continuity
+  universes (relocated from Phase 3). Add a boot integration test for the legacy
+  fallback: a v1 `SessionState` under `state/text-loop` is upgraded and the upgraded v2
+  copy is written to `state/session`, while the original `state/text-loop` file stays
+  byte-for-byte unchanged. (The newer-than-supported refusal is already covered at the
+  `load_session_state` level; extend it to the boot path if not already exercised.)
+- Phase 6b: `cargo run -p qsf_app -- list-experiments` shows the new `voice-loop`
+  entry and existing experiments remain discoverable; a simulated default run
+  completes without real audio credentials; text input mode and voice input mode
+  produce exchanges in the same persisted session shape.
 - `cargo build`
 - `cargo test`
 
@@ -468,6 +522,9 @@ Docs to update:
 - Update `docs/Architecture/Architecture.AudioLoop.md`,
   `docs/Architecture/Architecture.RuntimeLoop.md`, and
   `docs/Architecture/Architecture.SleepPhase.md` status sections.
+- Update `docs/Architecture/Architecture.StateAndObservability.md`, which still
+  documents `state/text-loop` as the default state path, so the user-visible
+  state/observability contract reflects the `state/session` default.
 - Add a `docs/DecisionLog.md` entry for the shared `state/session/` directory move
   (one continuous session across both loops), since it changes a user-visible default.
 - Add the required diary entry for the voice loop surface change.
@@ -543,12 +600,10 @@ detailed rationale lives in [Design Choices For This Plan](#design-choices-for-t
 
 Open items remaining:
 
-- **Phase 5 realtime bridge.** Realtime provider sessions still record rich
-  observability facts; the next step is to normalize those provider facts into shared
-  live-session reducer events and persist them on exchanges.
-- **Phase 6 shared resolver move.** Full voice <-> text round-trip continuity over one
-  `state/session/` directory still waits for the text loop to move off the silent
-  `state/text-loop` default.
+- **Phase 6 shared resolver move.** Both voice experiments already route through
+  `resolve_shared_state_directory_from_env`; full voice <-> text round-trip continuity
+  over one `state/session/` directory still waits for the multi-turn text loop to move
+  off the silent `state/text-loop` default onto the same resolver.
 - **Phase 7 sleep consumption.** Sleep still needs to consume shared `Exchange` records
   containing voice transcripts, interruptions, and speech-output metadata.
 
