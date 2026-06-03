@@ -394,19 +394,91 @@ pub fn persist_continuity_state(
     state_dir: &Path,
     previous_manifest: &ContinuityManifest,
 ) -> anyhow::Result<()> {
-    let state_path = super::persistence::persist_session_state(state, state_dir)?;
+    persist_continuity_state_from_dirs(state, state_dir, state_dir, previous_manifest)
+}
+
+pub fn persist_continuity_state_from_dirs(
+    state: &SessionState,
+    resume_state_dir: &Path,
+    persist_state_dir: &Path,
+    previous_manifest: &ContinuityManifest,
+) -> anyhow::Result<()> {
+    copy_forward_memory_store(resume_state_dir, persist_state_dir)?;
+    let state_path = super::persistence::persist_session_state(state, persist_state_dir)?;
     let mut manifest = previous_manifest.clone();
     manifest.current_session_id = Some(state.session_id.clone());
     manifest.current_session_state_path = Some(
         state_path
-            .strip_prefix(state_dir)
+            .strip_prefix(persist_state_dir)
             .unwrap_or(&state_path)
             .to_path_buf(),
     );
     manifest.sleep_pending = true;
     manifest.resume_mode = ResumeMode::AwakeContinuation;
-    manifest.persist(state_dir.join("continuity-manifest.json"))?;
+    manifest.persist(persist_state_dir.join("continuity-manifest.json"))?;
     Ok(())
+}
+
+fn copy_forward_memory_store(
+    resume_state_dir: &Path,
+    persist_state_dir: &Path,
+) -> anyhow::Result<()> {
+    if resume_state_dir == persist_state_dir {
+        return Ok(());
+    }
+
+    let source_path = resume_state_dir.join("memory-store.json");
+    if !source_path.exists() {
+        return Ok(());
+    }
+
+    let destination_path = persist_state_dir.join("memory-store.json");
+    let source = crate::memory::MemoryStore::load_or_empty(&source_path)?;
+    let destination = crate::memory::MemoryStore::load_or_empty(&destination_path)?;
+    let mut merged = source.contents().clone();
+    merge_memory_store_contents(&mut merged, destination.contents().clone());
+
+    let mut merged_store = crate::memory::MemoryStore::load_or_empty(destination_path)?;
+    *merged_store.contents_mut() = merged;
+    merged_store.persist()
+}
+
+fn merge_memory_store_contents(
+    target: &mut crate::memory::MemoryStoreContents,
+    incoming: crate::memory::MemoryStoreContents,
+) {
+    for record in incoming.records {
+        match target
+            .records
+            .iter()
+            .position(|existing| existing.id == record.id)
+        {
+            Some(index) => target.records[index] = record,
+            None => target.records.push(record),
+        }
+    }
+
+    for association in incoming.associations {
+        match target.associations.iter().position(|existing| {
+            existing.from_memory_id == association.from_memory_id
+                && existing.to_memory_id == association.to_memory_id
+        }) {
+            Some(index) => target.associations[index] = association,
+            None => target.associations.push(association),
+        }
+    }
+
+    for range in incoming.processed_ranges {
+        let already_present = target.processed_ranges.iter().any(|existing| {
+            existing.session_id == range.session_id
+                && existing.first_turn_index == range.first_turn_index
+                && existing.last_turn_index == range.last_turn_index
+                && existing.kind == range.kind
+        });
+        if !already_present {
+            target.processed_ranges.push(range);
+        }
+    }
 }
 
 pub fn format_boot_brief_for_context(brief: &crate::sleep::commit::ConsolidatedBrief) -> String {

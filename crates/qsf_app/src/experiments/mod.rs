@@ -14,6 +14,7 @@ mod sleep_phase_session_summary;
 mod streaming_transcription_mvp;
 mod text_owned_voice_loop;
 mod tool_as_perception_calculator;
+mod voice_loop;
 
 pub use registry::{
     Experiment, ExperimentInfo, ExperimentName, ExperimentOutcome, ExperimentRunSummary,

@@ -61,9 +61,7 @@ pub fn classify_resume_mode(inputs: &ResumeInputs) -> ResumeMode {
 }
 
 pub fn state_dir_from_env() -> PathBuf {
-    std::env::var("QSF_STATE_DIR")
-        .map(PathBuf::from)
-        .unwrap_or_else(|_| PathBuf::from("state/text-loop"))
+    crate::session::resolve_shared_state_directory_from_env().resume_state_dir
 }
 
 #[cfg(test)]

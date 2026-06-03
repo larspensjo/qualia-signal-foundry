@@ -371,8 +371,9 @@ fn bridge_realtime_session_into_shared_state(
             reason: SessionEndReason::Eof,
         },
     )?;
-    crate::session::persist_continuity_state(
+    crate::session::persist_continuity_state_from_dirs(
         state,
+        &state_resolution.resume_state_dir,
         &state_resolution.persist_state_dir,
         resume_manifest,
     )?;

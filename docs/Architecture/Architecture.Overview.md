@@ -33,8 +33,10 @@ focused architecture documents.
   [models/tool_dispatch.rs](../../crates/qsf_app/src/models/tool_dispatch.rs))
 - Versioned `MemoryRecord` and `Association`, file-backed memory source,
   association-weighted retrieval ([memory/](../../crates/qsf_app/src/memory/))
-- Streaming transcription, text-owned voice loop, realtime voice session provider
-  (all feature-gated under `openai`) ([audio/](../../crates/qsf_app/src/audio/))
+- Streaming transcription, text-owned voice loop, voice-loop peer surface, and
+  realtime voice session provider (all feature-gated under `openai`)
+  ([audio/](../../crates/qsf_app/src/audio/),
+  [experiments/voice_loop.rs](../../crates/qsf_app/src/experiments/voice_loop.rs))
 - Sleep-phase session summary plus reviewed-memory promotion pipeline
   ([sleep/](../../crates/qsf_app/src/sleep/),
   [memory/reviewed_memory_draft.rs](../../crates/qsf_app/src/memory/reviewed_memory_draft.rs))
@@ -52,7 +54,6 @@ focused architecture documents.
 
 **Not yet implemented:**
 
-- Cross-session continuity / `SessionState` persistence
 - An attention or salience subsystem as a first-class signal
 - A volition or goal system
 - Self-reflection through project-document introspection

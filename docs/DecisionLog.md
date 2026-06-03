@@ -624,3 +624,21 @@ crates/qsf_app/src/sleep/proposers/safety_net_co_retrieval.rs,
 docs/Architecture/Architecture.SleepPhase.md,
 docs/Plans/Plan.AssociativeRecallAndDropDrivenAssociations.md,
 docs/Plans/Ideas.AssociationProposers.md
+
+## 2026-06-03 - Shared session directory is the continuity root
+Type: Decision
+Decision: The multi-turn text loop, text-owned voice loop, and peer `voice-loop`
+surface default to the shared `state/session/` continuity root. Legacy
+`state/text-loop/` state remains a read-only fallback for continuity and is never
+rewritten in place.
+Context: Phase 6 moved the text loop onto the shared resolver so voice and text
+runs continue one session by default rather than splitting into separate
+continuity universes.
+Consequences: New cross-session state should land in `state/session/`; any future
+directory change needs explicit compatibility handling and a read-only fallback
+story for existing `state/text-loop/` artifacts.
+Refs: crates/qsf_app/src/session/state_directory.rs,
+crates/qsf_app/src/session/resume.rs,
+crates/qsf_app/src/experiments/multi_turn_text_loop.rs,
+crates/qsf_app/src/experiments/text_owned_voice_loop.rs,
+crates/qsf_app/src/experiments/voice_loop.rs

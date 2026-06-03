@@ -25,6 +25,7 @@ use super::sleep_phase_session_summary::SleepPhaseSessionSummaryExperiment;
 use super::streaming_transcription_mvp::StreamingTranscriptionMvpExperiment;
 use super::text_owned_voice_loop::TextOwnedVoiceLoopExperiment;
 use super::tool_as_perception_calculator::ToolAsPerceptionCalculatorExperiment;
+use super::voice_loop::{VOICE_LOOP_DESCRIPTION, VoiceLoopExperiment};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, ValueEnum)]
 #[value(rename_all = "kebab-case")]
@@ -41,6 +42,7 @@ pub enum ExperimentName {
     SleepPhaseSessionSummary,
     StreamingTranscriptionMvp,
     TextOwnedVoiceLoop,
+    VoiceLoop,
     ToolAsPerceptionCalculator,
 }
 
@@ -59,6 +61,7 @@ impl ExperimentName {
             Self::SleepPhaseSessionSummary => "sleep-phase-session-summary",
             Self::StreamingTranscriptionMvp => "streaming-transcription-mvp",
             Self::TextOwnedVoiceLoop => "text-owned-voice-loop",
+            Self::VoiceLoop => "voice-loop",
             Self::ToolAsPerceptionCalculator => "tool-as-perception-calculator",
         }
     }
@@ -99,6 +102,7 @@ impl ExperimentName {
             Self::TextOwnedVoiceLoop => {
                 "Capture or simulate speech, route finalized text through QSF-owned model behavior, then synthesize speech output from the QSF text response"
             }
+            Self::VoiceLoop => VOICE_LOOP_DESCRIPTION,
             Self::ToolAsPerceptionCalculator => {
                 "Execute a compute-only calculator tool and treat the result as a context candidate"
             }
@@ -313,6 +317,7 @@ fn experiment_for(name: ExperimentName) -> Box<dyn Experiment> {
         ExperimentName::SleepPhaseSessionSummary => Box::new(SleepPhaseSessionSummaryExperiment),
         ExperimentName::StreamingTranscriptionMvp => Box::new(StreamingTranscriptionMvpExperiment),
         ExperimentName::TextOwnedVoiceLoop => Box::new(TextOwnedVoiceLoopExperiment),
+        ExperimentName::VoiceLoop => Box::new(VoiceLoopExperiment),
         ExperimentName::ToolAsPerceptionCalculator => {
             Box::new(ToolAsPerceptionCalculatorExperiment)
         }
@@ -355,6 +360,18 @@ mod tests {
         let parsed: ExperimentName = "framework-skeleton-mvp".parse().unwrap();
 
         assert_eq!(parsed, ExperimentName::FrameworkSkeletonMvp);
+    }
+
+    #[test]
+    fn voice_loop_experiment_is_registered() {
+        let experiments = available_experiments();
+        let voice_loop = experiments
+            .iter()
+            .find(|experiment| experiment.id == ExperimentName::VoiceLoop.id())
+            .unwrap();
+
+        assert_eq!(ExperimentName::VoiceLoop.to_string(), "voice-loop");
+        assert!(voice_loop.description.contains("voice-loop"));
     }
 
     #[test]

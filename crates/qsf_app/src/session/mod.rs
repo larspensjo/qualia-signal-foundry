@@ -25,8 +25,8 @@ pub use live_state::{
 };
 pub use runtime::{
     BootedSession, SessionBootRequest, apply_live_session_event, apply_session_event, boot_session,
-    format_boot_brief_for_context, persist_continuity_state, reduce_session,
-    reduce_session_in_place, resume_breaking_config_changed,
+    format_boot_brief_for_context, persist_continuity_state, persist_continuity_state_from_dirs,
+    reduce_session, reduce_session_in_place, resume_breaking_config_changed,
 };
 pub use state_directory::{StateDirectoryResolution, resolve_shared_state_directory_from_env};
 

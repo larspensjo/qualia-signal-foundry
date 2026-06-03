@@ -46,6 +46,11 @@ const VOICE_MEMORY_FILE_ENV_VAR: &str = "QSF_VOICE_MEMORY_FILE";
 
 pub struct TextOwnedVoiceLoopExperiment;
 
+pub(crate) struct VoiceLoopSessionConfig {
+    pub(crate) state_resolution: StateDirectoryResolution,
+    pub(crate) config: SessionConfig,
+}
+
 impl Experiment for TextOwnedVoiceLoopExperiment {
     fn name(&self) -> ExperimentName {
         ExperimentName::TextOwnedVoiceLoop
@@ -119,7 +124,7 @@ impl TextOwnedVoiceLoopExperiment {
         )
     }
 
-    fn run_with_components_and_memory_source_at_state_dirs(
+    pub(crate) fn run_with_components_and_memory_source_at_state_dirs(
         &self,
         context: &mut RunContext,
         transcript_provider: &dyn TranscriptProvider,
@@ -129,6 +134,32 @@ impl TextOwnedVoiceLoopExperiment {
         state_resolution: StateDirectoryResolution,
     ) -> anyhow::Result<ExperimentOutcome> {
         let config = SessionConfig::from_env();
+        self.run_with_components_and_memory_source_at_state_dirs_with_config(
+            context,
+            transcript_provider,
+            model_client,
+            speech_provider,
+            memory_source,
+            VoiceLoopSessionConfig {
+                state_resolution,
+                config,
+            },
+        )
+    }
+
+    pub(crate) fn run_with_components_and_memory_source_at_state_dirs_with_config(
+        &self,
+        context: &mut RunContext,
+        transcript_provider: &dyn TranscriptProvider,
+        model_client: &dyn ModelClient,
+        speech_provider: &dyn SpeechOutputProvider,
+        memory_source: &dyn VoiceLoopMemorySource,
+        session_config: VoiceLoopSessionConfig,
+    ) -> anyhow::Result<ExperimentOutcome> {
+        let VoiceLoopSessionConfig {
+            state_resolution,
+            config,
+        } = session_config;
         let boot = crate::session::boot_session(
             context,
             SessionBootRequest {
@@ -503,8 +534,9 @@ impl TextOwnedVoiceLoopExperiment {
                 reason: SessionEndReason::Eof,
             },
         )?;
-        crate::session::persist_continuity_state(
+        crate::session::persist_continuity_state_from_dirs(
             &state,
+            &state_resolution.resume_state_dir,
             &state_resolution.persist_state_dir,
             &resume_manifest,
         )?;
@@ -561,16 +593,16 @@ impl TextOwnedVoiceLoopExperiment {
     }
 }
 
-trait VoiceLoopMemorySource {
+pub(crate) trait VoiceLoopMemorySource {
     fn load(&self) -> anyhow::Result<VoiceMemorySourceSnapshot>;
 }
 
-struct SharedVoiceMemorySource {
+pub(crate) struct SharedVoiceMemorySource {
     state_dir: PathBuf,
 }
 
 impl SharedVoiceMemorySource {
-    fn new(state_dir: impl Into<PathBuf>) -> Self {
+    pub(crate) fn new(state_dir: impl Into<PathBuf>) -> Self {
         Self {
             state_dir: state_dir.into(),
         }
@@ -634,7 +666,7 @@ impl VoiceLoopMemorySource for FileVoiceMemorySource {
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize)]
-struct VoiceMemorySourceSnapshot {
+pub(crate) struct VoiceMemorySourceSnapshot {
     source_name: String,
     source_reference: String,
     records: Vec<MemoryRecord>,
@@ -1895,6 +1927,22 @@ mod tests {
             crate::session::SessionState::new_with_id("legacy-text-session".to_string(), config);
         previous.turns.push(crate::session::tests::fake_turn(0));
         crate::session::persistence::persist_session_state(&previous, &legacy_state_dir).unwrap();
+        let legacy_memory_path = legacy_state_dir.join("memory-store.json");
+        let mut legacy_store = MemoryStore::load_or_empty(&legacy_memory_path).unwrap();
+        legacy_store.contents_mut().records.push(MemoryRecord::new(
+            "memory.legacy.voice",
+            MemoryRecordKind::Observation,
+            "Legacy voice memory",
+            "Legacy text-loop memory must survive a voice-first shared session migration.",
+            vec!["legacy", "voice", "session"],
+            timestamp("2026-06-03T08:00:00Z"),
+            0.8,
+            0,
+            "tests/legacy-memory.json",
+            16,
+        ));
+        legacy_store.persist().unwrap();
+        let legacy_memory_before = fs::read_to_string(&legacy_memory_path).unwrap();
         crate::session::manifest::ContinuityManifest {
             current_session_id: Some(previous.session_id.clone()),
             current_session_state_path: Some(PathBuf::from("session-state.json")),
@@ -1932,6 +1980,9 @@ mod tests {
             legacy_state_dir.join("session-state.json"),
         )
         .unwrap();
+        let legacy_memory_after = fs::read_to_string(&legacy_memory_path).unwrap();
+        let shared_store =
+            MemoryStore::load_or_empty(shared_state_dir.join("memory-store.json")).unwrap();
         let events = fs::read_to_string(context.run_dir().join("events.jsonl")).unwrap();
         let records = parse_event_records(&events);
         let resumed = records
@@ -1945,6 +1996,14 @@ mod tests {
         assert_eq!(
             shared_state.turns[0].user_input,
             previous.turns[0].user_input
+        );
+        assert_eq!(legacy_memory_after, legacy_memory_before);
+        assert!(
+            shared_store
+                .contents()
+                .records
+                .iter()
+                .any(|record| record.id == "memory.legacy.voice")
         );
         assert!(shared_state_dir.join("continuity-manifest.json").exists());
         assert_eq!(resumed.payload["mode"], "awake_continuation");

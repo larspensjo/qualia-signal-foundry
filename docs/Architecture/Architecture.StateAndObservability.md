@@ -28,8 +28,9 @@ candidate categories listed below still have no shared module.
   events
 - `SessionResumed` events that record the text-loop boot decision, previous session id,
   config-drift downgrade status, and pending brief path
-- Cross-session text-loop state persisted under `state/text-loop/` by default:
-  `continuity-manifest.json` and `session-state.json`
+- Cross-session session state persisted under `state/session/` by default:
+  `continuity-manifest.json` and `session-state.json`, with a read-only legacy
+  fallback from `state/text-loop/` when needed
 - Cross-session sleep and memory state persisted in the same state directory:
   `memory-store.json`, `consolidated-brief.json`, and archived sleep briefs
   ([memory/store.rs](../../crates/qsf_app/src/memory/store.rs),
@@ -50,12 +51,11 @@ candidate categories listed below still have no shared module.
 **Partial:**
 
 - **Runtime State** lives in experiments rather than a shared module
-- **Session State** is implemented for the multi-turn text loop
-  ([session/mod.rs](../../crates/qsf_app/src/session/mod.rs)) but not reused by
-  the voice loop
+- **Session State** is implemented for the multi-turn text loop and shared voice
+  surfaces ([session/mod.rs](../../crates/qsf_app/src/session/mod.rs))
 - **Memory State** is partial: records, associations, decay inputs, and live
-  reinforcement are maintained for the text loop, but graph inspection,
-  contradiction handling, and voice-loop reuse are not implemented
+  reinforcement are maintained for the text loop and shared voice surfaces, but
+  graph inspection and contradiction handling are not implemented
 - **Tool State** is exposed through registry metadata on `ToolRequested` /
   `ToolCompleted` / `ToolFailed`; there is no separate `ToolState` summary
 
@@ -259,10 +259,12 @@ Archived
 
 This helps prevent accidental promotion of short-lived observations into long-term memory.
 
-The multi-turn text loop currently persists cross-session state in a local
-`state/text-loop/` directory, or in `QSF_STATE_DIR` when that environment variable is
-set. The manifest is the observable commit record for whether the next boot should be a
-cold start, awake continuation, or consolidated-brief resume.
+The multi-turn text loop and shared voice surfaces now persist cross-session state
+in a local `state/session/` directory, or in `QSF_STATE_DIR` when that environment
+variable is set. The legacy `state/text-loop/` directory remains readable as a
+fallback for continuity. The manifest is the observable commit record for whether
+the next boot should be a cold start, awake continuation, or consolidated-brief
+resume.
 
 ## State Ownership
 

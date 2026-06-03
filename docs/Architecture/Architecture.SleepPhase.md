@@ -7,7 +7,7 @@ Candidate
 ## Implementation Status
 
 A session-end sleep flow exists: a sleep pass produces a structured report, consumes
-the persisted text-loop `SessionState` when available, promotes routine memory
+the persisted shared-session `SessionState` when available, promotes routine memory
 candidates into the cross-session store, writes a consolidated brief, and updates the
 continuity manifest through a manifest-last commit protocol. Manual review remains
 the boundary for decision-kind candidates.

@@ -1,4 +1,5 @@
 use std::fs;
+#[cfg(test)]
 use std::path::Path;
 use std::time::Instant;
 
@@ -9,8 +10,8 @@ use crate::models::{build_client, requested_provider_from_env};
 use crate::observability::event_log::EventType;
 use crate::observability::trace::{TraceRecord, elapsed_ns};
 use crate::runtime::run_context::RunContext;
-use crate::session::SessionState;
 use crate::session::resume::ResumeInputs;
+use crate::session::{SessionState, StateDirectoryResolution};
 use crate::sleep::{SleepInputBundle, SleepReport, summarize_session};
 
 use super::registry::{Experiment, ExperimentName, ExperimentOutcome};
@@ -39,21 +40,21 @@ impl SleepPhaseSessionSummaryExperiment {
         context: &mut RunContext,
         requested_provider: &str,
     ) -> anyhow::Result<ExperimentOutcome> {
-        self.run_with_provider_at_state_dir(
+        self.run_with_provider_at_state_resolution(
             context,
             requested_provider,
-            crate::session::resume::state_dir_from_env(),
+            crate::session::resolve_shared_state_directory_from_env(),
         )
     }
 
-    fn run_with_provider_at_state_dir(
+    fn run_with_provider_at_state_resolution(
         &self,
         context: &mut RunContext,
         requested_provider: &str,
-        state_dir: impl AsRef<Path>,
+        state_resolution: StateDirectoryResolution,
     ) -> anyhow::Result<ExperimentOutcome> {
-        let state_dir = state_dir.as_ref().to_path_buf();
-        let resume_inputs = crate::session::resume::load_resume_inputs(&state_dir)?;
+        let resume_inputs =
+            crate::session::resume::load_resume_inputs(&state_resolution.resume_state_dir)?;
         let input = build_sleep_input(&resume_inputs);
 
         context.record_event(
@@ -161,7 +162,26 @@ impl SleepPhaseSessionSummaryExperiment {
             extra_artifacts: vec!["sleep-report.json".to_string(), "sleep-report.md".to_string()],
         };
 
-        commit_cross_session_sleep(context, &summary.report, outcome, &state_dir)
+        commit_cross_session_sleep(context, &summary.report, outcome, &state_resolution)
+    }
+
+    #[cfg(test)]
+    fn run_with_provider_at_state_dir(
+        &self,
+        context: &mut RunContext,
+        requested_provider: &str,
+        state_dir: impl AsRef<Path>,
+    ) -> anyhow::Result<ExperimentOutcome> {
+        let state_dir = state_dir.as_ref().to_path_buf();
+        self.run_with_provider_at_state_resolution(
+            context,
+            requested_provider,
+            StateDirectoryResolution {
+                resume_state_dir: state_dir.clone(),
+                persist_state_dir: state_dir,
+                legacy_fallback_used: false,
+            },
+        )
     }
 }
 
@@ -169,9 +189,10 @@ fn commit_cross_session_sleep(
     context: &RunContext,
     report: &SleepReport,
     mut outcome: ExperimentOutcome,
-    state_dir: &Path,
+    state_resolution: &StateDirectoryResolution,
 ) -> anyhow::Result<ExperimentOutcome> {
-    let resume_inputs = crate::session::resume::load_resume_inputs(state_dir)?;
+    let resume_inputs =
+        crate::session::resume::load_resume_inputs(&state_resolution.resume_state_dir)?;
     let Some(session) = resume_inputs.previous_session.clone() else {
         return Ok(outcome);
     };
@@ -194,6 +215,16 @@ fn commit_cross_session_sleep(
         .map(time::OffsetDateTime::from)
         .unwrap_or_else(time::OffsetDateTime::now_utc);
     let sleep_run_id = context.run_id().to_string();
+    if state_resolution.resume_state_dir != state_resolution.persist_state_dir {
+        crate::session::persist_continuity_state_from_dirs(
+            &session,
+            &state_resolution.resume_state_dir,
+            &state_resolution.persist_state_dir,
+            &resume_inputs.manifest,
+        )?;
+    }
+
+    let state_dir = &state_resolution.persist_state_dir;
     let store_path = state_dir.join("memory-store.json");
     let mut store = crate::memory::MemoryStore::load_or_empty(&store_path)?;
     let plan = crate::sleep::auto_promote::build_promotion_plan(
@@ -457,7 +488,9 @@ mod tests {
     use crate::runtime::run_context::RunContext;
     use crate::session::manifest::{ContinuityManifest, ResumeMode};
     use crate::session::resume::ResumeInputs;
-    use crate::session::{MemorySourceConfig, SessionConfig, SessionState, TurnSummary};
+    use crate::session::{
+        MemorySourceConfig, SessionConfig, SessionState, StateDirectoryResolution, TurnSummary,
+    };
     use time::OffsetDateTime;
 
     #[test]
@@ -572,6 +605,82 @@ mod tests {
             outcome
                 .extra_artifacts
                 .contains(&state_dir.join("memory-store.json").display().to_string())
+        );
+
+        fs::remove_dir_all(base_dir).unwrap();
+    }
+
+    #[test]
+    fn sleep_legacy_fallback_writes_shared_state_without_rewriting_legacy() {
+        let base_dir =
+            std::env::temp_dir().join(format!("qsf-sleep-legacy-{}", uuid::Uuid::new_v4()));
+        let legacy_state_dir = base_dir.join("state/text-loop");
+        let shared_state_dir = base_dir.join("state/session");
+        let mut previous =
+            SessionState::new_with_id("legacy-session-to-sleep".to_string(), config());
+        previous.turns.push(crate::session::tests::fake_turn(0));
+        crate::session::persistence::persist_session_state(&previous, &legacy_state_dir).unwrap();
+        let mut store =
+            MemoryStore::load_or_empty(legacy_state_dir.join("memory-store.json")).unwrap();
+        store
+            .contents_mut()
+            .records
+            .push(memory_record("memory.legacy"));
+        store.persist().unwrap();
+        let legacy_session_before =
+            fs::read_to_string(legacy_state_dir.join("session-state.json")).unwrap();
+        let legacy_memory_before =
+            fs::read_to_string(legacy_state_dir.join("memory-store.json")).unwrap();
+        ContinuityManifest {
+            current_session_id: Some(previous.session_id.clone()),
+            current_session_state_path: Some(PathBuf::from("session-state.json")),
+            sleep_pending: true,
+            resume_mode: ResumeMode::AwakeContinuation,
+            ..ContinuityManifest::default()
+        }
+        .persist(legacy_state_dir.join("continuity-manifest.json"))
+        .unwrap();
+
+        let mut context = RunContext::create_in(base_dir.join("run"), "sleep-legacy-test").unwrap();
+        let experiment = SleepPhaseSessionSummaryExperiment;
+        experiment
+            .run_with_provider_at_state_resolution(
+                &mut context,
+                "mock",
+                StateDirectoryResolution {
+                    resume_state_dir: legacy_state_dir.clone(),
+                    persist_state_dir: shared_state_dir.clone(),
+                    legacy_fallback_used: true,
+                },
+            )
+            .unwrap();
+
+        let shared_state = crate::session::persistence::load_session_state(
+            shared_state_dir.join("session-state.json"),
+        )
+        .unwrap();
+        let shared_manifest =
+            ContinuityManifest::load_or_default(shared_state_dir.join("continuity-manifest.json"))
+                .unwrap();
+        let shared_store =
+            MemoryStore::load_or_empty(shared_state_dir.join("memory-store.json")).unwrap();
+
+        assert_eq!(shared_state.session_id, previous.session_id);
+        assert!(!shared_manifest.sleep_pending);
+        assert_eq!(
+            legacy_session_before,
+            fs::read_to_string(legacy_state_dir.join("session-state.json")).unwrap()
+        );
+        assert_eq!(
+            legacy_memory_before,
+            fs::read_to_string(legacy_state_dir.join("memory-store.json")).unwrap()
+        );
+        assert!(
+            shared_store
+                .contents()
+                .records
+                .iter()
+                .any(|record| record.id == "memory.legacy")
         );
 
         fs::remove_dir_all(base_dir).unwrap();

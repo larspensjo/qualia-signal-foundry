@@ -32,9 +32,9 @@ document as a candidate design that real experiments incrementally fill in.
   [experiments/text_owned_voice_loop.rs](../../crates/qsf_app/src/experiments/text_owned_voice_loop.rs),
   [experiments/realtime_voice_session.rs](../../crates/qsf_app/src/experiments/realtime_voice_session.rs))
 - Shared session boot and manifest-last persistence helpers now live in
-  `session/runtime.rs`, so the text loop and text-owned voice loop use the same
-  resume classification, `SessionResumed` event shape, live reducer startup, and
-  continuity manifest commit path
+  `session/runtime.rs`, so the text loop, text-owned voice loop, and voice-loop
+  peer surface use the same resume classification, `SessionResumed` event shape,
+  live reducer startup, and continuity manifest commit path
   ([session/runtime.rs](../../crates/qsf_app/src/session/runtime.rs))
 - Voice-turn event sequence matching the shape documented under *Runtime Loop and
   Voice Turns* below
@@ -51,13 +51,14 @@ document as a candidate design that real experiments incrementally fill in.
   truncation instead of persisting a truncated continuity summary
 - `session_id` propagation through transcript, runtime input, model role, output,
   and speech playback for voice turns
-- Cross-session boot for the multi-turn text loop and text-owned voice loop: load
-  continuity manifest, classify resume mode, emit `SessionResumed`, then enter the
-  normal reducer-driven loop
+- Cross-session boot for the multi-turn text loop, text-owned voice loop, and
+  voice-loop peer surface: load continuity manifest, classify resume mode, emit
+  `SessionResumed`, then enter the normal reducer-driven loop
   ([session/resume.rs](../../crates/qsf_app/src/session/resume.rs),
   [session/runtime.rs](../../crates/qsf_app/src/session/runtime.rs),
   [experiments/multi_turn_text_loop.rs](../../crates/qsf_app/src/experiments/multi_turn_text_loop.rs),
-  [experiments/text_owned_voice_loop.rs](../../crates/qsf_app/src/experiments/text_owned_voice_loop.rs))
+  [experiments/text_owned_voice_loop.rs](../../crates/qsf_app/src/experiments/text_owned_voice_loop.rs),
+  [experiments/voice_loop.rs](../../crates/qsf_app/src/experiments/voice_loop.rs))
 - Multi-turn hot context aging now composes the existing active-turn warm threshold
   with a token-budget high-water policy. Aging side effects run cross-turn
   co-retrieval first, persist association deltas and `processed_ranges`, retry
@@ -78,8 +79,9 @@ document as a candidate design that real experiments incrementally fill in.
 - Shared live-session state now exists in `session/exchange.rs` and
   `session/live_state.rs`, including exchange payloads, runtime phase, partial
   transcript, interruption, response, provider events, tool requests, and
-  processed-range state. The multi-turn text loop, text-owned voice loop, and
-  realtime voice session bridge now use that shared core directly
+  processed-range state. The multi-turn text loop, text-owned voice loop,
+  voice-loop peer surface, and realtime voice session bridge now use that shared
+  core directly
   ([session/exchange.rs](../../crates/qsf_app/src/session/exchange.rs),
   [session/live_state.rs](../../crates/qsf_app/src/session/live_state.rs),
   [session/mod.rs](../../crates/qsf_app/src/session/mod.rs))
@@ -159,26 +161,27 @@ See also: `Agents.md`, which carries this as a coding standard.
 
 ## Shared Session Boot Continuity
 
-The multi-turn text loop and text-owned voice loop now share a pre-loop boot step:
+The multi-turn text loop, text-owned voice loop, and voice-loop peer surface now
+share a pre-loop boot step:
 
 ```text
-state/text-loop/continuity-manifest.json
+state/session/continuity-manifest.json
   -> load previous SessionState if present
   -> classify ColdStart | AwakeContinuation | ConsolidatedBrief
   -> emit SessionResumed
   -> SessionStarted event enters the reducer loop
 ```
 
-The text loop still defaults to `state/text-loop/` until the planned directory move.
-The text-owned voice loop defaults to the shared `state/session/` resolver and, when
-`state/session/` does not exist but `state/text-loop/` does, reads the legacy text-loop
-state as a fallback while writing the continued session to `state/session/`.
-`QSF_STATE_DIR` overrides both paths. `AwakeContinuation` keeps the same `session_id`
-and carries turns forward only when the resume-breaking parts of the stored
-`SessionConfig` match the new run. Runtime-only limit overrides such as
-`allow_over_limit` are recomputed without forcing a cold start. `ConsolidatedBrief`
-starts a fresh session with `previous_session_id` set and injects the boot brief into
-the first prompt/context block.
+The multi-turn text loop, text-owned voice loop, and voice-loop peer surface now
+default to the shared `state/session/` resolver. When `state/session/` does not yet
+exist but `state/text-loop/` does, the resolver reads the legacy text-loop state as a
+fallback while writing the continued session to `state/session/`. `QSF_STATE_DIR`
+overrides both paths. `AwakeContinuation` keeps the same `session_id` and carries
+turns forward only when the resume-breaking parts of the stored `SessionConfig`
+match the new run. Runtime-only limit overrides such as `allow_over_limit` are
+recomputed without forcing a cold start. `ConsolidatedBrief` starts a fresh session
+with `previous_session_id` set and injects the boot brief into the first
+prompt/context block.
 
 ## Candidate Flow
 

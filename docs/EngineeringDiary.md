@@ -2234,3 +2234,62 @@ docs/Architecture/Architecture.RuntimeLoop.md,
 docs/Architecture/Architecture.AudioLoop.md,
 docs/Experiments/Experiment.RealtimeVoiceSessionMVP.md,
 docs/Reviews/Review.VoiceLoopUnification.Phase5.2026-06-01.md
+
+## 2026-06-03 - Voice loop peer surface and shared session directory move
+
+Phase 6 landed: the multi-turn text loop now boots through the shared
+`state/session/` resolver, legacy `state/text-loop/` continuity is read-only, and
+the shared session plus memory store are copied forward only through the normal
+manifest-last commit path. A stable `voice-loop` experiment was also added as a
+thin peer surface over the existing text-owned voice pipeline.
+
+What changed:
+- Routed the text loop through `resolve_shared_state_directory_from_env()` and
+  `boot_session()` so resume and persist directories can diverge during legacy
+  fallback.
+- Added legacy-fallback regression coverage for the text loop, including the
+  upgraded `SessionState` copy and migrated memory-store file in `state/session/`.
+- Made incomplete `state/session/` directories non-authoritative when a legacy
+  `state/text-loop/` fallback exists, preventing crash-created partial shared
+  state from masking legacy continuity.
+- Removed eager text-loop memory-store copying at boot; legacy memory is now
+  merged into the shared store during continuity persistence for text, voice,
+  realtime voice, and sleep commits.
+- Routed the sleep runtime through the shared state-directory resolver so legacy
+  reads and shared writes stay separate.
+- Added a `voice-loop` experiment registry entry that reuses the text-owned voice
+  pipeline without changing text-owned behavior.
+- Reused one `voice-loop` description constant for the pure alias and registry
+  metadata.
+- Made the cross-surface voice/text session regression pass an explicit shared
+  session config into the voice path so ambient `QSF_SESSION_*` variables cannot
+  turn the test into a cold-start scenario.
+- Added regression tests covering no boot-time shared directory materialization,
+  text and voice memory copy-forward, incomplete shared-directory fallback, and
+  sleep legacy fallback writes.
+- Updated the shared runtime, audio, and state/observability docs plus the README
+  launcher examples and defaults.
+
+Observed:
+- `cargo build`, `cargo test`, `cargo clippy --all-targets -- -D warnings`, and
+  `cargo fmt` passed after the routing and review follow-up.
+- `cargo nextest run` passed after hardening the cross-surface session-sharing
+  regression against developer shell config.
+- `cargo run -p qsf_app -- list-experiments` showed `voice-loop`, and a simulated
+  `voice-loop` run completed with an isolated `QSF_STATE_DIR`.
+
+Refs: crates/qsf_app/src/experiments/multi_turn_text_loop.rs,
+crates/qsf_app/src/experiments/realtime_voice_session.rs,
+crates/qsf_app/src/experiments/registry.rs,
+crates/qsf_app/src/experiments/sleep_phase_session_summary.rs,
+crates/qsf_app/src/experiments/text_owned_voice_loop.rs,
+crates/qsf_app/src/experiments/voice_loop.rs,
+crates/qsf_app/src/session/mod.rs,
+crates/qsf_app/src/session/resume.rs,
+crates/qsf_app/src/session/runtime.rs,
+crates/qsf_app/src/session/state_directory.rs,
+README.md, docs/Architecture/Architecture.Overview.md,
+docs/Architecture/Architecture.RuntimeLoop.md,
+docs/Architecture/Architecture.AudioLoop.md,
+docs/Architecture/Architecture.SleepPhase.md,
+docs/Architecture/Architecture.StateAndObservability.md

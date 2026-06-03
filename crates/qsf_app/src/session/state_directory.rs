@@ -9,20 +9,38 @@ pub struct StateDirectoryResolution {
 
 pub fn resolve_shared_state_directory_from_env() -> StateDirectoryResolution {
     if let Ok(path) = std::env::var("QSF_STATE_DIR") {
-        return resolve_shared_state_directory(Some(PathBuf::from(path)), None, None);
+        return resolve_shared_state_directory(
+            Some(PathBuf::from(path)),
+            PathBuf::from("state/session"),
+            None,
+            None,
+        );
     }
 
-    let shared = PathBuf::from("state/session");
-    let legacy = PathBuf::from("state/text-loop");
+    resolve_shared_state_directory_from_default_paths(
+        PathBuf::from("state/session"),
+        PathBuf::from("state/text-loop"),
+    )
+}
+
+fn resolve_shared_state_directory_from_default_paths(
+    default_shared: PathBuf,
+    legacy: PathBuf,
+) -> StateDirectoryResolution {
+    let shared_exists = default_shared.exists();
+    let legacy_exists = legacy.exists();
+    let shared_is_resumable = default_shared.join("continuity-manifest.json").exists();
     resolve_shared_state_directory(
         None,
-        shared.exists().then_some(shared),
-        legacy.exists().then_some(legacy),
+        default_shared.clone(),
+        (shared_is_resumable || (shared_exists && !legacy_exists)).then_some(default_shared),
+        legacy_exists.then_some(legacy),
     )
 }
 
 fn resolve_shared_state_directory(
     env_override: Option<PathBuf>,
+    default_shared: PathBuf,
     existing_shared: Option<PathBuf>,
     existing_legacy: Option<PathBuf>,
 ) -> StateDirectoryResolution {
@@ -34,7 +52,6 @@ fn resolve_shared_state_directory(
         };
     }
 
-    let default_shared = PathBuf::from("state/session");
     if let Some(shared) = existing_shared {
         return StateDirectoryResolution {
             resume_state_dir: shared.clone(),
@@ -72,6 +89,7 @@ mod tests {
     fn explicit_env_uses_one_directory_for_resume_and_persist() {
         let resolution = resolve_shared_state_directory(
             Some(path("custom-state")),
+            path("state/session"),
             Some(path("state/session")),
             Some(path("state/text-loop")),
         );
@@ -85,6 +103,7 @@ mod tests {
     fn existing_shared_directory_wins_over_legacy() {
         let resolution = resolve_shared_state_directory(
             None,
+            path("state/session"),
             Some(path("state/session")),
             Some(path("state/text-loop")),
         );
@@ -95,8 +114,29 @@ mod tests {
     }
 
     #[test]
+    fn incomplete_shared_directory_does_not_mask_legacy_fallback() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let shared = dir.path().join("state").join("session");
+        let legacy = dir.path().join("state").join("text-loop");
+        std::fs::create_dir_all(&shared).unwrap();
+        std::fs::create_dir_all(&legacy).unwrap();
+
+        let resolution =
+            resolve_shared_state_directory_from_default_paths(shared.clone(), legacy.clone());
+
+        assert_eq!(resolution.resume_state_dir, legacy);
+        assert_eq!(resolution.persist_state_dir, shared);
+        assert!(resolution.legacy_fallback_used);
+    }
+
+    #[test]
     fn legacy_directory_is_read_only_fallback_to_shared_persist() {
-        let resolution = resolve_shared_state_directory(None, None, Some(path("state/text-loop")));
+        let resolution = resolve_shared_state_directory(
+            None,
+            path("state/session"),
+            None,
+            Some(path("state/text-loop")),
+        );
 
         assert_eq!(resolution.resume_state_dir, path("state/text-loop"));
         assert_eq!(resolution.persist_state_dir, path("state/session"));
@@ -105,7 +145,7 @@ mod tests {
 
     #[test]
     fn absent_state_uses_fresh_shared_directory() {
-        let resolution = resolve_shared_state_directory(None, None, None);
+        let resolution = resolve_shared_state_directory(None, path("state/session"), None, None);
 
         assert_eq!(resolution.resume_state_dir, path("state/session"));
         assert_eq!(resolution.persist_state_dir, path("state/session"));

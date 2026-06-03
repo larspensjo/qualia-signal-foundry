@@ -27,8 +27,8 @@ use crate::observability::trace::{TraceRecord, elapsed_ms};
 use crate::runtime::run_context::RunContext;
 use crate::session::{
     Exchange, ExchangeModelUse, ExchangeOutput, LiveSessionEvent, MemorySourceConfig, RecallRecord,
-    SessionBootRequest, SessionConfig, SessionEndReason, SessionEvent, SessionState, Turn,
-    TurnRange, TurnSummary, is_turn_summarized,
+    SessionBootRequest, SessionConfig, SessionEndReason, SessionEvent, SessionState,
+    StateDirectoryResolution, Turn, TurnRange, TurnSummary, is_turn_summarized,
 };
 use crate::tools::{
     CALCULATOR_TOOL_NAME, RECALL_TURN_TOOL_NAME, SessionToolContext, ToolRegistry, ToolResult,
@@ -67,20 +67,20 @@ impl Experiment for MultiTurnTextLoopExperiment {
 
     fn run(&self, context: &mut RunContext) -> anyhow::Result<ExperimentOutcome> {
         let config = SessionConfig::from_env();
-        let state_dir = crate::session::resume::state_dir_from_env();
+        let state_resolution = crate::session::resolve_shared_state_directory_from_env();
         let model_client = build_client(requested_provider_from_env())?;
         let memory_source = build_session_memory_source_from_env();
         let stdin = std::io::stdin();
         let mut stdout = std::io::stdout();
 
-        run_with_io_and_components_at_state_dir(
+        run_with_io_and_components_at_state_resolution(
             context,
             stdin.lock(),
             &mut stdout,
             model_client.as_ref(),
             memory_source.as_ref(),
             config,
-            state_dir,
+            state_resolution,
         )
     }
 }
@@ -136,40 +136,50 @@ fn run_with_io_and_components(
     config: SessionConfig,
 ) -> anyhow::Result<ExperimentOutcome> {
     let state_dir = context.run_dir().join("state/text-loop");
-    run_with_io_and_components_at_state_dir(
+    run_with_io_and_components_at_state_resolution(
         context,
         &mut input,
         output,
         model_client,
         memory_source,
         config,
-        state_dir,
+        StateDirectoryResolution {
+            resume_state_dir: state_dir.clone(),
+            persist_state_dir: state_dir,
+            legacy_fallback_used: false,
+        },
     )
 }
 
-fn run_with_io_and_components_at_state_dir(
+pub(crate) fn run_with_io_and_components_at_state_resolution(
     context: &mut RunContext,
     mut input: impl BufRead,
     output: &mut impl Write,
     model_client: &dyn ModelClient,
     memory_source: &dyn SessionMemorySource,
     config: SessionConfig,
-    state_dir: impl AsRef<Path>,
+    state_resolution: StateDirectoryResolution,
 ) -> anyhow::Result<ExperimentOutcome> {
-    let state_dir = state_dir.as_ref().to_path_buf();
     let boot = crate::session::boot_session(
         context,
         SessionBootRequest {
-            resume_state_dir: state_dir.clone(),
-            persist_state_dir: state_dir.clone(),
+            resume_state_dir: state_resolution.resume_state_dir.clone(),
+            persist_state_dir: state_resolution.persist_state_dir.clone(),
             config,
-            legacy_fallback_used: false,
+            legacy_fallback_used: state_resolution.legacy_fallback_used,
         },
     )?;
     let resume_inputs = boot.resume_inputs;
     let mut pending_boot_brief = boot.pending_boot_brief;
     let mut state = boot.state;
-    let mut memory_snapshot = load_session_memory_snapshot(context, memory_source, &state_dir)?;
+    let resume_state_dir = state_resolution.resume_state_dir.clone();
+    let persist_state_dir = state_resolution.persist_state_dir.clone();
+    let mut memory_snapshot = load_session_memory_snapshot(
+        context,
+        memory_source,
+        &resume_state_dir,
+        &persist_state_dir,
+    )?;
     write_memory_source_snapshot(context, &memory_snapshot)?;
     let color_mode = ColorMode::for_stdout();
     writeln!(output, "multi-turn-text-loop ready; type :quit to exit")?;
@@ -185,7 +195,7 @@ fn run_with_io_and_components_at_state_dir(
             end_session(
                 context,
                 &mut state,
-                &state_dir,
+                &persist_state_dir,
                 output,
                 color_mode,
                 SessionEndReason::Eof,
@@ -198,7 +208,7 @@ fn run_with_io_and_components_at_state_dir(
             end_session(
                 context,
                 &mut state,
-                &state_dir,
+                &persist_state_dir,
                 output,
                 color_mode,
                 SessionEndReason::QuitCommand,
@@ -250,7 +260,7 @@ fn run_with_io_and_components_at_state_dir(
         match run_one_turn(
             context,
             &mut state,
-            &state_dir,
+            &persist_state_dir,
             &mut memory_snapshot,
             model_client,
             TurnRequest {
@@ -289,7 +299,12 @@ fn run_with_io_and_components_at_state_dir(
     }
 
     write_multi_turn_report(context, &state, &memory_snapshot)?;
-    persist_continuity_state(&state, &state_dir, &resume_inputs.manifest)?;
+    persist_continuity_state(
+        &state,
+        &resume_state_dir,
+        &persist_state_dir,
+        &resume_inputs.manifest,
+    )?;
 
     Ok(ExperimentOutcome {
         summary: format!(
@@ -319,6 +334,32 @@ fn run_with_io_and_components_at_state_dir(
             "session-memory-source.json".to_string(),
         ],
     })
+}
+
+#[cfg_attr(not(test), allow(dead_code))]
+fn run_with_io_and_components_at_state_dir(
+    context: &mut RunContext,
+    input: impl BufRead,
+    output: &mut impl Write,
+    model_client: &dyn ModelClient,
+    memory_source: &dyn SessionMemorySource,
+    config: SessionConfig,
+    state_dir: impl AsRef<Path>,
+) -> anyhow::Result<ExperimentOutcome> {
+    let state_dir = state_dir.as_ref().to_path_buf();
+    run_with_io_and_components_at_state_resolution(
+        context,
+        input,
+        output,
+        model_client,
+        memory_source,
+        config,
+        StateDirectoryResolution {
+            resume_state_dir: state_dir.clone(),
+            persist_state_dir: state_dir,
+            legacy_fallback_used: false,
+        },
+    )
 }
 
 struct TurnRequest<'a> {
@@ -1966,26 +2007,42 @@ fn end_session<W: Write>(
 
 fn persist_continuity_state(
     state: &SessionState,
-    state_dir: &Path,
+    resume_state_dir: &Path,
+    persist_state_dir: &Path,
     previous_manifest: &crate::session::manifest::ContinuityManifest,
 ) -> anyhow::Result<()> {
-    crate::session::persist_continuity_state(state, state_dir, previous_manifest)
+    crate::session::persist_continuity_state_from_dirs(
+        state,
+        resume_state_dir,
+        persist_state_dir,
+        previous_manifest,
+    )
 }
 
-trait SessionMemorySource {
+pub(crate) trait SessionMemorySource {
     fn load(&self, context: &mut RunContext) -> anyhow::Result<SessionMemorySourceSnapshot>;
 }
 
 fn load_session_memory_snapshot(
     context: &mut RunContext,
     memory_source: &dyn SessionMemorySource,
-    state_dir: &Path,
+    resume_state_dir: &Path,
+    persist_state_dir: &Path,
 ) -> anyhow::Result<SessionMemorySourceSnapshot> {
-    let memory_store_path = state_dir.join("memory-store.json");
-    if memory_store_path.exists() {
-        let store = crate::memory::MemoryStore::load_or_empty(&memory_store_path)?;
+    let persist_memory_store_path = persist_state_dir.join("memory-store.json");
+    if persist_memory_store_path.exists() {
+        let store = crate::memory::MemoryStore::load_or_empty(&persist_memory_store_path)?;
         return Ok(SessionMemorySourceSnapshot::from_memory_store(
-            &memory_store_path,
+            &persist_memory_store_path,
+            store.contents().clone(),
+        ));
+    }
+
+    let resume_memory_store_path = resume_state_dir.join("memory-store.json");
+    if resume_memory_store_path.exists() {
+        let store = crate::memory::MemoryStore::load_or_empty(&resume_memory_store_path)?;
+        return Ok(SessionMemorySourceSnapshot::from_memory_store(
+            &resume_memory_store_path,
             store.contents().clone(),
         ));
     }
@@ -2104,7 +2161,7 @@ fn build_session_memory_source_from_env() -> Box<dyn SessionMemorySource> {
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize)]
-struct SessionMemorySourceSnapshot {
+pub(crate) struct SessionMemorySourceSnapshot {
     source_name: String,
     source_reference: String,
     records: Vec<MemoryRecord>,
@@ -2500,15 +2557,16 @@ fn sanitize_error(error: &str) -> String {
 mod tests {
     use std::fs;
     use std::io::Cursor;
-    use std::path::PathBuf;
+    use std::path::{Path, PathBuf};
 
+    use crate::audio::{SimulatedSpeechOutputProvider, SimulatedTranscriptProvider};
     use serde_json::{Value, json};
     use uuid::Uuid;
 
     use super::{
         DEFAULT_SESSION_MODEL, SessionMemorySource, age_out_warm_turns,
         prompt_prefix_status_for_report, run_one_turn, run_with_io_and_components,
-        run_with_io_and_components_at_state_dir,
+        run_with_io_and_components_at_state_dir, run_with_io_and_components_at_state_resolution,
     };
     use crate::context::{
         ContextAssembly, ContextBudget, ContextFragment, ContextSelection, ContextSourceKind,
@@ -2518,6 +2576,7 @@ mod tests {
         PromptTurn, PromptTurnSummary, assemble_prompt, assemble_prompt_with_summaries,
         prior_request_prefix_hash,
     };
+    use crate::experiments::text_owned_voice_loop::SharedVoiceMemorySource;
     use crate::memory::{
         Association, MemoryFixture, MemoryRecord, MemoryRecordKind, MemoryStore, RetrievalStrategy,
         phase_four_fixture, retrieve_memories,
@@ -2530,7 +2589,8 @@ mod tests {
     use crate::runtime::run_context::RunContext;
     use crate::session::{
         MemorySourceConfig, RecallRecord, SessionConfig, SessionEndReason, SessionEvent,
-        SessionState, Turn, TurnRange, TurnSummary, reduce_session, resume_breaking_config_changed,
+        SessionState, StateDirectoryResolution, Turn, TurnRange, TurnSummary, reduce_session,
+        resume_breaking_config_changed,
     };
     use crate::tools::{CALCULATOR_TOOL_NAME, RECALL_TURN_TOOL_NAME};
 
@@ -4107,6 +4167,266 @@ mod tests {
         );
 
         fs::remove_dir_all(base_dir).unwrap();
+    }
+
+    #[test]
+    fn voice_and_text_runs_share_the_same_session_in_both_orders() {
+        let voice_then_text_base =
+            std::env::temp_dir().join(format!("qsf-voice-text-order-a-{}", Uuid::new_v4()));
+        let text_then_voice_base =
+            std::env::temp_dir().join(format!("qsf-voice-text-order-b-{}", Uuid::new_v4()));
+
+        run_voice_then_text(&voice_then_text_base);
+        run_text_then_voice(&text_then_voice_base);
+
+        fs::remove_dir_all(voice_then_text_base).unwrap();
+        fs::remove_dir_all(text_then_voice_base).unwrap();
+    }
+
+    #[test]
+    fn legacy_text_loop_boot_writes_upgraded_state_into_shared_session_dir() {
+        let base_dir =
+            std::env::temp_dir().join(format!("qsf-legacy-text-loop-{}", Uuid::new_v4()));
+        let legacy_state_dir = base_dir.join("state/text-loop");
+        let shared_state_dir = base_dir.join("state/session");
+        let config = shared_text_config();
+        let mut previous = SessionState::new_with_id("legacy-text-session".to_string(), config);
+        previous.turns.push(test_turn(0));
+        crate::session::persistence::persist_session_state(&previous, &legacy_state_dir).unwrap();
+        let mut legacy_store =
+            crate::memory::MemoryStore::load_or_empty(legacy_state_dir.join("memory-store.json"))
+                .unwrap();
+        legacy_store.contents_mut().records.push(memory_record(
+            "memory.legacy.text",
+            "Legacy text memory",
+            "Legacy text-loop memory must survive the shared session migration.",
+            vec!["legacy", "text", "session"],
+            16,
+        ));
+        legacy_store.persist().unwrap();
+        let legacy_session_before =
+            fs::read_to_string(legacy_state_dir.join("session-state.json")).unwrap();
+        let legacy_memory_before =
+            fs::read_to_string(legacy_state_dir.join("memory-store.json")).unwrap();
+        crate::session::manifest::ContinuityManifest {
+            current_session_id: Some(previous.session_id.clone()),
+            current_session_state_path: Some(PathBuf::from("session-state.json")),
+            sleep_pending: true,
+            resume_mode: crate::session::manifest::ResumeMode::AwakeContinuation,
+            ..crate::session::manifest::ContinuityManifest::default()
+        }
+        .persist(legacy_state_dir.join("continuity-manifest.json"))
+        .unwrap();
+
+        let mut context =
+            RunContext::create_in(base_dir.join("run"), "multi-turn-text-loop").unwrap();
+        let mut output = Vec::new();
+        let memory_source = TestMemorySource;
+        run_with_io_and_components_at_state_resolution(
+            &mut context,
+            Cursor::new(":quit\n"),
+            &mut output,
+            &MockModelClient::default(),
+            &memory_source,
+            shared_text_config(),
+            StateDirectoryResolution {
+                resume_state_dir: legacy_state_dir.clone(),
+                persist_state_dir: shared_state_dir.clone(),
+                legacy_fallback_used: true,
+            },
+        )
+        .unwrap();
+
+        let shared_state = crate::session::persistence::load_session_state(
+            shared_state_dir.join("session-state.json"),
+        )
+        .unwrap();
+        let legacy_session_after =
+            fs::read_to_string(legacy_state_dir.join("session-state.json")).unwrap();
+        let legacy_memory_after =
+            fs::read_to_string(legacy_state_dir.join("memory-store.json")).unwrap();
+        let shared_memory = fs::read_to_string(shared_state_dir.join("memory-store.json")).unwrap();
+        let events = fs::read_to_string(context.run_dir().join("events.jsonl")).unwrap();
+        let records = parse_event_records(&events);
+        let resumed = records
+            .iter()
+            .find(|record| record.event_type == EventType::SessionResumed)
+            .unwrap();
+        let legacy_state_dir_string = legacy_state_dir.display().to_string();
+
+        assert_eq!(shared_state.session_id, previous.session_id);
+        assert_eq!(shared_state.turns.len(), 1);
+        assert_eq!(
+            shared_state.schema_version,
+            crate::session::SESSION_STATE_SCHEMA_VERSION
+        );
+        assert_eq!(legacy_session_after, legacy_session_before);
+        assert_eq!(legacy_memory_after, legacy_memory_before);
+        assert!(shared_memory.contains("memory.legacy.text"));
+        assert_eq!(shared_memory, legacy_memory_before);
+        assert_eq!(resumed.payload["legacy_fallback_used"], true);
+        assert_eq!(
+            resumed.payload["resume_state_dir"].as_str(),
+            Some(legacy_state_dir_string.as_str())
+        );
+        assert!(shared_state_dir.join("continuity-manifest.json").exists());
+
+        fs::remove_dir_all(base_dir).unwrap();
+    }
+
+    #[test]
+    fn legacy_memory_snapshot_does_not_materialize_shared_dir_before_commit() {
+        let base_dir =
+            std::env::temp_dir().join(format!("qsf-legacy-memory-boot-{}", Uuid::new_v4()));
+        let legacy_state_dir = base_dir.join("state/text-loop");
+        let shared_state_dir = base_dir.join("state/session");
+        crate::memory::MemoryStore::load_or_empty(legacy_state_dir.join("memory-store.json"))
+            .unwrap()
+            .persist()
+            .unwrap();
+        let memory_source = TestMemorySource;
+        let mut context =
+            RunContext::create_in(base_dir.join("run"), "multi-turn-text-loop").unwrap();
+
+        let snapshot = super::load_session_memory_snapshot(
+            &mut context,
+            &memory_source,
+            &legacy_state_dir,
+            &shared_state_dir,
+        )
+        .unwrap();
+
+        assert_eq!(
+            snapshot.source_reference,
+            legacy_state_dir
+                .join("memory-store.json")
+                .display()
+                .to_string()
+        );
+        assert!(!shared_state_dir.exists());
+
+        fs::remove_dir_all(base_dir).unwrap();
+    }
+
+    fn run_voice_then_text(base_dir: &Path) {
+        let state_dir = base_dir.join("state/session");
+        let voice_memory_source = SharedVoiceMemorySource::new(&state_dir);
+        let mut voice_context =
+            RunContext::create_in(base_dir.join("voice"), "voice-loop").unwrap();
+        crate::experiments::text_owned_voice_loop::TextOwnedVoiceLoopExperiment
+            .run_with_components_and_memory_source_at_state_dirs_with_config(
+                &mut voice_context,
+                &SimulatedTranscriptProvider,
+                &MockModelClient::default(),
+                &SimulatedSpeechOutputProvider,
+                &voice_memory_source,
+                crate::experiments::text_owned_voice_loop::VoiceLoopSessionConfig {
+                    state_resolution: StateDirectoryResolution {
+                        resume_state_dir: state_dir.clone(),
+                        persist_state_dir: state_dir.clone(),
+                        legacy_fallback_used: false,
+                    },
+                    config: shared_text_config(),
+                },
+            )
+            .unwrap();
+        let voice_state =
+            crate::session::persistence::load_session_state(state_dir.join("session-state.json"))
+                .unwrap();
+
+        let mut text_context =
+            RunContext::create_in(base_dir.join("text"), "multi-turn-text-loop").unwrap();
+        let mut output = Vec::new();
+        let text_memory_source = TestMemorySource;
+        run_with_io_and_components_at_state_resolution(
+            &mut text_context,
+            Cursor::new("follow-up from text\n:quit\n"),
+            &mut output,
+            &MockModelClient::default(),
+            &text_memory_source,
+            shared_text_config(),
+            StateDirectoryResolution {
+                resume_state_dir: state_dir.clone(),
+                persist_state_dir: state_dir.clone(),
+                legacy_fallback_used: false,
+            },
+        )
+        .unwrap();
+        let text_state =
+            crate::session::persistence::load_session_state(state_dir.join("session-state.json"))
+                .unwrap();
+
+        assert_eq!(voice_state.turns.len(), 1);
+        assert_eq!(text_state.turns.len(), 2);
+        assert_eq!(text_state.session_id, voice_state.session_id);
+        assert!(state_dir.join("continuity-manifest.json").exists());
+    }
+
+    fn run_text_then_voice(base_dir: &Path) {
+        let state_dir = base_dir.join("state/session");
+        let mut text_context =
+            RunContext::create_in(base_dir.join("text"), "multi-turn-text-loop").unwrap();
+        let mut output = Vec::new();
+        let text_memory_source = TestMemorySource;
+        run_with_io_and_components_at_state_resolution(
+            &mut text_context,
+            Cursor::new("follow-up from text\n:quit\n"),
+            &mut output,
+            &MockModelClient::default(),
+            &text_memory_source,
+            shared_text_config(),
+            StateDirectoryResolution {
+                resume_state_dir: state_dir.clone(),
+                persist_state_dir: state_dir.clone(),
+                legacy_fallback_used: false,
+            },
+        )
+        .unwrap();
+        let text_state =
+            crate::session::persistence::load_session_state(state_dir.join("session-state.json"))
+                .unwrap();
+
+        let voice_memory_source = SharedVoiceMemorySource::new(&state_dir);
+        let mut voice_context =
+            RunContext::create_in(base_dir.join("voice"), "voice-loop").unwrap();
+        crate::experiments::text_owned_voice_loop::TextOwnedVoiceLoopExperiment
+            .run_with_components_and_memory_source_at_state_dirs_with_config(
+                &mut voice_context,
+                &SimulatedTranscriptProvider,
+                &MockModelClient::default(),
+                &SimulatedSpeechOutputProvider,
+                &voice_memory_source,
+                crate::experiments::text_owned_voice_loop::VoiceLoopSessionConfig {
+                    state_resolution: StateDirectoryResolution {
+                        resume_state_dir: state_dir.clone(),
+                        persist_state_dir: state_dir.clone(),
+                        legacy_fallback_used: false,
+                    },
+                    config: shared_text_config(),
+                },
+            )
+            .unwrap();
+        let voice_state =
+            crate::session::persistence::load_session_state(state_dir.join("session-state.json"))
+                .unwrap();
+
+        assert_eq!(text_state.turns.len(), 1);
+        assert_eq!(voice_state.turns.len(), 2);
+        assert_eq!(voice_state.session_id, text_state.session_id);
+        assert!(state_dir.join("continuity-manifest.json").exists());
+    }
+
+    fn shared_text_config() -> SessionConfig {
+        SessionConfig {
+            model_id: DEFAULT_SESSION_MODEL.to_string(),
+            max_turns: 10,
+            warm_threshold: 6,
+            allow_over_limit: false,
+            memory_source: MemorySourceConfig {
+                source: "phase_four_fixture".to_string(),
+                file: None,
+            },
+        }
     }
 
     #[test]

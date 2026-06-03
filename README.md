@@ -49,9 +49,10 @@ Currently implemented experiment paths include:
   selected through configuration.
 - **Streaming transcription** of microphone or WAV input via the OpenAI realtime
   transcription adapter.
-- **Realtime voice session** and a **text-owned voice loop** that retrieves memory
-  before context assembly and routes any provider-requested tool calls through the
-  QSF tool boundary instead of executing them directly.
+- **Realtime voice session**, a **text-owned voice loop**, and a peer **voice-loop**
+  surface that retrieve memory before context assembly and route any
+  provider-requested tool calls through the QSF tool boundary instead of executing
+  them directly.
 - **Sleep-phase session summary**, **reviewed memory draft**, and **accept reviewed
   memory** — the pipeline that turns a session summary into a manually reviewed
   file-backed memory source.
@@ -65,7 +66,6 @@ memory record schema, and association-weighted memory retrieval.
 
 Not yet implemented (documented as concepts, plans, or ideas):
 
-- session persistence and cross-session continuity
 - a volition or goal system
 - self-reflection through project-document introspection
 - attention/salience as a first-class signal
@@ -156,6 +156,7 @@ secrets. `-Profile` remains accepted as a compatibility alias, but new examples 
 .\scripts\qsf.ps1 app -Experiment multi-turn-text-loop -LaunchProfile openai-text
 .\scripts\qsf.ps1 app -Experiment multi-turn-text-loop -SessionMemorySource file -SessionMemoryFile docs/Experiments/Fixtures/session-memory.empty.json
 .\scripts\qsf.ps1 app -Experiment text-owned-voice-loop -LaunchProfile file-memory -VoiceMemoryFile docs/Experiments/Fixtures/voice-memory.example.json
+.\scripts\qsf.ps1 app -Experiment voice-loop
 ```
 
 `openai-text` and `openai-transcription-mic` require `OPENAI_API_KEY` to already exist
@@ -163,8 +164,9 @@ in the shell environment; the launcher checks this before starting the experimen
 does not print secret-like values.
 
 For `multi-turn-text-loop`, the launcher passes an empty session-memory source by
-default; the loop still resumes from `state/text-loop/memory-store.json` when that
-store exists. Use `-DemoMemory` or `-LaunchProfile demo-memory` to opt into the
+default; the loop still resumes from `state/session/memory-store.json` when that
+store exists, with a read-only fallback to `state/text-loop/memory-store.json` for
+legacy continuity. Use `-DemoMemory` or `-LaunchProfile demo-memory` to opt into the
 deterministic Phase 4 fixture, or use `-SessionMemorySource file -SessionMemoryFile
 <path>` for a specific JSON fixture. Raw Cargo runs still use the experiment's
 in-code default.
@@ -188,7 +190,7 @@ Start the memory browser API with the default store, host, and port:
 .\scripts\qsf.ps1 browser
 ```
 
-The browser defaults are `state/text-loop/memory-store.json`, `127.0.0.1`, and
+The browser defaults are `state/session/memory-store.json`, `127.0.0.1`, and
 `3939`. To use the tracked sample store instead:
 
 ```powershell
@@ -275,7 +277,7 @@ Raw fallback/reference commands:
 
 ```powershell
 # Shell 1: API server on 127.0.0.1:3939
-cargo run -p qsf_browser_server -- --store state/text-loop/memory-store.json --host 127.0.0.1 --port 3939
+cargo run -p qsf_browser_server -- --store state/session/memory-store.json --host 127.0.0.1 --port 3939
 
 # Shell 2: Vite UI
 cd crates/qsf_browser_server/ui

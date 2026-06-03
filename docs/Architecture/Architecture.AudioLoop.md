@@ -33,6 +33,9 @@ still experimental.
   memory retrieval, context assembly, model-role invocation, and `OutputProduced`
   text
   ([experiments/text_owned_voice_loop.rs](../../crates/qsf_app/src/experiments/text_owned_voice_loop.rs))
+- Peer `voice-loop` surface that reuses the same QSF-owned voice pipeline without
+  changing the text-owned loop behavior
+  ([experiments/voice_loop.rs](../../crates/qsf_app/src/experiments/voice_loop.rs))
 - The text-owned voice loop now boots through the shared session runtime, records a
   voice `Exchange` through the live-session reducer, persists a derived `Turn`, and
   updates the continuity manifest after successful simulated or provider-backed
