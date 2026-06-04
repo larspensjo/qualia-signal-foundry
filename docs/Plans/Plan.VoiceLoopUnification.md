@@ -2,26 +2,28 @@
 
 ## Status
 
-Phases 0-5 are complete. Phase 6 is the next implementation step.
+Phases 0-6 are complete. Phase 7 (sleep consumes voice sessions) is the next and
+final implementation step.
 
 Completed phase placeholders are intentionally short below; the durable design
 contracts are kept in [Design Choices For This Plan](#design-choices-for-this-plan),
 [Phase 0 Resolutions](#phase-0-resolutions), the architecture docs, and the code.
 
-Phase 5 (commit 673b902) bridged realtime provider facts into the shared
-live-session core: realtime sessions now boot shared continuity, normalize provider
-lifecycle/interruption/tool-call facts through the shared reducer, and persist them
-as durable voice exchanges. Provider tool calls stay inert (`auto_executed=false`)
-unless routed through a QSF-owned path, and provider preambles are persisted as a
-separate output category that never feeds QSF prompt assembly.
+Phase 6 (commit d177ba5) routed the multi-turn text loop onto the shared
+`state/session` resolver and added a first-class `voice-loop` peer experiment, so a
+voice run and a text run now read and append one continuous session over a single
+shared `state/session/` directory, with legacy `state/text-loop/` continuity kept
+read-only.
 
-Remaining gap before Phase 6: the multi-turn text loop still defaults to
-`state/text-loop` through `session::resume::state_dir_from_env()` and a
-single-directory boot path. Both voice experiments already resolve through the shared
-`session::state_directory::resolve_shared_state_directory_from_env` (with its
-read-only `state/text-loop` -> `state/session` fallback) and boot via
-`session::boot_session`. Phase 6 routes the text loop onto the same resolver so a
-voice run and a text run become one continuous session.
+Remaining gap before Phase 7: sleep summarization still reads only the legacy
+`SessionState.turns` records. Both `session_sleep_input`
+(`crates/qsf_app/src/experiments/sleep_phase_session_summary.rs`) and the safety-net
+co-retrieval proposer (`crates/qsf_app/src/sleep/proposers/safety_net_co_retrieval.rs`)
+iterate `session.turns` directly. Realtime voice sessions persist their content as
+`SessionState.exchanges` (carrying voice transcripts, interruptions, provider
+preambles, and speech-output metadata) and never derive `Turn` records, so sleep is
+currently blind to realtime voice content. Phase 7 teaches sleep to read shared
+`Exchange` records so voice sessions consolidate the same way text sessions do.
 
 This plan promotes `Idea.VoiceLoopUnification.md` into an incremental implementation
 path.
@@ -57,9 +59,13 @@ separate realtime provider experiment:
   response lifecycle events, and provider tool-call requests into the shared
   live-session reducer and persists them as durable voice exchanges (Phase 5).
 
-The next implementation step gives voice a first-class peer experiment and routes
-both loops onto the single shared `state/session` resolver so a voice run and a text
-run continue one session instead of two continuity universes.
+Phase 6 gave voice a first-class peer experiment and routed both loops onto the
+single shared `state/session` resolver, so a voice run and a text run already
+continue one session instead of two continuity universes. The remaining
+implementation step makes the sleep phase consume voice sessions: sleep must read
+shared `Exchange` records (voice transcripts, interruptions, and speech-output
+metadata), not only the legacy `Turn` records, so a voice run consolidates into the
+memory store and consolidated brief the same way a text run does.
 
 ## Current Anchors
 
@@ -84,10 +90,11 @@ Code anchors:
 - `crates/qsf_app/src/audio/voice_session_provider.rs` represents realtime
   transcripts, responses, interruptions, and provider tool-call requests, with a
   typed provider interruption enum mapped into shared interruption enums.
-- `crates/qsf_app/src/session/state_directory.rs` already implements
+- `crates/qsf_app/src/session/state_directory.rs` implements
   `resolve_shared_state_directory_from_env`, the shared resolver with the read-only
-  `state/text-loop` -> `state/session` fallback. Both voice experiments already use it;
-  Phase 6 routes the multi-turn text loop onto it too.
+  `state/text-loop` -> `state/session` fallback. As of Phase 6 all runtime loops
+  (multi-turn text, text-owned voice, realtime voice, voice-loop, and sleep) resolve
+  through it.
 - `crates/qsf_app/src/memory/{live_capture,co_retrieval,processed_ranges}.rs` and
   `crates/qsf_memory/src/processed_range.rs` now carry important continuity
   behavior that must survive the `Turn` -> `Exchange` migration.
@@ -224,7 +231,14 @@ compatibility shape for completed text-owned turns. `Exchange` is the shared run
 source of truth: text and text-owned voice build an `Exchange` first, then derive a
 `Turn` via `TryFrom<&Exchange>` for current persistence and legacy sleep/report
 readers. Phase 5 added persisted exchange records that carry realtime-specific details
-which cannot be represented by `Turn`; Phase 7 removes the last direct `Turn` consumer.
+which cannot be represented by `Turn` (interruptions, provider preambles, voice
+utterances), and realtime voice persists them only as `Exchange`. Phase 7 makes
+sleep — the last `Turn`-only reader in the sleep consolidation path — read `Exchange`
+records too, so realtime voice content stops being invisible to consolidation. (Other
+direct `Turn` consumers and writers remain and are required: the multi-turn text loop
+and text-owned voice loop still write derived `Turn` records, the reducer records
+`TurnCompleted` into `state.turns`, and awake continuation reads `state.turns.len()`.
+Collapsing those paths to exchanges-only is out of Phase 7 scope.)
 
 This avoids two parallel write paths while keeping the existing text test
 suite, sleep summarization, and persisted state files stable until voice has
@@ -280,16 +294,15 @@ not `state/live-loop`. The state lives in one directory regardless of whether
 input arrives as voice or text, which matches the goal of a single continuity
 universe.
 
-Current drift note, reviewed 2026-06-03: the shared resolver now exists as
-`session::state_directory::resolve_shared_state_directory_from_env`, implementing the
-read-only `state/text-loop` -> `state/session` fallback below. Both voice experiments
-already resolve through it and boot via `session::boot_session`. The
-`multi-turn-text-loop` is the one runtime loop still off the resolver: it defaults to
-`state/text-loop` through `session::resume::state_dir_from_env()` on a single-directory
-boot path. Phase 6 routes the text loop through the shared resolver so the
-`multi-turn-text-loop` and the voice loop share a single continuous session. The text
-loop stays a first-class experiment; only its persistence directory moves (once, via
-the read-only fallback below).
+Resolved in Phase 6 (commit d177ba5): the shared resolver
+`session::state_directory::resolve_shared_state_directory_from_env` implements the
+read-only `state/text-loop` -> `state/session` fallback below, and every runtime loop
+(multi-turn text, both voice experiments, the `voice-loop` peer, and sleep) now boots
+through it via `session::boot_session`. The `multi-turn-text-loop` stayed a
+first-class experiment; only its persistence directory moved (once, via the read-only
+fallback below). The historical drift note is retained for context: before Phase 6,
+the text loop defaulted to `state/text-loop` through
+`session::resume::state_dir_from_env()` on a single-directory boot path.
 
 Compatibility behavior on boot:
 
@@ -339,15 +352,14 @@ Rules:
   (`crates/qsf_app/src/session/resume.rs`) upgrades a loaded legacy state in
   memory via `upgrade_schema_version()` and logs the upgrade on resume. The
   newer-version guard does not need to be newly designed in Phase 6.
-- Phase 6 (default state directory move) only needs to make the in-memory
-  upgrade durable. Do not "rewrite v1 -> v2 in place" unconditionally: a direct
-  rewrite of the loaded file is only allowed when
-  `resume_state_dir == persist_state_dir`. When `legacy_fallback_used` is true
-  (`resume_state_dir == state/text-loop`, `persist_state_dir == state/session`),
-  keep the legacy file untouched and persist the upgraded copy to
-  `persist_state_dir` through the normal manifest-last commit. A regression test
-  must assert the legacy v1 file is byte-for-byte unchanged after such a boot
-  while the new `state/session` copy is v2.
+- Implemented in Phase 6 (default state directory move): the in-memory upgrade is
+  durable, and v1 -> v2 is never rewritten in place unconditionally. A direct rewrite
+  of the loaded file happens only when `resume_state_dir == persist_state_dir`. When
+  `legacy_fallback_used` is true (`resume_state_dir == state/text-loop`,
+  `persist_state_dir == state/session`), the legacy file is left untouched and the
+  upgraded copy is persisted to `persist_state_dir` through the normal manifest-last
+  commit. Regression tests assert the legacy v1 file is byte-for-byte unchanged after
+  such a boot while the new `state/session` copy is v2.
 - No back-compat promise for partial/live state (active transcripts, playback
   markers, listening/speaking phase). Those are cleared on awake resume per
   the interruption rules above.
@@ -379,8 +391,9 @@ helpers, uses the shared `MemoryStore` by default, records voice exchanges throu
 the live reducer, persists derived turns through the manifest-last protocol, and
 keeps fixture/file memory modes as explicit opt-ins.
 
-Remaining scope is unchanged: full voice-to-text round-trip continuity still waits
-for Phase 6, when the text loop moves onto the shared `state/session` resolver.
+Resolved in Phase 6: full voice-to-text round-trip continuity now works, because the
+text loop moved onto the shared `state/session` resolver and both loops share one
+continuous session.
 
 ## Phase 4: Add Live Interruption State — COMPLETE
 
@@ -426,153 +439,239 @@ Targeted verification passed on 2026-06-01: `cargo test session --lib`,
 `cargo test text_owned_voice_loop --lib`, `cargo build`, and
 `cargo clippy --all-targets -- -D warnings`.
 
-## Phase 6: Voice Loop As A Peer Surface
+## Phase 6: Voice Loop As A Peer Surface — COMPLETE
 
-Goal: give voice its own first-class experiment that reuses the shared core, without
-changing the status of the `multi-turn-text-loop`. Voice is a peer surface, not the
-primary or default loop. Route all loops onto the single shared `state/session`
-resolver so a voice run and a text run continue one session.
+Complete (commit d177ba5). The multi-turn text loop now boots through the shared
+`session::state_directory::resolve_shared_state_directory_from_env` resolver and
+`session::boot_session`, so legacy `state/text-loop/` continuity is read-only and the
+first manifest-last commit writes `state/session/`. The in-memory schema upgrade is
+made durable by persisting the upgraded copy to `persist_state_dir` without rewriting
+the legacy file when `legacy_fallback_used` is true; incomplete `state/session/`
+directories no longer mask legacy continuity, and legacy memory-store records are
+merged forward through continuity persistence (text, voice, realtime voice, and sleep)
+rather than copied eagerly at boot. Sleep also routes through the shared resolver so
+legacy reads and shared writes stay separate.
 
-Current state going in:
+A stable `voice-loop` experiment was added as a thin peer surface that reuses the
+text-owned voice pipeline (so the loops share one behavior code path), registered
+alongside the unchanged `multi-turn-text-loop`, `text-owned-voice-loop`, and
+`realtime-voice-session` experiments. There is no `QSF_PRIMARY_LOOP` default and the
+text loop stays first-class. A `docs/DecisionLog.md` entry for the shared
+`state/session/` directory move landed in the same commit.
 
-- The shared resolver `session::state_directory::resolve_shared_state_directory_from_env`
-  already exists with the read-only `state/text-loop` -> `state/session` fallback and
-  unit tests. Both voice experiments already call it from their public `run` entry
-  points (`crates/qsf_app/src/experiments/text_owned_voice_loop.rs:64`,
-  `crates/qsf_app/src/experiments/realtime_voice_session.rs:39`) and boot through
-  `session::boot_session` with separate `resume_state_dir`/`persist_state_dir`. The
-  remaining hardcoded `state/session` paths in those files are `#[cfg(test)]`
-  helpers that build explicit `StateDirectoryResolution` values, not runtime paths.
-- The multi-turn text loop is the one runtime loop still off the resolver: its `run`
-  uses `session::resume::state_dir_from_env()` (default `state/text-loop`) and a
-  single-directory boot path (`crates/qsf_app/src/experiments/multi_turn_text_loop.rs:70`).
-- `boot_session` already emits the `SessionResumed` event and an `engine_info` record
-  naming `resume_state_dir`, `persist_state_dir`, and `legacy_fallback_used`
-  (`crates/qsf_app/src/session/runtime.rs`).
-- `SessionState` already carries `schema_version` with `upgrade_schema_version()`;
-  `load_session_state` refuses newer versions and `load_resume_inputs` upgrades legacy
-  state in memory and logs it. The remaining gap is making that upgrade durable on a
-  legacy-fallback boot (see [Persisted State Compatibility](#persisted-state-compatibility)),
-  not designing the guard.
-- Experiments register through the `ExperimentName` enum in
-  `crates/qsf_app/src/experiments/registry.rs`; `list-experiments` already exists as a
-  CLI subcommand in `crates/qsf_app/src/cli.rs`.
+Targeted verification passed on 2026-06-03: `cargo build`, `cargo test`,
+`cargo nextest run`, `cargo clippy --all-targets -- -D warnings`, and `cargo fmt`;
+`cargo run -p qsf_app -- list-experiments` shows `voice-loop`, and a simulated
+`voice-loop` run completed with an isolated `QSF_STATE_DIR`. Regression coverage added
+for the cross-surface voice<->text shared session, no boot-time shared-directory
+materialization, text/voice memory copy-forward, incomplete shared-directory fallback,
+and sleep legacy-fallback writes (legacy v1 file byte-for-byte unchanged, upgraded v2
+copy plus migrated memory store written to `state/session/`).
 
-This phase has two separable, independently testable steps. Land and verify them in
-order:
-
-### Phase 6a: Route The Text Loop Onto The Shared Resolver
-
-- Move `multi_turn_text_loop.rs` off `state_dir_from_env()` and its single-directory
-  boot onto `resolve_shared_state_directory_from_env` + `session::boot_session`, so it
-  honors `resume_state_dir` vs `persist_state_dir` from `StateDirectoryResolution`: the
-  legacy `state/text-loop` directory is read-only and the first commit writes
-  `state/session`. The voice public entry points already do this; do not rewrite them.
-- Make the in-memory schema upgrade durable per
-  [Persisted State Compatibility](#persisted-state-compatibility): persist the upgraded
-  state to `persist_state_dir` through the normal manifest-last commit, and never
-  rewrite the legacy file in place when `legacy_fallback_used` is true. (The
-  newer-version guard and the in-memory `upgrade_schema_version()` already exist; this
-  step only makes the upgraded copy land in `state/session`.)
-- Audit for and remove any remaining silent `state/text-loop` default in runtime
-  paths (the resolver, not `state_dir_from_env`, becomes the single source of truth;
-  retire or redirect `state_dir_from_env` if it has no remaining runtime callers).
-  Test helpers and fixtures may still target explicit directories.
-- No new boot event/log is needed for the resolved directory: confirm the text loop
-  now flows through `boot_session`, which already emits it.
-
-### Phase 6b: Add The Voice Loop Peer Experiment
-
-- Add a stable `voice-loop` variant to the `ExperimentName` enum (a stable domain
-  name, not a phase name) with its id, description, and construction wired through the
-  registry. Keep `multi-turn-text-loop`, `text-owned-voice-loop`, and
-  `realtime-voice-session` registered and unchanged.
-- Let the voice entry point default to deterministic simulated providers unless real
-  providers are explicitly selected, so the default path needs no audio credentials.
-- Do not add a `QSF_PRIMARY_LOOP` default that demotes text. If a selector is useful,
-  it only chooses which experiment to run and defaults to today's behavior.
-- Confirm both loops exercise the same shared behavior code, so a later improvement to
-  the text loop is picked up by the voice loop without duplicate edits.
-- Emit a boot event and `engine_logging` record naming the chosen experiment.
-- Keep `multi-turn-text-loop` as a first-class experiment indefinitely.
-
-Verification:
-
-- Phase 6a: `cargo test session --lib` and a new regression test proving a voice run
-  followed by a text run AND a text run followed by a voice run both read and append
-  the same shared `state/session/` history rather than producing two continuity
-  universes (relocated from Phase 3). Add a boot integration test for the legacy
-  fallback: a v1 `SessionState` under `state/text-loop` is upgraded and the upgraded v2
-  copy is written to `state/session`, while the original `state/text-loop` file stays
-  byte-for-byte unchanged. (The newer-than-supported refusal is already covered at the
-  `load_session_state` level; extend it to the boot path if not already exercised.)
-- Phase 6b: `cargo run -p qsf_app -- list-experiments` shows the new `voice-loop`
-  entry and existing experiments remain discoverable; a simulated default run
-  completes without real audio credentials; text input mode and voice input mode
-  produce exchanges in the same persisted session shape.
-- `cargo build`
-- `cargo test`
-
-Docs to update:
-
-- Update `README.md` run instructions when the voice experiment is added as a
-  surfaced experiment.
-- Update `docs/Architecture/Architecture.Overview.md` when the voice loop surface is
-  added alongside the text loop.
-- Update `docs/Architecture/Architecture.AudioLoop.md`,
-  `docs/Architecture/Architecture.RuntimeLoop.md`, and
-  `docs/Architecture/Architecture.SleepPhase.md` status sections.
-- Update `docs/Architecture/Architecture.StateAndObservability.md`, which still
-  documents `state/text-loop` as the default state path, so the user-visible
-  state/observability contract reflects the `state/session` default.
-- Add a `docs/DecisionLog.md` entry for the shared `state/session/` directory move
-  (one continuous session across both loops), since it changes a user-visible default.
-- Add the required diary entry for the voice loop surface change.
-
-Rollback:
-
-- The read-only fallback means `state/text-loop/` is never rewritten in place, so the
-  directory move can be backed out by pointing `QSF_STATE_DIR` at the old path. If the
-  voice experiment misbehaves it can be disabled independently while the text loop and
-  shared core stay intact.
+Rollback remains available: because `state/text-loop/` is never rewritten in place,
+the directory move can be backed out by pointing `QSF_STATE_DIR` at the old path, and
+the `voice-loop` experiment can be disabled independently.
 
 ## Phase 7: Sleep Consumes Voice Sessions
 
 Goal: close the continuity loop by making sleep summarize and commit voice exchanges
-the same way it handles text sessions today.
+the same way it handles text sessions today. This is the last phase, and it removes
+the last `Turn`-only reader in the sleep consolidation path: when it lands, a realtime
+or text-owned voice session consolidates into the memory store and consolidated brief,
+and the next voice run resumes from that brief. (Non-sleep `Turn` consumers and writers
+remain and are required — awake-continuation limit recomputation reads
+`state.turns.len()`, the reducer records `SessionEvent::TurnCompleted` into
+`state.turns`, and both text loops still derive `Turn` records for persistence. Phase 7
+does not touch those.)
 
-Work:
+### Current state going in
 
-- Teach sleep session summarization to read shared `Exchange` records, including
-  voice transcripts, interrupted responses, and speech-output metadata.
-- Ensure routine voice memory candidates can auto-promote as observations, while
-  decision/preference-like candidates still use reviewed drafts.
-- Include interruption and latency summaries as inspectable sleep context but avoid
-  promoting raw partial transcripts into durable memory.
-- Commit consolidated brief and memory-store updates through the existing
-  manifest-last protocol.
-
-Verification:
-
-- Sleep over a voice session writes `memory-store.json`, `consolidated-brief.json`,
-  archive brief, and updated `continuity-manifest.json`.
-- Sleep over a session containing only interrupted exchanges with no completed
-  assistant output produces a coherent brief and does not crash on empty response
+- Sleep reads `SessionState.turns` in exactly two runtime places, and both ignore
+  `SessionState.exchanges`:
+  - `session_sleep_input` -> `session_sleep_input` builds the summarizer transcript by
+    iterating `session.turns` only
+    (`crates/qsf_app/src/experiments/sleep_phase_session_summary.rs`, around the
+    `Completed turns:` loop). It also renders `session.summarized_turns` warm
+    summaries.
+  - The safety-net co-retrieval proposer builds its mechanical cross-turn association
+    coverage from `session.turns` and per-turn `recalled_turns`
+    (`crates/qsf_app/src/sleep/proposers/safety_net_co_retrieval.rs`).
+- Realtime voice (`crates/qsf_app/src/experiments/realtime_voice_session.rs`) persists
+  its content **only** as `SessionState.exchanges` and never derives `Turn` records
+  (its tests assert `persisted_state.turns.is_empty()` and
+  `persisted_state.exchanges.len() == 1`). So realtime voice transcripts,
+  interruptions, provider preambles, and speech-output metadata are invisible to sleep
+  today.
+- The multi-turn text loop and the text-owned voice loop still persist derived `Turn`
+  records (`session.turns`), not exchanges. They are unaffected by this gap but must
+  keep working unchanged.
+- `Exchange` (`crates/qsf_app/src/session/exchange.rs`) already carries everything
+  sleep needs: `ExchangeInput::Voice { final_transcript, utterances }` /
+  `ExchangeInput::Text`, `ExchangeOutput { text, response_id, audio_marker, .. }`,
+  `interruptions: Vec<InterruptionRecord>`, `provider_events: Vec<ProviderEventRecord>`
+  (preambles + lifecycle), `recalled_items`, `retrieved_memory_block`, `model`
+  (latency/tokens), and a `status` (`Completed`, `Interrupted`, `Failed`, etc.).
+  `output` is `Option`, so an interrupted exchange may have no completed assistant
   text.
-- Next voice run resumes from `ConsolidatedBrief` and injects the brief into the
-  first model context.
+- `commit_cross_session_sleep` already commits through the manifest-last protocol and,
+  as of Phase 6, persists continuity to `persist_state_dir` on legacy fallback before
+  loading the memory store and building the promotion plan
+  (`crate::sleep::auto_promote::build_promotion_plan`). The commit path itself does not
+  need re-plumbing; only the *reading* of session content does.
+
+### Open questions to resolve before/while implementing
+
+1. **Read both `turns` and `exchanges`, or unify writes first?** Realtime voice writes
+   exchanges; text loops write turns. The pragmatic, in-scope choice is for sleep to
+   read a **unified view of both** so no content is dropped regardless of which loop
+   produced it. Do **not** order by vector index: indexes are not globally unique across
+   the two vectors. Realtime voice assigns `exchange_index = state.turns.len() +
+   state.exchanges.len()`, while text and text-owned voice derive turn indexes from
+   `state.turns.len()` alone, so after a voice-first session a later text turn can reuse
+   index `0`. Order the merged view **chronologically by `started_at` (tie-break on
+   `completed_at`, then a stable kind/index tie-breaker)** — both `Turn` and `Exchange`
+   carry timestamps. Collapsing the text/text-owned-voice write path to exchanges-only
+   (so `turns` disappears) is explicitly **out of scope** here — call it out but do not
+   attempt it in Phase 7. Recommended: add a shared read-only helper (e.g.
+   `SessionState::sleep_records()` or a small iterator over a normalized `SleepRecord`)
+   so both `session_sleep_input` and the safety-net proposer consume one chronological
+   representation instead of duplicating the turns-vs-exchanges branch.
+2. **Does the safety-net proposer need exchange coverage in this phase, or only the
+   summarizer transcript?** Voice exchanges carry `recalled_items` (the `Exchange`
+   analogue of `Turn.recalled_turns`), so they can participate in mechanical
+   association safety-net coverage. Decide whether Phase 7 extends
+   `safety_net_co_retrieval` to exchanges now, or whether that is deferred (and, if
+   deferred, record it so voice association coverage is not silently missing). Default
+   recommendation: extend it now via the same shared normalized view, since "preserve
+   sleep-side safety-net coverage" is a cross-cutting acceptance criterion.
+3. **Warm summaries for voice.** `summarized_turns` is text-loop machinery. Voice
+   exchanges are not warm-summarized today. Phase 7 should still surface completed
+   voice exchanges in the transcript even when they were never warm-summarized; decide
+   whether any exchange-side warm summary is needed (recommended: no, out of scope —
+   the summarizer sees full exchange text).
+
+### Work
+
+This phase has two separable, independently testable steps. Land and verify them in
+order.
+
+#### Phase 7a: Make Sleep Read Shared Exchange Records
+
+- Introduce one normalized, read-only sleep view over `SessionState` that yields both
+  derived-`Turn` content and `Exchange` content in **chronological order by `started_at`**
+  (tie-break on `completed_at`, then a stable kind/index tie-breaker), not by vector
+  index — see open question 1 for why index order is unreliable across a mixed session.
+  Expose for each record: user input text, assistant output text (may be empty),
+  retrieved memory block, recalled item references, and—for voice—`final_transcript`,
+  interruption records, and provider-preamble/lifecycle metadata (the last surfaced only
+  to the non-promotable diagnostic channel, never to promotable transcript text). Keep it
+  a pure function/iterator on the session type (no I/O), consistent with the
+  reducer/state discipline.
+- Update `session_sleep_input` to build the summarizer transcript from that view:
+  render completed text turns as today, and add a `Voice exchange N:` section that
+  includes the final transcript, the assistant/spoken response (or an explicit
+  `(no completed response)` marker when `output` is `None`), and interruption count and
+  outcomes.
+- Keep provider preambles out of the promotable path entirely. `SleepInputBundle.session_text`
+  is inserted verbatim into the sleep summarizer user prompt
+  (`crates/qsf_app/src/sleep/session_summary.rs`), and the summarizer report is then
+  committed into promoted memory records and the consolidated brief
+  (`commit_cross_session_sleep` in
+  `crates/qsf_app/src/experiments/sleep_phase_session_summary.rs`). So merely labeling a
+  preamble "provider context" inside `session_text` does **not** enforce the
+  [Provider Preambles](#provider-preambles) boundary — the summarizer could still echo it
+  into `memory_candidates`, `future_context_hints`, or
+  `ConsolidatedBrief.previous_session_summary`. Route provider preambles (and raw partial
+  transcripts) to a **separate non-promotable channel** — either as review/diagnostic
+  notes that are not fed into the summarizer prompt at all, or, if they must reach the
+  summarizer for latency context, through an explicit filter that strips preamble text
+  from the promotable report fields before commit. Either way add regression tests
+  proving provider-preamble text cannot appear in `memory_candidates`,
+  `future_context_hints`, or `ConsolidatedBrief.previous_session_summary`.
+- Extend the safety-net co-retrieval proposer to the same normalized view so voice
+  exchanges contribute `recalled_items` to mechanical association coverage (or
+  explicitly defer per open question 2, with a recorded note).
+- Guard the empty/interrupted case: an exchange with `status = Interrupted` and
+  `output = None` must produce coherent transcript text and must not panic on empty
+  response strings anywhere in the sleep path.
+- Add `engine_logging` context for the voice-aware path: at minimum `session_id`, and
+  per record `exchange_index`/turn index, `status`, and interruption count, so a sleep
+  run over a voice session is debuggable after the fact.
+
+Verification (7a):
+
+- A new unit test on the normalized sleep view: a `SessionState` carrying one
+  completed text `Turn` and one completed voice `Exchange` yields both in the
+  transcript, with the voice final transcript and assistant response present.
+- Chronology regression coverage for **both** orderings: a text-then-voice persisted
+  state and a voice-then-text persisted state each yield records in true session order
+  (by timestamp), proving index-based ordering bugs (reused index `0`) are caught.
+- A boundary regression test: a session whose voice exchange carries a provider
+  preamble runs through the full sleep path, and the test asserts the preamble text is
+  absent from `memory_candidates`, `future_context_hints`, and
+  `ConsolidatedBrief.previous_session_summary`.
+- A regression test: sleep over a session whose only content is an interrupted voice
+  exchange with `output = None` produces a non-empty, coherent `session_text` and does
+  not panic.
+- `cargo test sleep --lib`
+- `cargo test realtime_voice_session --lib`
+
+#### Phase 7b: Promote Voice Memories And Commit Through Manifest-Last
+
+- Confirm the auto-promote vs reviewed-draft split (`crate::sleep::auto_promote`) works
+  for candidates derived from voice content: routine voice memory candidates
+  auto-promote as observations, while decision/preference-like candidates still go to
+  reviewed drafts. The candidate source is the summarizer report, so this mostly means
+  verifying the boundary holds once voice content reaches the summarizer — add coverage
+  rather than new branching unless a voice-specific gap appears.
+- Keep raw partial transcripts and provider preambles out of durable memory: only
+  finalized exchange content may become a memory candidate.
+- Include interruption and latency summaries as inspectable sleep context (review
+  notes / report fields), not as promoted memories.
+- Commit the consolidated brief and memory-store updates through the existing
+  manifest-last protocol (`commit_cross_session_sleep`) with no new write path; verify
+  it already persists continuity correctly when the input session is voice-only.
+
+Verification (7b):
+
+- Sleep over a completed voice session writes `memory-store.json`,
+  `consolidated-brief.json`, the archive brief, and an updated
+  `continuity-manifest.json`.
+- A voice memory candidate classified as routine auto-promotes as an observation; a
+  decision/preference-like candidate lands as a reviewed draft (assert against the
+  promotion plan).
+- The next voice run resumes from `ConsolidatedBrief` and injects the brief into the
+  first model context (extend the existing voice resume coverage).
 - `cargo test sleep --lib`
 - `cargo test text_owned_voice_loop --lib`
 - `cargo test realtime_voice_session --lib`
 
-Docs to update:
+### Whole-phase verification
 
-- Update `docs/Architecture/Architecture.SleepPhase.md` Implementation Status.
-- Update `docs/Architecture/Architecture.MemorySystem.md` if voice memories now use
-  the shared store end to end.
-- Confirm the auto-promote vs reviewed-draft boundary for voice candidates still
-  matches `docs/Architecture/Architecture.MemorySystem.md`.
-- Add the required diary entry for sleep consuming voice sessions.
+- `cargo build`
+- `cargo test`
+- `cargo clippy --all-targets -- -D warnings` then `cargo fmt`
+- Human testing point (recommended, opt-in): run one deterministic simulated
+  `realtime-voice-session` (or `voice-loop`), then a `sleep-phase-session-summary` over
+  it, and inspect `runs/` plus the written `memory-store.json` /
+  `consolidated-brief.json` to confirm voice transcripts, interruptions, and latency
+  appear as sleep context and that only finalized content became durable memory.
+
+### Docs to update
+
+- Update `docs/Architecture/Architecture.SleepPhase.md` Implementation Status (it
+  currently notes voice-loop session consumption by sleep is not yet implemented).
+- Update `docs/Architecture/Architecture.MemorySystem.md` to record that voice
+  exchanges now flow through the shared memory store end to end, and confirm the
+  auto-promote vs reviewed-draft boundary for voice candidates still matches that doc.
+- Update `docs/Architecture/Architecture.RuntimeLoop.md` if the normalized sleep view
+  changes the documented `Turn`/`Exchange` consumption story.
+- Update the experiment specs/reports if present when implementation begins:
+  `docs/Experiments/Experiment.RealtimeVoiceSessionMVP.md` and
+  `docs/Experiments/Experiment.TextOwnedVoiceLoop.md`.
+- Add the required `docs/EngineeringDiary.md` entry for sleep consuming voice sessions.
+- No `docs/DecisionLog.md` entry is expected unless implementation surfaces a durable
+  commitment (e.g. dropping the `turns` write path), which is out of scope here.
 
 ## Phase 0 Resolutions
 
@@ -580,10 +679,12 @@ These were originally tracked as open questions and are now ratified by this
 plan. They are implementation-plan resolutions, not DecisionLog commitments. The
 detailed rationale lives in [Design Choices For This Plan](#design-choices-for-this-plan).
 
-- **`Turn` vs `Exchange` migration.** `Exchange` is now the shared runtime source of
-  truth for text and text-owned voice. Completed text-owned exchanges still derive
-  persisted `Turn` records for compatibility until realtime-specific exchange
-  persistence and sleep consumption land. See [Session Unit](#session-unit).
+- **`Turn` vs `Exchange` migration.** `Exchange` is the shared runtime source of
+  truth. Realtime voice persists realtime-specific exchanges directly (Phase 5);
+  text and text-owned voice still derive persisted `Turn` records for compatibility.
+  Phase 7 makes sleep — the last `Turn`-only reader in the sleep consolidation path —
+  read `Exchange` records too; the text-side `Turn` write path and other `Turn`
+  consumers (reducer, awake continuation) stay. See [Session Unit](#session-unit).
 - **Default state directory.** One shared `state/session/` directory for both loops,
   with a read-only fallback to `state/text-loop/` until the next sleep commit. A voice
   run and a text run are one continuous session over this directory. The text loop
@@ -600,12 +701,11 @@ detailed rationale lives in [Design Choices For This Plan](#design-choices-for-t
 
 Open items remaining:
 
-- **Phase 6 shared resolver move.** Both voice experiments already route through
-  `resolve_shared_state_directory_from_env`; full voice <-> text round-trip continuity
-  over one `state/session/` directory still waits for the multi-turn text loop to move
-  off the silent `state/text-loop` default onto the same resolver.
-- **Phase 7 sleep consumption.** Sleep still needs to consume shared `Exchange` records
-  containing voice transcripts, interruptions, and speech-output metadata.
+- **Phase 7 sleep consumption.** Sleep still reads only `SessionState.turns`
+  (`session_sleep_input` and the safety-net co-retrieval proposer). It needs to consume
+  shared `Exchange` records containing voice transcripts, interruptions, provider
+  preambles, and speech-output metadata, since realtime voice persists content only as
+  exchanges. See [Phase 7](#phase-7-sleep-consumes-voice-sessions).
 
 ## Human Testing Points
 
