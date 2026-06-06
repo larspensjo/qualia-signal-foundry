@@ -50,12 +50,14 @@ Currently implemented experiment paths include:
 - **Streaming transcription** of microphone or WAV input via the OpenAI realtime
   transcription adapter.
 - **Realtime voice session**, a **text-owned voice loop**, and a peer **voice-loop**
-  surface that retrieve memory before context assembly and route any
-  provider-requested tool calls through the QSF tool boundary instead of executing
-  them directly.
+  surface that share the `state/session/` continuity root, retrieve memory before
+  context assembly, and route any provider-requested tool calls through the QSF tool
+  boundary instead of executing them directly.
 - **Sleep-phase session summary**, **reviewed memory draft**, and **accept reviewed
-  memory** — the pipeline that turns a session summary into a manually reviewed
-  file-backed memory source.
+  memory** — the pipeline that reads persisted text turns and voice exchanges,
+  promotes routine memory candidates into the shared store, writes a consolidated
+  brief for the next run, and keeps decision-like candidates in manually reviewed
+  draft artifacts.
 - **Associative memory toy model**, **context budget retrieval test**, and
   **tool-as-perception calculator** as smaller focused experiments.
 
@@ -63,6 +65,9 @@ Implemented infrastructure includes a pure-reducer runtime loop, an event/trace 
 contract, a `ModelRole` + `ModelClient` boundary with mock and OpenAI adapters, a
 tool registry with role-level allow-listing enforced at model dispatch, a versioned
 memory record schema, and association-weighted memory retrieval.
+Text and voice interaction now share one continuity universe by default, and a sleep
+pass over either modality feeds the same memory store and consolidated-brief resume
+path.
 
 Not yet implemented (documented as concepts, plans, or ideas):
 

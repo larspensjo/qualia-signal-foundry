@@ -642,3 +642,22 @@ crates/qsf_app/src/session/resume.rs,
 crates/qsf_app/src/experiments/multi_turn_text_loop.rs,
 crates/qsf_app/src/experiments/text_owned_voice_loop.rs,
 crates/qsf_app/src/experiments/voice_loop.rs
+
+## 2026-06-06 - Provider preambles stay out of promotable sleep memory
+Decision: Realtime provider preambles and provider lifecycle metadata may be persisted
+for observability, but provider preamble text must not enter QSF prompt assembly,
+sleep summarizer input, memory candidates, future context hints, or consolidated
+brief summaries. Sleep may surface aggregate provider diagnostics in non-promotable
+report fields.
+Context: Realtime voice sessions now persist provider preambles alongside finalized
+transcripts and response lifecycle facts in shared exchange records. Sleep also reads
+voice exchanges for consolidation, so the provider/QSF ownership boundary needs to
+survive the handoff into memory and next-session briefs.
+Consequences: Finalized user transcripts and completed responses can be consolidated
+through sleep, but provider-authored preamble text remains diagnostic-only. Future
+provider-owned cognition experiments must opt in explicitly and cannot rely on the
+default shared sleep path to promote provider preambles.
+Refs: crates/qsf_app/src/session/sleep_records.rs,
+crates/qsf_app/src/experiments/sleep_phase_session_summary.rs,
+docs/Architecture/Architecture.AudioLoop.md,
+docs/Architecture/Architecture.SleepPhase.md

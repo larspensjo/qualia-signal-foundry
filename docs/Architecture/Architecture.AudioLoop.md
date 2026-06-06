@@ -48,6 +48,12 @@ still experimental.
   the resulting voice `Exchange` in `SessionState.exchanges`
   ([experiments/realtime_voice_session.rs](../../crates/qsf_app/src/experiments/realtime_voice_session.rs),
   [session/exchange.rs](../../crates/qsf_app/src/session/exchange.rs))
+- Completed voice exchanges are consumed by sleep consolidation through the shared
+  normalized sleep view. Final transcripts and completed response text can become
+  sleep context, while provider preamble text stays out of promotable sleep input
+  and remains diagnostic-only
+  ([session/sleep_records.rs](../../crates/qsf_app/src/session/sleep_records.rs),
+  [experiments/sleep_phase_session_summary.rs](../../crates/qsf_app/src/experiments/sleep_phase_session_summary.rs))
 - Latency reporting across transcript dispatch, memory retrieval, context assembly,
   model runtime, and speech output
 - `session_id` propagation across the voice turn and across resumed text-owned voice
@@ -66,7 +72,7 @@ still experimental.
 - Translation provider (`gpt-realtime-translate`) integration
 - A live debug UI for audio state
 
-Last reviewed: 2026-06-01 against the realtime voice shared-state bridge.
+Last reviewed: 2026-06-06 against the completed voice-to-sleep consolidation path.
 
 ## Summary
 
@@ -165,6 +171,12 @@ TranscriptProvider
   -> SpeechPlaybackCompleted
   -> persisted SessionState + continuity manifest
 ```
+
+Once persisted, finalized voice exchanges participate in the same sleep and
+cross-session continuity path as text turns. Sleep reads the shared turn/exchange
+view, writes the shared memory store and consolidated brief, and the next voice run
+can resume from that brief. Provider preambles and provider lifecycle metadata remain
+observable diagnostics rather than QSF-owned cognition or promotable memory text.
 
 ## Candidate Runtime Model
 

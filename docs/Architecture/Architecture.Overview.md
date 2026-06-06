@@ -32,25 +32,37 @@ focused architecture documents.
   ([tools/](../../crates/qsf_app/src/tools/),
   [models/tool_dispatch.rs](../../crates/qsf_app/src/models/tool_dispatch.rs))
 - Versioned `MemoryRecord` and `Association`, file-backed memory source,
-  association-weighted retrieval ([memory/](../../crates/qsf_app/src/memory/))
+  association-weighted retrieval, live reinforcement, and sleep-side promotion
+  into the shared memory store
+  ([memory/](../../crates/qsf_app/src/memory/),
+  [sleep/auto_promote.rs](../../crates/qsf_app/src/sleep/auto_promote.rs))
 - Streaming transcription, text-owned voice loop, voice-loop peer surface, and
-  realtime voice session provider (all feature-gated under `openai`)
+  realtime voice session provider. Text and voice runs share the same
+  `state/session/` continuity root; realtime voice persists provider/session facts
+  as shared exchange records while provider tool requests remain routed through the
+  QSF boundary
   ([audio/](../../crates/qsf_app/src/audio/),
+  [session/](../../crates/qsf_app/src/session/),
   [experiments/voice_loop.rs](../../crates/qsf_app/src/experiments/voice_loop.rs))
-- Sleep-phase session summary plus reviewed-memory promotion pipeline
+- Sleep-phase session summary, normalized text/voice sleep input, manifest-last
+  memory-store and consolidated-brief commit, plus reviewed-memory promotion
+  pipeline
   ([sleep/](../../crates/qsf_app/src/sleep/),
+  [session/sleep_records.rs](../../crates/qsf_app/src/session/sleep_records.rs),
   [memory/reviewed_memory_draft.rs](../../crates/qsf_app/src/memory/reviewed_memory_draft.rs))
 - Multi-turn text loop with warm-tier summarization and tool-augmented recall
   ([experiments/multi_turn_text_loop.rs](../../crates/qsf_app/src/experiments/multi_turn_text_loop.rs))
 
 **Partial:**
 
-- Associative memory exists only as a toy comparison experiment, not as a live
-  retrieval mechanism (`Experiment.AssociativeMemoryToyModel`)
+- Associative memory exists in live retrieval, live reinforcement, and sleep-side
+  safety-net association coverage, but richer graph inspection, typed relationships,
+  and editing remain future work
 - Context assembly selects fragments under a budget but ranking is simple and
   role-specific assembly strategies are not yet differentiated
-- Sleep consolidation summarizes sessions and drafts memory candidates but does not
-  yet handle decay, reinforcement, association updates, or open-question extraction
+- Sleep consolidation does not yet run explicit pruning/maintenance sweeps;
+  retrieval-time decay exists, and sleep extracts open questions and candidate
+  memories but semantic deduplication and contradiction handling remain shallow
 
 **Not yet implemented:**
 
@@ -60,7 +72,8 @@ focused architecture documents.
 - Identity / self-model state
 - A live activation dashboard or other inspection UI
 
-Last reviewed: 2026-05-18 against the code on `main`.
+Last reviewed: 2026-06-06 against the completed shared text/voice continuity and
+sleep-consolidation path.
 
 ## System Intent
 
