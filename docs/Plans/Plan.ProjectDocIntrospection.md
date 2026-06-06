@@ -27,13 +27,15 @@ choice ("plan-phase decision"), the plan picks one explicitly.
 
 ## Status
 
-Phase 1 is the next implementation step.
+Phase 1 (the `ProjectDocService` library) has landed and is committed.
+**Phase 2 (the two `Tool` implementations) is the next implementation
+step.**
 
 ## Background
 
 The design at `docs/Plans/Design.ProjectDocIntrospection.md` specifies a
 live-first introspection channel for project documents. This plan
-implements the v1 channel in nine sequential implementation and
+implements the v1 channel in sequential implementation and
 documentation phases that each produce something independently testable.
 Phases 1-6 are the minimum viable channel (tools work end-to-end and
 the responder can call them). Phase 7 delivers the offline
@@ -49,20 +51,34 @@ tool implementation.
 
 Code anchors (existing, will be extended):
 
-- `crates/qsf_app/src/tools/mod.rs` — re-exports tool surface; will
-  add `project_docs` submodule.
+- `crates/qsf_app/src/project_docs/` — **landed in Phase 1.** Pure
+  library: `Allowlist`, metadata extraction, lexical `search`, bounded
+  `read`, and the `ProjectDocService` facade. Phase 2 consumes this; it
+  does not modify it.
+- `crates/qsf_app/src/tools/mod.rs` — re-exports tool surface; Phase 2
+  adds the `project_doc_tool`, `search_project_docs_tool`, and
+  `read_project_doc_tool` submodules and their re-exports.
 - `crates/qsf_app/src/tools/tool_registry.rs` — `ToolRegistry`,
-  `Tool` trait, `ToolMetadata`, `ToolContext`. Adding two tools means
-  extending the struct, `Default`, and the `match` arms in
-  `metadata_for`, `dispatch`, and `model_tool_definitions_for`.
+  `Tool` trait, `ToolMetadata`, `ToolContext`, `EmptyToolContext`.
+  Adding two tools means extending the struct, `Default`, and the
+  `match` arms in `metadata_for`, `dispatch`, and
+  `model_tool_definitions_for` (the registry wiring lands in Phase 3;
+  Phase 2 only extends the `ToolContext` trait with a defaulted
+  accessor).
 - `crates/qsf_app/src/tools/tool_request.rs` — `ToolPermission`
-  (needs a `read_only()` constructor analogous to `compute_only()`).
+  (has `compute_only()`; Phase 2 adds a `read_only()` constructor),
+  `ToolRequest`, `ToolCategory`, `ToolSideEffectLevel`.
+- `crates/qsf_app/src/tools/tool_result.rs` — `ToolResult` with fields
+  `tool_name`, `category`, `side_effect_level`, `input`, `output_text`,
+  `numeric_value`, `observation_summary`.
 - `crates/qsf_app/src/tools/calculator_tool.rs` and
   `crates/qsf_app/src/tools/recall_turn_tool.rs` — reference
-  implementations of the `Tool` trait and custom `ToolContext`.
+  implementations of the `Tool` trait and custom `ToolContext`
+  (`SessionToolContext`). Phase 2's tools mirror these exactly.
 - `crates/qsf_app/src/models/tool_dispatch.rs` —
   `dispatch_model_tool_calls`; this is where per-turn caps are
-  enforced and where tool-result trace records are emitted.
+  enforced (Phase 4) and where tool-result trace records are emitted
+  (Phase 5).
 - `crates/qsf_app/src/models/model_role.rs` — `ModelRole::predefined`
   for `ConversationalResponder`; `allowed_tools` is overridden by
   call sites (see `multi_turn_text_loop.rs`).
@@ -99,23 +115,35 @@ resolved. The plan picks a default for each; if any plays out
 differently, raise it before changing direction.
 
 1. **Config file path.** This plan uses `config/project-doc-introspection.toml`
-   at the repo root. If the repo already has another config-loading
-   convention (search `crates/qsf_app` for existing config readers
-   before Phase 1), align with that and update the path everywhere in
-   this plan and in `Design.ProjectDocIntrospection.md`.
-   *Path-resolution note:* `cargo test` runs with the working
+   at the repo root. Phase 1 settled this path; no other config-loading
+   convention was found to conflict. *Path-resolution note (still
+   binding on later phases):* `cargo test` runs with the working
    directory set to the package root (`crates/qsf_app`), **not** the
    workspace root, so tests and production code must never load the
    config via a bare relative path like
    `"config/project-doc-introspection.toml"`. Tests resolve it from
-   `CARGO_MANIFEST_DIR` (see Task 1.2); production wiring (later
-   phases) must construct `ProjectDocService` with an explicit
-   absolute repo root and an explicit absolute allowlist path, rather
-   than relying on the process working directory.
+   `CARGO_MANIFEST_DIR`; production wiring (Phase 6 onward) must
+   construct `ProjectDocService` with an explicit absolute repo root
+   and an explicit absolute allowlist path, rather than relying on the
+   process working directory.
 2. **`ProjectDocService` injection shape.** This plan uses a dedicated
-   `ProjectDocToolContext` carrying a shared `Arc<ProjectDocService>`,
-   parallel to `SessionToolContext`. If a different existing pattern
-   is preferred, raise it before Phase 2.
+   `ProjectDocToolContext` carrying a borrowed `&ProjectDocService`,
+   parallel to `SessionToolContext`, surfaced through a new defaulted
+   `ToolContext::project_doc_service()` accessor. **Phase 2 makes this
+   decision concrete (Task 2.2).** A review raised that the live
+   `ConversationalResponder` advertises `recall_turn` (which needs
+   `session_state()`) alongside the project-doc tools (which need
+   `project_doc_service()`), and `dispatch_model_tool_calls` threads a
+   single `ToolContext` per batch. The standalone `ProjectDocToolContext`
+   is therefore sufficient only for Phase 2's **isolated unit tests**;
+   the production wiring in Phases 3-6 must supply **one** combined
+   context that can answer *both* accessors — otherwise `recall_turn`
+   fails under a project-doc-only context, or the project-doc tools fail
+   under the session-only context. The defaulted accessors keep this
+   composable (extend `SessionToolContext` to also carry an optional
+   `&ProjectDocService`, or introduce a dedicated combined context
+   implementing both accessors). If a different pattern is preferred,
+   raise it before Phase 3 hardens the registry/dispatch wiring.
 3. **`influenced_reply` storage.** Phase 8 writes the marker as a
    follow-up `TraceRecord` referencing the original by `trace_id`.
    If an annotation on the original record is preferred, raise before
@@ -177,1405 +205,145 @@ user input
 
 ---
 
-## Phase 1: `ProjectDocService` library
-
-Pure, side-effect-free Rust module under
-`crates/qsf_app/src/project_docs/` containing the allowlist loader,
-metadata extraction, lexical search, and bounded read. No tool wiring
-yet. All tests are unit tests driven by an in-tree fixture corpus
-under `crates/qsf_app/src/project_docs/fixtures/`.
-
-**Path-safety invariant for this phase:** any caller-supplied document
-path that reaches the filesystem (the bounded read in Task 1.5) must be
-normalized and confined to the repo root *before* the allowlist is
-consulted. The allowlist operates on clean, repo-relative,
-forward-slash paths; it must never see a raw string containing `..` or
-an absolute prefix, because glob include/exclude evaluation against
-such a string can admit material the exclude rules were meant to block.
-Search (Task 1.4) derives its paths from a `walkdir` traversal of the
-repo root, so those paths are already clean; only the read path takes a
-raw caller string.
-
-### Task 1.1: Module scaffold and types
-
-**Files:**
-- Create: `crates/qsf_app/src/project_docs/mod.rs`
-- Create: `crates/qsf_app/src/project_docs/types.rs`
-- Modify: `crates/qsf_app/src/lib.rs` (or wherever top-level modules
-  are declared) to add `pub mod project_docs;`
-
-- [ ] **Step 1: Write the types module.**
-
-```rust
-// crates/qsf_app/src/project_docs/types.rs
-use serde::{Deserialize, Serialize};
-
-#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
-#[serde(rename_all = "snake_case")]
-pub enum DocKind {
-    Frame,
-    Concept,
-    Research,
-    Plan,
-    Idea,
-    Design,
-    Architecture,
-    ExperimentSpec,
-    ExperimentReport,
-    Diary,
-    Decision,
-    Unknown,
-}
-
-#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
-#[serde(rename_all = "snake_case")]
-pub enum MaturityTag {
-    Brainstorm,
-    Sketch,
-    Candidate,
-    Accepted,
-    Implemented,
-    Deprecated,
-    Unknown,
-    NotApplicable,
-}
-
-#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
-#[serde(rename_all = "snake_case")]
-pub enum MatchStrength {
-    High,
-    Medium,
-    Low,
-}
-
-#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
-pub struct DocHit {
-    pub path: String,
-    pub kind: DocKind,
-    pub maturity_tag: MaturityTag,
-    pub last_reviewed: Option<String>, // ISO date, kept as string for trace stability
-    pub snippet: String,
-    pub section_hint: Option<String>,
-    pub match_strength: MatchStrength,
-}
-
-#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
-pub struct DocRead {
-    pub path: String,
-    pub kind: DocKind,
-    pub maturity_tag: MaturityTag,
-    pub last_reviewed: Option<String>,
-    pub content: String,
-    pub is_full: bool,
-    pub omitted_sections: Vec<String>,
-}
-```
-
-- [ ] **Step 2: Write the module scaffold.**
-
-```rust
-// crates/qsf_app/src/project_docs/mod.rs
-//! Read-only project-document introspection: allowlist evaluation,
-//! metadata extraction, lexical search, and bounded reads.
-
-pub mod types;
-// further submodules added in subsequent tasks:
-//   pub mod allowlist;
-//   pub mod metadata;
-//   pub mod search;
-//   pub mod read;
-//   pub mod service;
-
-pub use types::{DocHit, DocKind, DocRead, MatchStrength, MaturityTag};
-```
-
-- [ ] **Step 3: Wire the module into the crate.**
-
-Open `crates/qsf_app/src/lib.rs` and add `pub mod project_docs;`
-in alphabetical order with the other top-level modules.
-
-- [ ] **Step 4: Build and verify.**
-
-Run: `cargo build`
-Expected: builds clean.
-
-- [ ] **Step 5: Commit.**
-
-```bash
-git add crates/qsf_app/src/project_docs crates/qsf_app/src/lib.rs
-git commit -m "feat(project_docs): scaffold module and types"
-```
-
-### Task 1.2: Allowlist loader
-
-**Files:**
-- Create: `crates/qsf_app/src/project_docs/allowlist.rs`
-- Create: `config/project-doc-introspection.toml`
-- Create: `crates/qsf_app/src/project_docs/fixtures/allowlist_basic.toml`
-- Modify: `crates/qsf_app/src/project_docs/mod.rs`
-- Modify: `crates/qsf_app/Cargo.toml` (add `toml`, `globset` if not
-  already present; check first)
-
-- [ ] **Step 1: Write the production allowlist file.**
-
-```toml
-# config/project-doc-introspection.toml
-# Documents accessible to the project-doc introspection channel.
-# Edit this file to add or remove material. Patterns are repo-root globs.
-
-include = [
-  "docs/ProjectFrame/**/*.md",
-  "docs/Concepts/**/*.md",
-  "docs/Architecture/**/*.md",
-  "docs/Plans/**/*.md",
-  "docs/Experiments/**/*.md",
-  "docs/Research/**/*.md",
-  "docs/DecisionLog.md",
-  "README.md",
-]
-
-exclude = [
-  "docs/Reviews/**",
-  "docs/EngineeringDiary.md",
-]
-```
-
-- [ ] **Step 2: Write a small fixture allowlist.**
-
-```toml
-# crates/qsf_app/src/project_docs/fixtures/allowlist_basic.toml
-# Used by unit tests that walk the fixtures directory directly, so patterns
-# are relative to that directory rather than to the repo root.
-include = ["**/*.md"]
-exclude = []
-```
-
-- [ ] **Step 3: Write the failing unit test.**
-
-The production-allowlist test must resolve the workspace-root config
-from a path anchored to `CARGO_MANIFEST_DIR`, because `cargo test` runs
-with the working directory at the package root (`crates/qsf_app`), not
-the workspace root. A bare relative string would resolve to
-`crates/qsf_app/config/...` and fail to find the file.
-
-```rust
-// crates/qsf_app/src/project_docs/allowlist.rs (test block)
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use std::path::PathBuf;
-
-    /// `config/project-doc-introspection.toml` lives at the workspace root,
-    /// two levels above this crate's manifest dir.
-    fn workspace_config_path() -> PathBuf {
-        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .join("../../config/project-doc-introspection.toml")
-    }
-
-    #[test]
-    fn accepts_path_matching_include_only() {
-        let allowlist = Allowlist::from_str(
-            r#"include=["docs/**/*.md"]
-               exclude=[]"#,
-        )
-        .unwrap();
-        assert!(allowlist.allows("docs/ProjectFrame/ProjectVision.md"));
-    }
-
-    #[test]
-    fn rejects_path_outside_include() {
-        let allowlist = Allowlist::from_str(
-            r#"include=["docs/**/*.md"]
-               exclude=[]"#,
-        )
-        .unwrap();
-        assert!(!allowlist.allows("crates/qsf_app/src/main.rs"));
-    }
-
-    #[test]
-    fn exclude_overrides_include() {
-        let allowlist = Allowlist::from_str(
-            r#"include=["docs/**/*.md"]
-               exclude=["docs/Reviews/**"]"#,
-        )
-        .unwrap();
-        assert!(!allowlist.allows("docs/Reviews/Review.X.md"));
-        assert!(allowlist.allows("docs/Architecture/Architecture.Overview.md"));
-    }
-
-    #[test]
-    fn default_production_allowlist_excludes_diary_and_reviews() {
-        let allowlist = Allowlist::from_file(workspace_config_path())
-            .expect("production allowlist must load");
-        assert!(!allowlist.allows("docs/EngineeringDiary.md"));
-        assert!(!allowlist.allows("docs/Reviews/anything.md"));
-        assert!(allowlist.allows("docs/ProjectFrame/ProjectVision.md"));
-        assert!(allowlist.allows("docs/DecisionLog.md"));
-    }
-}
-```
-
-- [ ] **Step 4: Run tests; verify they fail.**
-
-Run: `cargo test -p qsf_app project_docs::allowlist`
-Expected: FAIL ("`Allowlist` not found" or similar).
-
-- [ ] **Step 5: Implement `Allowlist`.**
-
-```rust
-// crates/qsf_app/src/project_docs/allowlist.rs
-use std::fs;
-use std::path::Path;
-
-use anyhow::{Context, Result};
-use globset::{Glob, GlobSet, GlobSetBuilder};
-use serde::Deserialize;
-
-#[derive(Clone, Debug)]
-pub struct Allowlist {
-    include: GlobSet,
-    exclude: GlobSet,
-}
-
-#[derive(Debug, Deserialize)]
-struct AllowlistFile {
-    #[serde(default)]
-    include: Vec<String>,
-    #[serde(default)]
-    exclude: Vec<String>,
-}
-
-impl Allowlist {
-    pub fn from_file(path: impl AsRef<Path>) -> Result<Self> {
-        let path = path.as_ref();
-        let raw = fs::read_to_string(path)
-            .with_context(|| format!("read allowlist `{}`", path.display()))?;
-        Self::from_str(&raw)
-    }
-
-    pub fn from_str(raw: &str) -> Result<Self> {
-        let parsed: AllowlistFile =
-            toml::from_str(raw).context("parse allowlist toml")?;
-        Ok(Self {
-            include: build_globset(&parsed.include)?,
-            exclude: build_globset(&parsed.exclude)?,
-        })
-    }
-
-    /// Evaluates a clean, repo-relative, forward-slash path. Callers that
-    /// accept raw paths from outside (the bounded read in Task 1.5) must
-    /// normalize and confine the path before calling this.
-    pub fn allows(&self, repo_relative_path: &str) -> bool {
-        if self.exclude.is_match(repo_relative_path) {
-            return false;
-        }
-        self.include.is_match(repo_relative_path)
-    }
-}
-
-fn build_globset(patterns: &[String]) -> Result<GlobSet> {
-    let mut builder = GlobSetBuilder::new();
-    for pattern in patterns {
-        builder.add(
-            Glob::new(pattern)
-                .with_context(|| format!("invalid glob `{pattern}`"))?,
-        );
-    }
-    builder.build().context("compile glob set")
-}
-```
-
-- [ ] **Step 6: Add `globset` and `toml` to the crate if absent.**
-
-Inspect `crates/qsf_app/Cargo.toml`. If `globset` and `toml` are not
-already present (or pinned at a workspace level), add them under
-`[dependencies]`. Run `cargo build` to confirm the lockfile updates
-cleanly.
-
-- [ ] **Step 7: Re-export `Allowlist` from the module.**
-
-In `crates/qsf_app/src/project_docs/mod.rs`, add:
-
-```rust
-pub mod allowlist;
-pub use allowlist::Allowlist;
-```
-
-- [ ] **Step 8: Run tests; verify they pass.**
-
-Run: `cargo test -p qsf_app project_docs::allowlist`
-Expected: PASS.
-
-- [ ] **Step 9: Commit.**
-
-```bash
-git add crates/qsf_app/src/project_docs/allowlist.rs \
-        crates/qsf_app/src/project_docs/mod.rs \
-        crates/qsf_app/src/project_docs/fixtures/allowlist_basic.toml \
-        config/project-doc-introspection.toml \
-        crates/qsf_app/Cargo.toml Cargo.lock
-git commit -m "feat(project_docs): allowlist loader with include/exclude globs"
-```
-
-### Task 1.3: Metadata extraction
-
-**Files:**
-- Create: `crates/qsf_app/src/project_docs/metadata.rs`
-- Create: `crates/qsf_app/src/project_docs/fixtures/sample_concept.md`
-- Create: `crates/qsf_app/src/project_docs/fixtures/sample_architecture.md`
-- Create: `crates/qsf_app/src/project_docs/fixtures/sample_design.md`
-- Create: `crates/qsf_app/src/project_docs/fixtures/sample_unknown.md`
-- Modify: `crates/qsf_app/src/project_docs/mod.rs`
-
-- [ ] **Step 1: Write fixture documents.**
-
-`sample_concept.md`:
-
-```markdown
-# Concept: Sample
-
-## Maturity
-
-Candidate
-
-## Body
-
-Concept body for testing.
-```
-
-`sample_architecture.md` (the trailing `## Notes` section gives the
-bounded-read truncation test in Task 1.5 a body section to omit):
-
-```markdown
-# Architecture: Sample
-
-## Maturity
-
-Accepted
-
-## Implementation Status
-
-Implemented today: stuff.
-Last reviewed: 2026-05-21 against the code on `main`.
-
-## Notes
-
-Additional notes for testing bounded reads.
-```
-
-`sample_design.md`:
-
-```markdown
-# Design: Sample
-
-## Status
-
-Candidate
-
-## Body
-
-Design body for testing.
-```
-
-`sample_unknown.md`:
-
-```markdown
-# Unstructured Notes
-
-Some text without a recognized heading.
-```
-
-- [ ] **Step 2: Write the failing tests.**
-
-These cover the design's metadata matrix plus the edge cases the
-original skeleton omitted: `last_reviewed` must be scoped to the
-`## Implementation Status` section (not matched anywhere in the body),
-and a malformed date must yield `None` rather than a partial parse.
-
-```rust
-// crates/qsf_app/src/project_docs/metadata.rs (test block)
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::project_docs::{DocKind, MaturityTag};
-
-    #[test]
-    fn kind_from_projectframe_path() {
-        assert_eq!(kind_for_path("docs/ProjectFrame/ProjectVision.md"), DocKind::Frame);
-    }
-
-    #[test]
-    fn kind_from_plan_idea_design_filenames() {
-        assert_eq!(kind_for_path("docs/Plans/Plan.X.md"), DocKind::Plan);
-        assert_eq!(kind_for_path("docs/Plans/Idea.X.md"), DocKind::Idea);
-        assert_eq!(kind_for_path("docs/Plans/Design.X.md"), DocKind::Design);
-    }
-
-    #[test]
-    fn kind_falls_back_to_unknown() {
-        assert_eq!(kind_for_path("docs/Random/Other.md"), DocKind::Unknown);
-    }
-
-    #[test]
-    fn maturity_from_concept_doc() {
-        let body = include_str!("fixtures/sample_concept.md");
-        assert_eq!(
-            maturity_for(DocKind::Concept, body),
-            MaturityTag::Candidate
-        );
-    }
-
-    #[test]
-    fn maturity_from_design_uses_status_heading() {
-        let body = include_str!("fixtures/sample_design.md");
-        assert_eq!(maturity_for(DocKind::Design, body), MaturityTag::Candidate);
-    }
-
-    #[test]
-    fn maturity_unknown_when_heading_missing() {
-        let body = include_str!("fixtures/sample_unknown.md");
-        assert_eq!(maturity_for(DocKind::Concept, body), MaturityTag::Unknown);
-    }
-
-    #[test]
-    fn maturity_unknown_for_unrecognized_value() {
-        let body = "## Maturity\n\nBananas\n";
-        assert_eq!(maturity_for(DocKind::Concept, body), MaturityTag::Unknown);
-    }
-
-    #[test]
-    fn maturity_not_applicable_for_frame() {
-        assert_eq!(maturity_for(DocKind::Frame, "anything"), MaturityTag::NotApplicable);
-    }
-
-    #[test]
-    fn last_reviewed_parsed_from_architecture() {
-        let body = include_str!("fixtures/sample_architecture.md");
-        assert_eq!(
-            last_reviewed_for(body).as_deref(),
-            Some("2026-05-21")
-        );
-    }
-
-    #[test]
-    fn last_reviewed_none_when_section_absent() {
-        let body = include_str!("fixtures/sample_concept.md");
-        assert_eq!(last_reviewed_for(body), None);
-    }
-
-    #[test]
-    fn last_reviewed_ignored_outside_implementation_status_section() {
-        // "Last reviewed:" appears in the body but there is no
-        // `## Implementation Status` section to scope it to.
-        let body = "# Doc\n\n## Body\n\nLast reviewed: 2020-01-01 somewhere.\n";
-        assert_eq!(last_reviewed_for(body), None);
-    }
-
-    #[test]
-    fn last_reviewed_none_for_malformed_date() {
-        let body = "## Implementation Status\n\nLast reviewed: May 2026.\n";
-        assert_eq!(last_reviewed_for(body), None);
-    }
-}
-```
-
-- [ ] **Step 3: Run tests; verify they fail.**
-
-Run: `cargo test -p qsf_app project_docs::metadata`
-Expected: FAIL (functions undefined).
-
-- [ ] **Step 4: Implement extraction rules.**
-
-`last_reviewed_for` is scoped to the `## Implementation Status` section
-so a stray "Last reviewed:" elsewhere in the document is ignored; the
-date regex enforces an ISO `YYYY-MM-DD` shape so malformed dates yield
-`None`.
-
-```rust
-// crates/qsf_app/src/project_docs/metadata.rs
-use once_cell::sync::Lazy;
-use regex::Regex;
-
-use super::{DocKind, MaturityTag};
-
-pub fn kind_for_path(path: &str) -> DocKind {
-    if path.starts_with("docs/ProjectFrame/") || path == "README.md" {
-        return DocKind::Frame;
-    }
-    if path.starts_with("docs/Concepts/") {
-        return DocKind::Concept;
-    }
-    if path.starts_with("docs/Research/") {
-        return DocKind::Research;
-    }
-    if let Some(rest) = path.strip_prefix("docs/Plans/") {
-        if rest.starts_with("Plan.") {
-            return DocKind::Plan;
-        }
-        if rest.starts_with("Idea.") {
-            return DocKind::Idea;
-        }
-        if rest.starts_with("Design.") {
-            return DocKind::Design;
-        }
-    }
-    if path.starts_with("docs/Architecture/") {
-        return DocKind::Architecture;
-    }
-    if let Some(rest) = path.strip_prefix("docs/Experiments/") {
-        if rest.starts_with("Experiment.") {
-            return DocKind::ExperimentSpec;
-        }
-        if rest.starts_with("Report.") {
-            return DocKind::ExperimentReport;
-        }
-    }
-    if path == "docs/DecisionLog.md" {
-        return DocKind::Decision;
-    }
-    if path == "docs/EngineeringDiary.md" {
-        return DocKind::Diary;
-    }
-    DocKind::Unknown
-}
-
-pub fn maturity_for(kind: DocKind, body: &str) -> MaturityTag {
-    match kind {
-        DocKind::Concept | DocKind::Architecture => {
-            maturity_from_heading(body, "Maturity")
-        }
-        DocKind::Design => maturity_from_heading(body, "Status"),
-        _ => MaturityTag::NotApplicable,
-    }
-}
-
-fn maturity_from_heading(body: &str, heading: &str) -> MaturityTag {
-    let pattern = format!(r"(?m)^##\s+{heading}\s*\n+\s*(\S+)");
-    let regex = Regex::new(&pattern).expect("static regex");
-    let Some(captures) = regex.captures(body) else {
-        return MaturityTag::Unknown;
-    };
-    match captures.get(1).map(|m| m.as_str()) {
-        Some("Brainstorm") => MaturityTag::Brainstorm,
-        Some("Sketch") => MaturityTag::Sketch,
-        Some("Candidate") => MaturityTag::Candidate,
-        Some("Accepted") => MaturityTag::Accepted,
-        Some("Implemented") => MaturityTag::Implemented,
-        Some("Deprecated") => MaturityTag::Deprecated,
-        _ => MaturityTag::Unknown,
-    }
-}
-
-static LAST_REVIEWED_RE: Lazy<Regex> = Lazy::new(|| {
-    Regex::new(r"(?m)^Last reviewed:\s*(\d{4}-\d{2}-\d{2})\b").expect("static regex")
-});
-
-/// Returns the slice of `body` covering the `## Implementation Status`
-/// section, from its heading up to the next `## ` heading (or end of doc).
-fn implementation_status_section(body: &str) -> Option<&str> {
-    let start = body.find("## Implementation Status")?;
-    let after = &body[start..];
-    // Find the next top-level section heading after this one.
-    let end = after[1..]
-        .find("\n## ")
-        .map(|i| i + 1)
-        .unwrap_or(after.len());
-    Some(&after[..end])
-}
-
-pub fn last_reviewed_for(body: &str) -> Option<String> {
-    let section = implementation_status_section(body)?;
-    LAST_REVIEWED_RE
-        .captures(section)
-        .and_then(|c| c.get(1))
-        .map(|m| m.as_str().to_string())
-}
-```
-
-If broader fixture coverage is desired (one document per `DocKind`,
-status section without a date), add those fixtures here; they are a
-welcome extension but not required to pass this task's contract.
-
-- [ ] **Step 5: Re-export from `mod.rs` and add `regex` / `once_cell`
-  if needed.**
-
-```rust
-// crates/qsf_app/src/project_docs/mod.rs
-pub mod metadata;
-pub use metadata::{kind_for_path, last_reviewed_for, maturity_for};
-```
-
-Confirm `regex` and `once_cell` are in `Cargo.toml`; add if missing.
-
-- [ ] **Step 6: Run tests; verify they pass.**
-
-Run: `cargo test -p qsf_app project_docs::metadata`
-Expected: PASS.
-
-- [ ] **Step 7: Commit.**
-
-```bash
-git add crates/qsf_app/src/project_docs/metadata.rs \
-        crates/qsf_app/src/project_docs/fixtures \
-        crates/qsf_app/src/project_docs/mod.rs \
-        crates/qsf_app/Cargo.toml Cargo.lock
-git commit -m "feat(project_docs): metadata extraction rules with fixture coverage"
-```
-
-### Task 1.4: Lexical search
-
-**Files:**
-- Create: `crates/qsf_app/src/project_docs/search.rs`
-- Create: `crates/qsf_app/src/project_docs/fixtures/sample_body_heavy.md`
-- Modify: `crates/qsf_app/src/project_docs/mod.rs`
-
-Searches the in-scope corpus for a query, returning up to `max_results`
-`DocHit`s. Ranking is **heading-first**: any document whose query match
-falls inside a `## ` heading line outranks every document matched only
-in body text, regardless of body occurrence count. Within the same
-heading-match tier, documents are ordered by occurrence count, then by
-a deterministic path tiebreaker. Snippet extraction returns a ~200
-token excerpt around the strongest match offset.
-
-Production search walks the provided root with `walkdir` and filters
-each discovered path through the allowlist; the fixture allowlist uses
-`include=["**/*.md"]` so the tests exercise the whole fixtures
-directory. `walkdir` yields clean, repo-relative paths, so search needs
-no parent-directory-traversal guard — that guard lives in the bounded
-read (Task 1.5), which is the only path that consumes a raw
-caller-supplied string.
-
-- [ ] **Step 1: Add the body-heavy fixture and write the failing tests.**
-
-`sample_body_heavy.md` (many body occurrences of "maturity", but no
-`## ` heading containing it — used to prove heading matches win even
-against a high body count):
-
-```markdown
-# Notes
-
-Some text mentioning maturity. maturity maturity maturity maturity here.
-```
-
-```rust
-// crates/qsf_app/src/project_docs/search.rs (test block)
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::project_docs::Allowlist;
-    use std::path::PathBuf;
-
-    fn fixtures_root() -> PathBuf {
-        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("src/project_docs/fixtures")
-    }
-
-    fn fixture_allowlist() -> Allowlist {
-        Allowlist::from_file(fixtures_root().join("allowlist_basic.toml")).unwrap()
-    }
-
-    #[test]
-    fn heading_match_outranks_body_match() {
-        let hits = search(&fixtures_root(), &fixture_allowlist(), "Maturity", 6).unwrap();
-        assert!(!hits.is_empty());
-        assert_eq!(hits[0].section_hint.as_deref(), Some("Maturity"));
-        assert_eq!(hits[0].match_strength, crate::project_docs::MatchStrength::High);
-    }
-
-    #[test]
-    fn heading_match_outranks_many_body_matches() {
-        let hits = search(&fixtures_root(), &fixture_allowlist(), "maturity", 6).unwrap();
-        // The body-heavy doc has the most raw occurrences but no heading match;
-        // it must rank below any document matched in a `## Maturity` heading.
-        let first_heading_rank = hits
-            .iter()
-            .position(|h| h.section_hint.as_deref() == Some("Maturity"))
-            .expect("a heading match should exist");
-        let body_heavy_rank = hits
-            .iter()
-            .position(|h| h.path.contains("sample_body_heavy"))
-            .expect("body-heavy doc should appear");
-        assert!(first_heading_rank < body_heavy_rank);
-    }
-
-    #[test]
-    fn returns_unknown_kind_for_unstructured_doc() {
-        let hits = search(&fixtures_root(), &fixture_allowlist(), "Unstructured", 6).unwrap();
-        assert!(hits.iter().any(|h| h.kind == crate::project_docs::DocKind::Unknown));
-    }
-
-    #[test]
-    fn empty_results_when_no_match() {
-        let hits = search(&fixtures_root(), &fixture_allowlist(), "xyzzyno-such-token", 6).unwrap();
-        assert!(hits.is_empty());
-    }
-
-    #[test]
-    fn empty_query_returns_no_results() {
-        let hits = search(&fixtures_root(), &fixture_allowlist(), "   ", 6).unwrap();
-        assert!(hits.is_empty());
-    }
-}
-```
-
-- [ ] **Step 2: Run tests; verify they fail.**
-
-Run: `cargo test -p qsf_app project_docs::search`
-Expected: FAIL (`search` undefined).
-
-- [ ] **Step 3: Implement `search`.**
-
-The match analyzer scans the document line by line, tracking the
-current `## ` heading. A match inside a heading line is recorded as a
-heading match and pins `section_hint` to that heading; otherwise the
-first body match is kept along with its enclosing heading (if any). The
-final sort is a heading-first ordering tuple, never a summed score.
-
-```rust
-// crates/qsf_app/src/project_docs/search.rs
-use std::fs;
-use std::path::Path;
-
-use anyhow::{Context, Result};
-use walkdir::WalkDir;
-
-use super::metadata::{kind_for_path, last_reviewed_for, maturity_for};
-use super::{Allowlist, DocHit, MatchStrength};
-
-const SNIPPET_BYTES: usize = 800; // ~200 tokens
-
-struct DocScore {
-    heading_match: bool,
-    occurrences: usize,
-    hit: DocHit,
-}
-
-pub fn search(
-    repo_root: &Path,
-    allowlist: &Allowlist,
-    query: &str,
-    max_results: usize,
-) -> Result<Vec<DocHit>> {
-    let needle = query.trim().to_ascii_lowercase();
-    if needle.is_empty() {
-        return Ok(Vec::new());
-    }
-
-    let mut scored: Vec<DocScore> = Vec::new();
-    for entry in WalkDir::new(repo_root).into_iter().filter_map(|e| e.ok()) {
-        if !entry.file_type().is_file() {
-            continue;
-        }
-        let rel = entry
-            .path()
-            .strip_prefix(repo_root)
-            .unwrap()
-            .to_string_lossy()
-            .replace('\\', "/");
-        if !allowlist.allows(&rel) {
-            continue;
-        }
-        let body = fs::read_to_string(entry.path())
-            .with_context(|| format!("read `{rel}`"))?;
-        let Some(analysis) = analyze_matches(&body, &needle) else {
-            continue;
-        };
-        let kind = kind_for_path(&rel);
-        let maturity = maturity_for(kind, &body);
-        let last_reviewed = last_reviewed_for(&body);
-        let snippet = extract_snippet(&body, analysis.best_offset, SNIPPET_BYTES);
-        scored.push(DocScore {
-            heading_match: analysis.heading_match,
-            occurrences: analysis.occurrences,
-            hit: DocHit {
-                path: rel,
-                kind,
-                maturity_tag: maturity,
-                last_reviewed,
-                snippet,
-                section_hint: analysis.section_hint,
-                match_strength: classify_strength(analysis.heading_match, analysis.occurrences),
-            },
-        });
-    }
-
-    // Heading-first: heading matches win outright, then occurrence count,
-    // then a deterministic path tiebreaker for stable ordering.
-    scored.sort_by(|a, b| {
-        b.heading_match
-            .cmp(&a.heading_match)
-            .then_with(|| b.occurrences.cmp(&a.occurrences))
-            .then_with(|| a.hit.path.cmp(&b.hit.path))
-    });
-    Ok(scored.into_iter().take(max_results).map(|s| s.hit).collect())
-}
-
-struct MatchAnalysis {
-    best_offset: usize,
-    section_hint: Option<String>,
-    heading_match: bool,
-    occurrences: usize,
-}
-
-fn analyze_matches(body: &str, needle: &str) -> Option<MatchAnalysis> {
-    let occurrences = body.to_ascii_lowercase().matches(needle).count();
-    if occurrences == 0 {
-        return None;
-    }
-
-    let mut current_heading: Option<String> = None;
-    let mut best_heading: Option<(usize, String)> = None;
-    let mut best_body: Option<(usize, Option<String>)> = None;
-    let mut offset = 0usize;
-
-    for line in body.split_inclusive('\n') {
-        let trimmed = line.trim_start();
-        let is_heading = trimmed.starts_with("## ");
-        if is_heading {
-            current_heading = Some(trimmed.trim_start_matches('#').trim().to_string());
-        }
-        if let Some(pos) = line.to_ascii_lowercase().find(needle) {
-            let abs = offset + pos;
-            if is_heading {
-                if best_heading.is_none() {
-                    best_heading = Some((abs, current_heading.clone().unwrap_or_default()));
-                }
-            } else if best_body.is_none() {
-                best_body = Some((abs, current_heading.clone()));
-            }
-        }
-        offset += line.len();
-    }
-
-    if let Some((abs, heading)) = best_heading {
-        Some(MatchAnalysis {
-            best_offset: abs,
-            section_hint: Some(heading),
-            heading_match: true,
-            occurrences,
-        })
-    } else {
-        let (abs, heading) = best_body.expect("occurrences > 0 guarantees a body match");
-        Some(MatchAnalysis {
-            best_offset: abs,
-            section_hint: heading,
-            heading_match: false,
-            occurrences,
-        })
-    }
-}
-
-fn extract_snippet(body: &str, around: usize, byte_budget: usize) -> String {
-    let bytes = body.as_bytes();
-    let start = around.saturating_sub(byte_budget / 2);
-    let end = (around + byte_budget / 2).min(bytes.len());
-    let start = floor_char_boundary(body, start);
-    let end = ceil_char_boundary(body, end);
-    body[start..end].to_string()
-}
-
-fn floor_char_boundary(s: &str, mut idx: usize) -> usize {
-    while idx > 0 && !s.is_char_boundary(idx) {
-        idx -= 1;
-    }
-    idx
-}
-
-fn ceil_char_boundary(s: &str, mut idx: usize) -> usize {
-    while idx < s.len() && !s.is_char_boundary(idx) {
-        idx += 1;
-    }
-    idx
-}
-
-fn classify_strength(heading_match: bool, occurrences: usize) -> MatchStrength {
-    if heading_match {
-        MatchStrength::High
-    } else if occurrences >= 3 {
-        MatchStrength::Medium
-    } else {
-        MatchStrength::Low
-    }
-}
-```
-
-- [ ] **Step 4: Add `walkdir` to `Cargo.toml` if absent; re-export
-  `search` from `mod.rs`.**
-
-```rust
-// crates/qsf_app/src/project_docs/mod.rs
-pub mod search;
-pub use search::search;
-```
-
-- [ ] **Step 5: Run tests; verify they pass.**
-
-Run: `cargo test -p qsf_app project_docs::search`
-Expected: PASS.
-
-- [ ] **Step 6: Commit.**
-
-```bash
-git add crates/qsf_app/src/project_docs/search.rs \
-        crates/qsf_app/src/project_docs/fixtures/sample_body_heavy.md \
-        crates/qsf_app/src/project_docs/mod.rs \
-        crates/qsf_app/Cargo.toml Cargo.lock
-git commit -m "feat(project_docs): lexical search with heading-first ranking"
-```
-
-### Task 1.5: Bounded read with focus
-
-**Files:**
-- Create: `crates/qsf_app/src/project_docs/read.rs`
-- Modify: `crates/qsf_app/src/project_docs/mod.rs`
-
-This is the only entry point that takes a raw, caller-supplied path, so
-it owns the path-safety invariant for the phase. Before the allowlist
-is consulted, the path is normalized: absolute paths and any `..`
-component are rejected outright, `.` components are dropped, and the
-result is a clean forward-slash repo-relative string. Only that
-normalized string is passed to `allowlist.allows`, and only
-`repo_root.join(normalized)` is read. This closes the traversal hole
-where a string like `docs/ProjectFrame/../../EngineeringDiary.md` could
-satisfy an include glob, miss the literal `docs/EngineeringDiary.md`
-exclude, and then resolve — after filesystem normalization — to the
-excluded file.
-
-Budget accounting is a single incremental pass. A document's preamble
-(everything before the first `## ` heading) and its "head" sections
-(`## Status`, `## Implementation Status`) are always emitted and are
-excluded from later reconsideration so they are never duplicated. Every
-remaining section that does not fit the byte budget (or, for a focused
-read, does not match the focus) is recorded in `omitted_sections`, and
-`is_full` is true only when nothing was omitted.
-
-- [ ] **Step 1: Write the failing tests.**
-
-```rust
-// crates/qsf_app/src/project_docs/read.rs (test block)
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::project_docs::{Allowlist, DocKind, MaturityTag};
-    use std::path::PathBuf;
-
-    fn fixtures_root() -> PathBuf {
-        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("src/project_docs/fixtures")
-    }
-
-    fn allow_all() -> Allowlist {
-        Allowlist::from_str(r#"include=["**/*.md"] exclude=[]"#).unwrap()
-    }
-
-    #[test]
-    fn reads_whole_doc_when_under_budget() {
-        let doc = read(&fixtures_root(), &allow_all(), "sample_concept.md", None, 10_000).unwrap();
-        assert!(doc.is_full);
-        assert!(doc.omitted_sections.is_empty());
-        assert_eq!(doc.kind, DocKind::Unknown); // fixture path is not under docs/Concepts
-        assert_eq!(doc.maturity_tag, MaturityTag::NotApplicable);
-    }
-
-    #[test]
-    fn focused_read_returns_named_section_plus_head() {
-        let doc = read(
-            &fixtures_root(),
-            &allow_all(),
-            "sample_architecture.md",
-            Some("Implementation Status"),
-            10_000,
-        )
-        .unwrap();
-        assert!(doc.content.contains("Implementation Status"));
-        assert!(doc.content.contains("Last reviewed"));
-    }
-
-    #[test]
-    fn head_section_is_not_duplicated() {
-        let doc = read(
-            &fixtures_root(),
-            &allow_all(),
-            "sample_architecture.md",
-            None,
-            10_000,
-        )
-        .unwrap();
-        // The `## Implementation Status` head section must appear exactly once.
-        assert_eq!(doc.content.matches("## Implementation Status").count(), 1);
-    }
-
-    #[test]
-    fn refuses_path_outside_allowlist() {
-        let allow_none = Allowlist::from_str(r#"include=[] exclude=[]"#).unwrap();
-        let err = read(&fixtures_root(), &allow_none, "sample_concept.md", None, 10_000)
-            .unwrap_err();
-        assert!(err.to_string().contains("not in allowlist"));
-    }
-
-    #[test]
-    fn refuses_parent_directory_traversal() {
-        // Even though the allowlist admits `**/*.md`, a `..` path must be
-        // rejected before it can escape the repo root.
-        let err = read(
-            &fixtures_root(),
-            &allow_all(),
-            "../../docs/EngineeringDiary.md",
-            None,
-            10_000,
-        )
-        .unwrap_err();
-        assert!(err.to_string().contains(".."));
-    }
-
-    #[test]
-    fn refuses_absolute_path() {
-        let abs = if cfg!(windows) { r"C:\Windows\system.ini" } else { "/etc/passwd" };
-        let err = read(&fixtures_root(), &allow_all(), abs, None, 10_000).unwrap_err();
-        assert!(err.to_string().contains("repo-relative"));
-    }
-
-    #[test]
-    fn omitted_sections_populated_when_truncated() {
-        // A tiny budget: the preamble + head section are always emitted, so any
-        // trailing body section (`## Maturity`, `## Notes`) overflows and is
-        // recorded as omitted, making the read non-full.
-        let doc = read(&fixtures_root(), &allow_all(), "sample_architecture.md", None, 8).unwrap();
-        assert!(!doc.is_full);
-        assert!(!doc.omitted_sections.is_empty());
-    }
-}
-```
-
-- [ ] **Step 2: Implement `read`.**
-
-```rust
-// crates/qsf_app/src/project_docs/read.rs
-use std::fs;
-use std::path::{Component, Path};
-
-use anyhow::{bail, Context, Result};
-
-use super::metadata::{kind_for_path, last_reviewed_for, maturity_for};
-use super::{Allowlist, DocRead};
-
-const HEAD_HEADINGS: [&str; 2] = ["Status", "Implementation Status"];
-
-pub fn read(
-    repo_root: &Path,
-    allowlist: &Allowlist,
-    relative_path: &str,
-    focus: Option<&str>,
-    max_tokens: usize,
-) -> Result<DocRead> {
-    let normalized = normalize_repo_relative(relative_path)?;
-    if !allowlist.allows(&normalized) {
-        bail!("path `{normalized}` not in allowlist");
-    }
-    let body = fs::read_to_string(repo_root.join(&normalized))
-        .with_context(|| format!("read `{normalized}`"))?;
-    let kind = kind_for_path(&normalized);
-    let maturity = maturity_for(kind, &body);
-    let last_reviewed = last_reviewed_for(&body);
-
-    let byte_budget = max_tokens.saturating_mul(4);
-    let preamble = preamble_of(&body);
-    let sections = split_sections(&body);
-
-    let head_indices: Vec<usize> = sections
-        .iter()
-        .enumerate()
-        .filter(|(_, s)| HEAD_HEADINGS.contains(&s.heading.as_str()))
-        .map(|(i, _)| i)
-        .collect();
-
-    let mut content = String::new();
-    content.push_str(&preamble);
-    for &i in &head_indices {
-        content.push_str(&sections[i].text);
-    }
-
-    let mut omitted: Vec<String> = Vec::new();
-    let focus_needle = focus.map(|f| f.to_ascii_lowercase());
-
-    for (i, section) in sections.iter().enumerate() {
-        if head_indices.contains(&i) {
-            continue;
-        }
-        let matches_focus = match &focus_needle {
-            Some(needle) => {
-                section.heading.to_ascii_lowercase().contains(needle)
-                    || section.text.to_ascii_lowercase().contains(needle)
-            }
-            None => true,
-        };
-        if matches_focus && content.len() + section.text.len() <= byte_budget {
-            content.push_str(&section.text);
-        } else {
-            omitted.push(section.heading.clone());
-        }
-    }
-
-    let is_full = omitted.is_empty();
-
-    Ok(DocRead {
-        path: normalized,
-        kind,
-        maturity_tag: maturity,
-        last_reviewed,
-        content,
-        is_full,
-        omitted_sections: omitted,
-    })
-}
-
-/// Confines a caller-supplied path to a clean, repo-relative,
-/// forward-slash string. Rejects absolute paths and any `..` component
-/// so the allowlist and the filesystem read can never escape the root.
-fn normalize_repo_relative(path: &str) -> Result<String> {
-    let candidate = Path::new(path);
-    if candidate.is_absolute() {
-        bail!("path `{path}` must be repo-relative");
-    }
-    let mut parts: Vec<&str> = Vec::new();
-    for component in candidate.components() {
-        match component {
-            Component::Normal(c) => {
-                parts.push(c.to_str().context("non-utf8 path component")?)
-            }
-            Component::CurDir => {}
-            Component::ParentDir => bail!("path `{path}` must not contain `..`"),
-            Component::Prefix(_) | Component::RootDir => {
-                bail!("path `{path}` must be repo-relative")
-            }
-        }
-    }
-    if parts.is_empty() {
-        bail!("path `{path}` must name a document");
-    }
-    Ok(parts.join("/"))
-}
-
-struct Section {
-    heading: String,
-    text: String,
-}
-
-/// Everything before the first `## ` heading: title line(s) and intro.
-fn preamble_of(body: &str) -> String {
-    let mut out = String::new();
-    for line in body.lines() {
-        if line.starts_with("## ") {
-            break;
-        }
-        out.push_str(line);
-        out.push('\n');
-    }
-    out
-}
-
-fn split_sections(body: &str) -> Vec<Section> {
-    let mut sections: Vec<Section> = Vec::new();
-    for line in body.lines() {
-        if let Some(heading) = line.strip_prefix("## ") {
-            sections.push(Section {
-                heading: heading.trim().to_string(),
-                text: String::new(),
-            });
-        }
-        if let Some(last) = sections.last_mut() {
-            last.text.push_str(line);
-            last.text.push('\n');
-        }
-        // Lines before the first heading belong to the preamble and are
-        // intentionally dropped here.
-    }
-    sections
-}
-```
-
-- [ ] **Step 3: Re-export `read` from `mod.rs`.**
-
-```rust
-pub mod read;
-pub use read::read;
-```
-
-- [ ] **Step 4: Run tests; verify they pass.**
-
-Run: `cargo test -p qsf_app project_docs::read`
-Expected: PASS.
-
-- [ ] **Step 5: Commit.**
-
-```bash
-git add crates/qsf_app/src/project_docs/read.rs \
-        crates/qsf_app/src/project_docs/mod.rs
-git commit -m "feat(project_docs): bounded read with path confinement and section budgeting"
-```
-
-### Task 1.6: `ProjectDocService` facade
-
-**Files:**
-- Create: `crates/qsf_app/src/project_docs/service.rs`
-- Modify: `crates/qsf_app/src/project_docs/mod.rs`
-
-A small struct that holds the repo root and a hot-reloaded `Allowlist`.
-Re-reads the config file per call.
-
-- [ ] **Step 1: Write the failing tests.**
-
-```rust
-// crates/qsf_app/src/project_docs/service.rs (test block)
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use std::path::PathBuf;
-    use tempfile::TempDir;
-
-    fn repo_root_for_tests() -> PathBuf {
-        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("src/project_docs/fixtures")
-    }
-
-    #[test]
-    fn hot_reloads_allowlist_between_calls() {
-        let tmp = TempDir::new().unwrap();
-        let config = tmp.path().join("allowlist.toml");
-        std::fs::write(&config, r#"include=["sample_concept.md"] exclude=[]"#).unwrap();
-
-        let service =
-            ProjectDocService::new(repo_root_for_tests(), config.clone());
-
-        assert!(service.allowlist().unwrap().allows("sample_concept.md"));
-
-        std::fs::write(&config, r#"include=[] exclude=[]"#).unwrap();
-        assert!(!service.allowlist().unwrap().allows("sample_concept.md"));
-    }
-}
-```
-
-- [ ] **Step 2: Implement the facade.**
-
-```rust
-// crates/qsf_app/src/project_docs/service.rs
-use std::path::{Path, PathBuf};
-
-use anyhow::Result;
-
-use super::{read, search, Allowlist, DocHit, DocRead};
-
-pub struct ProjectDocService {
-    repo_root: PathBuf,
-    allowlist_path: PathBuf,
-}
-
-impl ProjectDocService {
-    pub fn new(repo_root: impl Into<PathBuf>, allowlist_path: impl Into<PathBuf>) -> Self {
-        Self {
-            repo_root: repo_root.into(),
-            allowlist_path: allowlist_path.into(),
-        }
-    }
-
-    pub fn repo_root(&self) -> &Path {
-        &self.repo_root
-    }
-
-    pub fn allowlist(&self) -> Result<Allowlist> {
-        Allowlist::from_file(&self.allowlist_path)
-    }
-
-    pub fn search(&self, query: &str, max_results: usize) -> Result<Vec<DocHit>> {
-        let allowlist = self.allowlist()?;
-        search(&self.repo_root, &allowlist, query, max_results)
-    }
-
-    pub fn read(
-        &self,
-        relative_path: &str,
-        focus: Option<&str>,
-        max_tokens: usize,
-    ) -> Result<DocRead> {
-        let allowlist = self.allowlist()?;
-        read(&self.repo_root, &allowlist, relative_path, focus, max_tokens)
-    }
-}
-```
-
-- [ ] **Step 3: Add `tempfile` as a dev-dependency if not already.**
-
-- [ ] **Step 4: Re-export from `mod.rs`.**
-
-```rust
-pub mod service;
-pub use service::ProjectDocService;
-```
-
-- [ ] **Step 5: Run tests.**
-
-Run: `cargo test -p qsf_app project_docs::service`
-Expected: PASS.
-
-- [ ] **Step 6: Commit.**
-
-```bash
-git add crates/qsf_app/src/project_docs \
-        crates/qsf_app/Cargo.toml Cargo.lock
-git commit -m "feat(project_docs): ProjectDocService facade with hot-reloaded allowlist"
-```
-
-### Phase 1 verification
-
-Run `cargo clippy --all-targets -- -D warnings` and `cargo fmt`. Expect
-both clean.
-
-**Diary note:** No diary entry is written in this phase; the diary
-entry in Phase 9 covers the whole logical change (Phases 1-8). This
-deferral is only safe if Phases 1-8 land as a single grouped feature
-submission. If Phase 1 (the library slice) is merged or reviewed as a
-standalone deliverable, add a short diary entry for it at that point,
-per the diary discipline in `Agents.md`.
-
-Acceptance criteria for Phase 1:
-
-- `cargo test -p qsf_app project_docs` passes, covering allowlist
-  include/exclude precedence, kind/maturity/last-reviewed extraction
-  (including last-reviewed scoping to the Implementation Status section
-  and malformed-date rejection), lexical search heading-first ranking
-  and empty-result/empty-query handling, bounded read with focus and
-  truncation, and service-level allowlist hot-reload.
-- The bounded read rejects absolute paths and any `..` component before
-  consulting the allowlist or touching the filesystem, with regression
-  coverage proving a traversal toward `docs/EngineeringDiary.md` is
-  refused even under an `**/*.md` allowlist.
-- The production allowlist `config/project-doc-introspection.toml`
-  loads (resolved from `CARGO_MANIFEST_DIR`, not the process working
-  directory) and provably excludes `docs/EngineeringDiary.md` and
-  `docs/Reviews/**` while admitting `docs/ProjectFrame/**` and
-  `docs/DecisionLog.md` (covered by the Task 1.2 test).
-- The `project_docs` module is pure and side-effect-free apart from
-  reading files under the repo root; no tool, registry, dispatch, or
-  responder wiring is introduced in this phase.
-- `crates/qsf_app/src/lib.rs` remains a thin module-declaration
-  wrapper — the new `pub mod project_docs;` line is the only change
-  there.
+## Phase 1: `ProjectDocService` library — completed
+
+**Status: landed and committed** (git: "ProjectDocIntrospection phase 1:
+feat(project_docs): add read-only project document service"). Summarized
+here; the source of truth is the code under
+`crates/qsf_app/src/project_docs/`.
+
+### What shipped
+
+A pure, side-effect-free module at `crates/qsf_app/src/project_docs/`
+(declared by a one-line `pub mod project_docs;` in `lib.rs`), with these
+submodules and a public surface that later phases depend on:
+
+- `types` — `DocKind`, `MaturityTag`, `MatchStrength`, `DocHit`,
+  `DocRead` (all `Serialize`/`Deserialize`, re-exported from
+  `crate::project_docs`).
+- `allowlist` — `Allowlist::from_file` / `from_str`, with
+  `allows(repo_relative_path)` evaluating exclude-then-include globs.
+- `metadata` — `kind_for_path`, `maturity_for`, `last_reviewed_for`
+  (the last scoped to the `## Implementation Status` section and
+  enforcing an ISO `YYYY-MM-DD` shape).
+- `search` — `search(repo_root, allowlist, query, max_results)`,
+  walking the corpus with `walkdir`, returning ranked `DocHit`s.
+- `read` — `read(repo_root, allowlist, relative_path, focus, max_tokens)`,
+  returning a bounded `DocRead`.
+- `service` — the facade other phases construct:
+  - `ProjectDocService::new(repo_root, allowlist_path)`
+  - `.search(query, max_results) -> Result<Vec<DocHit>>`
+  - `.read(path, focus, max_tokens) -> Result<DocRead>`
+  - `.allowlist() -> Result<Allowlist>` (re-read per call, so the
+    on-disk allowlist is hot-reloaded)
+  - `.repo_root() -> &Path`
+
+Dependencies added to `crates/qsf_app/Cargo.toml`: `globset`, `toml`,
+`regex`, `once_cell`, `walkdir`, and `tempfile` (dev). The production
+allowlist lives at `config/project-doc-introspection.toml`.
+
+### Lessons and constraints that bind later phases
+
+- **Path resolution (Open Question #1).** Tests resolve paths from
+  `CARGO_MANIFEST_DIR`. Production wiring (Phase 6 onward) must
+  construct `ProjectDocService` with an explicit **absolute** repo root
+  and an explicit **absolute** allowlist path — never a bare relative
+  path, because the test/runtime working directory is the package root,
+  not the workspace root.
+- **Path-safety lives in the library, not the tool.** The bounded
+  `read` normalizes and confines any caller-supplied path *before* the
+  allowlist or filesystem is touched: absolute paths and any `..`
+  component are rejected, `.` is dropped, and the result is a clean
+  forward-slash repo-relative string. Phase 2's `read_project_doc` tool
+  therefore must **not** re-implement traversal guards — it forwards the
+  raw `path` straight to `service.read(...)` and relies on this
+  invariant (the out-of-allowlist tool test in Task 2.4 uses a
+  non-`.md` path, since traversal rejection is already proven in the
+  library tests).
+- **Allowlist hot-reload + production defaults.** The production
+  allowlist excludes `docs/EngineeringDiary.md` and `docs/Reviews/**`
+  while admitting `docs/ProjectFrame/**` and `docs/DecisionLog.md`. The
+  channel will pick up edits to that file without a rebuild.
+- **Latency cap deferred (Open Question #5).** The service API is
+  synchronous with no deadline parameter; if real traces show
+  `latency_ms` over 1000, enforcement is added at the service boundary,
+  not in the tools or dispatch.
+- **Purity.** The module is side-effect-free apart from reading files
+  under the repo root. No tool, registry, dispatch, or responder wiring
+  was introduced in Phase 1.
+
+### Acceptance outcome (met)
+
+`cargo test -p qsf_app project_docs` passes, covering allowlist
+include/exclude precedence, kind/maturity/last-reviewed extraction
+(including the Implementation-Status scoping and malformed-date
+rejection), heading-first lexical search with empty-result/empty-query
+handling, bounded read with focus and truncation, the traversal/absolute
+path refusals, and service-level allowlist hot-reload. `cargo clippy
+--all-targets -- -D warnings` and `cargo fmt` are clean.
+
+### Diary follow-up constraint
+
+Phase 1 was committed as a standalone deliverable. The Phase 9 diary
+pass must therefore account for it explicitly: either fold Phase 1 into
+the Phases 1-8 entry (acceptable since it is part of the same logical
+feature) or add a separate library-slice entry. Do not silently skip it.
 
 ---
 
 ## Phase 2: Tool implementations
 
 Two `Tool` impls plus a `ToolPermission::read_only()` constructor and a
-new `ToolContext` variant. No registry wiring yet — that lands in
-Phase 3.
+new `ToolContext` variant. **No registry wiring yet — that lands in
+Phase 3.** This phase is implementable and reviewable on its own: the
+tools are exercised in unit tests by constructing them directly with a
+`ProjectDocToolContext` built over the Phase 1 fixture corpus, without
+touching `ToolRegistry` or `dispatch`.
+
+This phase resolves Open Question #2: the injection shape is a dedicated
+`ProjectDocToolContext<'a>` holding a borrowed `&'a ProjectDocService`,
+parallel to the existing `SessionToolContext`, surfaced through a new
+defaulted `ToolContext::project_doc_service()` accessor. Raise it before
+starting if a different pattern is preferred — Phase 3's registry wiring
+hardens this choice.
+
+**Mixed-batch dispatch (raised in review — plan now, build in Phase 3).**
+The live `ConversationalResponder` advertises `recall_turn` (needs
+`session_state()`) *alongside* the two project-doc tools (need
+`project_doc_service()`), and `dispatch_model_tool_calls` threads a single
+`ToolContext` per batch. The standalone `ProjectDocToolContext` introduced
+in Task 2.2 is therefore sufficient **only** for unit-testing the tools in
+isolation. Before Phase 3 hardens the registry/dispatch wiring, decide and
+implement a **combined** context that can answer *both* accessors — either
+extend `SessionToolContext` to also carry an optional `&ProjectDocService`
+(returning it from `project_doc_service()`), or add a dedicated combined
+context implementing both accessors. The defaulted accessors make this
+composable, so adding the second accessor in Task 2.2 does not force the
+decision now; but do not leave the Phase 3/6 call sites to infer the
+combined-context requirement. This is the concrete follow-through on Open
+Question #2.
+
+Implement the tasks in order (2.1 → 2.4); each ends in its own commit so
+the phase can be reviewed incrementally. Follow
+`superpowers:test-driven-development`: the failing test precedes the
+implementation in every task.
 
 ### Task 2.1: `ToolPermission::read_only()`
 
 **Files:**
 - Modify: `crates/qsf_app/src/tools/tool_request.rs`
 
+The reference is the existing `compute_only()` constructor in the same
+`impl ToolPermission` block. The new constructor grants the `ReadOnly`
+category and a `ReadOnly` maximum side-effect level — matching the
+metadata the two tools advertise so `ToolRegistry::validate_request`
+will admit them once Phase 3 wires them in.
+
 - [ ] **Step 1: Write the failing test.**
 
 ```rust
-// crates/qsf_app/src/tools/tool_request.rs (extend the existing test block,
-// or add a new one if absent)
+// crates/qsf_app/src/tools/tool_request.rs — add a test block (the file
+// currently has no inline tests).
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1591,6 +359,14 @@ mod tests {
         let permission = ToolPermission::read_only();
         assert!(!permission.allows(ToolCategory::WriteCapable, ToolSideEffectLevel::ExternalWrite));
     }
+
+    #[test]
+    fn read_only_permission_rejects_compute_only_category() {
+        // Guards against an over-broad allow-list: read_only must not also
+        // admit the compute_only category.
+        let permission = ToolPermission::read_only();
+        assert!(!permission.allows(ToolCategory::ComputeOnly, ToolSideEffectLevel::None));
+    }
 }
 ```
 
@@ -1601,7 +377,7 @@ Expected: FAIL (`read_only` not defined).
 
 - [ ] **Step 3: Implement the constructor.**
 
-Add to the existing `impl ToolPermission` block:
+Add to the existing `impl ToolPermission` block, next to `compute_only`:
 
 ```rust
 pub fn read_only() -> Self {
@@ -1627,15 +403,54 @@ git commit -m "feat(tools): add ToolPermission::read_only constructor"
 ### Task 2.2: Project-doc `ToolContext`
 
 **Files:**
+- Modify: `crates/qsf_app/src/tools/tool_registry.rs` (extend the
+  `ToolContext` trait)
 - Create: `crates/qsf_app/src/tools/project_doc_tool.rs`
-- Modify: `crates/qsf_app/src/tools/tool_registry.rs`
 - Modify: `crates/qsf_app/src/tools/mod.rs`
 
-Extends the `ToolContext` trait with a `project_doc_service()` accessor
-and provides a concrete `ProjectDocToolContext` analogous to
-`SessionToolContext`.
+The current `ToolContext` trait has one defaulted accessor
+(`session_state`). Add a second defaulted accessor returning `None`, so
+`EmptyToolContext` and `SessionToolContext` keep compiling untouched,
+then add a concrete context that returns the service. Per the phase's
+TDD rule, the new accessor behavior gets a failing test *before* the
+implementation — `cargo build` alone is not sufficient verification.
 
-- [ ] **Step 1: Extend the trait.**
+- [ ] **Step 1: Write the failing test.**
+
+```rust
+// crates/qsf_app/src/tools/project_doc_tool.rs (test block, added with the
+// module in Step 2 — written first so it fails to compile/assert).
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::project_docs::ProjectDocService;
+    use crate::tools::EmptyToolContext;
+    use crate::tools::tool_registry::ToolContext;
+    use std::path::PathBuf;
+
+    fn fixtures_root() -> PathBuf {
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("src/project_docs/fixtures")
+    }
+
+    #[test]
+    fn context_exposes_service() {
+        let service = ProjectDocService::new(
+            fixtures_root(),
+            fixtures_root().join("allowlist_basic.toml"),
+        );
+        let ctx = ProjectDocToolContext { service: &service };
+        assert!(ctx.project_doc_service().is_some());
+    }
+
+    #[test]
+    fn empty_context_returns_none() {
+        // The defaulted accessor must leave existing contexts unchanged.
+        assert!(EmptyToolContext.project_doc_service().is_none());
+    }
+}
+```
+
+- [ ] **Step 2: Extend the trait and write the context impl.**
 
 In `crates/qsf_app/src/tools/tool_registry.rs`, add to `trait ToolContext`:
 
@@ -1645,10 +460,7 @@ fn project_doc_service(&self) -> Option<&crate::project_docs::ProjectDocService>
 }
 ```
 
-(Default returns `None`, so existing `SessionToolContext` and
-`EmptyToolContext` keep compiling.)
-
-- [ ] **Step 2: Write the context impl.**
+Create the context:
 
 ```rust
 // crates/qsf_app/src/tools/project_doc_tool.rs
@@ -1670,12 +482,16 @@ impl<'a> ToolContext for ProjectDocToolContext<'a> {
 - [ ] **Step 3: Re-export from `mod.rs`.**
 
 Add `pub mod project_doc_tool;` and
-`pub use project_doc_tool::ProjectDocToolContext;`.
+`pub use project_doc_tool::ProjectDocToolContext;` to
+`crates/qsf_app/src/tools/mod.rs`.
 
-- [ ] **Step 4: Build.**
+- [ ] **Step 4: Run tests and build.**
 
+Run: `cargo test -p qsf_app tools::project_doc_tool`
+Expected: PASS (the two accessor tests).
 Run: `cargo build`
-Expected: builds clean.
+Expected: builds clean (the defaulted trait method means no existing
+`ToolContext` impl needs to change).
 
 - [ ] **Step 5: Commit.**
 
@@ -1692,6 +508,15 @@ git commit -m "feat(tools): ProjectDocToolContext and ToolContext accessor"
 - Create: `crates/qsf_app/src/tools/search_project_docs_tool.rs`
 - Modify: `crates/qsf_app/src/tools/mod.rs`
 
+Mirrors `calculator_tool.rs` exactly: a unit struct implementing `Tool`
+with `metadata`, `execute`, and `model_tool_definition`. The tool reads
+its arguments from `ToolRequest::structured`, calls
+`service.search(query, max_results)`, and serializes the `Vec<DocHit>`
+into `output_text`. It **normalizes** `max_results` into the
+`1..=DEFAULT_MAX_RESULTS` range — capping the upper bound so a model
+cannot request an unbounded page, and treating an out-of-schema `0` as
+the default rather than silently returning an empty page.
+
 - [ ] **Step 1: Write the failing tests.**
 
 ```rust
@@ -1699,52 +524,77 @@ git commit -m "feat(tools): ProjectDocToolContext and ToolContext accessor"
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::project_docs::ProjectDocService;
-    use crate::tools::{ProjectDocToolContext, Tool, ToolPermission, ToolRequest};
+    use crate::project_docs::{DocHit, ProjectDocService};
+    use crate::tools::{EmptyToolContext, ProjectDocToolContext, Tool, ToolPermission, ToolRequest};
     use std::path::PathBuf;
 
     fn fixtures_root() -> PathBuf {
         PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("src/project_docs/fixtures")
     }
 
-    fn make_request(query: &str) -> ToolRequest {
+    fn service() -> ProjectDocService {
+        ProjectDocService::new(
+            fixtures_root(),
+            fixtures_root().join("allowlist_basic.toml"),
+        )
+    }
+
+    fn make_request_with_max(query: &str, max_results: u64) -> ToolRequest {
         ToolRequest {
             tool_name: SEARCH_PROJECT_DOCS_TOOL_NAME.to_string(),
             input: query.to_string(),
-            structured: Some(serde_json::json!({ "query": query, "max_results": 6 })),
+            structured: Some(serde_json::json!({ "query": query, "max_results": max_results })),
             permission: ToolPermission::read_only(),
             requested_by: "test".to_string(),
         }
     }
 
+    fn make_request(query: &str) -> ToolRequest {
+        make_request_with_max(query, 6)
+    }
+
     #[test]
     fn search_returns_hits_with_metadata() {
-        let service = ProjectDocService::new(
-            fixtures_root(),
-            fixtures_root().join("allowlist_basic.toml"),
-        );
+        let service = service();
         let ctx = ProjectDocToolContext { service: &service };
-        let tool = SearchProjectDocsTool;
-        let request = make_request("Maturity");
+        let result = SearchProjectDocsTool.execute(&make_request("Maturity"), &ctx).unwrap();
 
-        let result = tool.execute(&request, &ctx).unwrap();
-
+        assert_eq!(result.category, ToolCategory::ReadOnly);
         assert!(result.observation_summary.contains("hits"));
+        // output_text is the serialized Vec<DocHit>; it must parse back.
+        let hits: Vec<DocHit> = serde_json::from_str(&result.output_text).unwrap();
+        assert!(!hits.is_empty());
+    }
+
+    #[test]
+    fn search_treats_zero_max_results_as_default() {
+        // max_results = 0 violates the schema minimum; the executor normalizes
+        // it to the default instead of returning an empty page.
+        let service = service();
+        let ctx = ProjectDocToolContext { service: &service };
+        let result = SearchProjectDocsTool
+            .execute(&make_request_with_max("Maturity", 0), &ctx)
+            .unwrap();
+        let hits: Vec<DocHit> = serde_json::from_str(&result.output_text).unwrap();
+        assert!(!hits.is_empty());
     }
 
     #[test]
     fn search_fails_without_project_doc_context() {
-        let tool = SearchProjectDocsTool;
-        let request = make_request("anything");
-        let err = tool
-            .execute(&request, &crate::tools::EmptyToolContext)
+        let err = SearchProjectDocsTool
+            .execute(&make_request("anything"), &EmptyToolContext)
             .unwrap_err();
         assert!(err.to_string().contains("ProjectDocToolContext"));
     }
 }
 ```
 
-- [ ] **Step 2: Implement the tool.**
+- [ ] **Step 2: Run tests; verify they fail.**
+
+Run: `cargo test -p qsf_app tools::search_project_docs_tool`
+Expected: FAIL (module/struct not defined).
+
+- [ ] **Step 3: Implement the tool.**
 
 ```rust
 // crates/qsf_app/src/tools/search_project_docs_tool.rs
@@ -1785,10 +635,13 @@ impl Tool for SearchProjectDocsTool {
             .get("query")
             .and_then(|v| v.as_str())
             .context("search_project_docs requires `query`")?;
+        // Normalize into 1..=DEFAULT_MAX_RESULTS: clamp the upper bound and
+        // treat a missing or out-of-schema 0 value as the default.
         let max_results = args
             .get("max_results")
             .and_then(|v| v.as_u64())
             .map(|n| n as usize)
+            .filter(|&n| n >= 1)
             .unwrap_or(DEFAULT_MAX_RESULTS)
             .min(DEFAULT_MAX_RESULTS);
 
@@ -1828,17 +681,17 @@ impl Tool for SearchProjectDocsTool {
 }
 ```
 
-- [ ] **Step 3: Re-export from `mod.rs`.**
+- [ ] **Step 4: Re-export from `mod.rs`.**
 
-Add `pub mod search_project_docs_tool;` and re-export the name and
-struct.
+Add `pub mod search_project_docs_tool;` and
+`pub use search_project_docs_tool::{SEARCH_PROJECT_DOCS_TOOL_NAME, SearchProjectDocsTool};`.
 
-- [ ] **Step 4: Run tests.**
+- [ ] **Step 5: Run tests.**
 
 Run: `cargo test -p qsf_app tools::search_project_docs_tool`
 Expected: PASS.
 
-- [ ] **Step 5: Commit.**
+- [ ] **Step 6: Commit.**
 
 ```bash
 git add crates/qsf_app/src/tools/search_project_docs_tool.rs \
@@ -1852,25 +705,39 @@ git commit -m "feat(tools): SearchProjectDocsTool"
 - Create: `crates/qsf_app/src/tools/read_project_doc_tool.rs`
 - Modify: `crates/qsf_app/src/tools/mod.rs`
 
-- [ ] **Step 1: Write the failing tests.**
+Same shape as Task 2.3. The default token budget is smaller for a
+focused read than for a whole-document read. Crucially, the tool does
+**not** trust the model- or dispatch-supplied `max_tokens`: the value is
+clamped to a hard cap (`MAX_TOKENS_HARD_CAP`, matching the
+`model_tool_definition` schema maximum) before it reaches
+`service.read(...)`, so a request that ignores the schema cannot produce
+an unbounded read. This mirrors the upper-bound clamp the search tool
+applies to `max_results`. Path safety is **not** re-implemented here —
+the raw `path` is forwarded to `service.read(...)`, which enforces the
+Phase 1 traversal/absolute-path invariant. The out-of-allowlist test
+therefore uses a clean-but-non-`.md` path so it exercises the allowlist
+refusal branch rather than the traversal branch.
 
-The out-of-allowlist test uses a non-markdown path (`outside.txt`),
-which normalizes cleanly but is not admitted by the fixture allowlist's
-`**/*.md` include, so it exercises the "not in allowlist" branch.
-Parent-directory traversal rejection is covered by the Phase 1 read
-tests (Task 1.5), so it is not re-tested here.
+- [ ] **Step 1: Write the failing tests.**
 
 ```rust
 // crates/qsf_app/src/tools/read_project_doc_tool.rs (test block)
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::project_docs::ProjectDocService;
-    use crate::tools::{ProjectDocToolContext, Tool, ToolPermission, ToolRequest};
+    use crate::project_docs::{DocRead, ProjectDocService};
+    use crate::tools::{EmptyToolContext, ProjectDocToolContext, Tool, ToolPermission, ToolRequest};
     use std::path::PathBuf;
 
     fn fixtures_root() -> PathBuf {
         PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("src/project_docs/fixtures")
+    }
+
+    fn service() -> ProjectDocService {
+        ProjectDocService::new(
+            fixtures_root(),
+            fixtures_root().join("allowlist_basic.toml"),
+        )
     }
 
     fn make_request(path: &str, focus: Option<&str>, max_tokens: u64) -> ToolRequest {
@@ -1887,39 +754,59 @@ mod tests {
         }
     }
 
+    fn read_output(path: &str, focus: Option<&str>, max_tokens: u64) -> String {
+        let service = service();
+        let ctx = ProjectDocToolContext { service: &service };
+        ReadProjectDocTool
+            .execute(&make_request(path, focus, max_tokens), &ctx)
+            .unwrap()
+            .output_text
+    }
+
     #[test]
     fn read_returns_doc_content() {
-        let service = ProjectDocService::new(
-            fixtures_root(),
-            fixtures_root().join("allowlist_basic.toml"),
-        );
-        let ctx = ProjectDocToolContext { service: &service };
-        let tool = ReadProjectDocTool;
-        let request = make_request("sample_concept.md", None, 10_000);
+        // In-range budget; output_text must round-trip back to a DocRead.
+        let doc: DocRead =
+            serde_json::from_str(&read_output("sample_concept.md", None, 4000)).unwrap();
+        assert!(doc.content.contains("Concept: Sample"));
+    }
 
-        let result = tool.execute(&request, &ctx).unwrap();
-
-        assert!(result.output_text.contains("Concept: Sample"));
+    #[test]
+    fn read_clamps_max_tokens_to_hard_cap() {
+        // A request above the advertised schema maximum must behave identically
+        // to one at the cap — the tool does not trust the supplied budget.
+        let at_cap = read_output("sample_concept.md", None, MAX_TOKENS_HARD_CAP as u64);
+        let over_cap = read_output("sample_concept.md", None, 10_000);
+        assert_eq!(at_cap, over_cap);
     }
 
     #[test]
     fn read_refuses_out_of_allowlist() {
-        let service = ProjectDocService::new(
-            fixtures_root(),
-            fixtures_root().join("allowlist_basic.toml"),
-        );
+        let service = service();
         let ctx = ProjectDocToolContext { service: &service };
-        let tool = ReadProjectDocTool;
         // Normalizes cleanly but is not a `*.md` file, so the allowlist refuses it.
-        let request = make_request("outside.txt", None, 10_000);
-
-        let err = tool.execute(&request, &ctx).unwrap_err();
+        let err = ReadProjectDocTool
+            .execute(&make_request("outside.txt", None, 4000), &ctx)
+            .unwrap_err();
         assert!(err.to_string().contains("not in allowlist"));
+    }
+
+    #[test]
+    fn read_fails_without_project_doc_context() {
+        let err = ReadProjectDocTool
+            .execute(&make_request("sample_concept.md", None, 4000), &EmptyToolContext)
+            .unwrap_err();
+        assert!(err.to_string().contains("ProjectDocToolContext"));
     }
 }
 ```
 
-- [ ] **Step 2: Implement the tool.**
+- [ ] **Step 2: Run tests; verify they fail.**
+
+Run: `cargo test -p qsf_app tools::read_project_doc_tool`
+Expected: FAIL (module/struct not defined).
+
+- [ ] **Step 3: Implement the tool.**
 
 ```rust
 // crates/qsf_app/src/tools/read_project_doc_tool.rs
@@ -1936,6 +823,10 @@ pub const READ_PROJECT_DOC_TOOL_NAME: &str = "read_project_doc";
 
 const DEFAULT_MAX_TOKENS_FOCUSED: usize = 1200;
 const DEFAULT_MAX_TOKENS_NO_FOCUS: usize = 2400;
+/// Hard ceiling, identical to the `model_tool_definition` schema maximum. The
+/// model and dispatch are not trusted to honor the schema, so the tool clamps
+/// any supplied `max_tokens` to this value before calling `service.read`.
+const MAX_TOKENS_HARD_CAP: usize = 4000;
 
 pub struct ReadProjectDocTool;
 
@@ -1967,11 +858,14 @@ impl Tool for ReadProjectDocTool {
         } else {
             DEFAULT_MAX_TOKENS_NO_FOCUS
         };
+        // Clamp to the hard cap so a model that ignores the schema maximum
+        // cannot request an unbounded read.
         let max_tokens = args
             .get("max_tokens")
             .and_then(|v| v.as_u64())
             .map(|n| n as usize)
-            .unwrap_or(default_budget);
+            .unwrap_or(default_budget)
+            .min(MAX_TOKENS_HARD_CAP);
 
         let doc = service.read(path, focus, max_tokens)?;
         let observation = format!(
@@ -2013,7 +907,10 @@ impl Tool for ReadProjectDocTool {
 }
 ```
 
-- [ ] **Step 3: Re-export and run tests.**
+Keep `MAX_TOKENS_HARD_CAP` and the schema `maximum` in sync — they are
+two faces of the same contract.
+
+- [ ] **Step 4: Re-export and run tests.**
 
 Add to `crates/qsf_app/src/tools/mod.rs`:
 
@@ -2025,7 +922,7 @@ pub use read_project_doc_tool::{READ_PROJECT_DOC_TOOL_NAME, ReadProjectDocTool};
 Run: `cargo test -p qsf_app tools::read_project_doc_tool`
 Expected: PASS.
 
-- [ ] **Step 4: Commit.**
+- [ ] **Step 5: Commit.**
 
 ```bash
 git add crates/qsf_app/src/tools/read_project_doc_tool.rs \
@@ -2035,8 +932,59 @@ git commit -m "feat(tools): ReadProjectDocTool"
 
 ### Phase 2 verification
 
-Run `cargo clippy --all-targets -- -D warnings` and `cargo fmt`. Expect
+Run `cargo test -p qsf_app tools::` then
+`cargo clippy --all-targets -- -D warnings` and `cargo fmt`. Expect all
 clean.
+
+**Diary discipline for this phase.** Per `Agents.md`, implementation
+changes must be recorded in `docs/EngineeringDiary.md`. This plan groups
+the *application* work of Phases 1-8 under a single diary entry written
+in Phase 9 — which means **Phases 2-8 are not considered complete or
+mergeable until that Phase 9 diary entry lands**. If Phase 2 is reviewed,
+merged, or handed off as an isolated deliverable ahead of the grouped
+feature, a short standalone Phase 2 diary entry must accompany that merge
+(read the *Instructions how to use* at the top of the diary first). Do
+not merge Phase 2 in isolation with no diary entry at all.
+
+**Acceptance criteria for Phase 2:**
+
+- `ToolPermission::read_only()` exists, admits a `ReadOnly`/`ReadOnly`
+  request, and rejects both `WriteCapable`/`ExternalWrite` and
+  `ComputeOnly`/`None` (Task 2.1 tests).
+- A new defaulted `ToolContext::project_doc_service()` accessor exists
+  and is **tested**: `ProjectDocToolContext` returns `Some(service)` and
+  `EmptyToolContext` returns `None` (Task 2.2 tests); `EmptyToolContext`
+  and `SessionToolContext` compile and behave unchanged via the `None`
+  default.
+- `SearchProjectDocsTool` and `ReadProjectDocTool` implement `Tool`,
+  advertise `category = ReadOnly` / `side_effect_level = ReadOnly`,
+  expose a `model_tool_definition` with the documented JSON schema, and
+  produce a `ToolResult` whose `output_text` round-trips via serde to
+  `Vec<DocHit>` / `DocRead` respectively (asserted by deserializing in
+  the success tests).
+- `SearchProjectDocsTool` normalizes `max_results` into
+  `1..=DEFAULT_MAX_RESULTS` (a `0` argument falls back to the default;
+  Task 2.3 test). `ReadProjectDocTool` clamps `max_tokens` to
+  `MAX_TOKENS_HARD_CAP` (an above-cap argument behaves identically to one
+  at the cap; Task 2.4 test).
+- Both tools fail with a clear, `ProjectDocToolContext`-mentioning error
+  when run against a context lacking the service (tested for **both**
+  search and read), and forward allowlist/path enforcement to
+  `ProjectDocService` rather than re-implementing it.
+- The tools are **not** yet referenced by `ToolRegistry`,
+  `dispatch_model_tool_calls`, or any responder role — that wiring is
+  deliberately deferred to Phases 3-6. `lib.rs` is unchanged in this
+  phase.
+- `cargo test -p qsf_app tools::`, `cargo clippy --all-targets -- -D
+  warnings`, and `cargo fmt` are all clean.
+
+**Open question to surface if it arises:** if, while writing Task 2.2,
+the borrowed-`&ProjectDocService` context proves awkward at the eventual
+call site (e.g. the dispatcher only has an owned/`Arc` handle, or needs
+the combined session+project-doc context described in the *Mixed-batch
+dispatch* note above), raise Open Question #2 before Phase 3 rather than
+silently switching to an `Arc<ProjectDocService>` or a one-off context —
+the change touches both the context type and every construction site.
 
 ---
 
@@ -2045,6 +993,14 @@ clean.
 Extend the hand-coded registry to dispatch the two new tools. Per
 `Agents.md`, keep shared constants DRY — the names already live in
 their respective tool modules; the registry imports them.
+
+**Before this phase hardens the wiring**, settle the combined-context
+decision from Phase 2's *Mixed-batch dispatch* note (Open Question #2):
+the dispatch path will need a single `ToolContext` that answers both
+`session_state()` (for `recall_turn`) and `project_doc_service()` (for
+the project-doc tools). The registry itself does not hold the context,
+but the construction site it feeds (Phases 4 and 6) does — do not defer
+the choice past this point.
 
 ### Task 3.1: Extend the registry
 
@@ -2148,6 +1104,11 @@ and `read_project_doc` calls a single batch (= one turn) has consumed,
 and to fail the excess calls fast — with a `ToolFailed` event and a
 `TraceRecord` recording the refusal — instead of running them.
 
+This is the first phase that actually dispatches the project-doc tools
+through a live `ToolContext` alongside `recall_turn`, so the combined
+context from Open Question #2 (a single context answering both
+`session_state()` and `project_doc_service()`) must already exist here.
+
 ### Task 4.1: Cap enforcement
 
 **Files:**
@@ -2193,7 +1154,7 @@ mod project_doc_cap_tests {
 setup mirrors the existing test patterns in the same file. If the file
 has no existing test infrastructure yet, write a focused integration
 test under `crates/qsf_app/tests/` that builds a `RunContext`, a
-`ModelRequest`, a `ToolRegistry`, and a `ProjectDocToolContext`, then
+`ModelRequest`, a `ToolRegistry`, and a combined `ToolContext`, then
 calls `dispatch_model_tool_calls` directly.)
 
 - [ ] **Step 2: Run tests; verify they fail.**
@@ -2421,6 +1382,14 @@ used by the multi-turn text loop (and, by extension, the unified
 text/voice path once that lands), and adds the always-on prompt block
 that teaches the model when and how to use them.
 
+This is the call site where `recall_turn`, `search_project_docs`, and
+`read_project_doc` are advertised together, so the `ToolContext`
+constructed here (and passed to `dispatch_model_tool_calls`) **must** be
+the combined context that answers both `session_state()` and
+`project_doc_service()` — see Phase 2's *Mixed-batch dispatch* note and
+Open Question #2. If that combined context does not yet exist, build it
+before extending `allowed_tools`.
+
 ### Task 6.1: Extend `allowed_tools` for the responder
 
 **Files:**
@@ -2462,7 +1431,11 @@ fn responder_advertises_project_doc_tools() {
 - [ ] **Step 3: Update the call site(s).**
 
 Extend each existing `vec![...]` of tool names to include the two new
-constants. Keep the constants imported from `crate::tools`.
+constants. Keep the constants imported from `crate::tools`. Confirm the
+context handed to `dispatch_model_tool_calls` at each updated call site
+is the combined context (exposes both `session_state()` and
+`project_doc_service()`); otherwise `recall_turn` or the project-doc
+tools will fail at runtime.
 
 - [ ] **Step 4: Run tests.**
 
@@ -2992,7 +1965,13 @@ git commit -m "docs(frame): pointer to allowlist; record deferred latency cap"
 Per the *Instructions how to use* at the top of the diary, add one
 entry at the end of the file covering the application work landed in
 Phases 1-8. Keep it short, reference concrete artifacts, do not
-reference planning documents.
+reference planning documents. **Because Phase 1 was committed as a
+standalone slice, make sure this entry (or a separate library-slice
+entry) explicitly accounts for the `project_docs` library work, not
+only Phases 2-8.** If any of Phases 2-8 were merged in isolation ahead
+of this pass and already carry their own standalone diary entries (per
+the Phase 2 diary discipline), reconcile rather than duplicate them
+here.
 
 Template:
 
@@ -3195,12 +2174,17 @@ Run after Phases 1-10 land:
   `docs/EngineeringDiary.md` (Task 1.2 test should already cover this
   in CI).
 - [ ] Verify the bounded read rejects `..` traversal and absolute paths
-  (Task 1.5 tests should already cover this in CI).
+  (Phase 1 read tests should already cover this in CI).
+- [ ] Verify `read_project_doc` clamps an above-cap `max_tokens` to
+  `MAX_TOKENS_HARD_CAP` and `search_project_docs` normalizes
+  `max_results` into `1..=DEFAULT_MAX_RESULTS` (Phase 2 tests should
+  already cover both in CI).
 - [ ] Verify `Architecture.ToolSystem.md`'s *Implementation Status*
   section lists the two new tools under "Implemented today" with code
   refs and a refreshed `Last reviewed:` date.
 - [ ] Confirm there is exactly one diary entry covering Phases 1-8 (or,
-  if Phase 1 was merged independently, a standalone library-slice entry
-  plus the Phases 2-8 entry).
+  since Phase 1 was committed independently, a standalone library-slice
+  entry plus the Phases 2-8 entry), with any isolated-merge diary
+  entries reconciled rather than duplicated.
 - [ ] Confirm Phase 11 remains a follow-on planning handoff unless it has
   been promoted into a separate detailed design or implementation plan.

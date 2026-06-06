@@ -2346,3 +2346,20 @@ Observed:
 - Search ranking is heading-first, so heading matches outrank repeated body hits.
 
 Refs: crates/qsf_app/src/project_docs, crates/qsf_app/src/lib.rs, crates/qsf_app/Cargo.toml, config/project-doc-introspection.toml
+
+## 2026-06-06 - Project-doc tool surface
+
+Added the `qsf_app` tool-layer entry points for project-doc introspection: a read-only permission preset, a service-backed tool context, and direct `search_project_docs` / `read_project_doc` implementations with JSON-schema tool definitions.
+
+What changed:
+- Added `ToolPermission::read_only()` alongside coverage for read-only, write-capable, and compute-only permission checks.
+- Added `ProjectDocToolContext` plus the defaulted `ToolContext::project_doc_service()` accessor.
+- Added `SearchProjectDocsTool` and `ReadProjectDocTool` with serde round-trip tests, context-missing failures, query/result and token-budget normalization, and hard-cap clamping.
+
+Observed:
+- `cargo test -p qsf_app tools::`, `cargo build`, `cargo clippy --all-targets -- -D warnings`, and `cargo fmt` passed.
+
+Open question:
+- Registry wiring and the eventual combined session+project-doc dispatch context are still deferred to later work.
+
+Refs: crates/qsf_app/src/tools/tool_request.rs, crates/qsf_app/src/tools/tool_registry.rs, crates/qsf_app/src/tools/project_doc_tool.rs, crates/qsf_app/src/tools/search_project_docs_tool.rs, crates/qsf_app/src/tools/read_project_doc_tool.rs, crates/qsf_app/src/tools/mod.rs

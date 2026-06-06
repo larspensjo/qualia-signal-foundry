@@ -2,6 +2,7 @@ use anyhow::{Result, bail};
 use serde::{Deserialize, Serialize};
 
 use crate::models::ModelToolDefinition;
+use crate::project_docs::ProjectDocService;
 use crate::session::SessionState;
 
 use super::calculator_tool::CalculatorTool;
@@ -28,6 +29,10 @@ pub trait Tool {
 
 pub trait ToolContext {
     fn session_state(&self) -> Option<&SessionState> {
+        None
+    }
+
+    fn project_doc_service(&self) -> Option<&ProjectDocService> {
         None
     }
 }
