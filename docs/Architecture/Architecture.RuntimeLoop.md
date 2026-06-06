@@ -31,6 +31,12 @@ document as a candidate design that real experiments incrementally fill in.
   [experiments/multi_turn_text_loop.rs](../../crates/qsf_app/src/experiments/multi_turn_text_loop.rs),
   [experiments/text_owned_voice_loop.rs](../../crates/qsf_app/src/experiments/text_owned_voice_loop.rs),
   [experiments/realtime_voice_session.rs](../../crates/qsf_app/src/experiments/realtime_voice_session.rs))
+- Shared normalized sleep view over `Turn` and `Exchange` records so sleep and
+  safety-net consolidation can read mixed text/voice sessions in chronological
+  order without relying on vector index order
+  ([session/sleep_records.rs](../../crates/qsf_app/src/session/sleep_records.rs),
+  [experiments/sleep_phase_session_summary.rs](../../crates/qsf_app/src/experiments/sleep_phase_session_summary.rs),
+  [sleep/proposers/safety_net_co_retrieval.rs](../../crates/qsf_app/src/sleep/proposers/safety_net_co_retrieval.rs))
 - Shared session boot and manifest-last persistence helpers now live in
   `session/runtime.rs`, so the text loop, text-owned voice loop, and voice-loop
   peer surface use the same resume classification, `SessionResumed` event shape,
@@ -96,10 +102,10 @@ document as a candidate design that real experiments incrementally fill in.
   experiment code
 - Full turn-taking policy beyond deterministic interruption recording
 
-Last reviewed: 2026-06-01 against the realtime voice bridge — realtime provider
+Last reviewed: 2026-06-06 against the shared sleep-view phase — realtime provider
 sessions now persist shared exchanges for transcript, provider preamble/lifecycle,
-interruption, and tool-request facts while leaving memory retrieval and QSF-owned
-model behavior to the text-owned paths.
+interruption, and tool-request facts while sleep and safety-net consolidation read
+the shared normalized turn/exchange view.
 
 ## Purpose
 

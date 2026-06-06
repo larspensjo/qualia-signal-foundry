@@ -2293,3 +2293,41 @@ docs/Architecture/Architecture.RuntimeLoop.md,
 docs/Architecture/Architecture.AudioLoop.md,
 docs/Architecture/Architecture.SleepPhase.md,
 docs/Architecture/Architecture.StateAndObservability.md
+
+## 2026-06-06 - Sleep consumes shared voice exchanges
+
+Phase 7 landed: sleep now builds a normalized shared view over text turns and voice
+exchanges, keeps provider preambles out of the promotable sleep prompt, and feeds
+voice sessions through the same consolidation and safety-net paths as text.
+
+What changed:
+- Added `session::sleep_records` as a chronological, read-only mixed turn/exchange
+  view for sleep and safety-net consolidation.
+- Updated `sleep_phase_session_summary` to render voice exchanges, interruption
+  details, and separate non-promotable diagnostic notes for provider metadata.
+- Routed the safety-net co-retrieval proposer through the same shared view so mixed
+  text/voice sessions participate in processed-range bookkeeping.
+- Added regression coverage for mixed chronology, provider-preamble isolation,
+  interrupted empty-response voice sessions, and voice retrieval coverage in sleep.
+- Applied review follow-up by aligning voice diagnostic labels with durable exchange
+  indexes, keeping mixed-session sleep coverage from treating text live ranges as
+  voice coverage, and adding Phase 7b coverage for voice promotion/draft commit plus
+  post-sleep voice resume from the consolidated brief.
+- Updated the sleep, runtime, memory, and voice-experiment architecture notes to
+  reflect voice-aware sleep consolidation.
+
+Observed:
+- `cargo test -p qsf_app sleep --lib`, `cargo test -p qsf_app realtime_voice_session --lib`,
+  `cargo test -p qsf_app text_owned_voice_loop --lib`,
+  `cargo test -p qsf_app safety_net_co_retrieval --lib`, `cargo build`,
+  `cargo clippy --all-targets -- -D warnings`, and `cargo fmt` passed after the
+  change and review follow-up.
+
+Refs: crates/qsf_app/src/session/sleep_records.rs,
+crates/qsf_app/src/experiments/sleep_phase_session_summary.rs,
+crates/qsf_app/src/sleep/proposers/safety_net_co_retrieval.rs,
+docs/Architecture/Architecture.SleepPhase.md,
+docs/Architecture/Architecture.RuntimeLoop.md,
+docs/Architecture/Architecture.MemorySystem.md,
+docs/Experiments/Experiment.RealtimeVoiceSessionMVP.md,
+docs/Experiments/Experiment.TextOwnedVoiceLoop.md

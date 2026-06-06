@@ -8,9 +8,10 @@ Candidate
 
 A session-end sleep flow exists: a sleep pass produces a structured report, consumes
 the persisted shared-session `SessionState` when available, promotes routine memory
-candidates into the cross-session store, writes a consolidated brief, and updates the
-continuity manifest through a manifest-last commit protocol. Manual review remains
-the boundary for decision-kind candidates.
+candidates into the cross-session store, writes a consolidated brief, updates the
+continuity manifest through a manifest-last commit protocol, and now reads a
+normalized shared view of both text turns and voice exchanges for consolidation.
+Manual review remains the boundary for decision-kind candidates.
 
 **Implemented today:**
 
@@ -35,6 +36,12 @@ the boundary for decision-kind candidates.
   against unprocessed retrieval-history ranges
   ([sleep/proposer.rs](../../crates/qsf_app/src/sleep/proposer.rs),
   [sleep/proposers/llm_candidate.rs](../../crates/qsf_app/src/sleep/proposers/llm_candidate.rs),
+  [sleep/proposers/safety_net_co_retrieval.rs](../../crates/qsf_app/src/sleep/proposers/safety_net_co_retrieval.rs))
+- Shared normalized sleep record view over text `Turn` records and voice
+  `Exchange` records, ordered chronologically for summarization and safety-net
+  coverage
+  ([session/sleep_records.rs](../../crates/qsf_app/src/session/sleep_records.rs),
+  [experiments/sleep_phase_session_summary.rs](../../crates/qsf_app/src/experiments/sleep_phase_session_summary.rs),
   [sleep/proposers/safety_net_co_retrieval.rs](../../crates/qsf_app/src/sleep/proposers/safety_net_co_retrieval.rs))
 - Cross-turn association strengthening from session retrieval history remains
   part of the sleep commit plan, but creation flows through the safety-net
@@ -72,10 +79,8 @@ the boundary for decision-kind candidates.
 - Explicit decay/pruning of weak memories during sleep
 - Semantic deduplication or contradiction handling during promotion
 - Replay UI or report view for deterministic sleep comparison
-- Voice-loop session consumption by the sleep phase
 
-Last reviewed: 2026-05-27 against the Phase 5 associative-recall proposer
-implementation.
+Last reviewed: 2026-06-06 against the Phase 7 shared sleep-view implementation.
 
 ## Summary
 

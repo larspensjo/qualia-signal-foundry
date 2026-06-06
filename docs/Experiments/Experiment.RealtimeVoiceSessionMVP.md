@@ -62,8 +62,8 @@ tool route explicitly handles them.
 
 The shared boot path may load continuity metadata and a pending consolidated brief,
 but realtime provider-owned cognition deliberately does not inject that brief into a
-provider prompt. Phase 7 remains responsible for sleep-side consumption of realtime
-voice exchanges.
+provider prompt. Phase 7 now consumes the persisted voice exchanges during sleep
+consolidation without giving the provider ownership of the brief or memory updates.
 
 ## Verification
 

@@ -157,6 +157,9 @@ reads `state/text-loop/` and writes `state/session/`,
 model failure prevents `OutputProduced`, and speech-provider failure sanitizes
 credential-like errors. A latency regression test uses a deliberately delayed mock
 model to ensure total turn latency includes model-role runtime.
+Sleep-phase consolidation now consumes the shared voice session material through the
+normalized text/voice sleep view, so finalized voice turns can promote memories the
+same way text turns do.
 
 ## Live Evaluation Notes
 

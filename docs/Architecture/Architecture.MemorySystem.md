@@ -46,7 +46,7 @@ future retrieval backends.
   [experiments/accept_reviewed_memory.rs](../../crates/qsf_app/src/experiments/accept_reviewed_memory.rs))
 - Sleep-side auto-promotion of routine memory candidates and safety-net
   cross-turn associations for session anchors not already covered by live
-  processing
+  processing, including voice exchanges through the shared normalized sleep view
   ([sleep/auto_promote.rs](../../crates/qsf_app/src/sleep/auto_promote.rs),
   [experiments/sleep_phase_session_summary.rs](../../crates/qsf_app/src/experiments/sleep_phase_session_summary.rs))
 - Live-loop co-retrieval association formation and retrieved-memory reinforcement
@@ -89,12 +89,14 @@ future retrieval backends.
 - Vector index, embedding store, or graph store
 - Promotion of session summaries or recall records into durable memory beyond
   sleep-generated candidates
-- Sleep consumption of voice exchanges as first-class voice session material
+- Sleep-side consolidation over voice exchanges is now shared with text turns,
+  but richer semantic typing of the resulting memories is still shallow
 
-Last reviewed: 2026-06-01 against the text-owned voice shared-continuity path —
+Last reviewed: 2026-06-06 against the shared sleep-view phase —
 live-loop co-retrieval handles mechanical edges, sleep contributes safety-net and
-LLM-candidate associations through the proposer interface, and text-owned voice now
-uses the shared memory store by default.
+LLM-candidate associations through the proposer interface, and both text and voice
+sessions flow through the shared memory store and sleep consolidation path by
+default.
 
 ## Purpose
 

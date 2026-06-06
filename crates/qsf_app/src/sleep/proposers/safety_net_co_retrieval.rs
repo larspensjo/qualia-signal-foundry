@@ -27,15 +27,17 @@ impl SafetyNetCoRetrievalProposer {
         session: &SessionState,
         as_of: OffsetDateTime,
     ) -> SafetyNetCoRetrievalOutput {
-        if session.turns.is_empty() {
+        let sleep_records = session.sleep_records();
+        if sleep_records.is_empty() {
             return SafetyNetCoRetrievalOutput::default();
         }
 
+        let coverage_ranges = coverage_ranges_for_sleep_records(&store.processed_ranges, session);
         let uncovered = uncovered_turn_indices(
-            &store.processed_ranges,
+            &coverage_ranges,
             &session.session_id,
             0,
-            session.turns.len() - 1,
+            sleep_records.len() - 1,
         );
         if uncovered.is_empty() {
             return SafetyNetCoRetrievalOutput::default();
@@ -49,10 +51,9 @@ impl SafetyNetCoRetrievalProposer {
                 last_turn: *last,
             })
             .collect::<Vec<_>>();
-        let retrievals = session
-            .turns
+        let retrievals = sleep_records
             .iter()
-            .map(|turn| turn.context_assembly.retrieved_memory_ids())
+            .map(|record| record.retrieval_source_ids())
             .collect::<Vec<_>>();
         let known_record_ids: HashSet<String> = store
             .records
@@ -114,6 +115,21 @@ impl SafetyNetCoRetrievalProposer {
     }
 }
 
+fn coverage_ranges_for_sleep_records(
+    ranges: &[qsf_memory::ProcessedRange],
+    session: &SessionState,
+) -> Vec<qsf_memory::ProcessedRange> {
+    if session.exchanges.is_empty() {
+        return ranges.to_vec();
+    }
+
+    ranges
+        .iter()
+        .filter(|range| range.kind == qsf_memory::ProcessedRangeKind::SleepSafetyNet)
+        .cloned()
+        .collect()
+}
+
 impl AssociationProposer for SafetyNetCoRetrievalProposer {
     fn name(&self) -> &str {
         "safety-net-co-retrieval"
@@ -141,7 +157,10 @@ mod tests {
     use crate::memory::association::Association;
     use crate::memory::memory_record::{MemoryRecord, MemoryRecordKind};
     use crate::memory::store::MemoryStoreContents;
-    use crate::session::{MemorySourceConfig, SessionConfig, SessionState, Turn};
+    use crate::session::{
+        Exchange, ExchangeInput, ExchangeOutput, MemorySourceConfig, SessionConfig, SessionState,
+        Turn, UtteranceRecord,
+    };
     use crate::sleep::proposer::AssociationProposer;
 
     fn session_with_turns(turn_count: usize, retrievals: &[&[&str]]) -> SessionState {
@@ -231,6 +250,62 @@ mod tests {
         }
     }
 
+    fn voice_exchange_with_memory(
+        index: usize,
+        started_at: std::time::SystemTime,
+        memory_id: &str,
+    ) -> Exchange {
+        Exchange {
+            index,
+            started_at,
+            completed_at: Some(started_at),
+            input: ExchangeInput::Voice {
+                final_transcript: "Please keep the voice path in sleep.".to_string(),
+                utterances: vec![UtteranceRecord {
+                    utterance_id: "utt-1".to_string(),
+                    revision_index: 0,
+                    transcript: "Please keep the voice path in sleep.".to_string(),
+                    received_at: started_at,
+                    provider_id: Some("provider".to_string()),
+                    source_chunk_index: None,
+                }],
+            },
+            output: Some(ExchangeOutput {
+                response_id: Some("response-1".to_string()),
+                text: "Understood.".to_string(),
+                produced_at: started_at,
+                provider_name: Some("provider".to_string()),
+                target: Some("speech-output-provider".to_string()),
+                audio_marker: None,
+            }),
+            context_assembly: Some(ContextAssembly {
+                budget: ContextBudget::new(4, 600),
+                selected: vec![ContextSelection {
+                    fragment: ContextFragment {
+                        fragment_id: memory_id.to_string(),
+                        source_kind: crate::context::ContextSourceKind::Memory,
+                        summary: format!("summary {memory_id}"),
+                        tags: vec![],
+                        score: 1.0,
+                        estimated_tokens: 10,
+                        source_reference: "tests".to_string(),
+                        selection_reason: "tests".to_string(),
+                    },
+                    cumulative_estimated_tokens: 10,
+                }],
+                omitted: vec![],
+                used_estimated_tokens: 10,
+            }),
+            retrieved_memory_block: String::new(),
+            recalled_items: vec![],
+            model: None,
+            interruptions: vec![],
+            provider_events: vec![],
+            tool_requests: vec![],
+            status: crate::session::ExchangeStatus::Completed,
+        }
+    }
+
     #[test]
     fn safety_net_skips_already_processed_ranges() {
         let session =
@@ -277,6 +352,69 @@ mod tests {
             vec![("memory.a".to_string(), "memory.c".to_string(), 0.45)]
         );
         assert_eq!(output.processed_ranges.len(), 1);
+        assert_eq!(
+            output.processed_ranges[0].kind,
+            qsf_memory::ProcessedRangeKind::SleepSafetyNet
+        );
+    }
+
+    #[test]
+    fn safety_net_includes_voice_exchange_retrievals_in_mixed_sessions() {
+        let mut session = session_with_turns(1, &[&["memory.a"]]);
+        session.exchanges.push(voice_exchange_with_memory(
+            0,
+            std::time::SystemTime::UNIX_EPOCH,
+            "memory.b",
+        ));
+
+        let store = store_with_records(&["memory.a", "memory.b"]);
+        let proposer = SafetyNetCoRetrievalProposer;
+
+        let output =
+            proposer.propose_with_bookkeeping(&store, &session, time::OffsetDateTime::UNIX_EPOCH);
+
+        assert!(!output.processed_ranges.is_empty());
+        assert!(
+            output
+                .proposals
+                .iter()
+                .any(|proposal| proposal.from_id == "memory.a" && proposal.to_id == "memory.b")
+        );
+    }
+
+    #[test]
+    fn mixed_sessions_ignore_text_live_ranges_when_covering_voice_sleep_records() {
+        let mut session = session_with_turns(1, &[&["memory.a"]]);
+        let later = std::time::SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(1);
+        session.turns[0].started_at = later;
+        session.turns[0].completed_at = later;
+        session.exchanges.push(voice_exchange_with_memory(
+            0,
+            std::time::SystemTime::UNIX_EPOCH,
+            "memory.b",
+        ));
+        let mut store = store_with_records(&["memory.a", "memory.b"]);
+        store.processed_ranges.push(qsf_memory::ProcessedRange {
+            session_id: session.session_id.clone(),
+            first_turn_index: 0,
+            last_turn_index: 0,
+            kind: qsf_memory::ProcessedRangeKind::LiveBatch,
+            at: time::OffsetDateTime::UNIX_EPOCH,
+        });
+        let proposer = SafetyNetCoRetrievalProposer;
+
+        let output =
+            proposer.propose_with_bookkeeping(&store, &session, time::OffsetDateTime::UNIX_EPOCH);
+
+        assert!(
+            output
+                .proposals
+                .iter()
+                .any(|proposal| proposal.from_id == "memory.a" && proposal.to_id == "memory.b")
+        );
+        assert_eq!(output.processed_ranges.len(), 1);
+        assert_eq!(output.processed_ranges[0].first_turn_index, 0);
+        assert_eq!(output.processed_ranges[0].last_turn_index, 1);
         assert_eq!(
             output.processed_ranges[0].kind,
             qsf_memory::ProcessedRangeKind::SleepSafetyNet

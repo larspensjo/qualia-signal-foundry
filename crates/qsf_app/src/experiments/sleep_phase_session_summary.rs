@@ -11,7 +11,7 @@ use crate::observability::event_log::EventType;
 use crate::observability::trace::{TraceRecord, elapsed_ns};
 use crate::runtime::run_context::RunContext;
 use crate::session::resume::ResumeInputs;
-use crate::session::{SessionState, StateDirectoryResolution};
+use crate::session::{SessionState, SleepRecord, StateDirectoryResolution};
 use crate::sleep::{SleepInputBundle, SleepReport, summarize_session};
 
 use super::registry::{Experiment, ExperimentName, ExperimentOutcome};
@@ -207,11 +207,7 @@ fn commit_cross_session_sleep(
         return Ok(outcome);
     }
 
-    let as_of = session
-        .turns
-        .iter()
-        .map(|turn| turn.completed_at)
-        .max()
+    let as_of = latest_sleep_record_completion(&session)
         .map(time::OffsetDateTime::from)
         .unwrap_or_else(time::OffsetDateTime::now_utc);
     let sleep_run_id = context.run_id().to_string();
@@ -347,43 +343,179 @@ fn session_sleep_input(session: &SessionState) -> SleepInputBundle {
         }
     }
 
-    transcript.push_str("\nCompleted turns:\n");
-    if session.turns.is_empty() {
+    let sleep_records = session.sleep_records();
+    engine_logging::engine_info!(
+        "sleep session input assembled: session_id={} turn_count={} exchange_count={} sleep_record_count={}",
+        session.session_id,
+        session.turns.len(),
+        session.exchanges.len(),
+        sleep_records.len()
+    );
+    transcript.push_str("\nCompleted turns and exchanges:\n");
+    if sleep_records.is_empty() {
         transcript.push_str("- None recorded.\n");
     } else {
-        for turn in &session.turns {
-            transcript.push_str(&format!("\nTurn {}:\n", turn.index));
-            transcript.push_str("User:\n");
-            transcript.push_str(turn.user_input.trim());
-            transcript.push_str("\nAssistant:\n");
-            transcript.push_str(turn.assistant_response.trim());
-            transcript.push('\n');
-
-            if !turn.retrieved_memory_block.trim().is_empty() {
-                transcript.push_str("Retrieved memory block:\n");
-                transcript.push_str(turn.retrieved_memory_block.trim());
-                transcript.push('\n');
-            }
-
-            if !turn.recalled_turns.is_empty() {
-                transcript.push_str("Recalled turns:\n");
-                for recall in &turn.recalled_turns {
-                    transcript.push_str(&format!(
-                        "- {} recalled turn {} via {}\n",
-                        recall.call_id, recall.turn_id, recall.tool_name
-                    ));
+        let mut diagnostic_notes = Vec::new();
+        for record in &sleep_records {
+            let source_index = record.source_index();
+            match record {
+                SleepRecord::Turn(_) => {
+                    engine_logging::engine_info!(
+                        "sleep record: session_id={} record_kind=turn turn_index={} status=completed interruptions=0",
+                        session.session_id,
+                        source_index
+                    );
+                    transcript.push_str(&format!("\nTurn {}:\n", source_index));
+                    append_labelled_value(
+                        &mut transcript,
+                        "User",
+                        record.user_input_text(),
+                        "(empty user input)",
+                    );
+                    append_labelled_value(
+                        &mut transcript,
+                        "Assistant",
+                        record.assistant_output_text().unwrap_or_default(),
+                        "(empty assistant response)",
+                    );
+                    append_retrieved_memory_block(&mut transcript, record.retrieved_memory_block());
+                    append_recalled_items(
+                        &mut transcript,
+                        "Recalled turns",
+                        record.recalled_items(),
+                    );
+                }
+                SleepRecord::Exchange(exchange) => {
+                    engine_logging::engine_info!(
+                        "sleep record: session_id={} record_kind=exchange exchange_index={} status={:?} interruptions={}",
+                        session.session_id,
+                        source_index,
+                        exchange.status,
+                        record.interruption_records().len()
+                    );
+                    transcript.push_str(&format!("\nVoice exchange {}:\n", source_index));
+                    append_labelled_value(
+                        &mut transcript,
+                        "Final transcript",
+                        record.final_transcript().unwrap_or_default(),
+                        "(no final transcript recorded)",
+                    );
+                    let assistant_response = record
+                        .assistant_output_text()
+                        .unwrap_or("(no completed response)");
+                    append_labelled_value(
+                        &mut transcript,
+                        "Assistant spoken response",
+                        assistant_response,
+                        "(no completed response)",
+                    );
+                    append_retrieved_memory_block(&mut transcript, record.retrieved_memory_block());
+                    append_recalled_items(
+                        &mut transcript,
+                        "Recalled items",
+                        record.recalled_items(),
+                    );
+                    append_interruption_block(&mut transcript, record.interruption_records());
+                    diagnostic_notes.extend(
+                        record
+                            .provider_diagnostic_notes()
+                            .into_iter()
+                            .map(|note| format!("Voice exchange {}: {note}", source_index)),
+                    );
                 }
             }
         }
+
+        return SleepInputBundle::new("session_state", session.session_id.clone(), transcript)
+            .with_review_notes(session_state_review_notes())
+            .with_diagnostic_notes(diagnostic_notes);
     }
 
     SleepInputBundle::new("session_state", session.session_id.clone(), transcript)
-        .with_review_notes(vec![
-            "This sleep pass uses the persisted previous session state as its source.".to_string(),
-            "All memory and decision outputs remain pending human review.".to_string(),
-            "Trace the sleep report back to concrete prior turns rather than hidden state."
-                .to_string(),
-        ])
+        .with_review_notes(session_state_review_notes())
+}
+
+fn session_state_review_notes() -> Vec<String> {
+    vec![
+        "This sleep pass uses the persisted previous session state as its source.".to_string(),
+        "All memory and decision outputs remain pending human review.".to_string(),
+        "Trace the sleep report back to concrete prior turns rather than hidden state.".to_string(),
+    ]
+}
+
+fn latest_sleep_record_completion(session: &SessionState) -> Option<std::time::SystemTime> {
+    session
+        .sleep_records()
+        .into_iter()
+        .map(|record| record.completed_at())
+        .max()
+}
+
+fn append_labelled_value(transcript: &mut String, label: &str, value: &str, placeholder: &str) {
+    transcript.push_str(label);
+    transcript.push_str(":\n");
+    let rendered = if value.trim().is_empty() {
+        placeholder
+    } else {
+        value.trim()
+    };
+    transcript.push_str(rendered);
+    transcript.push('\n');
+}
+
+fn append_retrieved_memory_block(transcript: &mut String, retrieved_memory_block: &str) {
+    if retrieved_memory_block.trim().is_empty() {
+        return;
+    }
+
+    transcript.push_str("Retrieved memory block:\n");
+    transcript.push_str(retrieved_memory_block.trim());
+    transcript.push('\n');
+}
+
+fn append_recalled_items(
+    transcript: &mut String,
+    label: &str,
+    recalled_items: &[crate::session::RecallRecord],
+) {
+    if recalled_items.is_empty() {
+        return;
+    }
+
+    transcript.push_str(label);
+    transcript.push_str(":\n");
+    for recall in recalled_items {
+        transcript.push_str(&format!(
+            "- {} recalled turn {} via {}\n",
+            recall.call_id, recall.turn_id, recall.tool_name
+        ));
+    }
+}
+
+fn append_interruption_block(
+    transcript: &mut String,
+    interruptions: &[crate::session::InterruptionRecord],
+) {
+    if interruptions.is_empty() {
+        return;
+    }
+
+    transcript.push_str(&format!("Interruptions ({}):\n", interruptions.len()));
+    for interruption in interruptions {
+        let partial_response_present = interruption
+            .partial_response_text
+            .as_ref()
+            .map(|text| !text.trim().is_empty())
+            .unwrap_or(false);
+        transcript.push_str(&format!(
+            "- source={} action={:?} stop_outcome={:?} partial_response_present={partial_response_present}",
+            interruption.source, interruption.action, interruption.stop_outcome
+        ));
+        if let Some(response_id) = &interruption.response_id {
+            transcript.push_str(&format!(" response_id={response_id}"));
+        }
+        transcript.push('\n');
+    }
 }
 
 fn write_sleep_artifacts(
@@ -412,6 +544,10 @@ fn write_sleep_artifacts(
     markdown.push_str(
         "- Review policy: all extracted items remain provisional until manually reviewed\n",
     );
+    if !input.diagnostic_notes.is_empty() {
+        markdown.push_str("\n## Sleep Input Diagnostics\n\n");
+        push_markdown_list(&mut markdown, &input.diagnostic_notes);
+    }
     markdown.push_str("\n## Session Summary\n\n");
     markdown.push_str(&report.session_summary);
     markdown.push_str("\n\n## Memory Candidates\n\n");
@@ -481,16 +617,22 @@ fn push_markdown_list(markdown: &mut String, items: &[String]) {
 mod tests {
     use std::fs;
     use std::path::PathBuf;
+    use std::time::SystemTime;
 
     use super::{SleepPhaseSessionSummaryExperiment, build_sleep_input};
     use crate::context::{ContextAssembly, ContextBudget, ContextFragment, ContextSelection};
-    use crate::memory::{MemoryRecord, MemoryRecordKind, MemoryStore};
+    use crate::experiments::ExperimentOutcome;
+    use crate::memory::{MemoryFixture, MemoryRecord, MemoryRecordKind, MemoryStore};
+    use crate::models::{MockModelClient, ModelClient, ModelRequest, ModelResponse};
     use crate::runtime::run_context::RunContext;
     use crate::session::manifest::{ContinuityManifest, ResumeMode};
     use crate::session::resume::ResumeInputs;
     use crate::session::{
-        MemorySourceConfig, SessionConfig, SessionState, StateDirectoryResolution, TurnSummary,
+        Exchange, ExchangeInput, ExchangeOutput, InterruptionAction, InterruptionRecord,
+        InterruptionStopOutcome, MemorySourceConfig, ProviderEventKind, ProviderEventRecord,
+        SessionConfig, SessionState, StateDirectoryResolution, TurnSummary,
     };
+    use crate::sleep::{SleepMemoryCandidate, SleepReport};
     use time::OffsetDateTime;
 
     #[test]
@@ -562,6 +704,178 @@ mod tests {
                 .iter()
                 .any(|note| note.contains("persisted previous session state"))
         );
+    }
+
+    #[test]
+    fn sleep_input_orders_mixed_text_and_voice_records_by_timestamp() {
+        let earlier = SystemTime::UNIX_EPOCH;
+        let later = SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(1);
+        let text_then_voice = mixed_session(true, earlier, later);
+        let voice_then_text = mixed_session(false, earlier, later);
+
+        assert_eq!(
+            text_then_voice
+                .sleep_records()
+                .into_iter()
+                .map(|record| record.kind())
+                .collect::<Vec<_>>(),
+            vec![
+                crate::session::SleepRecordKind::Exchange,
+                crate::session::SleepRecordKind::Turn
+            ]
+        );
+        assert_eq!(
+            voice_then_text
+                .sleep_records()
+                .into_iter()
+                .map(|record| record.kind())
+                .collect::<Vec<_>>(),
+            vec![
+                crate::session::SleepRecordKind::Exchange,
+                crate::session::SleepRecordKind::Turn
+            ]
+        );
+
+        let text_then_voice_input = super::session_sleep_input(&text_then_voice);
+        let voice_then_text_input = super::session_sleep_input(&voice_then_text);
+        let text_turn_position = text_then_voice_input.session_text.find("Turn 0:").unwrap();
+        let text_voice_position = text_then_voice_input
+            .session_text
+            .find("Voice exchange 0:")
+            .unwrap();
+        let voice_turn_position = voice_then_text_input.session_text.find("Turn 0:").unwrap();
+        let voice_voice_position = voice_then_text_input
+            .session_text
+            .find("Voice exchange 0:")
+            .unwrap();
+
+        assert!(text_voice_position < text_turn_position);
+        assert!(voice_voice_position < voice_turn_position);
+    }
+
+    #[test]
+    fn sleep_input_keeps_provider_preamble_out_of_promotable_prompt_and_commit_fields() {
+        let preamble_text = "provider preamble should stay out of the prompt";
+        let mut previous = SessionState::new_with_id("session-with-preamble".to_string(), config());
+        previous.exchanges.push(voice_exchange_with_metadata(
+            2,
+            SystemTime::UNIX_EPOCH,
+            Some("memory.voice".to_string()),
+            Some(preamble_text),
+            false,
+        ));
+
+        let input = build_sleep_input(&ResumeInputs {
+            manifest: ContinuityManifest::default(),
+            previous_session: Some(previous),
+        });
+
+        let mut context = RunContext::create_in(
+            std::env::temp_dir().join(format!("qsf-sleep-boundary-{}", uuid::Uuid::new_v4())),
+            "sleep-boundary-test",
+        )
+        .unwrap();
+        let result = crate::sleep::summarize_session(
+            &mut context,
+            &PreambleAssertingSleepClient {
+                prohibited_text: preamble_text.to_string(),
+            },
+            &input,
+        )
+        .unwrap();
+
+        assert!(!result.report.session_summary.contains(preamble_text));
+        assert!(
+            input
+                .session_text
+                .contains("Voice exchange 2:\nFinal transcript")
+        );
+        assert!(
+            input
+                .diagnostic_notes
+                .iter()
+                .any(|note| note.starts_with("Voice exchange 2: Provider diagnostics"))
+        );
+        assert!(
+            result
+                .report
+                .memory_candidates
+                .iter()
+                .all(|candidate| !candidate.summary.contains(preamble_text))
+        );
+        assert!(
+            result
+                .report
+                .future_context_hints
+                .iter()
+                .all(|hint| !hint.contains(preamble_text))
+        );
+    }
+
+    #[test]
+    fn interrupted_voice_exchange_builds_coherent_sleep_input_without_panicking() {
+        let mut previous = SessionState::new_with_id("interrupted-voice".to_string(), config());
+        previous.exchanges.push(Exchange {
+            index: 0,
+            started_at: SystemTime::UNIX_EPOCH,
+            completed_at: None,
+            input: ExchangeInput::Voice {
+                final_transcript: String::new(),
+                utterances: vec![],
+            },
+            output: None,
+            context_assembly: None,
+            retrieved_memory_block: String::new(),
+            recalled_items: vec![],
+            model: None,
+            interruptions: vec![InterruptionRecord {
+                exchange_index: 0,
+                response_id: Some("response-1".to_string()),
+                detected_at: SystemTime::UNIX_EPOCH,
+                source: "realtime-provider".to_string(),
+                action: InterruptionAction::Stop,
+                stop_outcome: InterruptionStopOutcome::Stopped,
+                partial_response_text: None,
+            }],
+            provider_events: vec![ProviderEventRecord {
+                exchange_index: 0,
+                event_kind: ProviderEventKind::Preamble,
+                provider_id: "provider".to_string(),
+                received_at: SystemTime::UNIX_EPOCH,
+                response_id: None,
+                text: Some("provider preamble text".to_string()),
+                status: Some("pending".to_string()),
+                audio_marker: None,
+            }],
+            tool_requests: vec![],
+            status: crate::session::ExchangeStatus::Interrupted,
+        });
+
+        let input = build_sleep_input(&ResumeInputs {
+            manifest: ContinuityManifest::default(),
+            previous_session: Some(previous),
+        });
+
+        assert!(!input.session_text.trim().is_empty());
+        assert!(
+            input
+                .session_text
+                .contains("(no final transcript recorded)")
+        );
+        assert!(input.session_text.contains("(no completed response)"));
+        assert!(
+            input
+                .diagnostic_notes
+                .iter()
+                .any(|note| note.contains("Provider diagnostics"))
+        );
+
+        let mut context = RunContext::create_in(
+            std::env::temp_dir().join(format!("qsf-sleep-interrupted-{}", uuid::Uuid::new_v4())),
+            "sleep-interrupted-test",
+        )
+        .unwrap();
+        crate::sleep::summarize_session(&mut context, &MockModelClient::default(), &input).unwrap();
     }
 
     #[test]
@@ -730,6 +1044,119 @@ mod tests {
         fs::remove_dir_all(base_dir).unwrap();
     }
 
+    #[test]
+    fn voice_sleep_commit_promotes_observations_and_writes_decision_draft() {
+        let base_dir =
+            std::env::temp_dir().join(format!("qsf-voice-sleep-commit-{}", uuid::Uuid::new_v4()));
+        let state_dir = base_dir.join("state/session");
+        let mut previous =
+            SessionState::new_with_id("voice-session-to-sleep".to_string(), config());
+        previous.exchanges.push(voice_exchange_with_metadata(
+            0,
+            SystemTime::UNIX_EPOCH,
+            None,
+            None,
+            false,
+        ));
+        crate::session::persistence::persist_session_state(&previous, &state_dir).unwrap();
+        ContinuityManifest {
+            current_session_id: Some(previous.session_id.clone()),
+            current_session_state_path: Some(PathBuf::from("session-state.json")),
+            sleep_pending: true,
+            resume_mode: ResumeMode::AwakeContinuation,
+            ..ContinuityManifest::default()
+        }
+        .persist(state_dir.join("continuity-manifest.json"))
+        .unwrap();
+
+        let report = SleepReport {
+            session_summary: "Voice session summary for the consolidated brief.".to_string(),
+            memory_candidates: vec![SleepMemoryCandidate {
+                summary: "Routine voice observation should auto-promote.".to_string(),
+                importance: Some(0.72),
+                source_reference: Some("voice-session:exchange-0".to_string()),
+            }],
+            association_candidates: vec![],
+            open_questions: vec![],
+            decision_candidates: vec![
+                "Prefer voice memory policy changes to stay in reviewed drafts.".to_string(),
+            ],
+            future_context_hints: vec!["Resume voice continuity from this brief.".to_string()],
+            review_notes: vec![],
+        };
+        let context =
+            RunContext::create_in(base_dir.join("runs"), "sleep-voice-commit-test").unwrap();
+        let outcome = ExperimentOutcome {
+            summary: "test".to_string(),
+            observations: vec![],
+            failure_modes: vec![],
+            follow_up_questions: vec![],
+            decision_candidates: vec![],
+            extra_artifacts: vec![],
+        };
+
+        let outcome = super::commit_cross_session_sleep(
+            &context,
+            &report,
+            outcome,
+            &StateDirectoryResolution {
+                resume_state_dir: state_dir.clone(),
+                persist_state_dir: state_dir.clone(),
+                legacy_fallback_used: false,
+            },
+        )
+        .unwrap();
+
+        let store = MemoryStore::load_or_empty(state_dir.join("memory-store.json")).unwrap();
+        let brief: crate::sleep::commit::ConsolidatedBrief = serde_json::from_str(
+            &fs::read_to_string(state_dir.join("consolidated-brief.json")).unwrap(),
+        )
+        .unwrap();
+        let manifest =
+            ContinuityManifest::load_or_default(state_dir.join("continuity-manifest.json"))
+                .unwrap();
+        let draft: MemoryFixture = serde_json::from_str(
+            &fs::read_to_string(context.run_dir().join("reviewed-memory-draft.json")).unwrap(),
+        )
+        .unwrap();
+
+        assert_eq!(store.contents().records.len(), 1);
+        assert_eq!(
+            store.contents().records[0].kind,
+            MemoryRecordKind::Observation
+        );
+        assert_eq!(
+            store.contents().records[0].summary,
+            "Routine voice observation should auto-promote."
+        );
+        assert!(
+            state_dir
+                .join("archive")
+                .join(format!("sleep-{}.json", context.run_id()))
+                .exists()
+        );
+        assert_eq!(
+            brief.previous_session_summary,
+            "Voice session summary for the consolidated brief."
+        );
+        assert_eq!(manifest.resume_mode, ResumeMode::ConsolidatedBrief);
+        assert_eq!(
+            manifest.last_sleep_consumed_session_id.as_deref(),
+            Some("voice-session-to-sleep")
+        );
+        assert_eq!(draft.records.len(), 1);
+        assert_eq!(draft.records[0].kind, MemoryRecordKind::Decision);
+        assert!(draft.records[0].summary.contains("reviewed drafts"));
+        assert!(
+            outcome
+                .extra_artifacts
+                .iter()
+                .any(|artifact| artifact.ends_with("reviewed-memory-draft.json"))
+        );
+
+        fs::remove_dir_all(base_dir).unwrap();
+    }
+
     fn config() -> SessionConfig {
         SessionConfig {
             model_id: "mock".to_string(),
@@ -779,5 +1206,136 @@ mod tests {
             used_estimated_tokens: 10,
         };
         turn
+    }
+
+    fn mixed_session(text_first: bool, earlier: SystemTime, later: SystemTime) -> SessionState {
+        let mut session = SessionState::new_with_id(format!("mixed-{}", text_first), config());
+        let mut turn = crate::session::tests::fake_turn(0);
+        turn.started_at = later;
+        turn.completed_at = later;
+        turn.user_input = "Turn prompt".to_string();
+        turn.assistant_response = "Turn response".to_string();
+        let exchange = voice_exchange_with_metadata(0, earlier, None, None, false);
+
+        if text_first {
+            session.turns.push(turn);
+            session.exchanges.push(exchange);
+        } else {
+            session.exchanges.push(exchange);
+            session.turns.push(turn);
+        }
+
+        session
+    }
+
+    fn voice_exchange_with_metadata(
+        index: usize,
+        started_at: SystemTime,
+        retrieved_memory_id: Option<String>,
+        preamble_text: Option<&str>,
+        interrupted: bool,
+    ) -> Exchange {
+        let mut exchange = Exchange {
+            index,
+            started_at,
+            completed_at: Some(started_at),
+            input: ExchangeInput::Voice {
+                final_transcript: if interrupted {
+                    String::new()
+                } else {
+                    "Voice prompt".to_string()
+                },
+                utterances: vec![],
+            },
+            output: if interrupted {
+                None
+            } else {
+                Some(ExchangeOutput {
+                    response_id: Some("response-1".to_string()),
+                    text: "Voice response".to_string(),
+                    produced_at: started_at,
+                    provider_name: Some("provider".to_string()),
+                    target: Some("speech-output-provider".to_string()),
+                    audio_marker: None,
+                })
+            },
+            context_assembly: retrieved_memory_id.map(|memory_id| ContextAssembly {
+                budget: ContextBudget::new(4, 600),
+                selected: vec![ContextSelection {
+                    fragment: ContextFragment {
+                        fragment_id: memory_id,
+                        source_kind: crate::context::ContextSourceKind::Memory,
+                        summary: "summary".to_string(),
+                        tags: vec![],
+                        score: 1.0,
+                        estimated_tokens: 10,
+                        source_reference: "tests".to_string(),
+                        selection_reason: "tests".to_string(),
+                    },
+                    cumulative_estimated_tokens: 10,
+                }],
+                omitted: vec![],
+                used_estimated_tokens: 10,
+            }),
+            retrieved_memory_block: String::new(),
+            recalled_items: vec![],
+            model: None,
+            interruptions: vec![],
+            provider_events: vec![],
+            tool_requests: vec![],
+            status: if interrupted {
+                crate::session::ExchangeStatus::Interrupted
+            } else {
+                crate::session::ExchangeStatus::Completed
+            },
+        };
+
+        if let Some(text) = preamble_text {
+            exchange.provider_events.push(ProviderEventRecord {
+                exchange_index: index,
+                event_kind: ProviderEventKind::Preamble,
+                provider_id: "provider".to_string(),
+                received_at: started_at,
+                response_id: None,
+                text: Some(text.to_string()),
+                status: Some("pending".to_string()),
+                audio_marker: None,
+            });
+        }
+
+        exchange
+    }
+
+    struct PreambleAssertingSleepClient {
+        prohibited_text: String,
+    }
+
+    impl ModelClient for PreambleAssertingSleepClient {
+        fn client_name(&self) -> &str {
+            "preamble-asserting-sleep-client"
+        }
+
+        fn complete(&self, request: &ModelRequest) -> anyhow::Result<ModelResponse> {
+            assert!(
+                request
+                    .messages
+                    .iter()
+                    .all(|message| !message.content.contains(&self.prohibited_text))
+            );
+
+            Ok(ModelResponse::from_text(
+                request,
+                self.client_name(),
+                request.model_name.clone(),
+                r#"{
+                    "session_summary": "Summary.",
+                    "memory_candidates": ["Routine observation."],
+                    "open_questions": [],
+                    "decision_candidates": [],
+                    "future_context_hints": ["Be prepared."],
+                    "review_notes": []
+                }"#,
+            ))
+        }
     }
 }

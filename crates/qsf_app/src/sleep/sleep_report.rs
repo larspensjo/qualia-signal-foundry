@@ -8,6 +8,7 @@ pub struct SleepInputBundle {
     pub source_label: String,
     pub session_text: String,
     pub review_notes: Vec<String>,
+    pub diagnostic_notes: Vec<String>,
 }
 
 impl SleepInputBundle {
@@ -21,11 +22,17 @@ impl SleepInputBundle {
             source_label: source_label.into(),
             session_text: session_text.into(),
             review_notes: vec![],
+            diagnostic_notes: vec![],
         }
     }
 
     pub fn with_review_notes(mut self, review_notes: Vec<String>) -> Self {
         self.review_notes = review_notes;
+        self
+    }
+
+    pub fn with_diagnostic_notes(mut self, diagnostic_notes: Vec<String>) -> Self {
+        self.diagnostic_notes = diagnostic_notes;
         self
     }
 

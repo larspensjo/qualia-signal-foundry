@@ -1551,7 +1551,7 @@ mod tests {
 
     use super::{
         FileVoiceMemorySource, PhaseFourVoiceMemorySource, SharedVoiceMemorySource,
-        TextOwnedVoiceLoopExperiment, VOICE_CONTEXT_ASSEMBLY_LATENCY_MS,
+        TextOwnedVoiceLoopExperiment, VOICE_CONTEXT_ASSEMBLY_LATENCY_MS, VoiceLoopSessionConfig,
     };
     use crate::audio::test_support::{
         assert_events_have_safety_markers, assert_payloads_do_not_contain_raw_audio_fields,
@@ -1568,7 +1568,9 @@ mod tests {
     use crate::models::{MockModelClient, ModelClient, ModelRequest, ModelResponse, ModelUsage};
     use crate::observability::event_log::{EventRecord, EventType};
     use crate::runtime::run_context::RunContext;
-    use crate::session::{SessionConfig, SessionEndReason, StateDirectoryResolution};
+    use crate::session::{
+        MemorySourceConfig, SessionConfig, SessionEndReason, StateDirectoryResolution,
+    };
     use anyhow::anyhow;
     use time::OffsetDateTime;
     use time::format_description::well_known::Rfc3339;
@@ -1600,6 +1602,8 @@ mod tests {
 
     struct ReviewedDraftReflectingModelClient;
 
+    struct ConsolidatedBriefAssertingModelClient;
+
     impl ModelClient for SlowModelClient {
         fn client_name(&self) -> &str {
             "slow-mock-model"
@@ -1629,6 +1633,32 @@ mod tests {
                 self.client_name(),
                 request.model_name.clone(),
                 reflected_memory,
+            )
+            .with_usage(ModelUsage::new(42, 16))
+            .with_finish_reason("stop"))
+        }
+    }
+
+    impl ModelClient for ConsolidatedBriefAssertingModelClient {
+        fn client_name(&self) -> &str {
+            "consolidated-brief-asserting-model"
+        }
+
+        fn complete(&self, request: &ModelRequest) -> anyhow::Result<ModelResponse> {
+            let user_message = request.last_user_message().unwrap_or_default();
+            assert!(user_message.contains("Previous session summary:\nVoice sleep summary."));
+            assert!(
+                user_message.contains("Future context hints:\n- Resume the user's voice project.")
+            );
+            assert!(
+                user_message.contains("Open questions:\n- Which voice path needs testing next?")
+            );
+
+            Ok(ModelResponse::from_text(
+                request,
+                self.client_name(),
+                request.model_name.clone(),
+                "The consolidated voice brief is in context.",
             )
             .with_usage(ModelUsage::new(42, 16))
             .with_finish_reason("stop"))
@@ -1912,6 +1942,94 @@ mod tests {
             resumed.payload["previous_session_id"].as_str(),
             Some(first_state.session_id.as_str())
         );
+
+        fs::remove_dir_all(base_dir).unwrap();
+    }
+
+    #[test]
+    fn voice_run_after_sleep_resumes_from_consolidated_brief() {
+        let base_dir =
+            std::env::temp_dir().join(format!("qsf-text-owned-brief-resume-{}", Uuid::new_v4()));
+        let state_dir = base_dir.join("state/session");
+        let config = SessionConfig {
+            model_id: "mock".to_string(),
+            max_turns: 10,
+            warm_threshold: 2,
+            allow_over_limit: false,
+            memory_source: MemorySourceConfig {
+                source: "memory_store".to_string(),
+                file: None,
+            },
+        };
+        let previous = crate::session::SessionState::new_with_id(
+            "slept-voice-session".to_string(),
+            config.clone(),
+        );
+        crate::session::persistence::persist_session_state(&previous, &state_dir).unwrap();
+        fs::write(
+            state_dir.join("consolidated-brief.json"),
+            serde_json::to_string_pretty(&crate::sleep::commit::ConsolidatedBrief {
+                previous_session_summary: "Voice sleep summary.".to_string(),
+                future_context_hints: vec!["Resume the user's voice project.".to_string()],
+                open_questions: vec!["Which voice path needs testing next?".to_string()],
+                promoted_count: 1,
+                new_associations_count: 0,
+            })
+            .unwrap(),
+        )
+        .unwrap();
+        crate::session::manifest::ContinuityManifest {
+            schema_version: crate::session::manifest::CONTINUITY_MANIFEST_SCHEMA_VERSION,
+            current_session_id: Some(previous.session_id.clone()),
+            current_session_state_path: Some(PathBuf::from("session-state.json")),
+            last_sleep_run_id: Some("sleep-voice-1".to_string()),
+            last_sleep_brief_path: Some(PathBuf::from("consolidated-brief.json")),
+            last_sleep_consumed_session_id: Some(previous.session_id.clone()),
+            sleep_pending: false,
+            resume_mode: crate::session::manifest::ResumeMode::ConsolidatedBrief,
+        }
+        .persist(state_dir.join("continuity-manifest.json"))
+        .unwrap();
+        let memory_source = SharedVoiceMemorySource::new(&state_dir);
+        let experiment = TextOwnedVoiceLoopExperiment;
+        let mut context =
+            RunContext::create_in(base_dir.join("runs"), "text-owned-voice-loop").unwrap();
+
+        experiment
+            .run_with_components_and_memory_source_at_state_dirs_with_config(
+                &mut context,
+                &SimulatedTranscriptProvider,
+                &ConsolidatedBriefAssertingModelClient,
+                &SimulatedSpeechOutputProvider,
+                &memory_source,
+                VoiceLoopSessionConfig {
+                    state_resolution: StateDirectoryResolution {
+                        resume_state_dir: state_dir.clone(),
+                        persist_state_dir: state_dir.clone(),
+                        legacy_fallback_used: false,
+                    },
+                    config,
+                },
+            )
+            .unwrap();
+
+        let events = fs::read_to_string(context.run_dir().join("events.jsonl")).unwrap();
+        let records = parse_event_records(&events);
+        let resumed = records
+            .iter()
+            .find(|record| record.event_type == EventType::SessionResumed)
+            .unwrap();
+        let resumed_state =
+            crate::session::persistence::load_session_state(state_dir.join("session-state.json"))
+                .unwrap();
+
+        assert_eq!(resumed.payload["mode"], "consolidated_brief");
+        assert_eq!(
+            resumed_state.previous_session_id.as_deref(),
+            Some("slept-voice-session")
+        );
+        assert_ne!(resumed_state.session_id, previous.session_id);
+        assert_eq!(resumed_state.turns.len(), 1);
 
         fs::remove_dir_all(base_dir).unwrap();
     }

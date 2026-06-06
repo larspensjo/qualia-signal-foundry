@@ -12,6 +12,7 @@ pub mod manifest;
 pub mod persistence;
 pub mod resume;
 pub mod runtime;
+pub mod sleep_records;
 pub mod state_directory;
 
 pub use exchange::{
@@ -28,6 +29,7 @@ pub use runtime::{
     format_boot_brief_for_context, persist_continuity_state, persist_continuity_state_from_dirs,
     reduce_session, reduce_session_in_place, resume_breaking_config_changed,
 };
+pub use sleep_records::{SleepRecord, SleepRecordKind};
 pub use state_directory::{StateDirectoryResolution, resolve_shared_state_directory_from_env};
 
 pub const SESSION_STATE_SCHEMA_VERSION: u32 = 2;
