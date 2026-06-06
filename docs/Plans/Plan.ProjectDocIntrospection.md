@@ -2,8 +2,11 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use
 > `superpowers:subagent-driven-development` (recommended) or
-> `superpowers:executing-plans` to implement this plan task-by-task. Steps use
-> checkbox (`- [ ]`) syntax for tracking.
+> `superpowers:executing-plans` to implement this plan task-by-task.
+> *(If those skills are unavailable in your environment, treat them as
+> optional guidance and fall back to plain test-driven development for
+> this repo — the per-task "failing test first" steps below stand on
+> their own.)* Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Build a read-only project-document introspection channel so the
 live-presence model can ground self-questions in actual project material
@@ -27,9 +30,11 @@ choice ("plan-phase decision"), the plan picks one explicitly.
 
 ## Status
 
-Phase 1 (the `ProjectDocService` library) has landed and is committed.
-**Phase 2 (the two `Tool` implementations) is the next implementation
-step.**
+Phase 1 (the `ProjectDocService` library) and Phase 2 (the two `Tool`
+implementations, plus `ToolPermission::read_only()` and the defaulted
+`ToolContext::project_doc_service()` accessor) have landed and are
+committed. **Phase 3 (wiring the two tools into `ToolRegistry`) is the
+next implementation step.**
 
 ## Background
 
@@ -53,32 +58,45 @@ Code anchors (existing, will be extended):
 
 - `crates/qsf_app/src/project_docs/` — **landed in Phase 1.** Pure
   library: `Allowlist`, metadata extraction, lexical `search`, bounded
-  `read`, and the `ProjectDocService` facade. Phase 2 consumes this; it
-  does not modify it.
-- `crates/qsf_app/src/tools/mod.rs` — re-exports tool surface; Phase 2
-  adds the `project_doc_tool`, `search_project_docs_tool`, and
-  `read_project_doc_tool` submodules and their re-exports.
+  `read`, and the `ProjectDocService` facade. Later phases consume it;
+  they do not modify it.
+- `crates/qsf_app/src/tools/mod.rs` — re-exports the tool surface.
+  **Phase 2 added** the `project_doc_tool`, `search_project_docs_tool`,
+  and `read_project_doc_tool` submodules and re-exported
+  `ProjectDocToolContext`, `SEARCH_PROJECT_DOCS_TOOL_NAME`,
+  `SearchProjectDocsTool`, `READ_PROJECT_DOC_TOOL_NAME`, and
+  `ReadProjectDocTool` from `crate::tools`. Phase 3 needs no new
+  re-exports here — only a verification that they are present.
 - `crates/qsf_app/src/tools/tool_registry.rs` — `ToolRegistry`,
   `Tool` trait, `ToolMetadata`, `ToolContext`, `EmptyToolContext`.
-  Adding two tools means extending the struct, `Default`, and the
-  `match` arms in `metadata_for`, `dispatch`, and
-  `model_tool_definitions_for` (the registry wiring lands in Phase 3;
-  Phase 2 only extends the `ToolContext` trait with a defaulted
-  accessor).
-- `crates/qsf_app/src/tools/tool_request.rs` — `ToolPermission`
-  (has `compute_only()`; Phase 2 adds a `read_only()` constructor),
-  `ToolRequest`, `ToolCategory`, `ToolSideEffectLevel`.
+  **Phase 2 added** the defaulted `ToolContext::project_doc_service()`
+  accessor (returns `None`). **Phase 3** extends the `ToolRegistry`
+  struct, its `Default`, and the `match` sites in `metadata_for`,
+  `dispatch`, and `model_tool_definitions_for` to route the two new
+  tools.
+- `crates/qsf_app/src/tools/tool_request.rs` — `ToolPermission` now has
+  both `compute_only()` and `read_only()` (the latter landed in Phase
+  2), plus `ToolRequest`, `ToolCategory`, `ToolSideEffectLevel`.
 - `crates/qsf_app/src/tools/tool_result.rs` — `ToolResult` with fields
   `tool_name`, `category`, `side_effect_level`, `input`, `output_text`,
   `numeric_value`, `observation_summary`.
 - `crates/qsf_app/src/tools/calculator_tool.rs` and
   `crates/qsf_app/src/tools/recall_turn_tool.rs` — reference
   implementations of the `Tool` trait and custom `ToolContext`
-  (`SessionToolContext`). Phase 2's tools mirror these exactly.
+  (`SessionToolContext`). The Phase 2 project-doc tools mirror these.
+- `crates/qsf_app/src/tools/project_doc_tool.rs` — **landed in Phase
+  2.** Holds `ProjectDocToolContext<'a> { service: &'a
+  ProjectDocService }` implementing `project_doc_service()`.
+- `crates/qsf_app/src/tools/search_project_docs_tool.rs` and
+  `crates/qsf_app/src/tools/read_project_doc_tool.rs` — **landed in
+  Phase 2.** The two `Tool` impls; not yet referenced by the registry.
 - `crates/qsf_app/src/models/tool_dispatch.rs` —
-  `dispatch_model_tool_calls`; this is where per-turn caps are
-  enforced (Phase 4) and where tool-result trace records are emitted
-  (Phase 5).
+  `dispatch_model_tool_calls`; per-turn caps are enforced here (Phase 4)
+  and tool-result trace records are emitted here (Phase 5). Its
+  `tool_request_from_model_tool_call` already routes structured/unknown
+  tools through a catch-all arm, so once the registry knows the two
+  tools (Phase 3), correct `ToolRequest`s are built for them with no
+  change to the request-builder.
 - `crates/qsf_app/src/models/model_role.rs` — `ModelRole::predefined`
   for `ConversationalResponder`; `allowed_tools` is overridden by
   call sites (see `multi_turn_text_loop.rs`).
@@ -126,24 +144,27 @@ differently, raise it before changing direction.
    construct `ProjectDocService` with an explicit absolute repo root
    and an explicit absolute allowlist path, rather than relying on the
    process working directory.
-2. **`ProjectDocService` injection shape.** This plan uses a dedicated
-   `ProjectDocToolContext` carrying a borrowed `&ProjectDocService`,
-   parallel to `SessionToolContext`, surfaced through a new defaulted
-   `ToolContext::project_doc_service()` accessor. **Phase 2 makes this
-   decision concrete (Task 2.2).** A review raised that the live
-   `ConversationalResponder` advertises `recall_turn` (which needs
-   `session_state()`) alongside the project-doc tools (which need
+2. **`ProjectDocService` injection shape (combined context).** Phase 2
+   landed the chosen shape: a dedicated `ProjectDocToolContext<'a>`
+   holding a borrowed `&'a ProjectDocService`, parallel to the existing
+   `SessionToolContext`, surfaced through the defaulted
+   `ToolContext::project_doc_service()` accessor. That standalone context
+   is sufficient for isolated unit tests and for Phase 3's registry
+   wiring (the registry holds no context). It is **not** sufficient for
+   live dispatch: the `ConversationalResponder` advertises `recall_turn`
+   (needs `session_state()`) *alongside* the project-doc tools (need
    `project_doc_service()`), and `dispatch_model_tool_calls` threads a
-   single `ToolContext` per batch. The standalone `ProjectDocToolContext`
-   is therefore sufficient only for Phase 2's **isolated unit tests**;
-   the production wiring in Phases 3-6 must supply **one** combined
-   context that can answer *both* accessors — otherwise `recall_turn`
-   fails under a project-doc-only context, or the project-doc tools fail
-   under the session-only context. The defaulted accessors keep this
-   composable (extend `SessionToolContext` to also carry an optional
-   `&ProjectDocService`, or introduce a dedicated combined context
-   implementing both accessors). If a different pattern is preferred,
-   raise it before Phase 3 hardens the registry/dispatch wiring.
+   single `ToolContext` per batch. So before **Phase 4** (the first live
+   dispatch of these tools), a **combined** context answering *both*
+   accessors must exist — otherwise `recall_turn` fails under a
+   project-doc-only context, or the project-doc tools fail under the
+   session-only context. The recommended default: extend
+   `SessionToolContext` to also carry an optional `&ProjectDocService`
+   and return it from `project_doc_service()`, or add a dedicated
+   combined context implementing both accessors (the defaulted accessors
+   keep this composable). **Decision to confirm before Phase 4:** which
+   of the two shapes. If a different pattern is preferred, raise it
+   before Phase 4 wiring begins.
 3. **`influenced_reply` storage.** Phase 8 writes the marker as a
    follow-up `TraceRecord` referencing the original by `trace_id`.
    If an annotation on the original record is preferred, raise before
@@ -171,14 +192,15 @@ differently, raise it before changing direction.
    record. Note the change in the diary entry when it happens.
 6. **Test setup in Tasks 4.1 and 5.1.** Those tasks include test
    skeletons rather than fully-spelled integration tests, because
-   wiring a `RunContext`, mock model client, `ProjectDocToolContext`,
+   wiring a `RunContext`, mock model client, combined `ToolContext`,
    and `ModelRequest` for a unit test of `dispatch_model_tool_calls`
-   is a lot of code that already has working examples in the file (or,
-   if absent, can mirror `crates/qsf_app/tests/` patterns). The
-   assertions in those skeletons are concrete; the harness wiring is
-   not. If existing patterns are unclear, write the integration test
-   under `crates/qsf_app/tests/project_doc_dispatch.rs` and treat the
-   skeletons as the assertion contract.
+   is a lot of code that already has working examples in the file (see
+   the `tests` module in `tool_dispatch.rs`, which builds a
+   `RunContext`, a `ToolRegistry`, a `SessionToolContext`, and a
+   `ModelRequest`). The assertions in those skeletons are concrete; the
+   harness wiring is not. If existing patterns are unclear, write the
+   integration test under `crates/qsf_app/tests/project_doc_dispatch.rs`
+   and treat the skeletons as the assertion contract.
 
 ## Target Shape
 
@@ -208,810 +230,229 @@ user input
 ## Phase 1: `ProjectDocService` library — completed
 
 **Status: landed and committed** (git: "ProjectDocIntrospection phase 1:
-feat(project_docs): add read-only project document service"). Summarized
-here; the source of truth is the code under
-`crates/qsf_app/src/project_docs/`.
+feat(project_docs): add read-only project document service"). The source
+of truth is the code under `crates/qsf_app/src/project_docs/`.
 
 ### What shipped
 
-A pure, side-effect-free module at `crates/qsf_app/src/project_docs/`
-(declared by a one-line `pub mod project_docs;` in `lib.rs`), with these
-submodules and a public surface that later phases depend on:
+A pure, side-effect-free module declared by `pub mod project_docs;` in
+`lib.rs`, with the public surface later phases depend on:
 
 - `types` — `DocKind`, `MaturityTag`, `MatchStrength`, `DocHit`,
-  `DocRead` (all `Serialize`/`Deserialize`, re-exported from
-  `crate::project_docs`).
+  `DocRead` (all serde, re-exported from `crate::project_docs`).
 - `allowlist` — `Allowlist::from_file` / `from_str`, with
   `allows(repo_relative_path)` evaluating exclude-then-include globs.
 - `metadata` — `kind_for_path`, `maturity_for`, `last_reviewed_for`
-  (the last scoped to the `## Implementation Status` section and
-  enforcing an ISO `YYYY-MM-DD` shape).
-- `search` — `search(repo_root, allowlist, query, max_results)`,
-  walking the corpus with `walkdir`, returning ranked `DocHit`s.
-- `read` — `read(repo_root, allowlist, relative_path, focus, max_tokens)`,
-  returning a bounded `DocRead`.
-- `service` — the facade other phases construct:
-  - `ProjectDocService::new(repo_root, allowlist_path)`
-  - `.search(query, max_results) -> Result<Vec<DocHit>>`
-  - `.read(path, focus, max_tokens) -> Result<DocRead>`
-  - `.allowlist() -> Result<Allowlist>` (re-read per call, so the
-    on-disk allowlist is hot-reloaded)
-  - `.repo_root() -> &Path`
+  (the last scoped to `## Implementation Status` and enforcing ISO
+  `YYYY-MM-DD`).
+- `search` — `search(repo_root, allowlist, query, max_results)`.
+- `read` — `read(repo_root, allowlist, relative_path, focus, max_tokens)`.
+- `service` — the facade: `ProjectDocService::new(repo_root,
+  allowlist_path)`, `.search(query, max_results)`, `.read(path, focus,
+  max_tokens)`, `.allowlist()` (re-read per call, hot-reload), and
+  `.repo_root()`.
 
-Dependencies added to `crates/qsf_app/Cargo.toml`: `globset`, `toml`,
-`regex`, `once_cell`, `walkdir`, and `tempfile` (dev). The production
-allowlist lives at `config/project-doc-introspection.toml`.
+Dependencies added: `globset`, `toml`, `regex`, `once_cell`, `walkdir`,
+and `tempfile` (dev). The production allowlist lives at
+`config/project-doc-introspection.toml`.
 
-### Lessons and constraints that bind later phases
+### Lessons and constraints binding later phases
 
 - **Path resolution (Open Question #1).** Tests resolve paths from
-  `CARGO_MANIFEST_DIR`. Production wiring (Phase 6 onward) must
-  construct `ProjectDocService` with an explicit **absolute** repo root
-  and an explicit **absolute** allowlist path — never a bare relative
-  path, because the test/runtime working directory is the package root,
-  not the workspace root.
-- **Path-safety lives in the library, not the tool.** The bounded
-  `read` normalizes and confines any caller-supplied path *before* the
+  `CARGO_MANIFEST_DIR`; production wiring (Phase 6 onward) must construct
+  `ProjectDocService` with **absolute** repo root and allowlist paths —
+  never a bare relative path, because the test/runtime working directory
+  is the package root, not the workspace root.
+- **Path-safety lives in the library, not the tool.** The bounded `read`
+  normalizes and confines any caller-supplied path *before* the
   allowlist or filesystem is touched: absolute paths and any `..`
-  component are rejected, `.` is dropped, and the result is a clean
-  forward-slash repo-relative string. Phase 2's `read_project_doc` tool
-  therefore must **not** re-implement traversal guards — it forwards the
-  raw `path` straight to `service.read(...)` and relies on this
-  invariant (the out-of-allowlist tool test in Task 2.4 uses a
-  non-`.md` path, since traversal rejection is already proven in the
-  library tests).
+  component are rejected, `.` is dropped, result is a clean
+  forward-slash repo-relative string. The Phase 2 `read_project_doc`
+  tool therefore forwards the raw `path` straight to `service.read(...)`
+  and does **not** re-implement traversal guards.
 - **Allowlist hot-reload + production defaults.** The production
   allowlist excludes `docs/EngineeringDiary.md` and `docs/Reviews/**`
-  while admitting `docs/ProjectFrame/**` and `docs/DecisionLog.md`. The
-  channel will pick up edits to that file without a rebuild.
+  while admitting `docs/ProjectFrame/**` and `docs/DecisionLog.md`, and
+  picks up edits without a rebuild.
 - **Latency cap deferred (Open Question #5).** The service API is
   synchronous with no deadline parameter; if real traces show
   `latency_ms` over 1000, enforcement is added at the service boundary,
   not in the tools or dispatch.
 - **Purity.** The module is side-effect-free apart from reading files
-  under the repo root. No tool, registry, dispatch, or responder wiring
-  was introduced in Phase 1.
+  under the repo root. No tool/registry/dispatch/responder wiring was
+  introduced here.
 
 ### Acceptance outcome (met)
 
-`cargo test -p qsf_app project_docs` passes, covering allowlist
-include/exclude precedence, kind/maturity/last-reviewed extraction
-(including the Implementation-Status scoping and malformed-date
-rejection), heading-first lexical search with empty-result/empty-query
-handling, bounded read with focus and truncation, the traversal/absolute
-path refusals, and service-level allowlist hot-reload. `cargo clippy
---all-targets -- -D warnings` and `cargo fmt` are clean.
+`cargo test -p qsf_app project_docs` passes (allowlist precedence,
+kind/maturity/last-reviewed extraction with Implementation-Status
+scoping and malformed-date rejection, heading-first lexical search,
+bounded read with focus/truncation, traversal/absolute-path refusals,
+service-level hot-reload). `cargo clippy --all-targets -- -D warnings`
+and `cargo fmt` are clean.
 
 ### Diary follow-up constraint
 
 Phase 1 was committed as a standalone deliverable. The Phase 9 diary
-pass must therefore account for it explicitly: either fold Phase 1 into
-the Phases 1-8 entry (acceptable since it is part of the same logical
-feature) or add a separate library-slice entry. Do not silently skip it.
+pass must account for it explicitly — fold it into the Phases 1-8 entry
+or add a separate library-slice entry. Do not silently skip it.
 
 ---
 
-## Phase 2: Tool implementations
-
-Two `Tool` impls plus a `ToolPermission::read_only()` constructor and a
-new `ToolContext` variant. **No registry wiring yet — that lands in
-Phase 3.** This phase is implementable and reviewable on its own: the
-tools are exercised in unit tests by constructing them directly with a
-`ProjectDocToolContext` built over the Phase 1 fixture corpus, without
-touching `ToolRegistry` or `dispatch`.
-
-This phase resolves Open Question #2: the injection shape is a dedicated
-`ProjectDocToolContext<'a>` holding a borrowed `&'a ProjectDocService`,
-parallel to the existing `SessionToolContext`, surfaced through a new
-defaulted `ToolContext::project_doc_service()` accessor. Raise it before
-starting if a different pattern is preferred — Phase 3's registry wiring
-hardens this choice.
-
-**Mixed-batch dispatch (raised in review — plan now, build in Phase 3).**
-The live `ConversationalResponder` advertises `recall_turn` (needs
-`session_state()`) *alongside* the two project-doc tools (need
-`project_doc_service()`), and `dispatch_model_tool_calls` threads a single
-`ToolContext` per batch. The standalone `ProjectDocToolContext` introduced
-in Task 2.2 is therefore sufficient **only** for unit-testing the tools in
-isolation. Before Phase 3 hardens the registry/dispatch wiring, decide and
-implement a **combined** context that can answer *both* accessors — either
-extend `SessionToolContext` to also carry an optional `&ProjectDocService`
-(returning it from `project_doc_service()`), or add a dedicated combined
-context implementing both accessors. The defaulted accessors make this
-composable, so adding the second accessor in Task 2.2 does not force the
-decision now; but do not leave the Phase 3/6 call sites to infer the
-combined-context requirement. This is the concrete follow-through on Open
-Question #2.
-
-Implement the tasks in order (2.1 → 2.4); each ends in its own commit so
-the phase can be reviewed incrementally. Follow
-`superpowers:test-driven-development`: the failing test precedes the
-implementation in every task.
-
-### Task 2.1: `ToolPermission::read_only()`
-
-**Files:**
-- Modify: `crates/qsf_app/src/tools/tool_request.rs`
-
-The reference is the existing `compute_only()` constructor in the same
-`impl ToolPermission` block. The new constructor grants the `ReadOnly`
-category and a `ReadOnly` maximum side-effect level — matching the
-metadata the two tools advertise so `ToolRegistry::validate_request`
-will admit them once Phase 3 wires them in.
-
-- [ ] **Step 1: Write the failing test.**
-
-```rust
-// crates/qsf_app/src/tools/tool_request.rs — add a test block (the file
-// currently has no inline tests).
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn read_only_permission_allows_read_only_tools() {
-        let permission = ToolPermission::read_only();
-        assert!(permission.allows(ToolCategory::ReadOnly, ToolSideEffectLevel::ReadOnly));
-    }
-
-    #[test]
-    fn read_only_permission_rejects_write_tools() {
-        let permission = ToolPermission::read_only();
-        assert!(!permission.allows(ToolCategory::WriteCapable, ToolSideEffectLevel::ExternalWrite));
-    }
-
-    #[test]
-    fn read_only_permission_rejects_compute_only_category() {
-        // Guards against an over-broad allow-list: read_only must not also
-        // admit the compute_only category.
-        let permission = ToolPermission::read_only();
-        assert!(!permission.allows(ToolCategory::ComputeOnly, ToolSideEffectLevel::None));
-    }
-}
-```
-
-- [ ] **Step 2: Run tests; verify they fail.**
-
-Run: `cargo test -p qsf_app tools::tool_request`
-Expected: FAIL (`read_only` not defined).
-
-- [ ] **Step 3: Implement the constructor.**
-
-Add to the existing `impl ToolPermission` block, next to `compute_only`:
-
-```rust
-pub fn read_only() -> Self {
-    Self {
-        allowed_categories: vec![ToolCategory::ReadOnly],
-        max_side_effect_level: ToolSideEffectLevel::ReadOnly,
-    }
-}
-```
-
-- [ ] **Step 4: Run tests.**
-
-Run: `cargo test -p qsf_app tools::tool_request`
-Expected: PASS.
-
-- [ ] **Step 5: Commit.**
-
-```bash
-git add crates/qsf_app/src/tools/tool_request.rs
-git commit -m "feat(tools): add ToolPermission::read_only constructor"
-```
-
-### Task 2.2: Project-doc `ToolContext`
-
-**Files:**
-- Modify: `crates/qsf_app/src/tools/tool_registry.rs` (extend the
-  `ToolContext` trait)
-- Create: `crates/qsf_app/src/tools/project_doc_tool.rs`
-- Modify: `crates/qsf_app/src/tools/mod.rs`
-
-The current `ToolContext` trait has one defaulted accessor
-(`session_state`). Add a second defaulted accessor returning `None`, so
-`EmptyToolContext` and `SessionToolContext` keep compiling untouched,
-then add a concrete context that returns the service. Per the phase's
-TDD rule, the new accessor behavior gets a failing test *before* the
-implementation — `cargo build` alone is not sufficient verification.
-
-- [ ] **Step 1: Write the failing test.**
-
-```rust
-// crates/qsf_app/src/tools/project_doc_tool.rs (test block, added with the
-// module in Step 2 — written first so it fails to compile/assert).
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::project_docs::ProjectDocService;
-    use crate::tools::EmptyToolContext;
-    use crate::tools::tool_registry::ToolContext;
-    use std::path::PathBuf;
-
-    fn fixtures_root() -> PathBuf {
-        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("src/project_docs/fixtures")
-    }
-
-    #[test]
-    fn context_exposes_service() {
-        let service = ProjectDocService::new(
-            fixtures_root(),
-            fixtures_root().join("allowlist_basic.toml"),
-        );
-        let ctx = ProjectDocToolContext { service: &service };
-        assert!(ctx.project_doc_service().is_some());
-    }
-
-    #[test]
-    fn empty_context_returns_none() {
-        // The defaulted accessor must leave existing contexts unchanged.
-        assert!(EmptyToolContext.project_doc_service().is_none());
-    }
-}
-```
-
-- [ ] **Step 2: Extend the trait and write the context impl.**
-
-In `crates/qsf_app/src/tools/tool_registry.rs`, add to `trait ToolContext`:
-
-```rust
-fn project_doc_service(&self) -> Option<&crate::project_docs::ProjectDocService> {
-    None
-}
-```
-
-Create the context:
-
-```rust
-// crates/qsf_app/src/tools/project_doc_tool.rs
-use crate::project_docs::ProjectDocService;
-
-use super::tool_registry::ToolContext;
-
-pub struct ProjectDocToolContext<'a> {
-    pub service: &'a ProjectDocService,
-}
-
-impl<'a> ToolContext for ProjectDocToolContext<'a> {
-    fn project_doc_service(&self) -> Option<&ProjectDocService> {
-        Some(self.service)
-    }
-}
-```
-
-- [ ] **Step 3: Re-export from `mod.rs`.**
-
-Add `pub mod project_doc_tool;` and
-`pub use project_doc_tool::ProjectDocToolContext;` to
-`crates/qsf_app/src/tools/mod.rs`.
-
-- [ ] **Step 4: Run tests and build.**
-
-Run: `cargo test -p qsf_app tools::project_doc_tool`
-Expected: PASS (the two accessor tests).
-Run: `cargo build`
-Expected: builds clean (the defaulted trait method means no existing
-`ToolContext` impl needs to change).
-
-- [ ] **Step 5: Commit.**
-
-```bash
-git add crates/qsf_app/src/tools/project_doc_tool.rs \
-        crates/qsf_app/src/tools/tool_registry.rs \
-        crates/qsf_app/src/tools/mod.rs
-git commit -m "feat(tools): ProjectDocToolContext and ToolContext accessor"
-```
-
-### Task 2.3: `SearchProjectDocsTool`
-
-**Files:**
-- Create: `crates/qsf_app/src/tools/search_project_docs_tool.rs`
-- Modify: `crates/qsf_app/src/tools/mod.rs`
-
-Mirrors `calculator_tool.rs` exactly: a unit struct implementing `Tool`
-with `metadata`, `execute`, and `model_tool_definition`. The tool reads
-its arguments from `ToolRequest::structured`, calls
-`service.search(query, max_results)`, and serializes the `Vec<DocHit>`
-into `output_text`. It **normalizes** `max_results` into the
-`1..=DEFAULT_MAX_RESULTS` range — capping the upper bound so a model
-cannot request an unbounded page, and treating an out-of-schema `0` as
-the default rather than silently returning an empty page.
-
-- [ ] **Step 1: Write the failing tests.**
-
-```rust
-// crates/qsf_app/src/tools/search_project_docs_tool.rs (test block)
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::project_docs::{DocHit, ProjectDocService};
-    use crate::tools::{EmptyToolContext, ProjectDocToolContext, Tool, ToolPermission, ToolRequest};
-    use std::path::PathBuf;
-
-    fn fixtures_root() -> PathBuf {
-        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("src/project_docs/fixtures")
-    }
-
-    fn service() -> ProjectDocService {
-        ProjectDocService::new(
-            fixtures_root(),
-            fixtures_root().join("allowlist_basic.toml"),
-        )
-    }
-
-    fn make_request_with_max(query: &str, max_results: u64) -> ToolRequest {
-        ToolRequest {
-            tool_name: SEARCH_PROJECT_DOCS_TOOL_NAME.to_string(),
-            input: query.to_string(),
-            structured: Some(serde_json::json!({ "query": query, "max_results": max_results })),
-            permission: ToolPermission::read_only(),
-            requested_by: "test".to_string(),
-        }
-    }
-
-    fn make_request(query: &str) -> ToolRequest {
-        make_request_with_max(query, 6)
-    }
-
-    #[test]
-    fn search_returns_hits_with_metadata() {
-        let service = service();
-        let ctx = ProjectDocToolContext { service: &service };
-        let result = SearchProjectDocsTool.execute(&make_request("Maturity"), &ctx).unwrap();
-
-        assert_eq!(result.category, ToolCategory::ReadOnly);
-        assert!(result.observation_summary.contains("hits"));
-        // output_text is the serialized Vec<DocHit>; it must parse back.
-        let hits: Vec<DocHit> = serde_json::from_str(&result.output_text).unwrap();
-        assert!(!hits.is_empty());
-    }
-
-    #[test]
-    fn search_treats_zero_max_results_as_default() {
-        // max_results = 0 violates the schema minimum; the executor normalizes
-        // it to the default instead of returning an empty page.
-        let service = service();
-        let ctx = ProjectDocToolContext { service: &service };
-        let result = SearchProjectDocsTool
-            .execute(&make_request_with_max("Maturity", 0), &ctx)
-            .unwrap();
-        let hits: Vec<DocHit> = serde_json::from_str(&result.output_text).unwrap();
-        assert!(!hits.is_empty());
-    }
-
-    #[test]
-    fn search_fails_without_project_doc_context() {
-        let err = SearchProjectDocsTool
-            .execute(&make_request("anything"), &EmptyToolContext)
-            .unwrap_err();
-        assert!(err.to_string().contains("ProjectDocToolContext"));
-    }
-}
-```
-
-- [ ] **Step 2: Run tests; verify they fail.**
-
-Run: `cargo test -p qsf_app tools::search_project_docs_tool`
-Expected: FAIL (module/struct not defined).
-
-- [ ] **Step 3: Implement the tool.**
-
-```rust
-// crates/qsf_app/src/tools/search_project_docs_tool.rs
-use anyhow::{Context, Result};
-use serde_json::json;
-
-use crate::models::ModelToolDefinition;
-
-use super::tool_registry::{Tool, ToolContext, ToolMetadata};
-use super::tool_request::{ToolCategory, ToolRequest, ToolSideEffectLevel};
-use super::tool_result::ToolResult;
-
-pub const SEARCH_PROJECT_DOCS_TOOL_NAME: &str = "search_project_docs";
-
-const DEFAULT_MAX_RESULTS: usize = 6;
-
-pub struct SearchProjectDocsTool;
-
-impl Tool for SearchProjectDocsTool {
-    fn metadata(&self) -> ToolMetadata {
-        ToolMetadata {
-            name: SEARCH_PROJECT_DOCS_TOOL_NAME,
-            description: "Search project documentation for material related to a query.",
-            category: ToolCategory::ReadOnly,
-            side_effect_level: ToolSideEffectLevel::ReadOnly,
-        }
-    }
-
-    fn execute(&self, request: &ToolRequest, ctx: &dyn ToolContext) -> Result<ToolResult> {
-        let service = ctx
-            .project_doc_service()
-            .context("search_project_docs requires ProjectDocToolContext")?;
-        let args = request
-            .structured
-            .as_ref()
-            .context("search_project_docs requires structured arguments")?;
-        let query = args
-            .get("query")
-            .and_then(|v| v.as_str())
-            .context("search_project_docs requires `query`")?;
-        // Normalize into 1..=DEFAULT_MAX_RESULTS: clamp the upper bound and
-        // treat a missing or out-of-schema 0 value as the default.
-        let max_results = args
-            .get("max_results")
-            .and_then(|v| v.as_u64())
-            .map(|n| n as usize)
-            .filter(|&n| n >= 1)
-            .unwrap_or(DEFAULT_MAX_RESULTS)
-            .min(DEFAULT_MAX_RESULTS);
-
-        let hits = service.search(query, max_results)?;
-
-        Ok(ToolResult {
-            tool_name: request.tool_name.clone(),
-            category: ToolCategory::ReadOnly,
-            side_effect_level: ToolSideEffectLevel::ReadOnly,
-            input: request.input.clone(),
-            output_text: serde_json::to_string(&hits)?,
-            numeric_value: None,
-            observation_summary: format!(
-                "search_project_docs returned {} hits for query `{}`.",
-                hits.len(),
-                query
-            ),
-        })
-    }
-
-    fn model_tool_definition(&self) -> Option<ModelToolDefinition> {
-        Some(ModelToolDefinition::new(
-            SEARCH_PROJECT_DOCS_TOOL_NAME,
-            "Search project documentation. Returns ranked hits with kind and maturity metadata; \
-             follow up with read_project_doc to read a focused excerpt.",
-            json!({
-                "type": "object",
-                "properties": {
-                    "query": { "type": "string" },
-                    "max_results": { "type": "integer", "minimum": 1, "maximum": 6 }
-                },
-                "required": ["query"],
-                "additionalProperties": false
-            }),
-        ))
-    }
-}
-```
-
-- [ ] **Step 4: Re-export from `mod.rs`.**
-
-Add `pub mod search_project_docs_tool;` and
-`pub use search_project_docs_tool::{SEARCH_PROJECT_DOCS_TOOL_NAME, SearchProjectDocsTool};`.
-
-- [ ] **Step 5: Run tests.**
-
-Run: `cargo test -p qsf_app tools::search_project_docs_tool`
-Expected: PASS.
-
-- [ ] **Step 6: Commit.**
-
-```bash
-git add crates/qsf_app/src/tools/search_project_docs_tool.rs \
-        crates/qsf_app/src/tools/mod.rs
-git commit -m "feat(tools): SearchProjectDocsTool"
-```
-
-### Task 2.4: `ReadProjectDocTool`
-
-**Files:**
-- Create: `crates/qsf_app/src/tools/read_project_doc_tool.rs`
-- Modify: `crates/qsf_app/src/tools/mod.rs`
-
-Same shape as Task 2.3. The default token budget is smaller for a
-focused read than for a whole-document read. Crucially, the tool does
-**not** trust the model- or dispatch-supplied `max_tokens`: the value is
-clamped to a hard cap (`MAX_TOKENS_HARD_CAP`, matching the
-`model_tool_definition` schema maximum) before it reaches
-`service.read(...)`, so a request that ignores the schema cannot produce
-an unbounded read. This mirrors the upper-bound clamp the search tool
-applies to `max_results`. Path safety is **not** re-implemented here —
-the raw `path` is forwarded to `service.read(...)`, which enforces the
-Phase 1 traversal/absolute-path invariant. The out-of-allowlist test
-therefore uses a clean-but-non-`.md` path so it exercises the allowlist
-refusal branch rather than the traversal branch.
-
-- [ ] **Step 1: Write the failing tests.**
-
-```rust
-// crates/qsf_app/src/tools/read_project_doc_tool.rs (test block)
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::project_docs::{DocRead, ProjectDocService};
-    use crate::tools::{EmptyToolContext, ProjectDocToolContext, Tool, ToolPermission, ToolRequest};
-    use std::path::PathBuf;
-
-    fn fixtures_root() -> PathBuf {
-        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("src/project_docs/fixtures")
-    }
-
-    fn service() -> ProjectDocService {
-        ProjectDocService::new(
-            fixtures_root(),
-            fixtures_root().join("allowlist_basic.toml"),
-        )
-    }
-
-    fn make_request(path: &str, focus: Option<&str>, max_tokens: u64) -> ToolRequest {
-        let mut args = serde_json::json!({ "path": path, "max_tokens": max_tokens });
-        if let Some(f) = focus {
-            args["focus"] = serde_json::Value::String(f.to_string());
-        }
-        ToolRequest {
-            tool_name: READ_PROJECT_DOC_TOOL_NAME.to_string(),
-            input: format!("read {path}"),
-            structured: Some(args),
-            permission: ToolPermission::read_only(),
-            requested_by: "test".to_string(),
-        }
-    }
-
-    fn read_output(path: &str, focus: Option<&str>, max_tokens: u64) -> String {
-        let service = service();
-        let ctx = ProjectDocToolContext { service: &service };
-        ReadProjectDocTool
-            .execute(&make_request(path, focus, max_tokens), &ctx)
-            .unwrap()
-            .output_text
-    }
-
-    #[test]
-    fn read_returns_doc_content() {
-        // In-range budget; output_text must round-trip back to a DocRead.
-        let doc: DocRead =
-            serde_json::from_str(&read_output("sample_concept.md", None, 4000)).unwrap();
-        assert!(doc.content.contains("Concept: Sample"));
-    }
-
-    #[test]
-    fn read_clamps_max_tokens_to_hard_cap() {
-        // A request above the advertised schema maximum must behave identically
-        // to one at the cap — the tool does not trust the supplied budget.
-        let at_cap = read_output("sample_concept.md", None, MAX_TOKENS_HARD_CAP as u64);
-        let over_cap = read_output("sample_concept.md", None, 10_000);
-        assert_eq!(at_cap, over_cap);
-    }
-
-    #[test]
-    fn read_refuses_out_of_allowlist() {
-        let service = service();
-        let ctx = ProjectDocToolContext { service: &service };
-        // Normalizes cleanly but is not a `*.md` file, so the allowlist refuses it.
-        let err = ReadProjectDocTool
-            .execute(&make_request("outside.txt", None, 4000), &ctx)
-            .unwrap_err();
-        assert!(err.to_string().contains("not in allowlist"));
-    }
-
-    #[test]
-    fn read_fails_without_project_doc_context() {
-        let err = ReadProjectDocTool
-            .execute(&make_request("sample_concept.md", None, 4000), &EmptyToolContext)
-            .unwrap_err();
-        assert!(err.to_string().contains("ProjectDocToolContext"));
-    }
-}
-```
-
-- [ ] **Step 2: Run tests; verify they fail.**
-
-Run: `cargo test -p qsf_app tools::read_project_doc_tool`
-Expected: FAIL (module/struct not defined).
-
-- [ ] **Step 3: Implement the tool.**
-
-```rust
-// crates/qsf_app/src/tools/read_project_doc_tool.rs
-use anyhow::{Context, Result};
-use serde_json::json;
-
-use crate::models::ModelToolDefinition;
-
-use super::tool_registry::{Tool, ToolContext, ToolMetadata};
-use super::tool_request::{ToolCategory, ToolRequest, ToolSideEffectLevel};
-use super::tool_result::ToolResult;
-
-pub const READ_PROJECT_DOC_TOOL_NAME: &str = "read_project_doc";
-
-const DEFAULT_MAX_TOKENS_FOCUSED: usize = 1200;
-const DEFAULT_MAX_TOKENS_NO_FOCUS: usize = 2400;
-/// Hard ceiling, identical to the `model_tool_definition` schema maximum. The
-/// model and dispatch are not trusted to honor the schema, so the tool clamps
-/// any supplied `max_tokens` to this value before calling `service.read`.
-const MAX_TOKENS_HARD_CAP: usize = 4000;
-
-pub struct ReadProjectDocTool;
-
-impl Tool for ReadProjectDocTool {
-    fn metadata(&self) -> ToolMetadata {
-        ToolMetadata {
-            name: READ_PROJECT_DOC_TOOL_NAME,
-            description: "Read a focused excerpt or bounded slice of a project document.",
-            category: ToolCategory::ReadOnly,
-            side_effect_level: ToolSideEffectLevel::ReadOnly,
-        }
-    }
-
-    fn execute(&self, request: &ToolRequest, ctx: &dyn ToolContext) -> Result<ToolResult> {
-        let service = ctx
-            .project_doc_service()
-            .context("read_project_doc requires ProjectDocToolContext")?;
-        let args = request
-            .structured
-            .as_ref()
-            .context("read_project_doc requires structured arguments")?;
-        let path = args
-            .get("path")
-            .and_then(|v| v.as_str())
-            .context("read_project_doc requires `path`")?;
-        let focus = args.get("focus").and_then(|v| v.as_str());
-        let default_budget = if focus.is_some() {
-            DEFAULT_MAX_TOKENS_FOCUSED
-        } else {
-            DEFAULT_MAX_TOKENS_NO_FOCUS
-        };
-        // Clamp to the hard cap so a model that ignores the schema maximum
-        // cannot request an unbounded read.
-        let max_tokens = args
-            .get("max_tokens")
-            .and_then(|v| v.as_u64())
-            .map(|n| n as usize)
-            .unwrap_or(default_budget)
-            .min(MAX_TOKENS_HARD_CAP);
-
-        let doc = service.read(path, focus, max_tokens)?;
-        let observation = format!(
-            "read_project_doc returned {} bytes from `{}` (is_full={}, omitted_sections={}).",
-            doc.content.len(),
-            doc.path,
-            doc.is_full,
-            doc.omitted_sections.len()
-        );
-
-        Ok(ToolResult {
-            tool_name: request.tool_name.clone(),
-            category: ToolCategory::ReadOnly,
-            side_effect_level: ToolSideEffectLevel::ReadOnly,
-            input: request.input.clone(),
-            output_text: serde_json::to_string(&doc)?,
-            numeric_value: None,
-            observation_summary: observation,
-        })
-    }
-
-    fn model_tool_definition(&self) -> Option<ModelToolDefinition> {
-        Some(ModelToolDefinition::new(
-            READ_PROJECT_DOC_TOOL_NAME,
-            "Read a focused excerpt or bounded slice of a project document, with kind and \
-             maturity metadata. Use after search_project_docs.",
-            json!({
-                "type": "object",
-                "properties": {
-                    "path": { "type": "string" },
-                    "focus": { "type": "string" },
-                    "max_tokens": { "type": "integer", "minimum": 100, "maximum": 4000 }
-                },
-                "required": ["path"],
-                "additionalProperties": false
-            }),
-        ))
-    }
-}
-```
-
-Keep `MAX_TOKENS_HARD_CAP` and the schema `maximum` in sync — they are
-two faces of the same contract.
-
-- [ ] **Step 4: Re-export and run tests.**
-
-Add to `crates/qsf_app/src/tools/mod.rs`:
-
-```rust
-pub mod read_project_doc_tool;
-pub use read_project_doc_tool::{READ_PROJECT_DOC_TOOL_NAME, ReadProjectDocTool};
-```
-
-Run: `cargo test -p qsf_app tools::read_project_doc_tool`
-Expected: PASS.
-
-- [ ] **Step 5: Commit.**
-
-```bash
-git add crates/qsf_app/src/tools/read_project_doc_tool.rs \
-        crates/qsf_app/src/tools/mod.rs
-git commit -m "feat(tools): ReadProjectDocTool"
-```
-
-### Phase 2 verification
-
-Run `cargo test -p qsf_app tools::` then
-`cargo clippy --all-targets -- -D warnings` and `cargo fmt`. Expect all
-clean.
-
-**Diary discipline for this phase.** Per `Agents.md`, implementation
-changes must be recorded in `docs/EngineeringDiary.md`. This plan groups
-the *application* work of Phases 1-8 under a single diary entry written
-in Phase 9 — which means **Phases 2-8 are not considered complete or
-mergeable until that Phase 9 diary entry lands**. If Phase 2 is reviewed,
-merged, or handed off as an isolated deliverable ahead of the grouped
-feature, a short standalone Phase 2 diary entry must accompany that merge
-(read the *Instructions how to use* at the top of the diary first). Do
-not merge Phase 2 in isolation with no diary entry at all.
-
-**Acceptance criteria for Phase 2:**
-
-- `ToolPermission::read_only()` exists, admits a `ReadOnly`/`ReadOnly`
-  request, and rejects both `WriteCapable`/`ExternalWrite` and
-  `ComputeOnly`/`None` (Task 2.1 tests).
-- A new defaulted `ToolContext::project_doc_service()` accessor exists
-  and is **tested**: `ProjectDocToolContext` returns `Some(service)` and
-  `EmptyToolContext` returns `None` (Task 2.2 tests); `EmptyToolContext`
-  and `SessionToolContext` compile and behave unchanged via the `None`
-  default.
-- `SearchProjectDocsTool` and `ReadProjectDocTool` implement `Tool`,
-  advertise `category = ReadOnly` / `side_effect_level = ReadOnly`,
-  expose a `model_tool_definition` with the documented JSON schema, and
-  produce a `ToolResult` whose `output_text` round-trips via serde to
-  `Vec<DocHit>` / `DocRead` respectively (asserted by deserializing in
-  the success tests).
-- `SearchProjectDocsTool` normalizes `max_results` into
-  `1..=DEFAULT_MAX_RESULTS` (a `0` argument falls back to the default;
-  Task 2.3 test). `ReadProjectDocTool` clamps `max_tokens` to
-  `MAX_TOKENS_HARD_CAP` (an above-cap argument behaves identically to one
-  at the cap; Task 2.4 test).
-- Both tools fail with a clear, `ProjectDocToolContext`-mentioning error
-  when run against a context lacking the service (tested for **both**
-  search and read), and forward allowlist/path enforcement to
-  `ProjectDocService` rather than re-implementing it.
-- The tools are **not** yet referenced by `ToolRegistry`,
-  `dispatch_model_tool_calls`, or any responder role — that wiring is
-  deliberately deferred to Phases 3-6. `lib.rs` is unchanged in this
-  phase.
-- `cargo test -p qsf_app tools::`, `cargo clippy --all-targets -- -D
-  warnings`, and `cargo fmt` are all clean.
-
-**Open question to surface if it arises:** if, while writing Task 2.2,
-the borrowed-`&ProjectDocService` context proves awkward at the eventual
-call site (e.g. the dispatcher only has an owned/`Arc` handle, or needs
-the combined session+project-doc context described in the *Mixed-batch
-dispatch* note above), raise Open Question #2 before Phase 3 rather than
-silently switching to an `Arc<ProjectDocService>` or a one-off context —
-the change touches both the context type and every construction site.
+## Phase 2: Tool implementations — completed
+
+**Status: landed and committed** (git: "ProjectDocIntrospection phase 2:
+add project-doc tool surface"). The source of truth is the code under
+`crates/qsf_app/src/tools/`.
+
+### What shipped
+
+- `ToolPermission::read_only()` in
+  `crates/qsf_app/src/tools/tool_request.rs` — grants the `ReadOnly`
+  category and a `ReadOnly` max side-effect level, matching the metadata
+  the two tools advertise so `ToolRegistry::validate_request` admits them
+  once Phase 3 wires them in. Covered by tests asserting it admits
+  `ReadOnly`/`ReadOnly` and rejects both `WriteCapable`/`ExternalWrite`
+  and `ComputeOnly`/`None`.
+- A second defaulted `ToolContext` accessor,
+  `project_doc_service(&self) -> Option<&ProjectDocService>` (returns
+  `None`), in `tool_registry.rs`. `EmptyToolContext` and
+  `SessionToolContext` compile and behave unchanged via the default.
+- `ProjectDocToolContext<'a> { service: &'a ProjectDocService }` in
+  `crates/qsf_app/src/tools/project_doc_tool.rs`, returning
+  `Some(service)` from the accessor. Tested against the Phase 1 fixture
+  corpus (`src/project_docs/fixtures`, `allowlist_basic.toml`).
+- `SearchProjectDocsTool` (`search_project_docs_tool.rs`): reads
+  `query`/`max_results` from `ToolRequest::structured`, calls
+  `service.search`, serializes `Vec<DocHit>` into `output_text`.
+  **Normalizes `max_results` into `1..=DEFAULT_MAX_RESULTS`** (clamps the
+  upper bound; treats an out-of-schema `0` as the default). Advertises
+  `ReadOnly`/`ReadOnly` and a `model_tool_definition` with the documented
+  JSON schema.
+- `ReadProjectDocTool` (`read_project_doc_tool.rs`): reads
+  `path`/`focus`/`max_tokens`, calls `service.read`, serializes `DocRead`.
+  **Clamps `max_tokens` to `MAX_TOKENS_HARD_CAP` (4000)** — kept in sync
+  with the schema `maximum` — so a request ignoring the schema cannot
+  produce an unbounded read. Default budget is smaller for a focused read
+  than a no-focus read. Forwards the raw `path` to `service.read` (path
+  safety enforced by the Phase 1 library, not re-implemented here).
+- `tools/mod.rs` re-exports `ProjectDocToolContext`,
+  `SEARCH_PROJECT_DOCS_TOOL_NAME`, `SearchProjectDocsTool`,
+  `READ_PROJECT_DOC_TOOL_NAME`, and `ReadProjectDocTool`.
+
+Both tools fail with a clear, `ProjectDocToolContext`-mentioning error
+when run against a context lacking the service, and round-trip their
+`output_text` back to `Vec<DocHit>` / `DocRead` via serde.
+
+### Lessons and constraints binding later phases
+
+- **Not yet wired.** The tools are **not** referenced by `ToolRegistry`,
+  `dispatch_model_tool_calls`, or any responder role — that is the work
+  of Phases 3-6. `lib.rs` was unchanged in this phase.
+- **Combined context required before Phase 4 (Open Question #2).** The
+  standalone `ProjectDocToolContext` is enough for unit tests and Phase
+  3's registry wiring, but live dispatch needs one context answering both
+  `session_state()` (for `recall_turn`) and `project_doc_service()` (for
+  the project-doc tools). Build that combined context before Phase 4 —
+  see Open Question #2 for the recommended shapes and the decision to
+  confirm.
+- **Upper-bound discipline is the tool's job.** `max_results` and
+  `max_tokens` are clamped/normalized inside the tools; later phases must
+  not assume the model honors the advertised schema.
+- **Diary discipline.** This plan groups the *application* work of Phases
+  1-8 under a single Phase 9 diary entry — so Phases 2-8 are not
+  considered complete or mergeable until that entry lands. If Phase 2 was
+  merged in isolation, a short standalone Phase 2 diary entry must
+  accompany that merge (read the *Instructions how to use* at the top of
+  the diary first). Reconcile, don't duplicate, in Phase 9.
+
+### Acceptance outcome (met)
+
+`cargo test -p qsf_app tools::` passes (the `read_only` permission tests,
+both context-accessor tests, search hit/metadata + `max_results`
+normalization + missing-context failure, read content + `max_tokens`
+clamp + out-of-allowlist refusal + missing-context failure).
+`cargo clippy --all-targets -- -D warnings` and `cargo fmt` are clean.
 
 ---
 
 ## Phase 3: `ToolRegistry` wiring
 
-Extend the hand-coded registry to dispatch the two new tools. Per
-`Agents.md`, keep shared constants DRY — the names already live in
-their respective tool modules; the registry imports them.
+Extend the hand-coded `ToolRegistry` so it knows about the two
+project-doc tools that landed in Phase 2. Today the registry's struct,
+its `Default`, and its three `match` sites (`metadata_for`, `dispatch`,
+`model_tool_definitions_for`) route only `calculator` and `recall_turn`;
+this phase adds `search_project_docs` and `read_project_doc` to all
+three. Per `Agents.md`, keep shared constants DRY — the tool-name
+constants already live in their modules and are re-exported from
+`crate::tools`, so the registry imports them rather than re-declaring
+strings.
 
-**Before this phase hardens the wiring**, settle the combined-context
-decision from Phase 2's *Mixed-batch dispatch* note (Open Question #2):
-the dispatch path will need a single `ToolContext` that answers both
-`session_state()` (for `recall_turn`) and `project_doc_service()` (for
-the project-doc tools). The registry itself does not hold the context,
-but the construction site it feeds (Phases 4 and 6) does — do not defer
-the choice past this point.
+This is a small, self-contained, independently reviewable slice: it
+touches only `tool_registry.rs` and changes no runtime call site.
+
+**Already in place from Phase 2 — do not redo:**
+
+- The tool-name constants and tool structs are re-exported from
+  `crates/qsf_app/src/tools/mod.rs`
+  (`SEARCH_PROJECT_DOCS_TOOL_NAME`, `SearchProjectDocsTool`,
+  `READ_PROJECT_DOC_TOOL_NAME`, `ReadProjectDocTool`). The "re-export the
+  constants" step from the original draft is now a *verification*, not
+  new work.
+- `ToolContext::project_doc_service()` exists on the trait (defaulted to
+  `None`).
+- `dispatch_model_tool_calls`'s `tool_request_from_model_tool_call`
+  already routes unrecognized tools through its catch-all `_ =>` arm,
+  copying `tool_call.arguments` into `ToolRequest.structured` and
+  deriving permission from the registry metadata. Once the registry
+  knows the two tools (this phase), that catch-all builds correct
+  `ToolRequest`s for them — **no change to the dispatch request-builder
+  is needed in this phase.**
+
+**Scope boundary — combined context is settled before Phase 4, not
+here.** The registry holds no `ToolContext`; it receives one per call.
+So the mixed-batch combined-context question (Open Question #2 — a single
+context answering both `session_state()` and `project_doc_service()`)
+does **not** need to be built in this phase. It must be settled before
+Phase 4, the first phase that dispatches these tools through a live
+context alongside `recall_turn`. **Decision to confirm before Phase 4**
+(stated for the implementer's awareness, but not blocking Phase 3):
+whether to extend `SessionToolContext` with an optional
+`&ProjectDocService` or to introduce a dedicated combined context. If
+neither default is acceptable, raise it before Phase 4 wiring begins.
+
+Follow `superpowers:test-driven-development` (or plain TDD if that skill
+is unavailable): the failing test precedes the implementation.
 
 ### Task 3.1: Extend the registry
 
 **Files:**
 - Modify: `crates/qsf_app/src/tools/tool_registry.rs`
-- Modify: `crates/qsf_app/src/tools/mod.rs` (re-exports)
+- Verify (no change expected): `crates/qsf_app/src/tools/mod.rs`
+  already re-exports the two constants and structs.
 
-- [ ] **Step 1: Write the failing test.**
+- [ ] **Step 1: Write the failing tests.**
+
+Add to the existing `#[cfg(test)] mod tests` block in
+`tool_registry.rs`. The first two prove the `metadata_for` and
+`model_tool_definitions_for` arms *for both tools and with their
+identity, not just their presence*; the last two drive real calls
+through `execute` → `dispatch`, exercising the new `dispatch` arms *and*
+confirming `read_only()` admits the tools. The dispatch tests reuse the
+Phase 1/2 fixture corpus: the search test uses the `"Maturity"` query
+that Phase 2 already proved returns non-empty hits, and the read test
+uses the same allowlisted fixture path that Phase 2's read test proved
+returns content.
+
+The metadata/definition assertions deliberately go beyond `is_some()` /
+`len() == 2` so a wrong-tool-under-the-right-name regression cannot
+slip through (review finding L1). Mirror the exact field/accessor shape
+the existing calculator and recall_turn tests use for `ToolMetadata`
+and the model tool definition — the snippets below assume a `name`
+field on the definition and `category` / `side_effect_level` fields on
+`ToolMetadata`; adjust to whatever the current types expose.
 
 ```rust
-// add to crates/qsf_app/src/tools/tool_registry.rs tests
 #[test]
 fn registry_exposes_project_doc_tools() {
     let registry = ToolRegistry::default();
@@ -1020,36 +461,117 @@ fn registry_exposes_project_doc_tools() {
         crate::tools::READ_PROJECT_DOC_TOOL_NAME,
     ]);
     assert_eq!(defs.len(), 2);
+    // Not just a count: assert the right definitions came back under the
+    // right names (a bare count would pass if one tool were returned twice).
+    let names: Vec<&str> = defs.iter().map(|d| d.name.as_str()).collect();
+    assert!(names.contains(&crate::tools::SEARCH_PROJECT_DOCS_TOOL_NAME));
+    assert!(names.contains(&crate::tools::READ_PROJECT_DOC_TOOL_NAME));
 }
 
 #[test]
 fn registry_metadata_for_project_doc_tools() {
     let registry = ToolRegistry::default();
-    assert!(registry
-        .metadata_for(crate::tools::SEARCH_PROJECT_DOCS_TOOL_NAME)
-        .is_some());
-    assert!(registry
-        .metadata_for(crate::tools::READ_PROJECT_DOC_TOOL_NAME)
-        .is_some());
+    for name in [
+        crate::tools::SEARCH_PROJECT_DOCS_TOOL_NAME,
+        crate::tools::READ_PROJECT_DOC_TOOL_NAME,
+    ] {
+        let meta = registry.metadata_for(name).expect("metadata present");
+        // Not just is_some(): Phase 3's dispatch path (and read_only()
+        // admission) depends on these advertising ReadOnly/ReadOnly.
+        assert_eq!(meta.category, crate::tools::ToolCategory::ReadOnly);
+        assert_eq!(
+            meta.side_effect_level,
+            crate::tools::ToolSideEffectLevel::ReadOnly
+        );
+    }
+}
+
+#[test]
+fn registry_dispatches_search_project_docs() {
+    use crate::project_docs::ProjectDocService;
+    use crate::tools::{ProjectDocToolContext, ToolPermission, ToolRequest};
+    use std::path::PathBuf;
+
+    let fixtures =
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("src/project_docs/fixtures");
+    let service =
+        ProjectDocService::new(fixtures.clone(), fixtures.join("allowlist_basic.toml"));
+    let ctx = ProjectDocToolContext { service: &service };
+    let registry = ToolRegistry::default();
+
+    let request = ToolRequest {
+        tool_name: crate::tools::SEARCH_PROJECT_DOCS_TOOL_NAME.to_string(),
+        input: "Maturity".to_string(),
+        structured: Some(serde_json::json!({ "query": "Maturity" })),
+        permission: ToolPermission::read_only(),
+        requested_by: "test".to_string(),
+    };
+
+    let result = registry.execute(&request, &ctx).unwrap();
+    assert_eq!(result.tool_name, crate::tools::SEARCH_PROJECT_DOCS_TOOL_NAME);
+    assert_eq!(result.category, crate::tools::ToolCategory::ReadOnly);
+}
+
+#[test]
+fn registry_dispatches_read_project_doc() {
+    use crate::project_docs::ProjectDocService;
+    use crate::tools::{ProjectDocToolContext, ToolPermission, ToolRequest};
+    use std::path::PathBuf;
+
+    let fixtures =
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("src/project_docs/fixtures");
+    let service =
+        ProjectDocService::new(fixtures.clone(), fixtures.join("allowlist_basic.toml"));
+    let ctx = ProjectDocToolContext { service: &service };
+    let registry = ToolRegistry::default();
+
+    // Use the same allowlisted fixture path Phase 2's read test proved
+    // returns content. Replace FIXTURE_DOC_PATH with that repo-relative path.
+    const FIXTURE_DOC_PATH: &str = /* the path Phase 2's read test used */;
+
+    let request = ToolRequest {
+        tool_name: crate::tools::READ_PROJECT_DOC_TOOL_NAME.to_string(),
+        input: FIXTURE_DOC_PATH.to_string(),
+        structured: Some(serde_json::json!({ "path": FIXTURE_DOC_PATH })),
+        permission: ToolPermission::read_only(),
+        requested_by: "test".to_string(),
+    };
+
+    let result = registry.execute(&request, &ctx).unwrap();
+    assert_eq!(result.tool_name, crate::tools::READ_PROJECT_DOC_TOOL_NAME);
+    assert_eq!(result.category, crate::tools::ToolCategory::ReadOnly);
 }
 ```
 
+The read dispatch test exists because Phase 3's acceptance says
+*both* tools must route through `dispatch` — testing only the search
+arm would let a missing or wrong `read_project_doc` dispatch arm slip
+through even when the metadata and definition arms were added correctly
+(review finding M1).
+
 - [ ] **Step 2: Run tests; verify they fail.**
 
-Run: `cargo test -p qsf_app tools::tool_registry::tests::registry_exposes_project_doc_tools`
-
-Expected: FAIL.
+Run: `cargo test -p qsf_app tools::tool_registry`
+Expected: all four new tests FAIL (registry does not yet know the two
+tools — `metadata_for` returns `None`, so `validate_request`/`execute`
+bail with "unknown tool", and `model_tool_definitions_for` yields 0
+definitions).
 
 - [ ] **Step 3: Implement the extension.**
 
-In `crates/qsf_app/src/tools/tool_registry.rs`:
+Add imports near the existing tool imports at the top of
+`tool_registry.rs`:
 
 ```rust
-use super::read_project_doc_tool::{READ_PROJECT_DOC_TOOL_NAME, ReadProjectDocTool};
-use super::search_project_docs_tool::{SEARCH_PROJECT_DOCS_TOOL_NAME, SearchProjectDocsTool};
+use super::read_project_doc_tool::ReadProjectDocTool;
+use super::search_project_docs_tool::SearchProjectDocsTool;
 ```
 
-Extend the struct:
+(The name constants are reached via `super::SEARCH_PROJECT_DOCS_TOOL_NAME`
+and `super::READ_PROJECT_DOC_TOOL_NAME`, mirroring how the existing arms
+use `super::CALCULATOR_TOOL_NAME` and `super::RECALL_TURN_TOOL_NAME`.)
+
+Extend the struct and `Default`:
 
 ```rust
 pub struct ToolRegistry {
@@ -1071,28 +593,108 @@ impl Default for ToolRegistry {
 }
 ```
 
-Extend each match arm in `metadata_for`, `dispatch`, and
-`model_tool_definitions_for` to route the two new names.
+Add one arm to each of the three `match` sites, mirroring the existing
+calculator/recall_turn arms. **Match the exact shape of the existing
+arm at each site** — in particular, if `model_tool_definitions_for`
+wraps each definition in `Some(...)` (or pushes into a `Vec`, or
+filters `Option`s), copy that wrapping rather than the bare-call
+snippets shown below; a literal paste of an unwrapped call will not
+compile against a `Some`-wrapping arm (review finding N1). The snippets
+below show the *call*, not necessarily the surrounding wrapper:
 
-- [ ] **Step 4: Re-export the constants from `tools/mod.rs`.**
+- in `metadata_for` (existing arms return `Some(...)`, so mirror that):
+  ```rust
+  super::SEARCH_PROJECT_DOCS_TOOL_NAME => Some(self.search_project_docs.metadata()),
+  super::READ_PROJECT_DOC_TOOL_NAME => Some(self.read_project_doc.metadata()),
+  ```
+- in `dispatch`:
+  ```rust
+  super::SEARCH_PROJECT_DOCS_TOOL_NAME => self.search_project_docs.execute(request, ctx),
+  super::READ_PROJECT_DOC_TOOL_NAME => self.read_project_doc.execute(request, ctx),
+  ```
+- in `model_tool_definitions_for` (wrap to match the existing arm's
+  shape — e.g. `Some(self.search_project_docs.model_tool_definition())`
+  if the existing arms yield `Option`):
+  ```rust
+  super::SEARCH_PROJECT_DOCS_TOOL_NAME => self.search_project_docs.model_tool_definition(),
+  super::READ_PROJECT_DOC_TOOL_NAME => self.read_project_doc.model_tool_definition(),
+  ```
 
-```rust
-pub use search_project_docs_tool::{SEARCH_PROJECT_DOCS_TOOL_NAME, SearchProjectDocsTool};
-pub use read_project_doc_tool::{READ_PROJECT_DOC_TOOL_NAME, ReadProjectDocTool};
-```
+- [ ] **Step 4: Verify the re-exports already exist.**
+
+Confirm `crates/qsf_app/src/tools/mod.rs` already exposes
+`SEARCH_PROJECT_DOCS_TOOL_NAME`, `SearchProjectDocsTool`,
+`READ_PROJECT_DOC_TOOL_NAME`, and `ReadProjectDocTool` (it does, from
+Phase 2). No edit expected here; if a re-export is missing, add it.
 
 - [ ] **Step 5: Run tests.**
 
 Run: `cargo test -p qsf_app tools::tool_registry`
-Expected: PASS.
+Expected: PASS (all four new tests, plus the existing calculator /
+recall_turn / permission tests unchanged).
 
 - [ ] **Step 6: Commit.**
 
+This commit is the code-only registry slice. Per the diary-discipline
+note below, only commit it on an **unmerged feature branch** whose
+Phase 9 diary entry will land before review/merge; if Phase 3 is to be
+merged independently ahead of that, add a short standalone Phase 3
+diary entry (see the diary note) *before* opening the merge.
+
 ```bash
-git add crates/qsf_app/src/tools/tool_registry.rs \
-        crates/qsf_app/src/tools/mod.rs
+git add crates/qsf_app/src/tools/tool_registry.rs
 git commit -m "feat(tools): wire project-doc tools into ToolRegistry"
 ```
+
+### Phase 3 verification
+
+Per `Agents.md` the build command is `cargo build`, so run it first,
+then the focused tests, then the lint/format gates:
+
+```bash
+cargo build
+cargo test -p qsf_app tools::
+cargo clippy --all-targets -- -D warnings
+cargo fmt
+```
+
+Expect all clean. (`cargo test`/`clippy` compile the crate too, but
+running `cargo build` explicitly keeps this phase aligned with the
+documented repo workflow — review finding L2.)
+
+**Diary discipline for this phase.** As with Phase 2, the *application*
+work of Phases 1-8 is grouped under a single Phase 9 diary entry, so
+Phase 3 is not considered complete or mergeable until that entry lands.
+The Step 6 commit is therefore intended for an unmerged feature branch.
+If Phase 3 is instead merged in isolation ahead of the grouped feature,
+a short standalone Phase 3 diary entry **must** accompany that merge
+(read the *Instructions how to use* at the top of the diary first), to
+satisfy the repo requirement that implementation changes are documented
+in `EngineeringDiary.md`. Do not merge Phase 3 in isolation with no
+diary entry at all (review finding M2).
+
+**Acceptance criteria for Phase 3:**
+
+- `ToolRegistry::default()` constructs with `search_project_docs` and
+  `read_project_doc` fields.
+- `metadata_for` returns `Some(_)` for both new tool names, and the
+  returned metadata advertises `ReadOnly`/`ReadOnly` for both (Task 3.1
+  test).
+- `model_tool_definitions_for(&[search, read])` returns exactly 2
+  definitions, named `search_project_docs` and `read_project_doc`
+  (Task 3.1 test).
+- `dispatch` routes **both** new names to their tools: a `read_only()`
+  search request and a `read_only()` read request executed through
+  `registry.execute(...)` against a `ProjectDocToolContext` each
+  succeed and return a `ReadOnly` result (Task 3.1 tests). This also
+  confirms `validate_request` admits the tools under `read_only()`
+  permission.
+- The calculator, recall_turn, and permission-rejection tests still pass
+  unchanged.
+- No runtime call site changed; the combined-context build is
+  deliberately deferred to Phase 4 (per the scope boundary above).
+- `cargo build`, `cargo test -p qsf_app tools::`, `cargo clippy
+  --all-targets -- -D warnings`, and `cargo fmt` are all clean.
 
 ---
 
@@ -1108,6 +710,8 @@ This is the first phase that actually dispatches the project-doc tools
 through a live `ToolContext` alongside `recall_turn`, so the combined
 context from Open Question #2 (a single context answering both
 `session_state()` and `project_doc_service()`) must already exist here.
+**Build it first** if it does not — see Open Question #2 for the
+recommended shapes and the decision to confirm.
 
 ### Task 4.1: Cap enforcement
 
@@ -1128,7 +732,7 @@ mod project_doc_cap_tests {
     use crate::tools::{READ_PROJECT_DOC_TOOL_NAME, SEARCH_PROJECT_DOCS_TOOL_NAME, ToolRegistry};
     use crate::models::{ModelRole, ModelRoleId, ModelRequest, ModelToolCall};
     // exact setup helpers depend on the existing test harness in this file;
-    // mirror the pattern used by any existing tool_dispatch tests.
+    // mirror the pattern used by the existing tool_dispatch tests.
 
     #[test]
     fn third_search_call_in_one_batch_is_refused() {
@@ -1151,11 +755,14 @@ mod project_doc_cap_tests {
 ```
 
 (The two tests are placeholders for the engineer; concrete fixture
-setup mirrors the existing test patterns in the same file. If the file
-has no existing test infrastructure yet, write a focused integration
-test under `crates/qsf_app/tests/` that builds a `RunContext`, a
-`ModelRequest`, a `ToolRegistry`, and a combined `ToolContext`, then
-calls `dispatch_model_tool_calls` directly.)
+setup mirrors the existing test patterns in the same file — see the
+`tests` module that already builds a `RunContext`, `ToolRegistry`,
+`SessionToolContext`, and `ModelRequest`. The live calls here need the
+combined context, not the session-only one. If the harness gets large,
+write a focused integration test under
+`crates/qsf_app/tests/project_doc_dispatch.rs` that builds a
+`RunContext`, `ModelRequest`, `ToolRegistry`, and combined `ToolContext`,
+then calls `dispatch_model_tool_calls` directly.)
 
 - [ ] **Step 2: Run tests; verify they fail.**
 
@@ -1386,9 +993,8 @@ This is the call site where `recall_turn`, `search_project_docs`, and
 `read_project_doc` are advertised together, so the `ToolContext`
 constructed here (and passed to `dispatch_model_tool_calls`) **must** be
 the combined context that answers both `session_state()` and
-`project_doc_service()` — see Phase 2's *Mixed-batch dispatch* note and
-Open Question #2. If that combined context does not yet exist, build it
-before extending `allowed_tools`.
+`project_doc_service()` — see Open Question #2. If that combined context
+does not yet exist, build it before extending `allowed_tools`.
 
 ### Task 6.1: Extend `allowed_tools` for the responder
 
@@ -1970,8 +1576,8 @@ standalone slice, make sure this entry (or a separate library-slice
 entry) explicitly accounts for the `project_docs` library work, not
 only Phases 2-8.** If any of Phases 2-8 were merged in isolation ahead
 of this pass and already carry their own standalone diary entries (per
-the Phase 2 diary discipline), reconcile rather than duplicate them
-here.
+the Phase 2 / Phase 3 diary discipline), reconcile rather than
+duplicate them here.
 
 Template:
 
@@ -2167,11 +1773,12 @@ bloat, false authority, or over-eager project self-reference.
 
 Run after Phases 1-10 land:
 
+- [ ] `cargo build`
 - [ ] `cargo clippy --all-targets -- -D warnings`
 - [ ] `cargo fmt`
 - [ ] `cargo test -p qsf_app`
 - [ ] Verify the production allowlist excludes `docs/Reviews/**` and
-  `docs/EngineeringDiary.md` (Task 1.2 test should already cover this
+  `docs/EngineeringDiary.md` (Phase 1 tests should already cover this
   in CI).
 - [ ] Verify the bounded read rejects `..` traversal and absolute paths
   (Phase 1 read tests should already cover this in CI).
@@ -2179,6 +1786,11 @@ Run after Phases 1-10 land:
   `MAX_TOKENS_HARD_CAP` and `search_project_docs` normalizes
   `max_results` into `1..=DEFAULT_MAX_RESULTS` (Phase 2 tests should
   already cover both in CI).
+- [ ] Verify the `ToolRegistry` routes **both** project-doc tools
+  through `metadata_for`, `dispatch`, and `model_tool_definitions_for`,
+  with metadata advertising `ReadOnly`/`ReadOnly` and definitions
+  returned under the correct names (Phase 3 tests should already cover
+  this in CI — search *and* read dispatch tests).
 - [ ] Verify `Architecture.ToolSystem.md`'s *Implementation Status*
   section lists the two new tools under "Implemented today" with code
   refs and a refreshed `Last reviewed:` date.

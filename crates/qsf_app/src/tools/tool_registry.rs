@@ -6,6 +6,8 @@ use crate::project_docs::ProjectDocService;
 use crate::session::SessionState;
 
 use super::calculator_tool::CalculatorTool;
+use super::read_project_doc_tool::ReadProjectDocTool;
+use super::search_project_docs_tool::SearchProjectDocsTool;
 use super::tool_request::{ToolCategory, ToolRequest, ToolSideEffectLevel};
 use super::tool_result::ToolResult;
 
@@ -45,6 +47,8 @@ impl ToolContext for EmptyToolContext {}
 pub struct ToolRegistry {
     calculator: CalculatorTool,
     recall_turn: super::RecallTurnTool,
+    search_project_docs: SearchProjectDocsTool,
+    read_project_doc: ReadProjectDocTool,
 }
 
 impl Default for ToolRegistry {
@@ -52,6 +56,8 @@ impl Default for ToolRegistry {
         Self {
             calculator: CalculatorTool,
             recall_turn: super::RecallTurnTool,
+            search_project_docs: SearchProjectDocsTool,
+            read_project_doc: ReadProjectDocTool,
         }
     }
 }
@@ -61,6 +67,8 @@ impl ToolRegistry {
         match tool_name {
             super::CALCULATOR_TOOL_NAME => Some(self.calculator.metadata()),
             super::RECALL_TURN_TOOL_NAME => Some(self.recall_turn.metadata()),
+            super::SEARCH_PROJECT_DOCS_TOOL_NAME => Some(self.search_project_docs.metadata()),
+            super::READ_PROJECT_DOC_TOOL_NAME => Some(self.read_project_doc.metadata()),
             _ => None,
         }
     }
@@ -69,6 +77,8 @@ impl ToolRegistry {
         match request.tool_name.as_str() {
             super::CALCULATOR_TOOL_NAME => self.calculator.execute(request, ctx),
             super::RECALL_TURN_TOOL_NAME => self.recall_turn.execute(request, ctx),
+            super::SEARCH_PROJECT_DOCS_TOOL_NAME => self.search_project_docs.execute(request, ctx),
+            super::READ_PROJECT_DOC_TOOL_NAME => self.read_project_doc.execute(request, ctx),
             _ => bail!("unknown tool `{}`", request.tool_name),
         }
     }
@@ -116,6 +126,10 @@ impl ToolRegistry {
             .filter_map(|name| match *name {
                 super::CALCULATOR_TOOL_NAME => self.calculator.model_tool_definition(),
                 super::RECALL_TURN_TOOL_NAME => self.recall_turn.model_tool_definition(),
+                super::SEARCH_PROJECT_DOCS_TOOL_NAME => {
+                    self.search_project_docs.model_tool_definition()
+                }
+                super::READ_PROJECT_DOC_TOOL_NAME => self.read_project_doc.model_tool_definition(),
                 _ => None,
             })
             .collect()
@@ -125,7 +139,15 @@ impl ToolRegistry {
 #[cfg(test)]
 mod tests {
     use super::ToolRegistry;
+    use crate::project_docs::ProjectDocService;
+    use crate::tools::ProjectDocToolContext;
     use crate::tools::{ToolCategory, ToolPermission, ToolRequest, ToolSideEffectLevel};
+    use std::path::PathBuf;
+
+    fn fixture_service() -> ProjectDocService {
+        let fixtures = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("src/project_docs/fixtures");
+        ProjectDocService::new(fixtures.clone(), fixtures.join("allowlist_basic.toml"))
+    }
 
     #[test]
     fn calculator_exposes_model_tool_definition() {
@@ -149,6 +171,84 @@ mod tests {
                 .get("turn_id")
                 .is_some()
         );
+    }
+
+    #[test]
+    fn registry_exposes_project_doc_tools() {
+        let registry = ToolRegistry::default();
+        let definitions = registry.model_tool_definitions_for(&[
+            crate::tools::SEARCH_PROJECT_DOCS_TOOL_NAME,
+            crate::tools::READ_PROJECT_DOC_TOOL_NAME,
+        ]);
+        let names: Vec<&str> = definitions
+            .iter()
+            .map(|definition| definition.name.as_str())
+            .collect();
+
+        assert_eq!(
+            names,
+            vec![
+                crate::tools::SEARCH_PROJECT_DOCS_TOOL_NAME,
+                crate::tools::READ_PROJECT_DOC_TOOL_NAME,
+            ]
+        );
+    }
+
+    #[test]
+    fn registry_metadata_for_project_doc_tools() {
+        let registry = ToolRegistry::default();
+
+        for name in [
+            crate::tools::SEARCH_PROJECT_DOCS_TOOL_NAME,
+            crate::tools::READ_PROJECT_DOC_TOOL_NAME,
+        ] {
+            let metadata = registry.metadata_for(name).expect("metadata present");
+            assert_eq!(metadata.name, name);
+            assert_eq!(metadata.category, ToolCategory::ReadOnly);
+            assert_eq!(metadata.side_effect_level, ToolSideEffectLevel::ReadOnly);
+        }
+    }
+
+    #[test]
+    fn registry_dispatches_search_project_docs() {
+        let service = fixture_service();
+        let ctx = ProjectDocToolContext { service: &service };
+        let registry = ToolRegistry::default();
+        let request = ToolRequest {
+            tool_name: crate::tools::SEARCH_PROJECT_DOCS_TOOL_NAME.to_string(),
+            input: "Maturity".to_string(),
+            structured: Some(serde_json::json!({ "query": "Maturity" })),
+            permission: ToolPermission::read_only(),
+            requested_by: "test".to_string(),
+        };
+
+        let result = registry.execute(&request, &ctx).unwrap();
+
+        assert_eq!(
+            result.tool_name,
+            crate::tools::SEARCH_PROJECT_DOCS_TOOL_NAME
+        );
+        assert_eq!(result.category, ToolCategory::ReadOnly);
+    }
+
+    #[test]
+    fn registry_dispatches_read_project_doc() {
+        let service = fixture_service();
+        let ctx = ProjectDocToolContext { service: &service };
+        let registry = ToolRegistry::default();
+        const FIXTURE_DOC_PATH: &str = "sample_concept.md";
+        let request = ToolRequest {
+            tool_name: crate::tools::READ_PROJECT_DOC_TOOL_NAME.to_string(),
+            input: FIXTURE_DOC_PATH.to_string(),
+            structured: Some(serde_json::json!({ "path": FIXTURE_DOC_PATH })),
+            permission: ToolPermission::read_only(),
+            requested_by: "test".to_string(),
+        };
+
+        let result = registry.execute(&request, &ctx).unwrap();
+
+        assert_eq!(result.tool_name, crate::tools::READ_PROJECT_DOC_TOOL_NAME);
+        assert_eq!(result.category, ToolCategory::ReadOnly);
     }
 
     #[test]
