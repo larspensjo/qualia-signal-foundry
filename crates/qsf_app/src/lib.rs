@@ -7,6 +7,7 @@ pub mod experiments;
 pub mod memory;
 pub mod models;
 pub mod observability;
+pub mod project_docs;
 pub mod reports;
 pub mod runtime;
 pub mod session;

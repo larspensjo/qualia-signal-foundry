@@ -13,6 +13,7 @@ clap.workspace = true
 cpal.workspace = true
 engine_logging = { path = "../engine_logging" }
 futures-util.workspace = true
+globset = "0.4"
 hound.workspace = true
 log.workspace = true
 openai_provider_kit = { git = "https://github.com/larspensjo/web_page_filet_mignon", package = "openai_provider_kit", rev = "ca28629d42fb350a7935df6907573e2f972b3ba9" }
@@ -23,6 +24,8 @@ serde_json.workspace = true
 sha2.workspace = true
 tempfile = "3"
 time.workspace = true
+toml = "0.8"
 tokio.workspace = true
 tokio-tungstenite.workspace = true
 uuid.workspace = true
+walkdir = "2"

@@ -1,0 +1,18 @@
+# Documents accessible to the project-doc introspection channel.
+# Edit this file to add or remove material. Patterns are repo-root globs.
+
+include = [
+  "docs/ProjectFrame/**/*.md",
+  "docs/Concepts/**/*.md",
+  "docs/Architecture/**/*.md",
+  "docs/Plans/**/*.md",
+  "docs/Experiments/**/*.md",
+  "docs/Research/**/*.md",
+  "docs/DecisionLog.md",
+  "README.md",
+]
+
+exclude = [
+  "docs/Reviews/**",
+  "docs/EngineeringDiary.md",
+]

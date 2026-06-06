@@ -1,0 +1,4 @@
+# Used by unit tests that walk the fixtures directory directly, so patterns
+# are relative to that directory rather than to the repo root.
+include = ["**/*.md"]
+exclude = []

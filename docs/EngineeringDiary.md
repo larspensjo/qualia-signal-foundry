@@ -2331,3 +2331,18 @@ docs/Architecture/Architecture.RuntimeLoop.md,
 docs/Architecture/Architecture.MemorySystem.md,
 docs/Experiments/Experiment.RealtimeVoiceSessionMVP.md,
 docs/Experiments/Experiment.TextOwnedVoiceLoop.md
+
+## 2026-06-06 - Project-doc introspection phase 1
+
+Added the read-only `project_docs` library slice in `qsf_app` with allowlist loading, metadata extraction, lexical search, bounded reads with path confinement, and a hot-reloaded `ProjectDocService`.
+
+What changed:
+- Added `crates/qsf_app/src/project_docs` with `Allowlist`, document kind/maturity helpers, search, bounded read, and service facade.
+- Added fixture corpus under `crates/qsf_app/src/project_docs/fixtures` plus `config/project-doc-introspection.toml`.
+- Wired `project_docs` into `crates/qsf_app/src/lib.rs` and added direct crate dependencies for allowlist/search support.
+
+Observed:
+- The read path now rejects absolute paths and `..` components before consulting the allowlist.
+- Search ranking is heading-first, so heading matches outrank repeated body hits.
+
+Refs: crates/qsf_app/src/project_docs, crates/qsf_app/src/lib.rs, crates/qsf_app/Cargo.toml, config/project-doc-introspection.toml

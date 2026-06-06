@@ -100,6 +100,15 @@ differently, raise it before changing direction.
    convention (search `crates/qsf_app` for existing config readers
    before Phase 1), align with that and update the path everywhere in
    this plan and in `Design.ProjectDocIntrospection.md`.
+   *Path-resolution note:* `cargo test` runs with the working
+   directory set to the package root (`crates/qsf_app`), **not** the
+   workspace root, so tests and production code must never load the
+   config via a bare relative path like
+   `"config/project-doc-introspection.toml"`. Tests resolve it from
+   `CARGO_MANIFEST_DIR` (see Task 1.2); production wiring (later
+   phases) must construct `ProjectDocService` with an explicit
+   absolute repo root and an explicit absolute allowlist path, rather
+   than relying on the process working directory.
 2. **`ProjectDocService` injection shape.** This plan uses a dedicated
    `ProjectDocToolContext` carrying a shared `Arc<ProjectDocService>`,
    parallel to `SessionToolContext`. If a different existing pattern
@@ -114,11 +123,21 @@ differently, raise it before changing direction.
    `ProjectDocV1Service`). Keep this discipline through the work.
 5. **Hard latency cap.** Decision 4 of the spec sets a 1500 ms hard
    cap. With lexical search over a small markdown corpus the cap is
-   not expected to fire, so this plan does **not** add an explicit
-   cap-enforcement task. If real-run traces ever show `latency_ms`
-   over 1000, add an enforcement task before the next release —
-   either at the `ProjectDocService` boundary or in the dispatch
-   path. Note this in the diary entry when it happens.
+   not expected to fire, so this plan **deliberately defers**
+   cap-enforcement: the `ProjectDocService` exposes synchronous
+   `search`/`read` with no deadline parameter. This is a conscious
+   scope decision, not an oversight — record it as such in
+   `Design.ProjectDocIntrospection.md` Decision 4 (a one-line note in
+   Phase 9's documentation pass is sufficient) so the design and the
+   implementation agree.
+   A review raised that a synchronous API gives dispatch no clean way
+   to interrupt a long filesystem walk. That risk is acceptable for
+   the current corpus size, but if real-run traces ever show
+   `latency_ms` over 1000, add enforcement **at the
+   `ProjectDocService` boundary**: thread a deadline / max-elapsed
+   budget through `search`/`read`, return partial results, and surface
+   an `omitted_due_to_budget` signal that Phase 5's trace emission can
+   record. Note the change in the diary entry when it happens.
 6. **Test setup in Tasks 4.1 and 5.1.** Those tasks include test
    skeletons rather than fully-spelled integration tests, because
    wiring a `RunContext`, mock model client, `ProjectDocToolContext`,
@@ -162,6 +181,17 @@ Pure, side-effect-free Rust module under
 metadata extraction, lexical search, and bounded read. No tool wiring
 yet. All tests are unit tests driven by an in-tree fixture corpus
 under `crates/qsf_app/src/project_docs/fixtures/`.
+
+**Path-safety invariant for this phase:** any caller-supplied document
+path that reaches the filesystem (the bounded read in Task 1.5) must be
+normalized and confined to the repo root *before* the allowlist is
+consulted. The allowlist operates on clean, repo-relative,
+forward-slash paths; it must never see a raw string containing `..` or
+an absolute prefix, because glob include/exclude evaluation against
+such a string can admit material the exclude rules were meant to block.
+Search (Task 1.4) derives its paths from a `walkdir` traversal of the
+repo root, so those paths are already clean; only the read path takes a
+raw caller string.
 
 ### Task 1.1: Module scaffold and types
 
@@ -319,11 +349,25 @@ exclude = []
 
 - [ ] **Step 3: Write the failing unit test.**
 
+The production-allowlist test must resolve the workspace-root config
+from a path anchored to `CARGO_MANIFEST_DIR`, because `cargo test` runs
+with the working directory at the package root (`crates/qsf_app`), not
+the workspace root. A bare relative string would resolve to
+`crates/qsf_app/config/...` and fail to find the file.
+
 ```rust
 // crates/qsf_app/src/project_docs/allowlist.rs (test block)
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::path::PathBuf;
+
+    /// `config/project-doc-introspection.toml` lives at the workspace root,
+    /// two levels above this crate's manifest dir.
+    fn workspace_config_path() -> PathBuf {
+        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../../config/project-doc-introspection.toml")
+    }
 
     #[test]
     fn accepts_path_matching_include_only() {
@@ -358,7 +402,7 @@ mod tests {
 
     #[test]
     fn default_production_allowlist_excludes_diary_and_reviews() {
-        let allowlist = Allowlist::from_file("config/project-doc-introspection.toml")
+        let allowlist = Allowlist::from_file(workspace_config_path())
             .expect("production allowlist must load");
         assert!(!allowlist.allows("docs/EngineeringDiary.md"));
         assert!(!allowlist.allows("docs/Reviews/anything.md"));
@@ -415,6 +459,9 @@ impl Allowlist {
         })
     }
 
+    /// Evaluates a clean, repo-relative, forward-slash path. Callers that
+    /// accept raw paths from outside (the bounded read in Task 1.5) must
+    /// normalize and confine the path before calling this.
     pub fn allows(&self, repo_relative_path: &str) -> bool {
         if self.exclude.is_match(repo_relative_path) {
             return false;
@@ -493,7 +540,8 @@ Candidate
 Concept body for testing.
 ```
 
-`sample_architecture.md`:
+`sample_architecture.md` (the trailing `## Notes` section gives the
+bounded-read truncation test in Task 1.5 a body section to omit):
 
 ```markdown
 # Architecture: Sample
@@ -506,6 +554,10 @@ Accepted
 
 Implemented today: stuff.
 Last reviewed: 2026-05-21 against the code on `main`.
+
+## Notes
+
+Additional notes for testing bounded reads.
 ```
 
 `sample_design.md`:
@@ -531,6 +583,11 @@ Some text without a recognized heading.
 ```
 
 - [ ] **Step 2: Write the failing tests.**
+
+These cover the design's metadata matrix plus the edge cases the
+original skeleton omitted: `last_reviewed` must be scoped to the
+`## Implementation Status` section (not matched anywhere in the body),
+and a malformed date must yield `None` rather than a partial parse.
 
 ```rust
 // crates/qsf_app/src/project_docs/metadata.rs (test block)
@@ -578,6 +635,12 @@ mod tests {
     }
 
     #[test]
+    fn maturity_unknown_for_unrecognized_value() {
+        let body = "## Maturity\n\nBananas\n";
+        assert_eq!(maturity_for(DocKind::Concept, body), MaturityTag::Unknown);
+    }
+
+    #[test]
     fn maturity_not_applicable_for_frame() {
         assert_eq!(maturity_for(DocKind::Frame, "anything"), MaturityTag::NotApplicable);
     }
@@ -596,6 +659,20 @@ mod tests {
         let body = include_str!("fixtures/sample_concept.md");
         assert_eq!(last_reviewed_for(body), None);
     }
+
+    #[test]
+    fn last_reviewed_ignored_outside_implementation_status_section() {
+        // "Last reviewed:" appears in the body but there is no
+        // `## Implementation Status` section to scope it to.
+        let body = "# Doc\n\n## Body\n\nLast reviewed: 2020-01-01 somewhere.\n";
+        assert_eq!(last_reviewed_for(body), None);
+    }
+
+    #[test]
+    fn last_reviewed_none_for_malformed_date() {
+        let body = "## Implementation Status\n\nLast reviewed: May 2026.\n";
+        assert_eq!(last_reviewed_for(body), None);
+    }
 }
 ```
 
@@ -605,6 +682,11 @@ Run: `cargo test -p qsf_app project_docs::metadata`
 Expected: FAIL (functions undefined).
 
 - [ ] **Step 4: Implement extraction rules.**
+
+`last_reviewed_for` is scoped to the `## Implementation Status` section
+so a stray "Last reviewed:" elsewhere in the document is ignored; the
+date regex enforces an ISO `YYYY-MM-DD` shape so malformed dates yield
+`None`.
 
 ```rust
 // crates/qsf_app/src/project_docs/metadata.rs
@@ -685,13 +767,31 @@ static LAST_REVIEWED_RE: Lazy<Regex> = Lazy::new(|| {
     Regex::new(r"(?m)^Last reviewed:\s*(\d{4}-\d{2}-\d{2})\b").expect("static regex")
 });
 
+/// Returns the slice of `body` covering the `## Implementation Status`
+/// section, from its heading up to the next `## ` heading (or end of doc).
+fn implementation_status_section(body: &str) -> Option<&str> {
+    let start = body.find("## Implementation Status")?;
+    let after = &body[start..];
+    // Find the next top-level section heading after this one.
+    let end = after[1..]
+        .find("\n## ")
+        .map(|i| i + 1)
+        .unwrap_or(after.len());
+    Some(&after[..end])
+}
+
 pub fn last_reviewed_for(body: &str) -> Option<String> {
+    let section = implementation_status_section(body)?;
     LAST_REVIEWED_RE
-        .captures(body)
+        .captures(section)
         .and_then(|c| c.get(1))
         .map(|m| m.as_str().to_string())
 }
 ```
+
+If broader fixture coverage is desired (one document per `DocKind`,
+status section without a date), add those fixtures here; they are a
+welcome extension but not required to pass this task's contract.
 
 - [ ] **Step 5: Re-export from `mod.rs` and add `regex` / `once_cell`
   if needed.**
@@ -723,14 +823,36 @@ git commit -m "feat(project_docs): metadata extraction rules with fixture covera
 
 **Files:**
 - Create: `crates/qsf_app/src/project_docs/search.rs`
+- Create: `crates/qsf_app/src/project_docs/fixtures/sample_body_heavy.md`
 - Modify: `crates/qsf_app/src/project_docs/mod.rs`
 
 Searches the in-scope corpus for a query, returning up to `max_results`
-`DocHit`s ranked by heading-proximity first, then by occurrence count.
-Snippet extraction returns ~200 token excerpt around the strongest
-match.
+`DocHit`s. Ranking is **heading-first**: any document whose query match
+falls inside a `## ` heading line outranks every document matched only
+in body text, regardless of body occurrence count. Within the same
+heading-match tier, documents are ordered by occurrence count, then by
+a deterministic path tiebreaker. Snippet extraction returns a ~200
+token excerpt around the strongest match offset.
 
-- [ ] **Step 1: Write the failing tests.**
+Production search walks the provided root with `walkdir` and filters
+each discovered path through the allowlist; the fixture allowlist uses
+`include=["**/*.md"]` so the tests exercise the whole fixtures
+directory. `walkdir` yields clean, repo-relative paths, so search needs
+no parent-directory-traversal guard — that guard lives in the bounded
+read (Task 1.5), which is the only path that consumes a raw
+caller-supplied string.
+
+- [ ] **Step 1: Add the body-heavy fixture and write the failing tests.**
+
+`sample_body_heavy.md` (many body occurrences of "maturity", but no
+`## ` heading containing it — used to prove heading matches win even
+against a high body count):
+
+```markdown
+# Notes
+
+Some text mentioning maturity. maturity maturity maturity maturity here.
+```
 
 ```rust
 // crates/qsf_app/src/project_docs/search.rs (test block)
@@ -750,50 +872,60 @@ mod tests {
 
     #[test]
     fn heading_match_outranks_body_match() {
-        let hits = search(
-            &fixtures_root(),
-            &fixture_allowlist(),
-            "Maturity",
-            6,
-        )
-        .unwrap();
+        let hits = search(&fixtures_root(), &fixture_allowlist(), "Maturity", 6).unwrap();
         assert!(!hits.is_empty());
         assert_eq!(hits[0].section_hint.as_deref(), Some("Maturity"));
+        assert_eq!(hits[0].match_strength, crate::project_docs::MatchStrength::High);
+    }
+
+    #[test]
+    fn heading_match_outranks_many_body_matches() {
+        let hits = search(&fixtures_root(), &fixture_allowlist(), "maturity", 6).unwrap();
+        // The body-heavy doc has the most raw occurrences but no heading match;
+        // it must rank below any document matched in a `## Maturity` heading.
+        let first_heading_rank = hits
+            .iter()
+            .position(|h| h.section_hint.as_deref() == Some("Maturity"))
+            .expect("a heading match should exist");
+        let body_heavy_rank = hits
+            .iter()
+            .position(|h| h.path.contains("sample_body_heavy"))
+            .expect("body-heavy doc should appear");
+        assert!(first_heading_rank < body_heavy_rank);
     }
 
     #[test]
     fn returns_unknown_kind_for_unstructured_doc() {
-        let hits = search(
-            &fixtures_root(),
-            &fixture_allowlist(),
-            "Unstructured",
-            6,
-        )
-        .unwrap();
+        let hits = search(&fixtures_root(), &fixture_allowlist(), "Unstructured", 6).unwrap();
         assert!(hits.iter().any(|h| h.kind == crate::project_docs::DocKind::Unknown));
     }
 
     #[test]
     fn empty_results_when_no_match() {
-        let hits = search(
-            &fixtures_root(),
-            &fixture_allowlist(),
-            "xyzzyno-such-token",
-            6,
-        )
-        .unwrap();
+        let hits = search(&fixtures_root(), &fixture_allowlist(), "xyzzyno-such-token", 6).unwrap();
+        assert!(hits.is_empty());
+    }
+
+    #[test]
+    fn empty_query_returns_no_results() {
+        let hits = search(&fixtures_root(), &fixture_allowlist(), "   ", 6).unwrap();
         assert!(hits.is_empty());
     }
 }
 ```
 
-Note: the fixture allowlist needs to match the fixtures directory, so
-update `fixtures/allowlist_basic.toml` to use root-relative
-patterns the test scaffolds. Alternative (simpler): pass an explicit
-list of paths into the search instead of an allowlist + directory
-walk. The plan picks the latter — see Step 2 below.
+- [ ] **Step 2: Run tests; verify they fail.**
 
-- [ ] **Step 2: Implement `search`.**
+Run: `cargo test -p qsf_app project_docs::search`
+Expected: FAIL (`search` undefined).
+
+- [ ] **Step 3: Implement `search`.**
+
+The match analyzer scans the document line by line, tracking the
+current `## ` heading. A match inside a heading line is recorded as a
+heading match and pins `section_hint` to that heading; otherwise the
+first body match is kept along with its enclosing heading (if any). The
+final sort is a heading-first ordering tuple, never a summed score.
 
 ```rust
 // crates/qsf_app/src/project_docs/search.rs
@@ -808,18 +940,24 @@ use super::{Allowlist, DocHit, MatchStrength};
 
 const SNIPPET_BYTES: usize = 800; // ~200 tokens
 
+struct DocScore {
+    heading_match: bool,
+    occurrences: usize,
+    hit: DocHit,
+}
+
 pub fn search(
     repo_root: &Path,
     allowlist: &Allowlist,
     query: &str,
     max_results: usize,
 ) -> Result<Vec<DocHit>> {
-    let needle = query.to_ascii_lowercase();
-    if needle.trim().is_empty() {
+    let needle = query.trim().to_ascii_lowercase();
+    if needle.is_empty() {
         return Ok(Vec::new());
     }
 
-    let mut scored: Vec<(u32, DocHit)> = Vec::new();
+    let mut scored: Vec<DocScore> = Vec::new();
     for entry in WalkDir::new(repo_root).into_iter().filter_map(|e| e.ok()) {
         if !entry.file_type().is_file() {
             continue;
@@ -835,51 +973,92 @@ pub fn search(
         }
         let body = fs::read_to_string(entry.path())
             .with_context(|| format!("read `{rel}`"))?;
-        let body_lower = body.to_ascii_lowercase();
-        let count = body_lower.matches(&needle).count() as u32;
-        if count == 0 {
+        let Some(analysis) = analyze_matches(&body, &needle) else {
             continue;
-        }
-        let (best_offset, section_hint, heading_proximity) =
-            best_match_position(&body_lower, &body, &needle);
-        let score = count + heading_proximity;
-        let snippet = extract_snippet(&body, best_offset, SNIPPET_BYTES);
+        };
         let kind = kind_for_path(&rel);
         let maturity = maturity_for(kind, &body);
         let last_reviewed = last_reviewed_for(&body);
-        scored.push((
-            score,
-            DocHit {
+        let snippet = extract_snippet(&body, analysis.best_offset, SNIPPET_BYTES);
+        scored.push(DocScore {
+            heading_match: analysis.heading_match,
+            occurrences: analysis.occurrences,
+            hit: DocHit {
                 path: rel,
                 kind,
                 maturity_tag: maturity,
                 last_reviewed,
                 snippet,
-                section_hint,
-                match_strength: classify_strength(score),
+                section_hint: analysis.section_hint,
+                match_strength: classify_strength(analysis.heading_match, analysis.occurrences),
             },
-        ));
+        });
     }
-    scored.sort_by(|a, b| b.0.cmp(&a.0).then_with(|| a.1.path.cmp(&b.1.path)));
-    Ok(scored.into_iter().take(max_results).map(|(_, h)| h).collect())
+
+    // Heading-first: heading matches win outright, then occurrence count,
+    // then a deterministic path tiebreaker for stable ordering.
+    scored.sort_by(|a, b| {
+        b.heading_match
+            .cmp(&a.heading_match)
+            .then_with(|| b.occurrences.cmp(&a.occurrences))
+            .then_with(|| a.hit.path.cmp(&b.hit.path))
+    });
+    Ok(scored.into_iter().take(max_results).map(|s| s.hit).collect())
 }
 
-fn best_match_position(
-    lower: &str,
-    original: &str,
-    needle: &str,
-) -> (usize, Option<String>, u32) {
-    let offset = lower.find(needle).unwrap_or(0);
-    let preceding_heading = original[..offset]
-        .rsplit_once("\n## ")
-        .map(|(_, after)| after.lines().next().unwrap_or("").trim().to_string());
-    let heading_proximity = if let Some(heading) = &preceding_heading {
-        let heading_lower = heading.to_ascii_lowercase();
-        if heading_lower.contains(needle) { 10 } else { 0 }
+struct MatchAnalysis {
+    best_offset: usize,
+    section_hint: Option<String>,
+    heading_match: bool,
+    occurrences: usize,
+}
+
+fn analyze_matches(body: &str, needle: &str) -> Option<MatchAnalysis> {
+    let occurrences = body.to_ascii_lowercase().matches(needle).count();
+    if occurrences == 0 {
+        return None;
+    }
+
+    let mut current_heading: Option<String> = None;
+    let mut best_heading: Option<(usize, String)> = None;
+    let mut best_body: Option<(usize, Option<String>)> = None;
+    let mut offset = 0usize;
+
+    for line in body.split_inclusive('\n') {
+        let trimmed = line.trim_start();
+        let is_heading = trimmed.starts_with("## ");
+        if is_heading {
+            current_heading = Some(trimmed.trim_start_matches('#').trim().to_string());
+        }
+        if let Some(pos) = line.to_ascii_lowercase().find(needle) {
+            let abs = offset + pos;
+            if is_heading {
+                if best_heading.is_none() {
+                    best_heading = Some((abs, current_heading.clone().unwrap_or_default()));
+                }
+            } else if best_body.is_none() {
+                best_body = Some((abs, current_heading.clone()));
+            }
+        }
+        offset += line.len();
+    }
+
+    if let Some((abs, heading)) = best_heading {
+        Some(MatchAnalysis {
+            best_offset: abs,
+            section_hint: Some(heading),
+            heading_match: true,
+            occurrences,
+        })
     } else {
-        0
-    };
-    (offset, preceding_heading, heading_proximity)
+        let (abs, heading) = best_body.expect("occurrences > 0 guarantees a body match");
+        Some(MatchAnalysis {
+            best_offset: abs,
+            section_hint: heading,
+            heading_match: false,
+            occurrences,
+        })
+    }
 }
 
 fn extract_snippet(body: &str, around: usize, byte_budget: usize) -> String {
@@ -905,16 +1084,18 @@ fn ceil_char_boundary(s: &str, mut idx: usize) -> usize {
     idx
 }
 
-fn classify_strength(score: u32) -> MatchStrength {
-    match score {
-        0..=1 => MatchStrength::Low,
-        2..=4 => MatchStrength::Medium,
-        _ => MatchStrength::High,
+fn classify_strength(heading_match: bool, occurrences: usize) -> MatchStrength {
+    if heading_match {
+        MatchStrength::High
+    } else if occurrences >= 3 {
+        MatchStrength::Medium
+    } else {
+        MatchStrength::Low
     }
 }
 ```
 
-- [ ] **Step 3: Add `walkdir` to `Cargo.toml` if absent; re-export
+- [ ] **Step 4: Add `walkdir` to `Cargo.toml` if absent; re-export
   `search` from `mod.rs`.**
 
 ```rust
@@ -923,18 +1104,19 @@ pub mod search;
 pub use search::search;
 ```
 
-- [ ] **Step 4: Run tests; verify they pass.**
+- [ ] **Step 5: Run tests; verify they pass.**
 
 Run: `cargo test -p qsf_app project_docs::search`
 Expected: PASS.
 
-- [ ] **Step 5: Commit.**
+- [ ] **Step 6: Commit.**
 
 ```bash
 git add crates/qsf_app/src/project_docs/search.rs \
+        crates/qsf_app/src/project_docs/fixtures/sample_body_heavy.md \
         crates/qsf_app/src/project_docs/mod.rs \
         crates/qsf_app/Cargo.toml Cargo.lock
-git commit -m "feat(project_docs): lexical search with heading-proximity ranking"
+git commit -m "feat(project_docs): lexical search with heading-first ranking"
 ```
 
 ### Task 1.5: Bounded read with focus
@@ -942,6 +1124,26 @@ git commit -m "feat(project_docs): lexical search with heading-proximity ranking
 **Files:**
 - Create: `crates/qsf_app/src/project_docs/read.rs`
 - Modify: `crates/qsf_app/src/project_docs/mod.rs`
+
+This is the only entry point that takes a raw, caller-supplied path, so
+it owns the path-safety invariant for the phase. Before the allowlist
+is consulted, the path is normalized: absolute paths and any `..`
+component are rejected outright, `.` components are dropped, and the
+result is a clean forward-slash repo-relative string. Only that
+normalized string is passed to `allowlist.allows`, and only
+`repo_root.join(normalized)` is read. This closes the traversal hole
+where a string like `docs/ProjectFrame/../../EngineeringDiary.md` could
+satisfy an include glob, miss the literal `docs/EngineeringDiary.md`
+exclude, and then resolve — after filesystem normalization — to the
+excluded file.
+
+Budget accounting is a single incremental pass. A document's preamble
+(everything before the first `## ` heading) and its "head" sections
+(`## Status`, `## Implementation Status`) are always emitted and are
+excluded from later reconsideration so they are never duplicated. Every
+remaining section that does not fit the byte budget (or, for a focused
+read, does not match the focus) is recorded in `omitted_sections`, and
+`is_full` is true only when nothing was omitted.
 
 - [ ] **Step 1: Write the failing tests.**
 
@@ -963,15 +1165,9 @@ mod tests {
 
     #[test]
     fn reads_whole_doc_when_under_budget() {
-        let doc = read(
-            &fixtures_root(),
-            &allow_all(),
-            "sample_concept.md",
-            None,
-            10_000,
-        )
-        .unwrap();
+        let doc = read(&fixtures_root(), &allow_all(), "sample_concept.md", None, 10_000).unwrap();
         assert!(doc.is_full);
+        assert!(doc.omitted_sections.is_empty());
         assert_eq!(doc.kind, DocKind::Unknown); // fixture path is not under docs/Concepts
         assert_eq!(doc.maturity_tag, MaturityTag::NotApplicable);
     }
@@ -991,29 +1187,55 @@ mod tests {
     }
 
     #[test]
-    fn refuses_path_outside_allowlist() {
-        let allow_none = Allowlist::from_str(r#"include=[] exclude=[]"#).unwrap();
-        let err = read(
-            &fixtures_root(),
-            &allow_none,
-            "sample_concept.md",
-            None,
-            10_000,
-        )
-        .unwrap_err();
-        assert!(err.to_string().contains("not in allowlist"));
-    }
-
-    #[test]
-    fn omitted_sections_populated_when_truncated() {
+    fn head_section_is_not_duplicated() {
         let doc = read(
             &fixtures_root(),
             &allow_all(),
             "sample_architecture.md",
             None,
-            80,
+            10_000,
         )
         .unwrap();
+        // The `## Implementation Status` head section must appear exactly once.
+        assert_eq!(doc.content.matches("## Implementation Status").count(), 1);
+    }
+
+    #[test]
+    fn refuses_path_outside_allowlist() {
+        let allow_none = Allowlist::from_str(r#"include=[] exclude=[]"#).unwrap();
+        let err = read(&fixtures_root(), &allow_none, "sample_concept.md", None, 10_000)
+            .unwrap_err();
+        assert!(err.to_string().contains("not in allowlist"));
+    }
+
+    #[test]
+    fn refuses_parent_directory_traversal() {
+        // Even though the allowlist admits `**/*.md`, a `..` path must be
+        // rejected before it can escape the repo root.
+        let err = read(
+            &fixtures_root(),
+            &allow_all(),
+            "../../docs/EngineeringDiary.md",
+            None,
+            10_000,
+        )
+        .unwrap_err();
+        assert!(err.to_string().contains(".."));
+    }
+
+    #[test]
+    fn refuses_absolute_path() {
+        let abs = if cfg!(windows) { r"C:\Windows\system.ini" } else { "/etc/passwd" };
+        let err = read(&fixtures_root(), &allow_all(), abs, None, 10_000).unwrap_err();
+        assert!(err.to_string().contains("repo-relative"));
+    }
+
+    #[test]
+    fn omitted_sections_populated_when_truncated() {
+        // A tiny budget: the preamble + head section are always emitted, so any
+        // trailing body section (`## Maturity`, `## Notes`) overflows and is
+        // recorded as omitted, making the read non-full.
+        let doc = read(&fixtures_root(), &allow_all(), "sample_architecture.md", None, 8).unwrap();
         assert!(!doc.is_full);
         assert!(!doc.omitted_sections.is_empty());
     }
@@ -1025,12 +1247,14 @@ mod tests {
 ```rust
 // crates/qsf_app/src/project_docs/read.rs
 use std::fs;
-use std::path::Path;
+use std::path::{Component, Path};
 
-use anyhow::{Context, Result, bail};
+use anyhow::{bail, Context, Result};
 
 use super::metadata::{kind_for_path, last_reviewed_for, maturity_for};
 use super::{Allowlist, DocRead};
+
+const HEAD_HEADINGS: [&str; 2] = ["Status", "Implementation Status"];
 
 pub fn read(
     repo_root: &Path,
@@ -1039,44 +1263,92 @@ pub fn read(
     focus: Option<&str>,
     max_tokens: usize,
 ) -> Result<DocRead> {
-    if !allowlist.allows(relative_path) {
-        bail!("path `{relative_path}` not in allowlist");
+    let normalized = normalize_repo_relative(relative_path)?;
+    if !allowlist.allows(&normalized) {
+        bail!("path `{normalized}` not in allowlist");
     }
-    let body = fs::read_to_string(repo_root.join(relative_path))
-        .with_context(|| format!("read `{relative_path}`"))?;
-    let kind = kind_for_path(relative_path);
+    let body = fs::read_to_string(repo_root.join(&normalized))
+        .with_context(|| format!("read `{normalized}`"))?;
+    let kind = kind_for_path(&normalized);
     let maturity = maturity_for(kind, &body);
     let last_reviewed = last_reviewed_for(&body);
 
     let byte_budget = max_tokens.saturating_mul(4);
+    let preamble = preamble_of(&body);
     let sections = split_sections(&body);
-    let head = head_of(&body, &sections);
 
-    let (selected, omitted) = if let Some(focus_str) = focus {
-        select_focused(&sections, focus_str)
-    } else {
-        select_in_order(&sections, byte_budget.saturating_sub(head.len()))
-    };
+    let head_indices: Vec<usize> = sections
+        .iter()
+        .enumerate()
+        .filter(|(_, s)| HEAD_HEADINGS.contains(&s.heading.as_str()))
+        .map(|(i, _)| i)
+        .collect();
 
-    let mut content = String::with_capacity(byte_budget.min(body.len()));
-    content.push_str(&head);
-    for section in &selected {
-        if content.len() + section.text.len() > byte_budget {
-            break;
-        }
-        content.push_str(&section.text);
+    let mut content = String::new();
+    content.push_str(&preamble);
+    for &i in &head_indices {
+        content.push_str(&sections[i].text);
     }
+
+    let mut omitted: Vec<String> = Vec::new();
+    let focus_needle = focus.map(|f| f.to_ascii_lowercase());
+
+    for (i, section) in sections.iter().enumerate() {
+        if head_indices.contains(&i) {
+            continue;
+        }
+        let matches_focus = match &focus_needle {
+            Some(needle) => {
+                section.heading.to_ascii_lowercase().contains(needle)
+                    || section.text.to_ascii_lowercase().contains(needle)
+            }
+            None => true,
+        };
+        if matches_focus && content.len() + section.text.len() <= byte_budget {
+            content.push_str(&section.text);
+        } else {
+            omitted.push(section.heading.clone());
+        }
+    }
+
     let is_full = omitted.is_empty();
 
     Ok(DocRead {
-        path: relative_path.to_string(),
+        path: normalized,
         kind,
         maturity_tag: maturity,
         last_reviewed,
         content,
         is_full,
-        omitted_sections: omitted.iter().map(|s| s.heading.clone()).collect(),
+        omitted_sections: omitted,
     })
+}
+
+/// Confines a caller-supplied path to a clean, repo-relative,
+/// forward-slash string. Rejects absolute paths and any `..` component
+/// so the allowlist and the filesystem read can never escape the root.
+fn normalize_repo_relative(path: &str) -> Result<String> {
+    let candidate = Path::new(path);
+    if candidate.is_absolute() {
+        bail!("path `{path}` must be repo-relative");
+    }
+    let mut parts: Vec<&str> = Vec::new();
+    for component in candidate.components() {
+        match component {
+            Component::Normal(c) => {
+                parts.push(c.to_str().context("non-utf8 path component")?)
+            }
+            Component::CurDir => {}
+            Component::ParentDir => bail!("path `{path}` must not contain `..`"),
+            Component::Prefix(_) | Component::RootDir => {
+                bail!("path `{path}` must be repo-relative")
+            }
+        }
+    }
+    if parts.is_empty() {
+        bail!("path `{path}` must name a document");
+    }
+    Ok(parts.join("/"))
 }
 
 struct Section {
@@ -1084,78 +1356,36 @@ struct Section {
     text: String,
 }
 
+/// Everything before the first `## ` heading: title line(s) and intro.
+fn preamble_of(body: &str) -> String {
+    let mut out = String::new();
+    for line in body.lines() {
+        if line.starts_with("## ") {
+            break;
+        }
+        out.push_str(line);
+        out.push('\n');
+    }
+    out
+}
+
 fn split_sections(body: &str) -> Vec<Section> {
-    let mut sections = Vec::new();
-    let mut current_heading: Option<String> = None;
-    let mut current_text = String::new();
+    let mut sections: Vec<Section> = Vec::new();
     for line in body.lines() {
         if let Some(heading) = line.strip_prefix("## ") {
-            if current_heading.is_some() || !current_text.is_empty() {
-                sections.push(Section {
-                    heading: current_heading.take().unwrap_or_default(),
-                    text: std::mem::take(&mut current_text),
-                });
-            }
-            current_heading = Some(heading.trim().to_string());
-            current_text.push_str(line);
-            current_text.push('\n');
-        } else if current_heading.is_some() {
-            current_text.push_str(line);
-            current_text.push('\n');
+            sections.push(Section {
+                heading: heading.trim().to_string(),
+                text: String::new(),
+            });
         }
-    }
-    if let Some(heading) = current_heading {
-        sections.push(Section {
-            heading,
-            text: current_text,
-        });
+        if let Some(last) = sections.last_mut() {
+            last.text.push_str(line);
+            last.text.push('\n');
+        }
+        // Lines before the first heading belong to the preamble and are
+        // intentionally dropped here.
     }
     sections
-}
-
-fn head_of(body: &str, sections: &[Section]) -> String {
-    // Title line plus any leading "## Status" or "## Implementation Status".
-    let mut head = String::new();
-    if let Some(first_line) = body.lines().next() {
-        head.push_str(first_line);
-        head.push('\n');
-    }
-    for section in sections {
-        if section.heading == "Status" || section.heading == "Implementation Status" {
-            head.push_str(&section.text);
-        }
-    }
-    head
-}
-
-fn select_focused<'a>(
-    sections: &'a [Section],
-    focus: &str,
-) -> (Vec<&'a Section>, Vec<&'a Section>) {
-    let needle = focus.to_ascii_lowercase();
-    let (matched, omitted): (Vec<_>, Vec<_>) = sections.iter().partition(|s| {
-        s.heading.to_ascii_lowercase().contains(&needle)
-            || s.text.to_ascii_lowercase().contains(&needle)
-    });
-    (matched, omitted)
-}
-
-fn select_in_order<'a>(
-    sections: &'a [Section],
-    byte_budget: usize,
-) -> (Vec<&'a Section>, Vec<&'a Section>) {
-    let mut selected = Vec::new();
-    let mut omitted = Vec::new();
-    let mut used = 0usize;
-    for section in sections {
-        if used + section.text.len() <= byte_budget {
-            used += section.text.len();
-            selected.push(section);
-        } else {
-            omitted.push(section);
-        }
-    }
-    (selected, omitted)
 }
 ```
 
@@ -1176,7 +1406,7 @@ Expected: PASS.
 ```bash
 git add crates/qsf_app/src/project_docs/read.rs \
         crates/qsf_app/src/project_docs/mod.rs
-git commit -m "feat(project_docs): bounded read with focus and section budgeting"
+git commit -m "feat(project_docs): bounded read with path confinement and section budgeting"
 ```
 
 ### Task 1.6: `ProjectDocService` facade
@@ -1227,7 +1457,7 @@ use std::path::{Path, PathBuf};
 
 use anyhow::Result;
 
-use super::{Allowlist, DocHit, DocRead, read, search};
+use super::{read, search, Allowlist, DocHit, DocRead};
 
 pub struct ProjectDocService {
     repo_root: PathBuf,
@@ -1292,7 +1522,38 @@ git commit -m "feat(project_docs): ProjectDocService facade with hot-reloaded al
 ### Phase 1 verification
 
 Run `cargo clippy --all-targets -- -D warnings` and `cargo fmt`. Expect
-both clean. No diary entry yet; the feature is not user-visible.
+both clean.
+
+**Diary note:** No diary entry is written in this phase; the diary
+entry in Phase 9 covers the whole logical change (Phases 1-8). This
+deferral is only safe if Phases 1-8 land as a single grouped feature
+submission. If Phase 1 (the library slice) is merged or reviewed as a
+standalone deliverable, add a short diary entry for it at that point,
+per the diary discipline in `Agents.md`.
+
+Acceptance criteria for Phase 1:
+
+- `cargo test -p qsf_app project_docs` passes, covering allowlist
+  include/exclude precedence, kind/maturity/last-reviewed extraction
+  (including last-reviewed scoping to the Implementation Status section
+  and malformed-date rejection), lexical search heading-first ranking
+  and empty-result/empty-query handling, bounded read with focus and
+  truncation, and service-level allowlist hot-reload.
+- The bounded read rejects absolute paths and any `..` component before
+  consulting the allowlist or touching the filesystem, with regression
+  coverage proving a traversal toward `docs/EngineeringDiary.md` is
+  refused even under an `**/*.md` allowlist.
+- The production allowlist `config/project-doc-introspection.toml`
+  loads (resolved from `CARGO_MANIFEST_DIR`, not the process working
+  directory) and provably excludes `docs/EngineeringDiary.md` and
+  `docs/Reviews/**` while admitting `docs/ProjectFrame/**` and
+  `docs/DecisionLog.md` (covered by the Task 1.2 test).
+- The `project_docs` module is pure and side-effect-free apart from
+  reading files under the repo root; no tool, registry, dispatch, or
+  responder wiring is introduced in this phase.
+- `crates/qsf_app/src/lib.rs` remains a thin module-declaration
+  wrapper — the new `pub mod project_docs;` line is the only change
+  there.
 
 ---
 
@@ -1590,6 +1851,12 @@ git commit -m "feat(tools): SearchProjectDocsTool"
 
 - [ ] **Step 1: Write the failing tests.**
 
+The out-of-allowlist test uses a non-markdown path (`outside.txt`),
+which normalizes cleanly but is not admitted by the fixture allowlist's
+`**/*.md` include, so it exercises the "not in allowlist" branch.
+Parent-directory traversal rejection is covered by the Phase 1 read
+tests (Task 1.5), so it is not re-tested here.
+
 ```rust
 // crates/qsf_app/src/tools/read_project_doc_tool.rs (test block)
 #[cfg(test)]
@@ -1640,7 +1907,8 @@ mod tests {
         );
         let ctx = ProjectDocToolContext { service: &service };
         let tool = ReadProjectDocTool;
-        let request = make_request("../outside.md", None, 10_000);
+        // Normalizes cleanly but is not a `*.md` file, so the allowlist refuses it.
+        let request = make_request("outside.txt", None, 10_000);
 
         let err = tool.execute(&request, &ctx).unwrap_err();
         assert!(err.to_string().contains("not in allowlist"));
@@ -2687,22 +2955,30 @@ git add docs/Architecture/Architecture.ToolSystem.md
 git commit -m "docs(architecture): mark project-doc tools implemented"
 ```
 
-### Task 9.4: Pointer in DocumentStatus
+### Task 9.4: Pointer in DocumentStatus, and record the deferred latency cap
 
 **Files:**
 - Modify: `docs/ProjectFrame/DocumentStatus.md`
+- Modify: `docs/Plans/Design.ProjectDocIntrospection.md`
 
-In the *Implications For Introspection* section, add a one-line
-pointer:
+In `DocumentStatus.md`'s *Implications For Introspection* section, add a
+one-line pointer:
 
 > The set of documents accessible to the introspection channel is
 > defined by `config/project-doc-introspection.toml`.
 
+In `Design.ProjectDocIntrospection.md` Decision 4, add a one-line note
+recording that the 1500 ms hard cap is **deliberately not enforced in
+v1** (lexical search over a small markdown corpus), and that if it is
+ever needed it will be added at the `ProjectDocService` boundary as a
+deadline/budget parameter with partial-result reporting. This keeps the
+design and the implementation in agreement per Open Question #5.
+
 - [ ] Commit.
 
 ```bash
-git add docs/ProjectFrame/DocumentStatus.md
-git commit -m "docs(frame): pointer from DocumentStatus to allowlist"
+git add docs/ProjectFrame/DocumentStatus.md docs/Plans/Design.ProjectDocIntrospection.md
+git commit -m "docs(frame): pointer to allowlist; record deferred latency cap"
 ```
 
 ### Task 9.5: Engineering diary entry
@@ -2727,7 +3003,8 @@ hedging, and trace records.
 
 What changed:
 - New `project_docs` module: allowlist loader, metadata extraction,
-  lexical search, bounded read, post-hoc reply-overlap check.
+  lexical search, bounded read (path-confined against traversal),
+  post-hoc reply-overlap check.
 - New tools `search_project_docs` and `read_project_doc` wired into
   `ToolRegistry`.
 - `dispatch_model_tool_calls` enforces per-turn caps (2 search, 1 read)
@@ -2780,6 +3057,9 @@ acceptance gate.
   - No claim of current behavior is made from a Plan, Idea, or
     Concept.
   - The control question made no introspection calls.
+  - Recorded `latency_ms` values stay well under 1000 ms; if any
+    exceed it, follow Open Question #5 and add a cap-enforcement task
+    at the `ProjectDocService` boundary.
 - [ ] If anything fails, do **not** patch the prompt to mask it —
   open a new diary entry describing the failure and add a follow-on
   ticket in the experiment backlog.
@@ -2796,7 +3076,11 @@ Run after all phases land:
 - [ ] Verify the production allowlist excludes `docs/Reviews/**` and
   `docs/EngineeringDiary.md` (Task 1.2 test should already cover this
   in CI).
+- [ ] Verify the bounded read rejects `..` traversal and absolute paths
+  (Task 1.5 tests should already cover this in CI).
 - [ ] Verify `Architecture.ToolSystem.md`'s *Implementation Status*
   section lists the two new tools under "Implemented today" with code
   refs and a refreshed `Last reviewed:` date.
-- [ ] Confirm there is exactly one diary entry covering Phases 1-8.
+- [ ] Confirm there is exactly one diary entry covering Phases 1-8 (or,
+  if Phase 1 was merged independently, a standalone library-slice entry
+  plus the Phases 2-8 entry).
