@@ -107,6 +107,7 @@ pub fn dispatch_model_tool_calls(
         let started_at = Instant::now();
         match registry.validate_and_execute(&tool_request, state_ctx) {
             Ok((_metadata, result)) => {
+                let tool_latency_ms = elapsed_ms(started_at);
                 context.record_event(
                     EventType::ToolCompleted,
                     json!({
@@ -116,11 +117,25 @@ pub fn dispatch_model_tool_calls(
                         "call_id": &tool_call.call_id,
                         "category": result.category,
                         "side_effect_level": result.side_effect_level,
-                        "latency_ms": elapsed_ms(started_at),
+                        "latency_ms": tool_latency_ms,
                         "scope": "model_tool_dispatch",
                     }),
                     None,
                 )?;
+                if let Some((operation, trace_record)) = project_doc_success_trace(
+                    context,
+                    request,
+                    tool_call,
+                    &tool_request.tool_name,
+                    &result,
+                    project_doc_budget.turn_index,
+                    tool_latency_ms,
+                )? {
+                    context.record_trace(trace_record)?;
+                    debug_assert!(
+                        operation == "project_doc_search" || operation == "project_doc_read"
+                    );
+                }
                 results.push(result);
             }
             Err(error) => {
@@ -274,6 +289,92 @@ fn project_doc_operation_name(tool_name: &str) -> &'static str {
     }
 }
 
+fn project_doc_success_trace(
+    context: &RunContext,
+    request: &ModelRequest,
+    tool_call: &ModelToolCall,
+    tool_name: &str,
+    result: &ToolResult,
+    turn_index: usize,
+    tool_latency_ms: u64,
+) -> Result<Option<(&'static str, TraceRecord)>> {
+    let operation = project_doc_operation_name(tool_name);
+    let arguments = sanitized_project_doc_arguments(tool_name, &tool_call.arguments);
+
+    let trace = match tool_name {
+        SEARCH_PROJECT_DOCS_TOOL_NAME => {
+            let parsed_hits = serde_json::from_str::<serde_json::Value>(&result.output_text)
+                .unwrap_or_else(|_| json!([]));
+            let hit_count = parsed_hits.as_array().map(|hits| hits.len()).unwrap_or(0);
+
+            TraceRecord::new(
+                context.experiment_id(),
+                operation,
+                tool_call
+                    .arguments
+                    .get("query")
+                    .and_then(|value| value.as_str())
+                    .unwrap_or(""),
+                format!("{hit_count} hit(s)"),
+            )
+            .with_details(json!({
+                "session_id": &request.session_id,
+                "role_id": request.role.role_id,
+                "call_id": &tool_call.call_id,
+                "tool_name": tool_name,
+                "turn_index": turn_index,
+                "arguments": arguments,
+                "hits": parsed_hits,
+                "hit_count": hit_count,
+                "refused": false,
+            }))
+            .with_latency_ms(tool_latency_ms)
+        }
+        READ_PROJECT_DOC_TOOL_NAME => {
+            let parsed = serde_json::from_str::<serde_json::Value>(&result.output_text)
+                .unwrap_or_else(|_| json!({}));
+            let is_full = parsed
+                .get("is_full")
+                .cloned()
+                .unwrap_or(serde_json::Value::Null);
+            let omitted_sections = parsed
+                .get("omitted_sections")
+                .cloned()
+                .unwrap_or(serde_json::Value::Null);
+
+            TraceRecord::new(
+                context.experiment_id(),
+                operation,
+                tool_call
+                    .arguments
+                    .get("path")
+                    .and_then(|value| value.as_str())
+                    .unwrap_or(""),
+                parsed
+                    .get("is_full")
+                    .map(|value| format!("is_full={value}"))
+                    .unwrap_or_else(|| "?".to_string()),
+            )
+            .with_details(json!({
+                "session_id": &request.session_id,
+                "role_id": request.role.role_id,
+                "call_id": &tool_call.call_id,
+                "tool_name": tool_name,
+                "turn_index": turn_index,
+                "arguments": arguments,
+                "read": parsed,
+                "is_full": is_full,
+                "omitted_sections": omitted_sections,
+                "refused": false,
+            }))
+            .with_latency_ms(tool_latency_ms)
+        }
+        _ => return Ok(None),
+    };
+
+    Ok(Some((operation, trace)))
+}
+
 fn sanitized_project_doc_arguments(
     tool_name: &str,
     arguments: &serde_json::Value,
@@ -391,7 +492,7 @@ mod tests {
     };
     use crate::observability::event_log::{EventRecord, EventType};
     use crate::observability::trace::TraceRecord;
-    use crate::project_docs::ProjectDocService;
+    use crate::project_docs::{DocHit, DocRead, ProjectDocService};
     use crate::runtime::run_context::RunContext;
     use crate::session::{SessionConfig, SessionState, Turn, TurnSummary};
     use crate::tools::{
@@ -902,6 +1003,250 @@ mod tests {
     }
 
     #[test]
+    fn successful_search_emits_project_doc_search_trace() {
+        let base_dir =
+            std::env::temp_dir().join(format!("qsf-tool-dispatch-{}", uuid::Uuid::new_v4()));
+        let mut context = RunContext::create_in(&base_dir, "tool-dispatch-test").unwrap();
+        let registry = ToolRegistry::default();
+        let state = SessionState::new(test_config());
+        let service = project_doc_service();
+        let tool_ctx = responder_tool_context(&state, &service);
+        let mut budget = ProjectDocToolBudget::new(3);
+        let role = responder_role();
+        let request = allowed_responder_request(&context, &registry, role);
+        let tool_calls = vec![ModelToolCall::new(
+            "call-1",
+            SEARCH_PROJECT_DOCS_TOOL_NAME,
+            json!({"query": "Maturity"}),
+        )];
+
+        let results = dispatch_model_tool_calls(
+            &mut context,
+            &request,
+            &registry,
+            &tool_ctx,
+            &mut budget,
+            &tool_calls,
+        )
+        .unwrap();
+
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].tool_name, SEARCH_PROJECT_DOCS_TOOL_NAME);
+        assert_eq!(results[0].category, ToolCategory::ReadOnly);
+        assert_eq!(results[0].side_effect_level, ToolSideEffectLevel::ReadOnly);
+
+        let hits: Vec<DocHit> = serde_json::from_str(&results[0].output_text).unwrap();
+        assert!(!hits.is_empty());
+
+        let events = read_events(&context);
+        assert!(
+            events
+                .iter()
+                .any(|record| record.event_type == EventType::ToolCompleted)
+        );
+
+        let traces = read_traces(&context);
+        let trace = traces
+            .iter()
+            .find(|record| {
+                record.operation == "project_doc_search"
+                    && !record.details["refused"].as_bool().unwrap_or(true)
+            })
+            .expect("success trace present");
+        assert_eq!(trace.input_summary, "Maturity");
+        assert_eq!(trace.output_summary, format!("{} hit(s)", hits.len()));
+        assert_eq!(trace.details["session_id"], context.run_id());
+        assert_eq!(trace.details["role_id"], json!("conversational_responder"));
+        assert_eq!(trace.details["call_id"], "call-1");
+        assert_eq!(trace.details["tool_name"], SEARCH_PROJECT_DOCS_TOOL_NAME);
+        assert_eq!(trace.details["turn_index"], json!(3));
+        assert_eq!(trace.details["refused"], false);
+        assert_eq!(trace.details["arguments"]["query"], "Maturity");
+        assert_eq!(trace.details["arguments"].get("max_results"), None);
+        assert_eq!(trace.details["hit_count"], json!(hits.len()));
+        assert_eq!(trace.details["hits"], serde_json::to_value(&hits).unwrap());
+        assert!(trace.latency_ms.is_some());
+        assert!(trace.latency_ms.unwrap() < u64::MAX);
+
+        fs::remove_dir_all(base_dir).unwrap();
+    }
+
+    #[test]
+    fn successful_read_emits_project_doc_read_trace() {
+        let base_dir =
+            std::env::temp_dir().join(format!("qsf-tool-dispatch-{}", uuid::Uuid::new_v4()));
+        let mut context = RunContext::create_in(&base_dir, "tool-dispatch-test").unwrap();
+        let registry = ToolRegistry::default();
+        let state = SessionState::new(test_config());
+        let service = project_doc_service();
+        let tool_ctx = responder_tool_context(&state, &service);
+        let mut budget = ProjectDocToolBudget::new(4);
+        let role = responder_role();
+        let request = allowed_responder_request(&context, &registry, role);
+        let tool_calls = vec![ModelToolCall::new(
+            "call-1",
+            READ_PROJECT_DOC_TOOL_NAME,
+            json!({
+                "path": "sample_concept.md",
+                "focus": "Maturity",
+                "max_tokens": 1200
+            }),
+        )];
+
+        let results = dispatch_model_tool_calls(
+            &mut context,
+            &request,
+            &registry,
+            &tool_ctx,
+            &mut budget,
+            &tool_calls,
+        )
+        .unwrap();
+
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].tool_name, READ_PROJECT_DOC_TOOL_NAME);
+        assert_eq!(results[0].category, ToolCategory::ReadOnly);
+        assert_eq!(results[0].side_effect_level, ToolSideEffectLevel::ReadOnly);
+
+        let read: DocRead = serde_json::from_str(&results[0].output_text).unwrap();
+        assert_eq!(read.path, "sample_concept.md");
+        assert!(read.content.contains("Concept: Sample"));
+
+        let events = read_events(&context);
+        assert!(
+            events
+                .iter()
+                .any(|record| record.event_type == EventType::ToolCompleted)
+        );
+
+        let traces = read_traces(&context);
+        let trace = traces
+            .iter()
+            .find(|record| {
+                record.operation == "project_doc_read"
+                    && !record.details["refused"].as_bool().unwrap_or(true)
+            })
+            .expect("success trace present");
+        assert_eq!(trace.input_summary, "sample_concept.md");
+        assert_eq!(trace.output_summary, "is_full=false");
+        assert_eq!(trace.details["session_id"], context.run_id());
+        assert_eq!(trace.details["role_id"], json!("conversational_responder"));
+        assert_eq!(trace.details["call_id"], "call-1");
+        assert_eq!(trace.details["tool_name"], READ_PROJECT_DOC_TOOL_NAME);
+        assert_eq!(trace.details["turn_index"], json!(4));
+        assert_eq!(trace.details["refused"], false);
+        assert_eq!(trace.details["arguments"]["path"], "sample_concept.md");
+        assert_eq!(trace.details["arguments"]["focus"], "Maturity");
+        assert_eq!(trace.details["arguments"]["max_tokens"], json!(1200));
+        assert_eq!(trace.details["read"], serde_json::to_value(&read).unwrap());
+        assert_eq!(trace.details["is_full"], json!(read.is_full));
+        assert_eq!(
+            trace.details["omitted_sections"],
+            serde_json::to_value(&read.omitted_sections).unwrap()
+        );
+        assert!(trace.latency_ms.is_some());
+
+        fs::remove_dir_all(base_dir).unwrap();
+    }
+
+    #[test]
+    fn failed_read_execution_emits_no_success_trace() {
+        let base_dir =
+            std::env::temp_dir().join(format!("qsf-tool-dispatch-{}", uuid::Uuid::new_v4()));
+        let mut context = RunContext::create_in(&base_dir, "tool-dispatch-test").unwrap();
+        let registry = ToolRegistry::default();
+        let state = SessionState::new(test_config());
+        let service = project_doc_service();
+        let tool_ctx = responder_tool_context(&state, &service);
+        let mut budget = ProjectDocToolBudget::new(5);
+        let role = responder_role();
+        let request = allowed_responder_request(&context, &registry, role);
+        let tool_calls = vec![ModelToolCall::new(
+            "call-1",
+            READ_PROJECT_DOC_TOOL_NAME,
+            json!({"path": "outside.txt"}),
+        )];
+
+        let error = dispatch_model_tool_calls(
+            &mut context,
+            &request,
+            &registry,
+            &tool_ctx,
+            &mut budget,
+            &tool_calls,
+        )
+        .unwrap_err();
+        assert!(error.to_string().contains("not in allowlist"));
+
+        let events = read_events(&context);
+        assert!(
+            events
+                .iter()
+                .any(|record| record.event_type == EventType::ToolFailed)
+        );
+
+        let traces = read_traces(&context);
+        assert!(!traces.iter().any(|record| {
+            record.operation == "project_doc_read" && record.details["refused"] == false
+        }));
+
+        fs::remove_dir_all(base_dir).unwrap();
+    }
+
+    #[test]
+    fn non_project_doc_tools_emit_no_project_doc_trace() {
+        let base_dir =
+            std::env::temp_dir().join(format!("qsf-tool-dispatch-{}", uuid::Uuid::new_v4()));
+        let mut context = RunContext::create_in(&base_dir, "tool-dispatch-test").unwrap();
+        let registry = ToolRegistry::default();
+        let mut state = SessionState::new(test_config());
+        state.turns.push(test_turn(0));
+        state.summarized_turns.push(TurnSummary {
+            turn_index: 0,
+            summarized_after_turn_index: 0,
+            summary: "user said one; assistant replied".to_string(),
+            model_id: "mock".to_string(),
+            model_latency_ms: 0,
+            input_tokens: 0,
+            output_tokens: 0,
+        });
+        let tool_ctx = SessionToolContext { state: &state };
+        let mut budget = ProjectDocToolBudget::new(6);
+        let mut role = ModelRole::predefined(ModelRoleId::ConversationalResponder);
+        role.allowed_tools = vec![RECALL_TURN_TOOL_NAME.to_string()];
+        let allowed_tools = role.allowed_tools.clone();
+        let allowed = allowed_tools.iter().map(String::as_str).collect::<Vec<_>>();
+        let request = ModelRequest::new(role, vec![])
+            .with_session_id(context.run_id())
+            .with_tools(registry.model_tool_definitions_for(&allowed));
+        let tool_calls = vec![ModelToolCall::new(
+            "call-1",
+            RECALL_TURN_TOOL_NAME,
+            json!({ "turn_id": 0 }),
+        )];
+
+        let results = dispatch_model_tool_calls(
+            &mut context,
+            &request,
+            &registry,
+            &tool_ctx,
+            &mut budget,
+            &tool_calls,
+        )
+        .unwrap();
+
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].tool_name, RECALL_TURN_TOOL_NAME);
+
+        let traces = read_traces(&context);
+        assert!(!traces.iter().any(|record| {
+            record.operation == "project_doc_search" || record.operation == "project_doc_read"
+        }));
+
+        fs::remove_dir_all(base_dir).unwrap();
+    }
+
+    #[test]
     fn mixed_batch_runs_recall_turn_and_project_doc_through_one_context() {
         let base_dir =
             std::env::temp_dir().join(format!("qsf-tool-dispatch-{}", uuid::Uuid::new_v4()));
@@ -1010,5 +1355,35 @@ mod tests {
             .lines()
             .map(|line| serde_json::from_str::<TraceRecord>(line).unwrap())
             .collect()
+    }
+
+    fn read_traces(context: &RunContext) -> Vec<TraceRecord> {
+        parse_trace_records(&fs::read_to_string(context.run_dir().join("traces.jsonl")).unwrap())
+    }
+
+    fn read_events(context: &RunContext) -> Vec<EventRecord> {
+        parse_event_records(&fs::read_to_string(context.run_dir().join("events.jsonl")).unwrap())
+    }
+
+    fn allowed_responder_request(
+        context: &RunContext,
+        registry: &ToolRegistry,
+        role: ModelRole,
+    ) -> ModelRequest {
+        let allowed_tools = role.allowed_tools.clone();
+        let allowed = allowed_tools.iter().map(String::as_str).collect::<Vec<_>>();
+        ModelRequest::new(role, vec![])
+            .with_session_id(context.run_id())
+            .with_tools(registry.model_tool_definitions_for(&allowed))
+    }
+
+    fn responder_role() -> ModelRole {
+        let mut role = ModelRole::predefined(ModelRoleId::ConversationalResponder);
+        role.allowed_tools = vec![
+            SEARCH_PROJECT_DOCS_TOOL_NAME.to_string(),
+            READ_PROJECT_DOC_TOOL_NAME.to_string(),
+            RECALL_TURN_TOOL_NAME.to_string(),
+        ];
+        role
     }
 }

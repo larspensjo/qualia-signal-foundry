@@ -30,7 +30,7 @@ choice ("plan-phase decision"), the plan picks one explicitly.
 
 ## Status
 
-Phases 1-3 have landed and are committed:
+Phases 1-4 have landed and are committed:
 
 - **Phase 1** — the pure `ProjectDocService` library
   (`crates/qsf_app/src/project_docs/`).
@@ -40,12 +40,18 @@ Phases 1-3 have landed and are committed:
 - **Phase 3** — both tools wired into `ToolRegistry` (struct, `Default`,
   and the three `match` sites in `metadata_for`, `dispatch`, and
   `model_tool_definitions_for`).
+- **Phase 4** — the combined `ResponderToolContext` (answers both
+  `session_state()` and `project_doc_service()`) plus the true
+  per-human-turn `ProjectDocToolBudget`, with refusal telemetry
+  (`ToolFailed` event + refusal `TraceRecord`) for over-cap project-doc
+  calls.
 
-**Phase 4 (true per-turn project-doc budget state, plus the combined
-`ToolContext` needed for live dispatch) is the next implementation
-step.** Phase 6 then uses that budget state in a bounded two-round
-responder tool loop so the model can search first, read after seeing
-search results, and still stay inside one human turn's caps.
+**Phase 5 (TraceRecord emission for *successful* project-doc search and
+read calls) is the next implementation step.** It complements the Phase 4
+refusal traces so a researcher can replay every project-doc call, not
+just the rejected ones. Phase 6 then uses the Phase 4 budget state in a
+bounded two-round responder tool loop so the model can search first, read
+after seeing search results, and still stay inside one human turn's caps.
 
 ## Background
 
@@ -74,15 +80,15 @@ Code anchors:
 - `crates/qsf_app/src/tools/mod.rs` — re-exports the tool surface,
   including `ProjectDocToolContext`, `SEARCH_PROJECT_DOCS_TOOL_NAME`,
   `SearchProjectDocsTool`, `READ_PROJECT_DOC_TOOL_NAME`, and
-  `ReadProjectDocTool` (Phase 2). **Phase 4** adds a re-export for the
-  new combined `ToolContext`.
+  `ReadProjectDocTool` (Phase 2), and `ResponderToolContext`
+  (**landed, Phase 4**).
 - `crates/qsf_app/src/tools/tool_registry.rs` — `ToolRegistry`, `Tool`
   trait, `ToolMetadata`, the `ToolContext` trait (both
   `session_state()` and `project_doc_service()` defaulted to `None`),
   and `EmptyToolContext`. **Landed (Phase 3):** the registry struct,
   `Default`, and all three `match` sites route all four tools; tests
   assert metadata/definition identity and dispatch for both project-doc
-  tools. No change expected here in Phase 4.
+  tools. No change in Phase 4 or Phase 5.
 - `crates/qsf_app/src/tools/tool_request.rs` — `ToolPermission` has both
   `compute_only()` and `read_only()` (Phase 2), plus `ToolRequest`,
   `ToolCategory`, `ToolSideEffectLevel`.
@@ -96,6 +102,9 @@ Code anchors:
 - `crates/qsf_app/src/tools/project_doc_tool.rs` — **landed (Phase 2).**
   `ProjectDocToolContext<'a> { service: &'a ProjectDocService }`
   (implements `project_doc_service()` only).
+- `crates/qsf_app/src/tools/responder_tool_context.rs` — **landed
+  (Phase 4).** `ResponderToolContext<'a> { state, project_docs }`
+  implementing both accessors for live dispatch.
 - `crates/qsf_app/src/tools/search_project_docs_tool.rs` and
   `crates/qsf_app/src/tools/read_project_doc_tool.rs` — **landed (Phase
   2), wired (Phase 3).** The two `Tool` impls, now routed by the
@@ -103,13 +112,15 @@ Code anchors:
 - `crates/qsf_app/src/models/tool_dispatch.rs` —
   `dispatch_model_tool_calls(context, request, registry, state_ctx,
   project_doc_budget, tool_calls)`. Its loop checks `allowed_tools`,
-  builds a `ToolRequest`
-  via `tool_request_from_model_tool_call` (whose catch-all `_ =>` arm
-  already builds correct requests for the two project-doc tools now that
-  the registry knows them), records `ToolRequested`, then
-  `validate_and_execute` + `ToolCompleted`/`ToolFailed`. **Phase 4**
-  adds a `ProjectDocToolBudget` that tracks true per-human-turn counts
-  across dispatch batches; **Phase 5** adds success traces.
+  builds a `ToolRequest` via `tool_request_from_model_tool_call`,
+  records `ToolRequested`, then `validate_and_execute` +
+  `ToolCompleted`/`ToolFailed`. **Phase 4 (landed)** added the
+  `ProjectDocToolBudget` parameter, the per-turn cap gate, the
+  refusal `ToolFailed`/`TraceRecord` path, and the
+  `sanitized_project_doc_arguments` helper; **Phase 5 (this phase)** adds
+  success traces (`project_doc_search` / `project_doc_read`,
+  `refused == false`) on the executed path, reusing that helper and the
+  budget's `turn_index`.
 - `crates/qsf_app/src/models/model_role.rs` — `ModelRole::predefined`
   for `ConversationalResponder`; `allowed_tools` is overridden by call
   sites (see `multi_turn_text_loop.rs`).
@@ -123,7 +134,7 @@ Code anchors:
 - `crates/qsf_app/src/observability/trace.rs` — `TraceRecord::new(
   experiment_id, operation, input_summary, output_summary)` with
   builder methods `.with_details(Value)` and `.with_latency_ms(u64)`;
-  new operations (`project_doc_search`, `project_doc_read`) ride in
+  operations (`project_doc_search`, `project_doc_read`) ride in
   `operation` + `details`, no schema change required.
 - `crates/qsf_app/src/observability/event_log.rs` —
   `EventType::ToolRequested` / `ToolCompleted` / `ToolFailed`. No new
@@ -161,27 +172,18 @@ differently, raise it before changing direction.
    onward) must construct `ProjectDocService` with an explicit absolute
    repo root and an explicit absolute allowlist path, never relying on
    the process working directory.
-2. **Combined `ToolContext` shape — DECIDED IN PHASE 4.** Live dispatch
-   needs one context answering *both* `session_state()` (for
-   `recall_turn`) and `project_doc_service()` (for the project-doc
-   tools), because the `ConversationalResponder` advertises them
-   together and `dispatch_model_tool_calls` threads a single
-   `&dyn ToolContext` per batch. The existing single-accessor contexts
-   (`SessionToolContext`, `ProjectDocToolContext`) each answer only one.
-   The two candidate shapes are (a) extend `SessionToolContext` with an
-   optional `&ProjectDocService`, or (b) add a dedicated combined
-   context implementing both accessors. **Phase 4 Task 4.1 picks (b)**
-   (a dedicated combined context) because it is purely additive: option
-   (a) would force every existing literal `SessionToolContext { state }`
-   construction (dispatch tests, future call sites) to gain a new field.
-   The decision callout in Task 4.1 records this; if a reviewer prefers
-   (a), raise it before Task 4.1 wiring.
+2. **Combined `ToolContext` shape — DECIDED AND LANDED IN PHASE 4.** Live
+   dispatch needs one context answering *both* `session_state()` and
+   `project_doc_service()`. Phase 4 shipped a dedicated combined context
+   (`ResponderToolContext`) rather than extending `SessionToolContext`,
+   because the dedicated type is purely additive. The existing
+   single-accessor contexts are unchanged.
 3. **`influenced_reply` storage.** Phase 8 writes the marker as a
    follow-up `TraceRecord` referencing the original by `trace_id`. If an
    annotation on the original record is preferred, raise before Phase 8.
 4. **Module naming.** Per `Agents.md`, name modules after stable
    behavior. This plan uses `project_docs` / `ProjectDocService`, and
-   the Phase 4 combined context is named for the role it serves
+   the combined context is named for the role it serves
    (`ResponderToolContext`), not a plan phase. Keep this discipline.
 5. **Hard latency cap.** Decision 4 of the spec sets a 1500 ms hard
    cap. With lexical search over a small markdown corpus the cap is not
@@ -193,29 +195,27 @@ differently, raise it before changing direction.
    `latency_ms` over 1000, add enforcement **at the `ProjectDocService`
    boundary**: thread a deadline / max-elapsed budget through
    `search`/`read`, return partial results, and surface an
-   `omitted_due_to_budget` signal Phase 5's trace emission can record.
-   Note the change in the diary when it happens.
-6. **Integration-test setup in Tasks 4.x and 5.1.** The plan still uses
+   `omitted_due_to_budget` signal the success traces in Phase 5 can
+   record. Note the change in the diary when it happens.
+6. **Integration-test setup in the dispatch tests.** The plan uses
    compact test sketches rather than fully inlined harness code, but the
    assertions are binding. Mirror the existing `tool_dispatch.rs` tests:
    `RunContext::create_in`, `ToolRegistry::default()`,
    `ModelRequest::new(...).with_session_id(...).with_tools(...)`, parsed
    `EventRecord`s from `events.jsonl`, and parsed `TraceRecord`s from
-   `traces.jsonl`. Phase 4 tests must prove both returned
-   `ToolResult`s and persisted telemetry, including the two-batch
-   shared-budget case. If the inline test module grows unwieldy, write a
+   `traces.jsonl`. If an inline test module grows unwieldy, write a
    focused integration test under
    `crates/qsf_app/tests/project_doc_dispatch.rs` and treat the
    skeletons as the assertion contract.
-7. **Per-turn budget scope — DECIDED AFTER PHASE 4 PLAN REVIEW.** The
-   caps apply across the whole human/responder turn, not merely one
-   provider tool-call batch. Phase 4 therefore introduces explicit
-   `ProjectDocToolBudget` state, keyed by the current `turn_index`, and
-   threads a mutable budget through each dispatch call. Phase 6 then
-   reuses the same budget across a bounded two-round responder tool
-   loop. If a future generic tool runtime changes the loop structure, it
-   must preserve this invariant: fresh budget per human turn, shared
-   budget across all provider calls inside that turn.
+7. **Per-turn budget scope — DECIDED AND LANDED IN PHASE 4.** The caps
+   apply across the whole human/responder turn, not merely one provider
+   tool-call batch. Phase 4 introduced explicit `ProjectDocToolBudget`
+   state, keyed by the current `turn_index`, threaded mutably through
+   `dispatch_model_tool_calls`. Phase 6 reuses the same budget across a
+   bounded two-round responder tool loop. If a future generic tool
+   runtime changes the loop structure, it must preserve this invariant:
+   fresh budget per human turn, shared budget across all provider calls
+   inside that turn.
 
 ## Target Shape
 
@@ -324,11 +324,8 @@ Source of truth is the code under `crates/qsf_app/src/tools/`.
 
 **Lessons / constraints still binding on later phases:**
 
-- **Combined context required for live dispatch (OQ #2).** The
-  standalone `ProjectDocToolContext` is enough for unit tests and for
-  Phase 3's registry wiring, but live dispatch (responder advertising
-  `recall_turn` *and* the project-doc tools) needs one context answering
-  both accessors. **Built in Phase 4.**
+- **Combined context required for live dispatch (OQ #2).** Built and
+  landed in Phase 4 as `ResponderToolContext`.
 - **Upper-bound discipline is the tool's job.** `max_results` and
   `max_tokens` are clamped/normalized inside the tools; later phases must
   not assume the model honors the advertised schema.
@@ -365,8 +362,8 @@ dispatch request-builder needed no change for this phase.
 
 - The registry holds no `ToolContext`; it receives one per call, so the
   combined-context question (OQ #2) was deliberately out of scope here
-  and is settled in **Phase 4**, the first phase to dispatch these tools
-  through a live context alongside `recall_turn`.
+  and was settled in **Phase 4**, the first phase to dispatch these
+  tools through a live context alongside `recall_turn`.
 - No runtime call site changed in Phase 3.
 
 **Acceptance outcome (met):** the registry tests assert that
@@ -374,496 +371,163 @@ dispatch request-builder needed no change for this phase.
 tools (by name, not just presence); that
 `model_tool_definitions_for(&[search, read])` returns exactly the two
 definitions under the correct names; and that **both** tools route
-through `dispatch` (a `read_only()` search request and a `read_only()`
-read request executed via `registry.execute(...)` against a
-`ProjectDocToolContext` each succeed and return a `ReadOnly` result,
-confirming `validate_request` admits them under `read_only()`). The
-calculator, recall_turn, and permission-rejection tests pass unchanged.
-`cargo build`, `cargo test -p qsf_app tools::`, `cargo clippy
---all-targets -- -D warnings`, and `cargo fmt` are clean.
+through `dispatch`. The calculator, recall_turn, and permission-rejection
+tests pass unchanged. `cargo build`, `cargo test -p qsf_app tools::`,
+`cargo clippy --all-targets -- -D warnings`, and `cargo fmt` are clean.
 
 ---
 
-## Phase 4: Combined context + true per-turn budget state
-
-This phase does two things, in order:
-
-1. **Task 4.1** introduces the combined `ToolContext` that live dispatch
-   needs (OQ #2) — a single context answering both `session_state()` and
-   `project_doc_service()`. It is a prerequisite for any batch that
-   advertises `recall_turn` alongside the project-doc tools, and it is
-   exercised by the cap tests in Task 4.2.
-2. **Task 4.2** introduces explicit per-turn project-doc budget state and
-   extends `dispatch_model_tool_calls` to consume that state. The budget
-   is owned by the caller for one human/responder turn and reused across
-   all provider tool-call batches inside that turn. Excess
-   `search_project_docs` / `read_project_doc` calls fail fast — with a
-   `ToolFailed` event, a refusal `TraceRecord`, and a structured
-   `ToolResult` — instead of reaching the registry.
-
-Follow `superpowers:test-driven-development` (or plain TDD if that skill
-is unavailable): the failing test precedes the implementation. Keep the
-context changes additive; do not touch `SessionToolContext`,
-`ProjectDocToolContext`, or the registry. The dispatcher signature does
-change in Task 4.2 so callers can pass explicit budget state.
-
-### Task 4.1: Combined `ToolContext` for live dispatch
-
-**Decision callout (OQ #2 — confirm before wiring).** This task adds a
-**dedicated** combined context rather than extending `SessionToolContext`.
-Rationale grounded in the current code: `SessionToolContext { state }` is
-a plain pub-field struct constructed by literal everywhere it is used
-(e.g. the `tool_dispatch.rs` tests, and the Phase 6 responder call
-site); adding a field would force every such literal to change, whereas a
-new struct is purely additive and leaves the existing single-accessor
-contexts intact for their isolated unit tests. If a reviewer prefers
-extending `SessionToolContext` (carrying an `Option<&ProjectDocService>`)
-instead, raise it before implementing this task. Per `Agents.md`, the new
-type is named for the role it serves, not the plan phase.
-
-**Files:**
-- Create: `crates/qsf_app/src/tools/responder_tool_context.rs`
-- Modify: `crates/qsf_app/src/tools/mod.rs` (declare the module and
-  re-export the type)
-
-- [ ] **Step 1: Write the failing test.**
-
-In the new file's `#[cfg(test)] mod tests` block, assert the combined
-context answers both accessors. Mirror the accessor-test style in
-`project_doc_tool.rs`.
-
-```rust
-// crates/qsf_app/src/tools/responder_tool_context.rs (tests)
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::project_docs::ProjectDocService;
-    use crate::session::{SessionConfig, SessionState};
-    use crate::tools::tool_registry::ToolContext;
-    use std::path::PathBuf;
-
-    fn fixtures_root() -> PathBuf {
-        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("src/project_docs/fixtures")
-    }
-
-    #[test]
-    fn responder_context_answers_both_accessors() {
-        let service =
-            ProjectDocService::new(fixtures_root(), fixtures_root().join("allowlist_basic.toml"));
-        let state = SessionState::new(/* a minimal test SessionConfig */);
-        let ctx = ResponderToolContext { state: &state, project_docs: &service };
-
-        assert!(ctx.session_state().is_some());
-        assert!(ctx.project_doc_service().is_some());
-    }
-}
-```
-
-- [ ] **Step 2: Run the test; verify it fails to compile** (the type
-  does not yet exist).
-
-Run: `cargo test -p qsf_app tools::responder_tool_context`
-
-- [ ] **Step 3: Implement the combined context.**
-
-```rust
-// crates/qsf_app/src/tools/responder_tool_context.rs
-use crate::project_docs::ProjectDocService;
-use crate::session::SessionState;
-
-use super::tool_registry::ToolContext;
-
-/// Tool context for the ConversationalResponder, which advertises
-/// `recall_turn` (needs session state) alongside the project-doc tools
-/// (need the project-doc service). Holds borrows of both so a single
-/// `&dyn ToolContext` can serve a mixed batch.
-pub struct ResponderToolContext<'a> {
-    pub state: &'a SessionState,
-    pub project_docs: &'a ProjectDocService,
-}
-
-impl ToolContext for ResponderToolContext<'_> {
-    fn session_state(&self) -> Option<&SessionState> {
-        Some(self.state)
-    }
-
-    fn project_doc_service(&self) -> Option<&ProjectDocService> {
-        Some(self.project_docs)
-    }
-}
-```
-
-In `crates/qsf_app/src/tools/mod.rs`, declare the module alongside the
-other tool modules and re-export the type:
-
-```rust
-mod responder_tool_context;
-pub use responder_tool_context::ResponderToolContext;
-```
-
-(If `project_docs` is `pub(crate)` rather than `pub` for both
-accessors, match the visibility the existing accessors expect — the
-trait already exposes both, so no trait change is needed.)
-
-- [ ] **Step 4: Run the test.** Expected: PASS.
-
-> **Note on scope.** The combined context is *constructed* at the Phase 6
-> call site; Task 4.1 only defines and exports the type and proves it
-> satisfies both accessors. Task 4.2 below uses it in the cap tests to
-> prove a mixed `recall_turn` + project-doc batch dispatches through one
-> context, de-risking Phase 6.
-
-- [ ] **Step 5: Commit** (on the unmerged feature branch — see the diary
-  discipline note at the end of this phase).
-
-```bash
-git add crates/qsf_app/src/tools/responder_tool_context.rs \
-        crates/qsf_app/src/tools/mod.rs
-git commit -m "feat(tools): add ResponderToolContext combining session + project-doc accessors"
-```
-
-### Task 4.2: Explicit per-turn budget enforcement
-
-**Files:**
-- Modify: `crates/qsf_app/src/models/tool_dispatch.rs`
-
-Caps per human/responder turn:
-- `search_project_docs`: 2
-- `read_project_doc`: 1
-
-Both defaults exercise the new code path on the third search / second
-read call (`Agents.md`: defaults must exercise the new path).
-
-**Implementation decision (review blocker P4-001).** Do **not** use local
-per-batch counters. Add named module-level constants and a small budget
-state type:
-
-```rust
-pub const PROJECT_DOC_SEARCH_CAP_PER_TURN: usize = 2;
-pub const PROJECT_DOC_READ_CAP_PER_TURN: usize = 1;
-
-#[derive(Clone, Debug)]
-pub struct ProjectDocToolBudget {
-    pub turn_index: usize,
-    search_calls: usize,
-    read_calls: usize,
-}
-
-impl ProjectDocToolBudget {
-    pub fn new(turn_index: usize) -> Self {
-        Self {
-            turn_index,
-            search_calls: 0,
-            read_calls: 0,
-        }
-    }
-}
-```
-
-`dispatch_model_tool_calls` receives `&mut ProjectDocToolBudget` and
-increments it for project-doc tools only. Callers create one fresh budget
-per human/responder turn. Tests that call dispatch directly should create
-`ProjectDocToolBudget::new(test_turn_index)`.
-
-- [ ] **Step 1: Write the failing tests.**
-
-Add to the `#[cfg(test)] mod tests` block in `tool_dispatch.rs`, mirroring
-the existing harness there (`RunContext::create_in`, `ToolRegistry::default()`,
-a `ModelRole::predefined(ModelRoleId::ConversationalResponder)` with
-`allowed_tools` set, `model_tool_definitions_for`, and
-`ModelRequest::new(...).with_session_id(...).with_tools(...)`). Use the
-`ResponderToolContext` from Task 4.1 as the dispatch context, with the
-Phase 1/2 fixture service (`src/project_docs/fixtures`,
-`allowlist_basic.toml`) and a fixture `SessionState`. The search calls use
-the `"Maturity"` query Phase 2 proved returns hits; the read call uses the
-`"sample_concept.md"` fixture path Phase 3's read test used.
-
-Make the harness concrete enough that it proves telemetry, not just return
-values: parse `events.jsonl` into existing `EventRecord` values and parse
-`traces.jsonl` into `TraceRecord` values. Assertions should check both the
-returned `ToolResult`s and the persisted event/trace details.
-
-```rust
-#[test]
-fn third_search_call_in_one_turn_is_refused() {
-    // allowed_tools = [SEARCH_PROJECT_DOCS_TOOL_NAME, READ_PROJECT_DOC_TOOL_NAME]
-    // Emit three search_project_docs calls in one batch with one
-    // ProjectDocToolBudget.
-    // Assert:
-    //   - results.len() == 3
-    //   - results[0] and results[1] are real ReadOnly results
-    //   - results[2].tool_name == SEARCH_PROJECT_DOCS_TOOL_NAME
-    //   - results[2].observation_summary contains "per_turn_cap"
-    //   - events.jsonl has a ToolFailed event for the third call whose
-    //     payload.refusal_reason == "per_turn_cap",
-    //     payload.cap == PROJECT_DOC_SEARCH_CAP_PER_TURN, and
-    //     payload.attempted_count == 3
-    //   - traces.jsonl has a "project_doc_search" record with
-    //     details.refused == true, details.call_id, details.session_id,
-    //     details.tool_name, details.turn_index, details.cap,
-    //     details.attempted_count, and sanitized details.arguments.query
-}
-
-#[test]
-fn second_read_call_in_one_turn_is_refused() {
-    // Same shape with two read_project_doc calls; second is refused with
-    // a "project_doc_read" refusal trace containing sanitized
-    // details.arguments.path.
-}
-
-#[test]
-fn budget_persists_across_dispatch_batches_in_same_turn() {
-    // Create one ProjectDocToolBudget::new(7).
-    // First dispatch batch: one read_project_doc call succeeds.
-    // Second dispatch batch, using the same budget: another read_project_doc
-    // call is refused with attempted_count == 2 and turn_index == 7.
-    // This guards the review blocker: caps are per human turn, not per
-    // provider batch.
-}
-
-#[test]
-fn fresh_budget_allows_next_turn_to_use_caps_again() {
-    // Exhaust a read budget for turn 7, then create
-    // ProjectDocToolBudget::new(8) and verify a read succeeds.
-}
-
-#[test]
-fn mixed_batch_runs_recall_turn_and_project_doc_through_one_context() {
-    // allowed_tools includes recall_turn + both project-doc tools.
-    // Batch: one recall_turn (on a summarized turn, as in the existing
-    // dispatcher_executes_allowed_recall_turn_tool test) + one search.
-    // Assert both succeed through a single ResponderToolContext and one
-    // ProjectDocToolBudget, proving the combined context serves a mixed
-    // batch (OQ #2) while non-project-doc tools do not consume the budget.
-}
-```
-
-The traces are read from `context.run_dir().join("traces.jsonl")` (the
-events tests already read `events.jsonl` the same way). If wiring grows
-unwieldy, lift these into
-`crates/qsf_app/tests/project_doc_dispatch.rs` per OQ #6.
-
-- [ ] **Step 2: Run tests; verify they fail.**
-
-Run: `cargo test -p qsf_app tool_dispatch`
-Expected: FAIL (the dispatcher does not yet accept explicit budget state;
-the third search / second read currently run instead of being refused).
-
-- [ ] **Step 3: Implement the cap.**
-
-Add imports to `tool_dispatch.rs`:
-
-```rust
-use crate::observability::trace::TraceRecord;
-use crate::tools::{
-    READ_PROJECT_DOC_TOOL_NAME, SEARCH_PROJECT_DOCS_TOOL_NAME, ToolCategory, ToolSideEffectLevel,
-};
-```
-
-Declare the named cap constants and `ProjectDocToolBudget` near
-`dispatch_model_tool_calls`, not as hidden locals inside the loop. This
-keeps the policy discoverable for future tuning.
-
-Change the dispatcher signature to accept the budget:
-
-```rust
-pub fn dispatch_model_tool_calls(
-    context: &mut RunContext,
-    request: &ModelRequest,
-    registry: &ToolRegistry,
-    state_ctx: &dyn ToolContext,
-    project_doc_budget: &mut ProjectDocToolBudget,
-    tool_calls: &[ModelToolCall],
-) -> Result<Vec<ToolResult>> {
-    // ...
-}
-```
-
-Update existing tests and call sites to pass
-`&mut ProjectDocToolBudget::new(turn_index)`. Direct tests can use a
-fixed test turn index; the live loop in Phase 6 uses
-`completed_turn_count(state)` / the `turn_index` already computed at the
-start of `run_one_turn`.
-
-Inside the loop, **after** the existing `allowed_tools` membership check
-and **before** `tool_request_from_model_tool_call`, add a helper-backed
-cap gate. Match the exact `ToolResult` field shape used by
-`recall_turn_tool.rs` when building the refusal result:
-
-```rust
-let cap_check = match tool_call.name.as_str() {
-    SEARCH_PROJECT_DOCS_TOOL_NAME => {
-        project_doc_budget.record_search_attempt()
-    }
-    READ_PROJECT_DOC_TOOL_NAME => {
-        project_doc_budget.record_read_attempt()
-    }
-    _ => ProjectDocCapCheck::not_applicable(),
-};
-
-if cap_check.over_cap {
-    let is_search = tool_call.name == SEARCH_PROJECT_DOCS_TOOL_NAME;
-    let operation = if is_search { "project_doc_search" } else { "project_doc_read" };
-    let arguments = sanitized_project_doc_arguments(&tool_call.name, &tool_call.arguments);
-
-    context.record_event(
-        EventType::ToolFailed,
-        json!({
-            "session_id": &request.session_id,
-            "role_id": request.role.role_id,
-            "tool_name": &tool_call.name,
-            "call_id": &tool_call.call_id,
-            "turn_index": project_doc_budget.turn_index,
-            "error": "per-turn budget exhausted",
-            "refusal_reason": "per_turn_cap",
-            "cap": cap_check.cap,
-            "attempted_count": cap_check.attempted_count,
-            "arguments": &arguments,
-            "scope": "model_tool_dispatch",
-        }),
-        None,
-    )?;
-    context.record_trace(
-        TraceRecord::new(
-            context.experiment_id(),
-            operation,
-            "(refused)",
-            "per_turn_cap",
-        )
-        .with_details(json!({
-            "session_id": &request.session_id,
-            "role_id": request.role.role_id,
-            "call_id": &tool_call.call_id,
-            "tool_name": &tool_call.name,
-            "turn_index": project_doc_budget.turn_index,
-            "refused": true,
-            "refusal_reason": "per_turn_cap",
-            "cap": cap_check.cap,
-            "attempted_count": cap_check.attempted_count,
-            "arguments": arguments,
-        })),
-    )?;
-    results.push(ToolResult {
-        tool_name: tool_call.name.clone(),
-        category: ToolCategory::ReadOnly,
-        side_effect_level: ToolSideEffectLevel::ReadOnly,
-        input: String::new(),
-        output_text: String::new(),
-        numeric_value: None,
-        observation_summary: format!(
-            "{} refused: per_turn_cap (max {} call(s) per turn).",
-            tool_call.name,
-            cap_check.cap
-        ),
-    });
-    continue;
-}
-```
-
-Notes:
-- `record_search_attempt` and `record_read_attempt` should increment
-  before checking the cap so `attempted_count` is diagnostically useful
-  (3 for the third search, 2 for the second read).
-- `sanitized_project_doc_arguments` should preserve only stable,
-  non-sensitive model inputs needed for replay: `query` / `max_results`
-  for search and `path` / `focus` / `max_tokens` for read. Do not dump
-  arbitrary JSON wholesale.
-- The refusal path deliberately emits only `ToolFailed` (plus a refusal
-  trace) and does **not** emit a preceding `ToolRequested`, because the
-  call is rejected before a `ToolRequest` is built — it never reaches the
-  registry. This keeps the existing `ToolRequested → ToolCompleted/Failed`
-  symmetry intact for *executed* calls.
-- Calculator and `recall_turn` fall through the `_ => false` arm and are
-  unaffected; they do not consume `ProjectDocToolBudget`.
-
-- [ ] **Step 4: Run tests.**
-
-Run: `cargo test -p qsf_app tool_dispatch`
-Expected: PASS (the five new tests, plus the existing dispatcher tests
-unchanged).
-
-- [ ] **Step 5: Commit.**
-
-```bash
-git add crates/qsf_app/src/models/tool_dispatch.rs
-git commit -m "feat(dispatch): enforce per-turn caps for project-doc tools"
-```
-
-### Phase 4 verification
-
-Per `Agents.md`, run the build first, then focused tests, then the
-lint/format gates:
-
-```bash
-cargo build
-cargo test -p qsf_app tools::responder_tool_context
-cargo test -p qsf_app tool_dispatch
-cargo clippy --all-targets -- -D warnings
-cargo fmt
-```
-
-Expect all clean. No external/human testing is required for this phase —
-it is pure Rust with deterministic unit/integration coverage. (Live
-end-to-end behaviour is verified in Phase 7's battery and Phase 10's
-manual session.)
-
-**Diary discipline for this phase.** As with Phases 2-3, the *application*
-work of Phases 1-8 is grouped under a single Phase 9 diary entry, so
-Phase 4 is not considered complete or mergeable until that entry lands.
-The commits above are intended for an unmerged feature branch. If Phase 4
-is merged in isolation ahead of the grouped feature, a short standalone
-Phase 4 diary entry **must** accompany that merge (read the *Instructions
-how to use* at the top of `docs/EngineeringDiary.md` first); reconcile,
-don't duplicate, in Phase 9.
-
-**Acceptance criteria for Phase 4:**
-
-- A combined `ResponderToolContext` exists and returns `Some(_)` from
-  **both** `session_state()` and `project_doc_service()`; it is
-  re-exported from `crate::tools`. `SessionToolContext` and
-  `ProjectDocToolContext` are unchanged (Task 4.1).
-- `ProjectDocToolBudget` exists with named module-level cap constants
-  (`2` searches, `1` read) and is passed mutably into
-  `dispatch_model_tool_calls` so one budget can be reused across
-  dispatch batches in the same human/responder turn (Task 4.2).
-- The 3rd `search_project_docs` call and the 2nd `read_project_doc`
-  call are refused whether they occur in one batch or across two batches
-  that share one `ProjectDocToolBudget`: each produces a `ToolFailed`
-  event with `refusal_reason == "per_turn_cap"`, `turn_index`, `cap`,
-  `attempted_count`, and sanitized arguments; a refusal `TraceRecord`
-  (`operation` = `project_doc_search`/`project_doc_read`,
+## Phase 4: Combined context + true per-turn budget state — completed
+
+**Status: landed and committed** (git: "ProjectDocIntrospection phase 4:
+Combined context + true per-turn budget state"). Source of truth is
+`crates/qsf_app/src/tools/responder_tool_context.rs` and
+`crates/qsf_app/src/models/tool_dispatch.rs`.
+
+**What shipped:**
+
+- **Combined context (OQ #2, option b).** `ResponderToolContext<'a> {
+  state: &'a SessionState, project_docs: &'a ProjectDocService }`,
+  implementing `ToolContext` so a single `&dyn ToolContext` answers
+  *both* `session_state()` and `project_doc_service()` with `Some(_)`.
+  Re-exported from `crate::tools`. The decision was to add a dedicated
+  type rather than extend `SessionToolContext` (purely additive; the
+  existing single-accessor contexts are unchanged).
+- **True per-turn budget.** Named module-level cap constants
+  `PROJECT_DOC_SEARCH_CAP_PER_TURN = 2` and
+  `PROJECT_DOC_READ_CAP_PER_TURN = 1`, plus a `ProjectDocToolBudget {
+  turn_index, search_calls, read_calls }` (`new(turn_index)`,
+  attempt-recording methods). The dispatcher signature changed to
+  `dispatch_model_tool_calls(context, request, registry, state_ctx,
+  project_doc_budget: &mut ProjectDocToolBudget, tool_calls)`. Callers
+  create one budget per human/responder turn and reuse it across
+  dispatch batches.
+- **Refusal path.** After the `allowed_tools` membership check and before
+  a `ToolRequest` is built, the loop gates project-doc tools on the
+  budget. An over-cap call is refused *before* reaching the registry,
+  emitting only a `ToolFailed` event (no preceding `ToolRequested`, to
+  keep the `ToolRequested → ToolCompleted/Failed` symmetry intact for
+  executed calls) with `refusal_reason == "per_turn_cap"`, `cap`,
+  `attempted_count`, `turn_index`, and sanitized arguments; a refusal
+  `TraceRecord` (`operation` = `project_doc_search`/`project_doc_read`,
   `details.refused == true` with the same correlation fields); and a
-  `ToolResult` whose `observation_summary` names `per_turn_cap`. The
-  first 2 searches and the first read still execute normally, and a
-  fresh budget for the next turn resets the counts (Task 4.2).
-- A mixed batch (`recall_turn` + `search_project_docs`) dispatches
-  successfully through a single `ResponderToolContext` and a
-  `ProjectDocToolBudget`, proving the combined context serves both
-  accessors and non-project-doc tools do not consume the budget
-  (Task 4.2).
-- Calculator, recall_turn, and existing dispatcher tests pass unchanged;
-  no registry or library change was needed.
-- `cargo build`, `cargo test -p qsf_app` (the relevant modules),
-  `cargo clippy --all-targets -- -D warnings`, and `cargo fmt` are
-  clean.
+  `ToolResult` whose `observation_summary` names `per_turn_cap`.
+- **`sanitized_project_doc_arguments` helper.** Preserves only stable,
+  non-sensitive replay inputs (`query`/`max_results` for search;
+  `path`/`focus`/`max_tokens` for read), never dumping arbitrary JSON.
+
+**Lessons / constraints still binding on later phases:**
+
+- **Reuse, don't reinvent (Phase 5/6).** Success-path traces in Phase 5
+  must reuse `sanitized_project_doc_arguments` and the budget's
+  `turn_index`, and must carry the same correlation fields
+  (`session_id`, `role_id`, `call_id`, `tool_name`, `turn_index`) as the
+  refusal traces so refused and executed calls join cleanly.
+- **Budget invariant (Phase 6).** Fresh `ProjectDocToolBudget` per human
+  turn, shared across all provider tool batches inside that turn;
+  calculator and `recall_turn` never consume the budget.
+- **Live wiring still pending.** Phase 4 proved the combined context and
+  budget in dispatch-level tests only; the `ResponderToolContext` is
+  *constructed* and the budget *created per turn* at the Phase 6 call
+  site, where `ProjectDocService` must be built with absolute paths
+  (OQ #1).
+
+**Acceptance outcome (met):** `ResponderToolContext` returns `Some(_)`
+from both accessors; `ProjectDocToolBudget` enforces the 2-search /
+1-read caps whether the over-cap call occurs in one batch or across two
+batches sharing one budget; a fresh budget for the next turn resets the
+counts; a mixed `recall_turn` + `search_project_docs` batch dispatches
+through one `ResponderToolContext` with non-project-doc tools not
+consuming the budget; refusal telemetry includes session ID, call ID,
+tool name, turn index, cap, attempted count, and sanitized arguments;
+calculator, recall_turn, and existing dispatcher tests pass unchanged.
+`cargo build`, `cargo test -p qsf_app` (relevant modules),
+`cargo clippy --all-targets -- -D warnings`, and `cargo fmt` are clean.
+
+**Diary discipline (still binding):** as with Phases 1-3, the
+*application* work of Phases 1-8 is grouped under the single Phase 9
+diary entry; if Phase 4 merged in isolation ahead of the grouped
+feature, a short standalone Phase 4 diary entry must accompany that
+merge, reconciled (not duplicated) in Phase 9.
 
 ---
 
 ## Phase 5: TraceRecord emission for successful project-doc calls
 
-Phase 4 added refusal traces. This phase adds traces for the *successful*
-search and read paths, so a researcher can replay every call.
+Phase 4 added refusal traces (`details.refused == true`) for over-cap
+project-doc calls. This phase adds the symmetric *success* traces for
+the executed `search_project_docs` and `read_project_doc` paths
+(`details.refused == false`), so a researcher can replay **every**
+project-doc call in a run's `traces.jsonl`, not just the rejected ones.
+Calculator and `recall_turn` dispatch is unchanged — only the two
+project-doc tools emit these traces.
+
+This is a single-file, pure-Rust change with deterministic
+unit/integration coverage; no external/human testing is required (live
+behaviour is verified in Phase 7's battery and Phase 10's manual
+session). Follow `superpowers:test-driven-development` (or plain TDD if
+that skill is unavailable): the failing test precedes the
+implementation.
+
+**Replayability is the success criterion (review P5-001, binding).** A
+trace must let a downstream reader reconstruct *what the call returned*,
+not merely that it succeeded — Phase 8's `influenced_reply` enrichment
+computes reply-overlap directly from these records. Concretely:
+
+- The `project_doc_search` trace stores the parsed `hits` array **and**
+  an explicit `details.hit_count` (review P5-003), so the hit count is a
+  first-class field rather than something a reader must re-derive.
+- The `project_doc_read` trace stores the **parsed read output**
+  (`details.read`) — the bounded content/excerpt the tool returned, plus
+  its metadata — not just the `is_full` / `omitted_sections` signals.
+  This is safe because `ReadProjectDocTool` already capped the output to
+  `max_tokens` (Phase 2): the trace records what the model actually saw,
+  under the same bound, with no second cap and no widening of input
+  discipline.
+
+**Reuse discipline (from Phase 4, binding here).** Do **not** introduce a
+new arguments-sanitizer, latency helper, or correlation-field shape.
+Reuse:
+
+- `sanitized_project_doc_arguments(&tool_name, &arguments)` for the
+  `arguments` field;
+- the budget's `turn_index` (`project_doc_budget.turn_index`) for the
+  `turn_index` field;
+- the same elapsed-latency source the `ToolCompleted` event already uses
+  (`elapsed_ms(started_at)`), captured **once** and shared between the
+  event and the trace;
+- the same correlation fields the refusal traces emit (`session_id`,
+  `role_id`, `call_id`, `tool_name`, `turn_index`).
+
+The constants (`SEARCH_PROJECT_DOCS_TOOL_NAME`,
+`READ_PROJECT_DOC_TOOL_NAME`), the `TraceRecord` import, and `serde_json`
+(`json!`, `from_str`) are already in scope in `tool_dispatch.rs` from
+Phase 4; no new imports are expected. If any is missing, add it
+minimally.
 
 ### Task 5.1: Emit success traces
 
 **Files:**
 - Modify: `crates/qsf_app/src/models/tool_dispatch.rs`
 
-In the success path of the dispatch loop, after the `ToolCompleted`
-event is written, emit a `TraceRecord` for the two project-doc
-operations. Calculator and recall_turn continue to behave as today.
+In the success path of the dispatch loop, after the existing
+`ToolCompleted` event is written, emit a `TraceRecord` for the two
+project-doc operations only. The trace **complements** the
+`ToolCompleted` event; it does not replace it.
 
-- [ ] **Step 1: Write the failing test.**
+- [ ] **Step 1: Write the failing tests.**
+
+Add to the `#[cfg(test)] mod tests` block in `tool_dispatch.rs` (or to
+`crates/qsf_app/tests/project_doc_dispatch.rs` per OQ #6), mirroring the
+Phase 4 harness: `RunContext::create_in`, `ToolRegistry::default()`, a
+`ResponderToolContext` over the Phase 1/2 fixture service
+(`src/project_docs/fixtures`, `allowlist_basic.toml`) and a fixture
+`SessionState`, a `ModelRole::predefined(ModelRoleId::ConversationalResponder)`
+with `allowed_tools` set, and `ProjectDocToolBudget::new(turn_index)`.
+Read traces from `context.run_dir().join("traces.jsonl")` and parse them
+into `TraceRecord` values exactly as the Phase 4 refusal tests do. Use
+the `"Maturity"` query Phase 2 proved returns hits and the
+`"sample_concept.md"` fixture path Phase 3's read test used.
 
 ```rust
 // crates/qsf_app/src/models/tool_dispatch.rs (tests)
@@ -872,26 +536,73 @@ fn successful_search_emits_project_doc_search_trace() {
     // Run one search_project_docs call through dispatch_model_tool_calls
     // with ProjectDocToolBudget::new(3).
     // Read traces.jsonl from context.run_dir().
-    // Assert a TraceRecord with operation == "project_doc_search" and
-    // details containing session_id, call_id, tool_name, turn_index == 3,
-    // sanitized arguments.query, hits count, and refused == false.
+    // Assert exactly one TraceRecord with operation == "project_doc_search"
+    // whose details contain:
+    //   session_id, role_id, call_id, tool_name == SEARCH_PROJECT_DOCS_TOOL_NAME,
+    //   turn_index == 3, refused == false,
+    //   sanitized arguments.query (and no unexpected raw keys),
+    //   the parsed hits array,
+    //   an explicit hit_count that equals hits.len() and is consistent
+    //     with the returned ToolResult.output_text (review P5-003).
+    // Assert the trace carries a latency (with_latency_ms) and the returned
+    // ToolResult is a real ReadOnly result (not a refusal).
 }
 
 #[test]
 fn successful_read_emits_project_doc_read_trace() {
-    // Same shape for read_project_doc, including sanitized
-    // arguments.path/focus/max_tokens.
+    // Same shape for one read_project_doc call with ProjectDocToolBudget::new(4).
+    // Assert operation == "project_doc_read", refused == false, turn_index == 4,
+    // sanitized arguments.path/focus/max_tokens.
+    // Assert details.read holds the parsed read output the model saw —
+    //   the bounded content/excerpt (already max_tokens-capped) plus its
+    //   metadata — so the trace alone can replay the read and support
+    //   Phase 8 overlap (review P5-001). Assert the captured content matches
+    //   the ToolResult.output_text the tool returned.
+    // Assert details.is_full / details.omitted_sections reflect the DocRead.
+}
+
+#[test]
+fn failed_read_execution_emits_no_success_trace() {
+    // Regression (review P5-002): drive one read_project_doc call that
+    // passes the allowed_tools membership check and the per-turn budget gate
+    // but FAILS inside validate_and_execute (e.g. an out-of-allowlist or
+    // nonexistent path the Phase 1 library rejects), with
+    // ProjectDocToolBudget::new(5).
+    // Assert a ToolFailed event is written for the call and that NO
+    // project_doc_read TraceRecord with refused == false appears in
+    // traces.jsonl. Execution failures keep their existing behaviour and
+    // never gain a success trace. (Distinct from the Phase 4 over-cap
+    // refusal path, which never reaches execution.)
+}
+
+#[test]
+fn non_project_doc_tools_emit_no_project_doc_trace() {
+    // Regression: a calculator (or recall_turn) call writes a ToolCompleted
+    // event but produces no project_doc_* TraceRecord and does not touch the
+    // budget. Guards against the success branch firing for the wrong tools.
 }
 ```
 
-- [ ] **Step 2: Implement the emission.**
+- [ ] **Step 2: Run the tests; verify they fail.**
 
-After the existing `ToolCompleted` event write in
-`dispatch_model_tool_calls` (capture the elapsed latency the same way
-the event does, via `elapsed_ms(started_at)`), branch on tool name:
+Run: `cargo test -p qsf_app tool_dispatch`
+Expected: FAIL (the dispatcher writes `ToolCompleted` but no
+`project_doc_*` success trace yet; the assertions on `traces.jsonl` find
+nothing). The `failed_read_execution_emits_no_success_trace` and
+`non_project_doc_tools_emit_no_project_doc_trace` regression tests should
+pass even before implementation — they assert the *absence* of a trace
+and guard against the new branch firing too broadly.
+
+- [ ] **Step 3: Implement the emission.**
+
+Bind the latency once so the event and the trace report the same value
+(`started_at` is currently consumed inline by the `ToolCompleted`
+event's `elapsed_ms(started_at)`):
 
 ```rust
 let tool_latency_ms = elapsed_ms(started_at);
+// ... existing ToolCompleted event write, using tool_latency_ms ...
+
 match tool_request.tool_name.as_str() {
     SEARCH_PROJECT_DOCS_TOOL_NAME => {
         let parsed_hits: serde_json::Value =
@@ -912,9 +623,11 @@ match tool_request.tool_name.as_str() {
                 "turn_index": project_doc_budget.turn_index,
                 "arguments": sanitized_project_doc_arguments(
                     &tool_request.tool_name,
-                    &tool_call.arguments
+                    &tool_call.arguments,
                 ),
                 "hits": parsed_hits,
+                // Explicit field, not only implied by output_summary (P5-003).
+                "hit_count": hit_count,
                 "refused": false,
             }))
             .with_latency_ms(tool_latency_ms),
@@ -928,7 +641,10 @@ match tool_request.tool_name.as_str() {
                 context.experiment_id(),
                 "project_doc_read",
                 tool_call.arguments.get("path").and_then(|v| v.as_str()).unwrap_or(""),
-                parsed.get("is_full").map(|v| format!("is_full={v}")).unwrap_or_else(|| "?".to_string()),
+                parsed
+                    .get("is_full")
+                    .map(|v| format!("is_full={v}"))
+                    .unwrap_or_else(|| "?".to_string()),
             )
             .with_details(json!({
                 "session_id": &request.session_id,
@@ -938,8 +654,13 @@ match tool_request.tool_name.as_str() {
                 "turn_index": project_doc_budget.turn_index,
                 "arguments": sanitized_project_doc_arguments(
                     &tool_request.tool_name,
-                    &tool_call.arguments
+                    &tool_call.arguments,
                 ),
+                // Store the full bounded read output the model actually saw,
+                // so traces.jsonl alone can replay the read and Phase 8 can
+                // compute reply overlap (review P5-001). The tool already
+                // capped this to max_tokens, so no extra bound is applied.
+                "read": parsed,
                 "is_full": parsed.get("is_full"),
                 "omitted_sections": parsed.get("omitted_sections"),
                 "refused": false,
@@ -951,20 +672,100 @@ match tool_request.tool_name.as_str() {
 }
 ```
 
-(Note: `started_at` is currently consumed inline by the `ToolCompleted`
-event's `elapsed_ms(started_at)`. Bind `tool_latency_ms` once before the
-event write and reuse it in both places so the event and the trace report
-the same latency.) The success traces complement the `ToolCompleted`
-event; they do not replace it.
+Notes:
+- Place this branch only on the **executed** success path (after a
+  `ToolCompleted` write), never on the `ToolFailed` path — execution
+  failures keep their existing behaviour and do not gain a
+  `refused: false` success trace (guarded by
+  `failed_read_execution_emits_no_success_trace`).
+- The `_ => {}` arm leaves calculator and `recall_turn` untouched.
+- `details.read` carries the parsed `DocRead` output verbatim from
+  `result.output_text`. If the parsed shape uses a field name other than
+  the convenience `is_full` / `omitted_sections` accessors above (confirm
+  against the Phase 2 serialization during implementation), the full
+  `read` object still preserves replay content regardless; adjust only
+  the convenience accessors, not the stored object.
+- Field names and the `details` shape must match the Phase 4 refusal
+  traces so a downstream reader can union refused and executed records on
+  `(session_id, turn_index, tool_name, call_id)`. **Open question — only
+  if the actual `details` keys diverge from Phase 4 during
+  implementation** (e.g. Phase 4 ended up keying turn correlation
+  differently): do not silently pick a new shape — record the mismatch
+  inline here and reconcile both paths before committing, since Phase 8's
+  enrichment join depends on a single consistent trace shape.
 
-- [ ] **Step 3: Run tests.** Expected: PASS.
+- [ ] **Step 4: Run the tests.**
 
-- [ ] **Step 4: Commit.**
+Run: `cargo test -p qsf_app tool_dispatch`
+Expected: PASS (the four new tests, plus all existing dispatcher and
+Phase 4 refusal tests unchanged).
+
+- [ ] **Step 5: Commit** (on the unmerged feature branch — see the diary
+  discipline note below).
 
 ```bash
 git add crates/qsf_app/src/models/tool_dispatch.rs
 git commit -m "feat(dispatch): emit project_doc_search/read trace records on success"
 ```
+
+### Phase 5 verification
+
+Per `Agents.md`, run the build first, then focused tests, then the
+lint/format gates:
+
+```bash
+cargo build
+cargo test -p qsf_app tool_dispatch
+cargo clippy --all-targets -- -D warnings
+cargo fmt
+```
+
+Expect all clean. No external/human testing is required for this phase —
+it is pure Rust with deterministic unit/integration coverage. (Live
+end-to-end behaviour is verified in Phase 7's battery and Phase 10's
+manual session, where Phase 10 also confirms recorded `latency_ms` stays
+well under 1000 ms per OQ #5.)
+
+**Diary discipline for this phase.** As with Phases 1-4, the
+*application* work of Phases 1-8 is grouped under a single Phase 9 diary
+entry, so Phase 5 is not considered complete or mergeable until that
+entry lands. The commit above is intended for an unmerged feature
+branch. If Phase 5 is merged in isolation ahead of the grouped feature, a
+short standalone Phase 5 diary entry **must** accompany that merge (read
+the *Instructions how to use* at the top of `docs/EngineeringDiary.md`
+first); reconcile, don't duplicate, in Phase 9.
+
+**Acceptance criteria for Phase 5:**
+
+- A successful `search_project_docs` dispatch emits exactly one
+  `TraceRecord` with `operation == "project_doc_search"`,
+  `details.refused == false`, the parsed `hits` array, an explicit
+  `details.hit_count` equal to `hits.len()`, the sanitized
+  `arguments.query`, the budget `turn_index`, the full correlation
+  fields (`session_id`, `role_id`, `call_id`, `tool_name`), and a
+  recorded latency — in addition to (not replacing) the existing
+  `ToolCompleted` event.
+- A successful `read_project_doc` dispatch emits the analogous
+  `project_doc_read` trace, including sanitized
+  `arguments.path/focus/max_tokens`, the read's
+  `is_full`/`omitted_sections` signals, and `details.read` holding the
+  bounded content/excerpt the tool returned (already `max_tokens`-capped)
+  so the trace alone can replay the read and feed Phase 8 overlap.
+- The success traces reuse the Phase 4 `sanitized_project_doc_arguments`
+  helper and share the `ToolCompleted` latency value (no second clock
+  read); no new sanitizer or latency helper is added.
+- A project-doc tool call that reaches execution and **fails** writes a
+  `ToolFailed` event and emits **no** `project_doc_*` trace with
+  `refused == false`; the success branch fires only on the executed
+  success path.
+- Calculator and `recall_turn` dispatch emit **no** `project_doc_*`
+  trace and do not consume the budget; the executed-vs-refused trace
+  shapes are consistent so they can be joined downstream (used by
+  Phase 8).
+- Existing dispatcher and Phase 4 refusal tests pass unchanged; no
+  registry or library change was needed.
+- `cargo build`, `cargo test -p qsf_app tool_dispatch`,
+  `cargo clippy --all-targets -- -D warnings`, and `cargo fmt` are clean.
 
 ---
 
@@ -1446,6 +1247,13 @@ in a run's `traces.jsonl` to the same-turn final assistant reply and
 writes a follow-up `TraceRecord` (operation = `project_doc_influence`)
 marking whether the reply substantively overlapped the returned content.
 
+This phase relies on the Phase 5 success traces carrying the returned
+content: the search trace's `details.hits` and the read trace's
+`details.read` bounded excerpt are the source material the overlap check
+runs against. If either is missing or shaped differently than Phase 5
+recorded, surface it before implementing the join rather than
+re-deriving content elsewhere.
+
 ### Task 8.1: Overlap check
 
 **Files:**
@@ -1559,12 +1367,13 @@ mod tests {
 - [ ] **Step 2: Implement `enrich`.**
 
 The implementation reads `traces.jsonl` line by line, parses each
-`TraceRecord`, groups them by turn (carried in `details.role_id` or an
-equivalent turn marker — confirm against the actual trace shape during
-implementation), pairs each `project_doc_*` record with the final
-`assistant_reply` trace in the same turn, computes
-`reply_overlaps_excerpt`, and appends one `project_doc_influence` record
-per pair.
+`TraceRecord`, groups them by turn (carried in `details.turn_index`, now
+present on both refused and executed project-doc traces after Phase 5;
+confirm against the actual trace shape during implementation), pairs each
+`project_doc_*` record with the final `assistant_reply` trace in the same
+turn, computes `reply_overlaps_excerpt` against the recorded content
+(search `details.hits`; read `details.read`), and appends one
+`project_doc_influence` record per pair.
 
 This is plumbing work whose precise shape depends on existing trace
 conventions; follow the pattern of any other post-hoc analysis tool
@@ -1724,7 +1533,8 @@ What changed:
   sequence while preserving a no-unbounded-tool-loop guard.
 - `dispatch_model_tool_calls` emits `project_doc_search` /
   `project_doc_read` trace records for successful and refused calls,
-  including call correlation fields and sanitized arguments.
+  including call correlation fields, sanitized arguments, and the
+  returned content (search hits / bounded read excerpt) for replay.
 - `ToolPermission::read_only()` constructor.
 - Responder system prompt appends a kind/maturity voicing block when
   the tools are advertised.
@@ -1934,8 +1744,13 @@ Run after Phases 1-10 land:
   arguments.
 - [ ] Verify successful `search_project_docs` / `read_project_doc`
   dispatch emits `project_doc_search` / `project_doc_read` traces with
-  `refused == false` plus the same call-correlation fields (Phase 5
-  tests should already cover this in CI).
+  `refused == false` plus the same call-correlation fields and a
+  recorded latency; the search trace carries an explicit `hit_count` and
+  the parsed `hits`, and the read trace carries the bounded returned
+  content (`details.read`) so the trace alone can replay the read; a
+  project-doc call that reaches execution and fails writes `ToolFailed`
+  and **no** success trace; calculator and recall_turn emit no
+  `project_doc_*` trace (Phase 5 tests should already cover this in CI).
 - [ ] Verify the responder can complete a bounded
   `search -> read -> answer` sequence in one human turn and rejects a
   third tool-call batch without appending the turn (Phase 6 tests should
