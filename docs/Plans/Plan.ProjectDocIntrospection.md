@@ -33,14 +33,17 @@ Phase 1 is the next implementation step.
 
 The design at `docs/Plans/Design.ProjectDocIntrospection.md` specifies a
 live-first introspection channel for project documents. This plan
-implements it in nine sequential phases that each produce something
-independently testable. Phases 1-6 are the minimum viable channel
-(tools work end-to-end and the responder can call them). Phase 7
-delivers the offline self-question battery promised by the design's
-*Live-First Rationale*. Phase 8 adds the `influenced_reply` post-hoc
-enrichment. Phase 9 lands the documentation updates required by
-`docs/ProjectFrame/ProjectWorkflow.md`. A final external verification
-step is recorded at the end.
+implements the v1 channel in nine sequential implementation and
+documentation phases that each produce something independently testable.
+Phases 1-6 are the minimum viable channel (tools work end-to-end and
+the responder can call them). Phase 7 delivers the offline
+self-question battery promised by the design's *Live-First Rationale*.
+Phase 8 adds the `influenced_reply` post-hoc enrichment. Phase 9 lands
+the documentation updates required by
+`docs/ProjectFrame/ProjectWorkflow.md`. Phase 10 records the live
+external verification step. Phase 11 is a future planning handoff for
+associative project-doc context pointers; it is not part of the v1
+tool implementation.
 
 ## Current Anchors
 
@@ -3066,9 +3069,124 @@ acceptance gate.
 
 ---
 
+## Phase 11: Associative project-doc context pointers (future planning handoff)
+
+This is a follow-on planning phase, not part of the v1 project-doc tool
+channel. It gives a project manager enough shape to create a separate
+design or implementation plan after Phases 1-10 have produced trace
+evidence about how project-doc lookup behaves in live dialogue.
+
+The goal is to explore an automatic, association-driven context source
+for project documents. Unlike `search_project_docs` and
+`read_project_doc`, this mechanism is not activated by a model tool
+call. It is driven by the same memory/context-selection path that
+retrieves relevant memories for the current input. Its output should be
+compact project-doc pointers, not full document bodies.
+
+### Candidate shape
+
+```text
+current input / active focus
+  -> associative retrieval cues
+  -> project-doc pointer candidates
+  -> context budget and authority ranking
+  -> selected ProjectDocContextPointer fragments enter active context
+  -> model may answer from the pointer metadata, or call read_project_doc
+     when body content is needed
+```
+
+A `ProjectDocContextPointer` should include only enough material to
+orient the model and preserve provenance:
+
+```text
+ProjectDocContextPointer
+  path
+  title
+  kind
+  maturity_tag
+  last_reviewed
+  section_hint
+  reason_selected
+  association_path_or_score
+  header_excerpt
+  authority_note
+  suggested_followup_tool_call
+```
+
+`header_excerpt` should be limited to the document title and document
+status/header material, such as `## Status`, `## Maturity`, and the
+`## Implementation Status` summary when present. It should not include
+arbitrary body sections by default. If the model needs actual body text,
+the expected path is an explicit `read_project_doc` call with a focused
+section or token budget.
+
+### Boundaries for the future plan
+
+- This phase must not make project documents always-present prompt
+  material.
+- This phase must not inject complete documents, long plan bodies, or
+  broad search excerpts into live context.
+- The context assembler, not the project-doc service alone, decides
+  whether a pointer enters active context.
+- Pointer fragments must carry kind/maturity metadata so brainstorm,
+  plan, decision, architecture, and implementation-status material are
+  not flattened into one authority level.
+- Stable project anchors and accepted decisions may be protected from
+  ordinary memory decay, but speculative plans and ideas should remain
+  weaker and clearly labeled.
+- Full-text reads remain observable tool calls; automatic context
+  injection should not hide document inspection that materially affects
+  a reply.
+
+### Planning work to flesh out later
+
+- Decide whether pointers are generated from the same allowlisted corpus
+  as `search_project_docs`, from post-hoc `project_doc_*` traces, from
+  curated stable project facts, or from a combination.
+- Define the `ContextSource` / `ContextFragment` boundary that turns
+  project-doc pointer candidates into active context.
+- Define ranking signals: query similarity, association strength,
+  document authority, recency, prior successful influence, and diversity.
+- Set initial live budgets, for example maximum pointer count and maximum
+  total pointer tokens per turn.
+- Define trace records for selected and omitted project-doc pointers,
+  including why each pointer was selected or rejected.
+- Decide whether pointer selection can request asynchronous follow-up
+  reflection when the relevant material is too large for the live turn.
+- Update `Architecture.ContextManagement.md`,
+  `Architecture.MemorySystem.md`, and possibly
+  `Architecture.ToolSystem.md` if the mechanism becomes implemented
+  architecture.
+- Record a decision only if the project commits to automatic
+  project-doc pointer injection as a standing context mechanism.
+
+### Verification expectations
+
+A later detailed plan should include tests or review checks for these
+cases:
+
+- A project-self question about a stable boundary selects a compact
+  pointer to a frame or decision document.
+- A question related to a brainstorm or plan selects a pointer with
+  explicit low-authority voicing metadata.
+- An unrelated ordinary question selects no project-doc pointers.
+- Pointer context contains path/title/status/header metadata, but not
+  full document bodies.
+- When body content is needed, the responder still uses
+  `read_project_doc` and the read remains visible in tool traces.
+- Selected and omitted pointer candidates are observable enough for a
+  reviewer to understand context influence.
+
+**External testing recommended:** after implementation, run live
+side-by-side sessions with associative pointers disabled and enabled.
+Check whether the pointers improve grounding without causing prompt
+bloat, false authority, or over-eager project self-reference.
+
+---
+
 ## Self-Review
 
-Run after all phases land:
+Run after Phases 1-10 land:
 
 - [ ] `cargo clippy --all-targets -- -D warnings`
 - [ ] `cargo fmt`
@@ -3084,3 +3202,5 @@ Run after all phases land:
 - [ ] Confirm there is exactly one diary entry covering Phases 1-8 (or,
   if Phase 1 was merged independently, a standalone library-slice entry
   plus the Phases 2-8 entry).
+- [ ] Confirm Phase 11 remains a follow-on planning handoff unless it has
+  been promoted into a separate detailed design or implementation plan.
