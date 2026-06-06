@@ -14,4 +14,4 @@ pub use model_role::{ModelOutputExpectation, ModelRole, ModelRoleId};
 pub use openai_provider::{
     OpenAiProviderModelClient, build_client, build_client_from_env, requested_provider_from_env,
 };
-pub use tool_dispatch::dispatch_model_tool_calls;
+pub use tool_dispatch::{ProjectDocToolBudget, dispatch_model_tool_calls};

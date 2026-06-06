@@ -1185,8 +1185,18 @@ fn execute_model_tool_calls(
 ) -> anyhow::Result<Vec<ToolExecution>> {
     let tool_ctx = SessionToolContext { state };
     let dispatch_started_at = Instant::now();
-    let tool_results =
-        dispatch_model_tool_calls(context, request, registry, &tool_ctx, tool_calls)?;
+    // When the responder grows multiple tool batches per human turn, lift this
+    // budget to the turn scope and thread it through each dispatch batch.
+    let mut project_doc_budget =
+        crate::models::ProjectDocToolBudget::new(completed_turn_count(state));
+    let tool_results = dispatch_model_tool_calls(
+        context,
+        request,
+        registry,
+        &tool_ctx,
+        &mut project_doc_budget,
+        tool_calls,
+    )?;
     let dispatch_latency_ms = elapsed_ms(dispatch_started_at);
     let tool_latency_ms = dispatch_latency_ms / tool_results.len().max(1) as u64;
     let mut executions = Vec::with_capacity(tool_results.len());

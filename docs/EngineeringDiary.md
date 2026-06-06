@@ -2363,3 +2363,21 @@ Open question:
 - Registry wiring and the eventual combined session+project-doc dispatch context are still deferred to later work.
 
 Refs: crates/qsf_app/src/tools/tool_request.rs, crates/qsf_app/src/tools/tool_registry.rs, crates/qsf_app/src/tools/project_doc_tool.rs, crates/qsf_app/src/tools/search_project_docs_tool.rs, crates/qsf_app/src/tools/read_project_doc_tool.rs, crates/qsf_app/src/tools/mod.rs
+
+## 2026-06-06 - Project-doc live dispatch caps
+
+Added the live-dispatch context and per-turn caps for project-doc tools, with refusal telemetry for over-budget calls.
+
+What changed:
+- Added `ResponderToolContext` so one tool context can answer both `session_state()` and `project_doc_service()`.
+- Added `ProjectDocToolBudget` plus per-turn search/read caps and refusal handling in `dispatch_model_tool_calls`.
+- Recorded refused project-doc calls as `ToolFailed` events and refusal `TraceRecord`s with sanitized arguments.
+- Kept refused tool results aligned with the same sanitized project-doc argument payload.
+- Wired the new budget through the multi-turn text loop's tool dispatch call site.
+- Noted at the current single-batch dispatch call site that future multi-batch responder loops must keep one turn-scoped budget.
+- Added dispatcher coverage for the third search refusal, second read refusal, same-turn budget reuse, fresh-turn reset, and mixed `recall_turn` + project-doc batches.
+
+Observed:
+- `cargo build`, `cargo test -p qsf_app responder_tool_context`, `cargo test -p qsf_app tool_dispatch`, `cargo clippy --all-targets -- -D warnings`, and `cargo fmt` passed.
+
+Refs: crates/qsf_app/src/tools/responder_tool_context.rs, crates/qsf_app/src/tools/mod.rs, crates/qsf_app/src/models/tool_dispatch.rs, crates/qsf_app/src/models/mod.rs, crates/qsf_app/src/experiments/multi_turn_text_loop.rs

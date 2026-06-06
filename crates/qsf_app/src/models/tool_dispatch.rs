@@ -5,11 +5,12 @@ use anyhow::{Context, Result, bail};
 use serde_json::json;
 
 use crate::observability::event_log::EventType;
-use crate::observability::trace::elapsed_ms;
+use crate::observability::trace::{TraceRecord, elapsed_ms};
 use crate::runtime::run_context::RunContext;
 use crate::tools::{
-    CALCULATOR_TOOL_NAME, RECALL_TURN_TOOL_NAME, ToolContext, ToolMetadata, ToolPermission,
-    ToolRegistry, ToolRequest, ToolResult,
+    CALCULATOR_TOOL_NAME, READ_PROJECT_DOC_TOOL_NAME, RECALL_TURN_TOOL_NAME,
+    SEARCH_PROJECT_DOCS_TOOL_NAME, ToolCategory, ToolContext, ToolMetadata, ToolPermission,
+    ToolRegistry, ToolRequest, ToolResult, ToolSideEffectLevel,
 };
 
 use super::{ModelRequest, ModelToolCall};
@@ -19,6 +20,7 @@ pub fn dispatch_model_tool_calls(
     request: &ModelRequest,
     registry: &ToolRegistry,
     state_ctx: &dyn ToolContext,
+    project_doc_budget: &mut ProjectDocToolBudget,
     tool_calls: &[ModelToolCall],
 ) -> Result<Vec<ToolResult>> {
     debug_assert_request_tools_match_role(request);
@@ -49,6 +51,20 @@ pub fn dispatch_model_tool_calls(
                 None,
             )?;
             bail!(message);
+        }
+
+        if let Some(cap_check) = project_doc_cap_check_for_call(tool_call, project_doc_budget) {
+            if cap_check.over_cap {
+                let result = refuse_project_doc_tool_call(
+                    context,
+                    request,
+                    tool_call,
+                    cap_check,
+                    project_doc_budget.turn_index,
+                )?;
+                results.push(result);
+                continue;
+            }
         }
 
         let tool_request =
@@ -128,6 +144,171 @@ pub fn dispatch_model_tool_calls(
     Ok(results)
 }
 
+pub const PROJECT_DOC_SEARCH_CAP_PER_TURN: usize = 2;
+pub const PROJECT_DOC_READ_CAP_PER_TURN: usize = 1;
+
+#[derive(Clone, Debug)]
+pub struct ProjectDocToolBudget {
+    pub turn_index: usize,
+    search_calls: usize,
+    read_calls: usize,
+}
+
+impl ProjectDocToolBudget {
+    pub fn new(turn_index: usize) -> Self {
+        Self {
+            turn_index,
+            search_calls: 0,
+            read_calls: 0,
+        }
+    }
+
+    fn record_search_attempt(&mut self) -> ProjectDocCapCheck {
+        self.search_calls = self.search_calls.saturating_add(1);
+        ProjectDocCapCheck {
+            cap: PROJECT_DOC_SEARCH_CAP_PER_TURN,
+            attempted_count: self.search_calls,
+            over_cap: self.search_calls > PROJECT_DOC_SEARCH_CAP_PER_TURN,
+        }
+    }
+
+    fn record_read_attempt(&mut self) -> ProjectDocCapCheck {
+        self.read_calls = self.read_calls.saturating_add(1);
+        ProjectDocCapCheck {
+            cap: PROJECT_DOC_READ_CAP_PER_TURN,
+            attempted_count: self.read_calls,
+            over_cap: self.read_calls > PROJECT_DOC_READ_CAP_PER_TURN,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct ProjectDocCapCheck {
+    cap: usize,
+    attempted_count: usize,
+    over_cap: bool,
+}
+
+fn project_doc_cap_check_for_call(
+    tool_call: &ModelToolCall,
+    project_doc_budget: &mut ProjectDocToolBudget,
+) -> Option<ProjectDocCapCheck> {
+    match tool_call.name.as_str() {
+        SEARCH_PROJECT_DOCS_TOOL_NAME => Some(project_doc_budget.record_search_attempt()),
+        READ_PROJECT_DOC_TOOL_NAME => Some(project_doc_budget.record_read_attempt()),
+        _ => None,
+    }
+}
+
+fn refuse_project_doc_tool_call(
+    context: &mut RunContext,
+    request: &ModelRequest,
+    tool_call: &ModelToolCall,
+    cap_check: ProjectDocCapCheck,
+    turn_index: usize,
+) -> Result<ToolResult> {
+    let operation = project_doc_operation_name(&tool_call.name);
+    let arguments = sanitized_project_doc_arguments(&tool_call.name, &tool_call.arguments);
+    let refusal_message = format!(
+        "tool `{}` refused: per-turn budget exhausted",
+        tool_call.name
+    );
+
+    context.record_event(
+        EventType::ToolFailed,
+        json!({
+            "session_id": &request.session_id,
+            "role_id": request.role.role_id,
+            "tool_name": &tool_call.name,
+            "call_id": &tool_call.call_id,
+            "turn_index": turn_index,
+            "error": &refusal_message,
+            "refusal_reason": "per_turn_cap",
+            "cap": cap_check.cap,
+            "attempted_count": cap_check.attempted_count,
+            "arguments": &arguments,
+            "scope": "model_tool_dispatch",
+        }),
+        None,
+    )?;
+    context.record_trace(
+        TraceRecord::new(
+            context.experiment_id(),
+            operation,
+            "(refused)",
+            "per_turn_cap",
+        )
+        .with_details(json!({
+            "session_id": &request.session_id,
+            "role_id": request.role.role_id,
+            "call_id": &tool_call.call_id,
+            "tool_name": &tool_call.name,
+            "turn_index": turn_index,
+            "refused": true,
+            "refusal_reason": "per_turn_cap",
+            "cap": cap_check.cap,
+            "attempted_count": cap_check.attempted_count,
+            "arguments": arguments,
+        })),
+    )?;
+
+    Ok(ToolResult {
+        tool_name: tool_call.name.clone(),
+        category: ToolCategory::ReadOnly,
+        side_effect_level: ToolSideEffectLevel::ReadOnly,
+        input: arguments.to_string(),
+        output_text: String::new(),
+        numeric_value: None,
+        observation_summary: format!(
+            "{} refused: per_turn_cap (max {} call(s) per turn).",
+            tool_call.name, cap_check.cap
+        ),
+    })
+}
+
+fn project_doc_operation_name(tool_name: &str) -> &'static str {
+    match tool_name {
+        SEARCH_PROJECT_DOCS_TOOL_NAME => "project_doc_search",
+        READ_PROJECT_DOC_TOOL_NAME => "project_doc_read",
+        _ => "project_doc_unknown",
+    }
+}
+
+fn sanitized_project_doc_arguments(
+    tool_name: &str,
+    arguments: &serde_json::Value,
+) -> serde_json::Value {
+    let mut sanitized = serde_json::Map::new();
+    let Some(object) = arguments.as_object() else {
+        return serde_json::Value::Object(sanitized);
+    };
+
+    match tool_name {
+        SEARCH_PROJECT_DOCS_TOOL_NAME => {
+            if let Some(query) = object.get("query") {
+                sanitized.insert("query".to_string(), query.clone());
+            }
+            if let Some(max_results) = object.get("max_results") {
+                sanitized.insert("max_results".to_string(), max_results.clone());
+            }
+        }
+        READ_PROJECT_DOC_TOOL_NAME => {
+            if let Some(path) = object.get("path") {
+                sanitized.insert("path".to_string(), path.clone());
+            }
+            if let Some(focus) = object.get("focus") {
+                sanitized.insert("focus".to_string(), focus.clone());
+            }
+            if let Some(max_tokens) = object.get("max_tokens") {
+                sanitized.insert("max_tokens".to_string(), max_tokens.clone());
+            }
+        }
+        _ => {}
+    }
+
+    serde_json::Value::Object(sanitized)
+}
+
 fn debug_assert_request_tools_match_role(request: &ModelRequest) {
     let allowed = request
         .role
@@ -200,15 +381,45 @@ fn permission_from_metadata(metadata: &ToolMetadata) -> ToolPermission {
 #[cfg(test)]
 mod tests {
     use std::fs;
+    use std::path::PathBuf;
 
     use serde_json::json;
 
     use super::dispatch_model_tool_calls;
-    use crate::models::{ModelRequest, ModelRole, ModelRoleId, ModelToolCall};
+    use crate::models::{
+        ModelRequest, ModelRole, ModelRoleId, ModelToolCall, ProjectDocToolBudget,
+    };
     use crate::observability::event_log::{EventRecord, EventType};
+    use crate::observability::trace::TraceRecord;
+    use crate::project_docs::ProjectDocService;
     use crate::runtime::run_context::RunContext;
     use crate::session::{SessionConfig, SessionState, Turn, TurnSummary};
-    use crate::tools::{RECALL_TURN_TOOL_NAME, SessionToolContext, ToolRegistry};
+    use crate::tools::{
+        READ_PROJECT_DOC_TOOL_NAME, RECALL_TURN_TOOL_NAME, ResponderToolContext,
+        SEARCH_PROJECT_DOCS_TOOL_NAME, SessionToolContext, ToolCategory, ToolRegistry,
+        ToolSideEffectLevel,
+    };
+
+    fn fixtures_root() -> PathBuf {
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("src/project_docs/fixtures")
+    }
+
+    fn project_doc_service() -> ProjectDocService {
+        ProjectDocService::new(
+            fixtures_root(),
+            fixtures_root().join("allowlist_basic.toml"),
+        )
+    }
+
+    fn responder_tool_context<'a>(
+        state: &'a SessionState,
+        service: &'a ProjectDocService,
+    ) -> ResponderToolContext<'a> {
+        ResponderToolContext {
+            state,
+            project_docs: service,
+        }
+    }
 
     #[test]
     fn dispatcher_rejects_tool_not_allowed_for_role() {
@@ -218,6 +429,7 @@ mod tests {
         let registry = ToolRegistry::default();
         let state = SessionState::new(test_config());
         let tool_ctx = SessionToolContext { state: &state };
+        let mut project_doc_budget = ProjectDocToolBudget::new(0);
         let request = ModelRequest::new(
             ModelRole::predefined(ModelRoleId::ConversationalResponder),
             vec![],
@@ -229,9 +441,15 @@ mod tests {
             json!({ "turn_id": 0 }),
         )];
 
-        let error =
-            dispatch_model_tool_calls(&mut context, &request, &registry, &tool_ctx, &tool_calls)
-                .unwrap_err();
+        let error = dispatch_model_tool_calls(
+            &mut context,
+            &request,
+            &registry,
+            &tool_ctx,
+            &mut project_doc_budget,
+            &tool_calls,
+        )
+        .unwrap_err();
 
         let events = fs::read_to_string(context.run_dir().join("events.jsonl")).unwrap();
         assert!(error.to_string().contains("not permitted for role"));
@@ -262,13 +480,11 @@ mod tests {
             output_tokens: 0,
         });
         let tool_ctx = SessionToolContext { state: &state };
+        let mut project_doc_budget = ProjectDocToolBudget::new(0);
         let mut role = ModelRole::predefined(ModelRoleId::ConversationalResponder);
         role.allowed_tools = vec![RECALL_TURN_TOOL_NAME.to_string()];
-        let allowed = role
-            .allowed_tools
-            .iter()
-            .map(String::as_str)
-            .collect::<Vec<_>>();
+        let allowed_tools = role.allowed_tools.clone();
+        let allowed = allowed_tools.iter().map(String::as_str).collect::<Vec<_>>();
         let tool_definitions = registry.model_tool_definitions_for(&allowed);
         let request = ModelRequest::new(role, vec![])
             .with_session_id(context.run_id())
@@ -279,9 +495,15 @@ mod tests {
             json!({ "turn_id": 0 }),
         )];
 
-        let results =
-            dispatch_model_tool_calls(&mut context, &request, &registry, &tool_ctx, &tool_calls)
-                .unwrap();
+        let results = dispatch_model_tool_calls(
+            &mut context,
+            &request,
+            &registry,
+            &tool_ctx,
+            &mut project_doc_budget,
+            &tool_calls,
+        )
+        .unwrap();
 
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].tool_name, RECALL_TURN_TOOL_NAME);
@@ -298,6 +520,7 @@ mod tests {
         let registry = ToolRegistry::default();
         let state = SessionState::new(test_config());
         let tool_ctx = SessionToolContext { state: &state };
+        let mut project_doc_budget = ProjectDocToolBudget::new(0);
         let mut role = ModelRole::predefined(ModelRoleId::ConversationalResponder);
         role.allowed_tools = vec!["missing_tool".to_string()];
         let request = ModelRequest::new(role, vec![])
@@ -309,9 +532,15 @@ mod tests {
             )]);
         let tool_calls = vec![ModelToolCall::new("call-1", "missing_tool", json!({}))];
 
-        let error =
-            dispatch_model_tool_calls(&mut context, &request, &registry, &tool_ctx, &tool_calls)
-                .unwrap_err();
+        let error = dispatch_model_tool_calls(
+            &mut context,
+            &request,
+            &registry,
+            &tool_ctx,
+            &mut project_doc_budget,
+            &tool_calls,
+        )
+        .unwrap_err();
 
         let events = fs::read_to_string(context.run_dir().join("events.jsonl")).unwrap();
         assert!(error.to_string().contains("unknown tool"));
@@ -334,6 +563,7 @@ mod tests {
         let registry = ToolRegistry::default();
         let state = SessionState::new(test_config());
         let tool_ctx = SessionToolContext { state: &state };
+        let mut project_doc_budget = ProjectDocToolBudget::new(0);
         let mut role = ModelRole::predefined(ModelRoleId::ConversationalResponder);
         role.allowed_tools = vec![RECALL_TURN_TOOL_NAME.to_string()];
         let request = ModelRequest::new(role, vec![])
@@ -345,8 +575,389 @@ mod tests {
             json!({ "turn_id": 0 }),
         )];
 
-        let _ =
-            dispatch_model_tool_calls(&mut context, &request, &registry, &tool_ctx, &tool_calls);
+        let _ = dispatch_model_tool_calls(
+            &mut context,
+            &request,
+            &registry,
+            &tool_ctx,
+            &mut project_doc_budget,
+            &tool_calls,
+        );
+    }
+
+    #[test]
+    fn third_search_call_in_one_turn_is_refused() {
+        let base_dir =
+            std::env::temp_dir().join(format!("qsf-tool-dispatch-{}", uuid::Uuid::new_v4()));
+        let mut context = RunContext::create_in(&base_dir, "tool-dispatch-test").unwrap();
+        let registry = ToolRegistry::default();
+        let state = SessionState::new(test_config());
+        let service = project_doc_service();
+        let tool_ctx = responder_tool_context(&state, &service);
+        let mut budget = ProjectDocToolBudget::new(3);
+        let mut role = ModelRole::predefined(ModelRoleId::ConversationalResponder);
+        role.allowed_tools = vec![
+            SEARCH_PROJECT_DOCS_TOOL_NAME.to_string(),
+            READ_PROJECT_DOC_TOOL_NAME.to_string(),
+        ];
+        let allowed_tools = role.allowed_tools.clone();
+        let allowed = allowed_tools.iter().map(String::as_str).collect::<Vec<_>>();
+        let request = ModelRequest::new(role, vec![])
+            .with_session_id(context.run_id())
+            .with_tools(registry.model_tool_definitions_for(&allowed));
+        let tool_calls = vec![
+            ModelToolCall::new(
+                "call-1",
+                SEARCH_PROJECT_DOCS_TOOL_NAME,
+                json!({"query": "Maturity"}),
+            ),
+            ModelToolCall::new(
+                "call-2",
+                SEARCH_PROJECT_DOCS_TOOL_NAME,
+                json!({"query": "Maturity"}),
+            ),
+            ModelToolCall::new(
+                "call-3",
+                SEARCH_PROJECT_DOCS_TOOL_NAME,
+                json!({"query": "Maturity"}),
+            ),
+        ];
+
+        let results = dispatch_model_tool_calls(
+            &mut context,
+            &request,
+            &registry,
+            &tool_ctx,
+            &mut budget,
+            &tool_calls,
+        )
+        .unwrap();
+
+        assert_eq!(results.len(), 3);
+        assert_eq!(results[0].tool_name, SEARCH_PROJECT_DOCS_TOOL_NAME);
+        assert_eq!(results[0].category, ToolCategory::ReadOnly);
+        assert_eq!(results[0].side_effect_level, ToolSideEffectLevel::ReadOnly);
+        assert_eq!(results[1].tool_name, SEARCH_PROJECT_DOCS_TOOL_NAME);
+        assert_eq!(results[1].category, ToolCategory::ReadOnly);
+        assert!(results[2].observation_summary.contains("per_turn_cap"));
+
+        let events = parse_event_records(
+            &fs::read_to_string(context.run_dir().join("events.jsonl")).unwrap(),
+        );
+        let failed_events = events
+            .iter()
+            .filter(|record| record.event_type == EventType::ToolFailed)
+            .collect::<Vec<_>>();
+        assert_eq!(failed_events.len(), 1);
+        let payload = &failed_events[0].payload;
+        assert_eq!(payload["refusal_reason"], "per_turn_cap");
+        assert_eq!(payload["cap"], super::PROJECT_DOC_SEARCH_CAP_PER_TURN);
+        assert_eq!(payload["attempted_count"], 3);
+        assert_eq!(payload["arguments"]["query"], "Maturity");
+        assert_eq!(payload["arguments"].get("max_results"), None);
+
+        let traces = parse_trace_records(
+            &fs::read_to_string(context.run_dir().join("traces.jsonl")).unwrap(),
+        );
+        let trace = traces
+            .iter()
+            .find(|record| {
+                record.operation == "project_doc_search" && record.details["refused"] == true
+            })
+            .expect("refusal trace present");
+        assert_eq!(trace.details["refused"], true);
+        assert_eq!(trace.details["call_id"], "call-3");
+        assert_eq!(trace.details["session_id"], context.run_id());
+        assert_eq!(trace.details["tool_name"], SEARCH_PROJECT_DOCS_TOOL_NAME);
+        assert_eq!(trace.details["turn_index"], 3);
+        assert_eq!(trace.details["cap"], super::PROJECT_DOC_SEARCH_CAP_PER_TURN);
+        assert_eq!(trace.details["attempted_count"], 3);
+        assert_eq!(trace.details["arguments"]["query"], "Maturity");
+
+        fs::remove_dir_all(base_dir).unwrap();
+    }
+
+    #[test]
+    fn second_read_call_in_one_turn_is_refused() {
+        let base_dir =
+            std::env::temp_dir().join(format!("qsf-tool-dispatch-{}", uuid::Uuid::new_v4()));
+        let mut context = RunContext::create_in(&base_dir, "tool-dispatch-test").unwrap();
+        let registry = ToolRegistry::default();
+        let state = SessionState::new(test_config());
+        let service = project_doc_service();
+        let tool_ctx = responder_tool_context(&state, &service);
+        let mut budget = ProjectDocToolBudget::new(4);
+        let mut role = ModelRole::predefined(ModelRoleId::ConversationalResponder);
+        role.allowed_tools = vec![
+            SEARCH_PROJECT_DOCS_TOOL_NAME.to_string(),
+            READ_PROJECT_DOC_TOOL_NAME.to_string(),
+        ];
+        let allowed_tools = role.allowed_tools.clone();
+        let allowed = allowed_tools.iter().map(String::as_str).collect::<Vec<_>>();
+        let request = ModelRequest::new(role, vec![])
+            .with_session_id(context.run_id())
+            .with_tools(registry.model_tool_definitions_for(&allowed));
+        let tool_calls = vec![
+            ModelToolCall::new(
+                "call-1",
+                READ_PROJECT_DOC_TOOL_NAME,
+                json!({"path": "sample_concept.md"}),
+            ),
+            ModelToolCall::new(
+                "call-2",
+                READ_PROJECT_DOC_TOOL_NAME,
+                json!({"path": "sample_concept.md"}),
+            ),
+        ];
+
+        let results = dispatch_model_tool_calls(
+            &mut context,
+            &request,
+            &registry,
+            &tool_ctx,
+            &mut budget,
+            &tool_calls,
+        )
+        .unwrap();
+
+        assert_eq!(results.len(), 2);
+        assert_eq!(results[0].tool_name, READ_PROJECT_DOC_TOOL_NAME);
+        assert_eq!(results[1].tool_name, READ_PROJECT_DOC_TOOL_NAME);
+        assert!(results[1].observation_summary.contains("per_turn_cap"));
+
+        let events = parse_event_records(
+            &fs::read_to_string(context.run_dir().join("events.jsonl")).unwrap(),
+        );
+        let failed_event = events
+            .iter()
+            .find(|record| record.event_type == EventType::ToolFailed)
+            .expect("failed event present");
+        assert_eq!(failed_event.payload["refusal_reason"], "per_turn_cap");
+        assert_eq!(
+            failed_event.payload["cap"],
+            super::PROJECT_DOC_READ_CAP_PER_TURN
+        );
+        assert_eq!(failed_event.payload["attempted_count"], 2);
+        assert_eq!(
+            failed_event.payload["arguments"]["path"],
+            "sample_concept.md"
+        );
+
+        let traces = parse_trace_records(
+            &fs::read_to_string(context.run_dir().join("traces.jsonl")).unwrap(),
+        );
+        let trace = traces
+            .iter()
+            .find(|record| {
+                record.operation == "project_doc_read" && record.details["refused"] == true
+            })
+            .expect("refusal trace present");
+        assert_eq!(trace.details["call_id"], "call-2");
+        assert_eq!(trace.details["turn_index"], 4);
+        assert_eq!(trace.details["cap"], super::PROJECT_DOC_READ_CAP_PER_TURN);
+        assert_eq!(trace.details["attempted_count"], 2);
+        assert_eq!(trace.details["arguments"]["path"], "sample_concept.md");
+
+        fs::remove_dir_all(base_dir).unwrap();
+    }
+
+    #[test]
+    fn budget_persists_across_dispatch_batches_in_same_turn() {
+        let base_dir =
+            std::env::temp_dir().join(format!("qsf-tool-dispatch-{}", uuid::Uuid::new_v4()));
+        let mut context = RunContext::create_in(&base_dir, "tool-dispatch-test").unwrap();
+        let registry = ToolRegistry::default();
+        let state = SessionState::new(test_config());
+        let service = project_doc_service();
+        let tool_ctx = responder_tool_context(&state, &service);
+        let mut budget = ProjectDocToolBudget::new(7);
+        let mut role = ModelRole::predefined(ModelRoleId::ConversationalResponder);
+        role.allowed_tools = vec![
+            SEARCH_PROJECT_DOCS_TOOL_NAME.to_string(),
+            READ_PROJECT_DOC_TOOL_NAME.to_string(),
+        ];
+        let allowed_tools = role.allowed_tools.clone();
+        let allowed = allowed_tools.iter().map(String::as_str).collect::<Vec<_>>();
+        let request = ModelRequest::new(role, vec![])
+            .with_session_id(context.run_id())
+            .with_tools(registry.model_tool_definitions_for(&allowed));
+
+        let first_batch = vec![ModelToolCall::new(
+            "call-1",
+            READ_PROJECT_DOC_TOOL_NAME,
+            json!({"path": "sample_concept.md"}),
+        )];
+        let first_results = dispatch_model_tool_calls(
+            &mut context,
+            &request,
+            &registry,
+            &tool_ctx,
+            &mut budget,
+            &first_batch,
+        )
+        .unwrap();
+        assert_eq!(first_results.len(), 1);
+        assert!(first_results[0].observation_summary.contains("returned"));
+
+        let second_batch = vec![ModelToolCall::new(
+            "call-2",
+            READ_PROJECT_DOC_TOOL_NAME,
+            json!({"path": "sample_concept.md"}),
+        )];
+        let second_results = dispatch_model_tool_calls(
+            &mut context,
+            &request,
+            &registry,
+            &tool_ctx,
+            &mut budget,
+            &second_batch,
+        )
+        .unwrap();
+        assert_eq!(second_results.len(), 1);
+        assert!(
+            second_results[0]
+                .observation_summary
+                .contains("per_turn_cap")
+        );
+
+        let events = parse_event_records(
+            &fs::read_to_string(context.run_dir().join("events.jsonl")).unwrap(),
+        );
+        let refusal = events
+            .iter()
+            .find(|record| {
+                record.event_type == EventType::ToolFailed
+                    && record.payload["refusal_reason"] == "per_turn_cap"
+            })
+            .expect("refusal event present");
+        assert_eq!(refusal.payload["turn_index"], 7);
+        assert_eq!(refusal.payload["attempted_count"], 2);
+        assert_eq!(refusal.payload["arguments"]["path"], "sample_concept.md");
+
+        fs::remove_dir_all(base_dir).unwrap();
+    }
+
+    #[test]
+    fn fresh_budget_allows_next_turn_to_use_caps_again() {
+        let base_dir =
+            std::env::temp_dir().join(format!("qsf-tool-dispatch-{}", uuid::Uuid::new_v4()));
+        let mut context = RunContext::create_in(&base_dir, "tool-dispatch-test").unwrap();
+        let registry = ToolRegistry::default();
+        let state = SessionState::new(test_config());
+        let service = project_doc_service();
+        let tool_ctx = responder_tool_context(&state, &service);
+        let mut role = ModelRole::predefined(ModelRoleId::ConversationalResponder);
+        role.allowed_tools = vec![
+            SEARCH_PROJECT_DOCS_TOOL_NAME.to_string(),
+            READ_PROJECT_DOC_TOOL_NAME.to_string(),
+        ];
+        let allowed_tools = role.allowed_tools.clone();
+        let allowed = allowed_tools.iter().map(String::as_str).collect::<Vec<_>>();
+        let request = ModelRequest::new(role, vec![])
+            .with_session_id(context.run_id())
+            .with_tools(registry.model_tool_definitions_for(&allowed));
+
+        let mut budget_turn_7 = ProjectDocToolBudget::new(7);
+        let exhausted = vec![
+            ModelToolCall::new(
+                "call-1",
+                READ_PROJECT_DOC_TOOL_NAME,
+                json!({"path": "sample_concept.md"}),
+            ),
+            ModelToolCall::new(
+                "call-2",
+                READ_PROJECT_DOC_TOOL_NAME,
+                json!({"path": "sample_concept.md"}),
+            ),
+        ];
+        let _ = dispatch_model_tool_calls(
+            &mut context,
+            &request,
+            &registry,
+            &tool_ctx,
+            &mut budget_turn_7,
+            &exhausted,
+        )
+        .unwrap();
+
+        let mut budget_turn_8 = ProjectDocToolBudget::new(8);
+        let fresh_results = dispatch_model_tool_calls(
+            &mut context,
+            &request,
+            &registry,
+            &tool_ctx,
+            &mut budget_turn_8,
+            &[ModelToolCall::new(
+                "call-3",
+                READ_PROJECT_DOC_TOOL_NAME,
+                json!({"path": "sample_concept.md"}),
+            )],
+        )
+        .unwrap();
+
+        assert_eq!(fresh_results.len(), 1);
+        assert!(fresh_results[0].observation_summary.contains("returned"));
+
+        fs::remove_dir_all(base_dir).unwrap();
+    }
+
+    #[test]
+    fn mixed_batch_runs_recall_turn_and_project_doc_through_one_context() {
+        let base_dir =
+            std::env::temp_dir().join(format!("qsf-tool-dispatch-{}", uuid::Uuid::new_v4()));
+        let mut context = RunContext::create_in(&base_dir, "tool-dispatch-test").unwrap();
+        let registry = ToolRegistry::default();
+        let mut state = SessionState::new(test_config());
+        state.turns.push(test_turn(0));
+        state.summarized_turns.push(TurnSummary {
+            turn_index: 0,
+            summarized_after_turn_index: 0,
+            summary: "user said one; assistant replied".to_string(),
+            model_id: "mock".to_string(),
+            model_latency_ms: 0,
+            input_tokens: 0,
+            output_tokens: 0,
+        });
+        let service = project_doc_service();
+        let tool_ctx = responder_tool_context(&state, &service);
+        let mut budget = ProjectDocToolBudget::new(9);
+        let mut role = ModelRole::predefined(ModelRoleId::ConversationalResponder);
+        role.allowed_tools = vec![
+            RECALL_TURN_TOOL_NAME.to_string(),
+            SEARCH_PROJECT_DOCS_TOOL_NAME.to_string(),
+            READ_PROJECT_DOC_TOOL_NAME.to_string(),
+        ];
+        let allowed_tools = role.allowed_tools.clone();
+        let allowed = allowed_tools.iter().map(String::as_str).collect::<Vec<_>>();
+        let request = ModelRequest::new(role, vec![])
+            .with_session_id(context.run_id())
+            .with_tools(registry.model_tool_definitions_for(&allowed));
+        let tool_calls = vec![
+            ModelToolCall::new("call-1", RECALL_TURN_TOOL_NAME, json!({ "turn_id": 0 })),
+            ModelToolCall::new(
+                "call-2",
+                SEARCH_PROJECT_DOCS_TOOL_NAME,
+                json!({"query": "Maturity"}),
+            ),
+        ];
+
+        let results = dispatch_model_tool_calls(
+            &mut context,
+            &request,
+            &registry,
+            &tool_ctx,
+            &mut budget,
+            &tool_calls,
+        )
+        .unwrap();
+
+        assert_eq!(results.len(), 2);
+        assert_eq!(results[0].tool_name, RECALL_TURN_TOOL_NAME);
+        assert!(results[0].output_text.contains("[Turn 0]"));
+        assert_eq!(results[1].tool_name, SEARCH_PROJECT_DOCS_TOOL_NAME);
+        assert_eq!(results[1].category, ToolCategory::ReadOnly);
+
+        fs::remove_dir_all(base_dir).unwrap();
     }
 
     fn test_turn(index: usize) -> Turn {
@@ -391,6 +1002,13 @@ mod tests {
         events
             .lines()
             .map(|line| serde_json::from_str::<EventRecord>(line).unwrap())
+            .collect()
+    }
+
+    fn parse_trace_records(traces: &str) -> Vec<TraceRecord> {
+        traces
+            .lines()
+            .map(|line| serde_json::from_str::<TraceRecord>(line).unwrap())
             .collect()
     }
 }
