@@ -695,3 +695,17 @@ the shared module instead of copying the text-loop implementation.
 Refs: crates/qsf_app/src/session/ageing.rs,
 crates/qsf_app/src/experiments/multi_turn_text_loop.rs,
 crates/qsf_app/src/experiments/text_owned_voice_loop.rs
+
+## 2026-06-07 - Project-doc introspection v1 scope
+Decision: Project-doc introspection v1 is framed-self only, exposed to the
+`ConversationalResponder` role only, with no source-code access, no write effects,
+and a default allowlist that excludes `docs/Reviews/**` and
+`docs/EngineeringDiary.md`.
+Context: Self-reflection design and implementation planning narrowed the first
+live introspection channel to read-only project documentation so the responder
+can ground self-questions without broad repository access or autonomous
+development agency.
+Consequences: Active-self, episodic-self, pattern-self, meta-memory, source-code,
+write-capable, and non-live-role introspection are deferred to follow-on designs.
+Refs: docs/Plans/Design.ProjectDocIntrospection.md,
+docs/Plans/Plan.ProjectDocIntrospection.md, config/project-doc-introspection.toml

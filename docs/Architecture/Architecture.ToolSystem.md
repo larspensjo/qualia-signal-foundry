@@ -7,8 +7,9 @@ Candidate
 ## Implementation Status
 
 A registry-based tool system is implemented end-to-end for one read-only
-computational tool (`calculator`) and one introspection-style tool (`recall_turn`).
-The wider catalogue of categories described below is mostly aspirational.
+computational tool (`calculator`) and three introspection-style tools
+(`recall_turn`, `search_project_docs`, and `read_project_doc`). The wider
+catalogue of categories described below is mostly aspirational.
 
 **Implemented today:**
 
@@ -24,15 +25,24 @@ The wider catalogue of categories described below is mostly aspirational.
 - `ToolRequested` → `ToolCompleted` / `ToolFailed` lifecycle events with provider
   metadata
 - `CalculatorTool` (`Experiment.ToolAsPerceptionCalculator` and the multi-turn
-  conversational loop) and `RecallTurnTool` (multi-turn loop) as the two
+  conversational loop), `RecallTurnTool` (multi-turn loop), and the
+  `search_project_docs` / `read_project_doc` project-document tools as the
   production tools
   ([tools/calculator_tool.rs](../../crates/qsf_app/src/tools/calculator_tool.rs),
-  [tools/recall_turn_tool.rs](../../crates/qsf_app/src/tools/recall_turn_tool.rs))
-- Multi-turn conversational requests advertise `calculator` and `recall_turn`
-  from the responder role allow-list, then feed successful tool results back as
+  [tools/recall_turn_tool.rs](../../crates/qsf_app/src/tools/recall_turn_tool.rs),
+  [tools/search_project_docs_tool.rs](../../crates/qsf_app/src/tools/search_project_docs_tool.rs),
+  [tools/read_project_doc_tool.rs](../../crates/qsf_app/src/tools/read_project_doc_tool.rs))
+- Multi-turn conversational requests advertise `calculator`, `recall_turn`,
+  `search_project_docs`, and `read_project_doc` from the responder role
+  allow-list, then feed successful or refused tool results back as
   provider-native tool messages before the final response
   ([experiments/multi_turn_text_loop.rs](../../crates/qsf_app/src/experiments/multi_turn_text_loop.rs),
   [conversation/prompt.rs](../../crates/qsf_app/src/conversation/prompt.rs))
+- Project-document dispatch enforces turn-scoped caps and emits
+  `project_doc_search` / `project_doc_read` traces, with a library-only
+  `project_doc_influence` enrichment pass available for post-hoc run analysis
+  ([models/tool_dispatch.rs](../../crates/qsf_app/src/models/tool_dispatch.rs),
+  [project_docs/](../../crates/qsf_app/src/project_docs/))
 - Realtime voice provider records requested tool calls as QSF events without
   executing them, preserving the QSF tool boundary
   ([audio/voice_session_provider.rs](../../crates/qsf_app/src/audio/voice_session_provider.rs))
@@ -48,15 +58,15 @@ The wider catalogue of categories described below is mostly aspirational.
 
 **Not yet implemented:**
 
-- Search, file inspection, code execution, environment sensing, or any other tool
-  beyond calculator and recall_turn
+- Source-code inspection, code execution, environment sensing, web search, or
+  run-artifact inspection tools
 - Tool result confidence / trust signal
 - Tool-result-to-memory promotion
 - Asynchronous or interruptible tool execution
-- Project introspection tools (`search_project_docs`, `read_project_doc`, source
-  inspection, run inspection — all still in `Idea.SelfReflectionProjectIntrospection.md`)
+- Project introspection beyond the framed-self documentation slice: source
+  inspection, run inspection, active-self inspection, and write-capable tools
 
-Last reviewed: 2026-05-18 against the code on `main`.
+Last reviewed: 2026-06-07 against the code in this workspace.
 
 ## Summary
 

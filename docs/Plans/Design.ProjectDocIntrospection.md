@@ -80,8 +80,9 @@ The accepted tradeoff:
 - v1 concentrates tool-selection, latency, prompt influence, and authority
   hedging into the realtime path at once.
 - Mitigations are explicit in this design: bounded per-call and per-turn
-  budgets enforced at the dispatch layer, hard latency cap, fixture-based
-  metadata rules, status-aware voicing, and a full trace per call.
+  budgets enforced at the dispatch layer, recorded latency with a deferred
+  service-boundary cap decision, fixture-based metadata rules, status-aware
+  voicing, and a full trace per call.
 - A self-question battery (see the Testing section) gives the same offline
   validation surface the brainstorm wanted, but as a verification fixture
   rather than as a separate first phase.
@@ -309,6 +310,12 @@ observed usage gives evidence.
 | Latency target, read | <300 ms |
 | Hard latency cap, either op | 1500 ms |
 
+The 1500 ms hard latency cap is deliberately not enforced in v1 because the
+initial implementation uses synchronous lexical search over a small markdown
+corpus. If real runs show cap enforcement is needed, add it at the
+`ProjectDocService` boundary as a deadline or budget parameter with
+partial-result reporting.
+
 When a budget is exceeded the tool returns whatever it has assembled with
 the relevant `omitted_*` flag set. The model is instructed to acknowledge
 truncation rather than feign completeness.
@@ -438,8 +445,10 @@ alone are not sufficient to bound cost.
 
 **`ToolContext` extension:**
 
-The new tools need access to: a repository root path, the resolved
-allowlist (or a path to the config file), and a clock for latency budgets.
+The new tools need access to: a repository root path and the resolved
+allowlist (or a path to the config file). A clock or deadline parameter is
+only needed if the deferred hard latency cap is later enforced at the
+`ProjectDocService` boundary.
 The implementation contract is one of:
 
 - a dedicated `ProjectDocToolContext` (analogous to `SessionToolContext`)
@@ -506,8 +515,9 @@ not preclude it.
   attempts three searches in one turn receives a budget-exhausted
   `ToolResult` for the third call, traced with
   `refusal_reason = "per_turn_cap"`. Same for a second `read_project_doc`.
-- Hard latency cap returns a partial result with `omitted_due_to_budget`
-  set rather than blocking past the cap.
+- Hard latency cap enforcement is deferred in v1; live verification should
+  inspect recorded `latency_ms` values and add service-boundary enforcement if
+  real runs approach the 1500 ms cap.
 - `influenced_reply` post-hoc enrichment sets its marker for a reply
   that quotes returned material and leaves it false when the reply
   ignores the result.
@@ -672,9 +682,10 @@ an out-of-allowlist path is traced.
 
 A slow lookup blocks the live turn.
 
-Mitigation: the hard latency cap returns truncated results rather than
-blocking, and the model treats truncation as a normal result it must
-acknowledge.
+Mitigation: v1 records tool latency for review and keeps the corpus small. If
+real runs approach the 1500 ms cap, add deadline enforcement at the
+`ProjectDocService` boundary so partial results can be returned and acknowledged
+instead of blocking the turn.
 
 ## Relationship to Existing Documents
 

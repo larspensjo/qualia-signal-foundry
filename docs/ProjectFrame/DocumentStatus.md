@@ -118,15 +118,17 @@ system does" from speculative documents.
 
 ## Implications For Introspection
 
-When the project eventually adds self-reflection through document introspection
+When self-reflection uses project-document introspection
 (`Idea.SelfReflectionProjectIntrospection.md`), the introspection layer should:
 
 - Tag each retrieved excerpt with the document kind, maturity, and (if present) the
   Implementation Status section's last-reviewed date.
+- Use `config/project-doc-introspection.toml` as the source of truth for which
+  documents are accessible to the introspection channel.
 - Surface the authority ranking above so that downstream synthesis can distinguish
   "the project intends X" from "the project does X".
-- Prefer source inspection over plan or concept retrieval whenever a claim is about
-  current behavior.
+- Treat documentation as weaker than source code whenever a claim is about current
+  behavior; the v1 project-document channel does not provide source-code access.
 - Treat absence of a feature from `Architecture.Overview.md`'s *Implementation
   Status* section as weak evidence the feature is unbuilt, not as proof.
 

@@ -2506,3 +2506,25 @@ What changed:
 
 Refs: crates/qsf_app/src/experiments/multi_turn_text_loop/tests.rs,
 crates/qsf_app/tests/fixtures/self_question_battery.json
+
+## 2026-06-07 - Project-doc influence enrichment
+
+Added the post-hoc analysis slice for project-doc introspection so completed run
+artifacts can show whether fetched project-document content overlapped the final
+assistant reply. This completes diary coverage for the project-doc channel
+alongside the earlier entries for the library, tool surface, dispatch caps,
+responder wiring, and self-question battery.
+
+What changed:
+- Added `project_docs::influence` for contiguous multi-word reply/excerpt overlap
+  checks.
+- Added `project_docs::enrichment::enrich` to join executed `project_doc_search`
+  and `project_doc_read` traces to same-turn `TurnCompleted` replies and append
+  idempotent `project_doc_influence` records.
+- The enrichment skips refused calls and no-reply turns, and appends directly to
+  `traces.jsonl` without truncating existing trace records.
+
+Refs: crates/qsf_app/src/project_docs/influence.rs,
+crates/qsf_app/src/project_docs/enrichment.rs,
+crates/qsf_app/src/project_docs/mod.rs; implements: 2026-06-07 - Project-doc
+introspection v1 scope

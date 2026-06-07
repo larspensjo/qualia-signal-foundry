@@ -4,6 +4,11 @@
 
 Brainstorm
 
+The documentation-introspection slice of this idea is now in design at
+`docs/Plans/Design.ProjectDocIntrospection.md` and implementation at
+`docs/Plans/Plan.ProjectDocIntrospection.md`. The rest of this document is
+preserved as future-scope brainstorm.
+
 ## Summary
 
 Qualia Signal Foundry could explore self-reflection by letting the simulation inspect
