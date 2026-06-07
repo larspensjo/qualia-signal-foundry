@@ -1,6 +1,6 @@
 use std::fs;
 use std::io::{BufRead, Write};
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::time::{Instant, SystemTime};
 
 use anyhow::Context;
@@ -9,46 +9,54 @@ use serde_json::json;
 
 use crate::console::styling::ColorMode;
 use crate::context::{ContextAssembly, ContextFragment, ContextSourceKind, assemble_context};
-use crate::conversation::prompt::{self, PromptToolMessage, PromptTurn};
+use crate::conversation::prompt::{self, PromptTurn};
 use crate::conversation::{PromptAssembly, PromptTurnSummary};
 use crate::memory::{
     Association, MemoryFixture, MemoryRecord, RetrievalResult, RetrievalStrategy,
-    phase_four_fixture, retrieve_memories, retrieved_memory_ids,
+    retrieve_memories, retrieved_memory_ids,
 };
 use crate::models::{
-    ModelClient, ModelMessage, ModelRequest, ModelRole, ModelRoleId, ModelToolCall, build_client,
-    dispatch_model_tool_calls, invoke_model_role, requested_provider_from_env,
+    ModelClient, ModelMessage, ModelRole, ModelRoleId, build_client, invoke_model_role,
+    requested_provider_from_env,
 };
 use crate::observability::event_log::EventType;
 use crate::observability::trace::{TraceRecord, elapsed_ms};
-use crate::project_docs::ProjectDocService;
 use crate::runtime::run_context::RunContext;
 use crate::session::ageing::{
     age_out_warm_turns, maybe_run_token_budget_drop, run_session_end_flush, sanitize_error,
 };
 use crate::session::{
-    Exchange, ExchangeModelUse, ExchangeOutput, LiveSessionEvent, MemorySourceConfig, RecallRecord,
-    SessionBootRequest, SessionConfig, SessionEndReason, SessionEvent, SessionState,
-    StateDirectoryResolution, Turn, is_turn_summarized,
+    Exchange, ExchangeModelUse, ExchangeOutput, LiveSessionEvent, SessionBootRequest,
+    SessionConfig, SessionEndReason, SessionEvent, SessionState, StateDirectoryResolution, Turn,
+    is_turn_summarized,
 };
-use crate::tools::{
-    CALCULATOR_TOOL_NAME, READ_PROJECT_DOC_TOOL_NAME, RECALL_TURN_TOOL_NAME, ResponderToolContext,
-    SEARCH_PROJECT_DOCS_TOOL_NAME, ToolRegistry, ToolResult,
-};
+use crate::tools::ToolRegistry;
 
 use super::registry::{Experiment, ExperimentName, ExperimentOutcome};
 
-const DEFAULT_SESSION_MODEL: &str = "gpt-5.4-mini";
-const DEFAULT_MAX_TURNS: usize = 10;
-const DEFAULT_WARM_THRESHOLD: usize = 6;
-const DEFAULT_TURN_MAX_OUTPUT_TOKENS: u32 = 1024;
-const SESSION_MEMORY_SOURCE_ENV_VAR: &str = "QSF_SESSION_MEMORY_SOURCE";
-const SESSION_MEMORY_FILE_ENV_VAR: &str = "QSF_SESSION_MEMORY_FILE";
-const SESSION_MODEL_ENV_VAR: &str = "QSF_CONVERSATION_MODEL";
-const SESSION_MAX_TURNS_ENV_VAR: &str = "QSF_SESSION_MAX_TURNS";
-const SESSION_ALLOW_OVER_LIMIT_ENV_VAR: &str = "QSF_SESSION_ALLOW_OVER_LIMIT";
-const SESSION_WARM_THRESHOLD_ENV_VAR: &str = "QSF_SESSION_WARM_THRESHOLD";
-const SESSION_TURN_MAX_OUTPUT_TOKENS_ENV_VAR: &str = "QSF_SESSION_TURN_MAX_OUTPUT_TOKENS";
+mod config;
+mod console;
+mod report;
+mod tool_runtime;
+
+#[allow(unused_imports)]
+pub(crate) use crate::session::config::DEFAULT_SESSION_MODEL;
+#[allow(unused_imports)]
+pub(crate) use config::{
+    DEFAULT_TURN_MAX_OUTPUT_TOKENS, MissingFileSessionMemorySource,
+    build_session_memory_source_from_env, parse_turn_max_output_tokens,
+    turn_max_output_tokens_from_env,
+};
+pub(crate) use console::{
+    begin_user_input_echo, end_user_input_echo, print_assistant_response, print_memory_blocks,
+};
+#[allow(unused_imports)]
+pub(crate) use report::{prompt_prefix_status_for_report, write_multi_turn_report};
+pub(crate) use tool_runtime::{
+    conversational_responder_role_with_session_and_project_doc_tools, execute_model_tool_calls,
+    project_doc_service_for_multi_turn_text_loop, prompt_tool_message_from_recall,
+    responder_request_for_messages,
+};
 const SESSION_RETRIEVAL_LIMIT: usize = 8;
 const SESSION_RETRIEVAL_STRATEGY: RetrievalStrategy = RetrievalStrategy::KeywordTag;
 const MAX_RESPONDER_TOOL_ROUNDS_PER_TURN: usize = 2;
@@ -81,47 +89,6 @@ impl Experiment for MultiTurnTextLoopExperiment {
             config,
             state_resolution,
         )
-    }
-}
-
-impl SessionConfig {
-    pub(crate) fn from_env() -> Self {
-        let model_id = std::env::var(SESSION_MODEL_ENV_VAR)
-            .unwrap_or_else(|_| DEFAULT_SESSION_MODEL.to_string());
-        let max_turns = std::env::var(SESSION_MAX_TURNS_ENV_VAR)
-            .ok()
-            .and_then(|value| value.parse::<usize>().ok())
-            .filter(|value| *value > 0)
-            .unwrap_or(DEFAULT_MAX_TURNS);
-        let warm_threshold = std::env::var(SESSION_WARM_THRESHOLD_ENV_VAR)
-            .ok()
-            .and_then(|value| value.parse::<usize>().ok())
-            .filter(|value| *value > 0)
-            .unwrap_or(DEFAULT_WARM_THRESHOLD);
-        let allow_over_limit = std::env::var(SESSION_ALLOW_OVER_LIMIT_ENV_VAR)
-            .map(|value| value.eq_ignore_ascii_case("true"))
-            .unwrap_or(false);
-        let memory_source = MemorySourceConfig::from_env();
-
-        Self {
-            model_id,
-            max_turns,
-            warm_threshold,
-            allow_over_limit,
-            memory_source,
-        }
-    }
-}
-
-impl MemorySourceConfig {
-    pub(crate) fn from_env() -> Self {
-        let source = std::env::var(SESSION_MEMORY_SOURCE_ENV_VAR)
-            .unwrap_or_else(|_| "phase_four_fixture".to_string());
-        let file = std::env::var(SESSION_MEMORY_FILE_ENV_VAR)
-            .ok()
-            .map(PathBuf::from);
-
-        Self { source, file }
     }
 }
 
@@ -651,235 +618,8 @@ fn run_one_turn<W: Write>(
     Ok(output_text)
 }
 
-fn begin_user_input_echo<W: Write>(output: &mut W, color_mode: ColorMode) -> std::io::Result<()> {
-    use crate::console::styling::{STYLE_USER_INPUT, style_prefix};
-
-    write!(output, "{}", style_prefix(color_mode, STYLE_USER_INPUT))?;
-    output.flush()
-}
-
-fn end_user_input_echo<W: Write>(output: &mut W, color_mode: ColorMode) -> std::io::Result<()> {
-    use crate::console::styling::style_reset;
-
-    write!(output, "{}", style_reset(color_mode))?;
-    output.flush()
-}
-
-fn print_assistant_response<W: Write>(
-    output: &mut W,
-    response: &str,
-    color_mode: ColorMode,
-) -> std::io::Result<()> {
-    use crate::console::styling::{STYLE_ASSISTANT_RESPONSE, paint};
-
-    writeln!(
-        output,
-        "{}",
-        paint(color_mode, STYLE_ASSISTANT_RESPONSE, response)
-    )
-}
-
 fn completed_turn_count(state: &SessionState) -> usize {
     state.turns.len()
-}
-
-fn turn_max_output_tokens_from_env() -> u32 {
-    parse_turn_max_output_tokens(std::env::var(SESSION_TURN_MAX_OUTPUT_TOKENS_ENV_VAR).ok())
-}
-
-fn parse_turn_max_output_tokens(raw: Option<String>) -> u32 {
-    raw.and_then(|value| value.parse::<u32>().ok())
-        .filter(|value| *value > 0)
-        .unwrap_or(DEFAULT_TURN_MAX_OUTPUT_TOKENS)
-}
-
-fn conversational_responder_role_with_session_and_project_doc_tools() -> ModelRole {
-    let mut role = ModelRole::predefined(ModelRoleId::ConversationalResponder);
-    role.allowed_tools = vec![
-        RECALL_TURN_TOOL_NAME.to_string(),
-        CALCULATOR_TOOL_NAME.to_string(),
-        SEARCH_PROJECT_DOCS_TOOL_NAME.to_string(),
-        READ_PROJECT_DOC_TOOL_NAME.to_string(),
-    ];
-    role
-}
-
-fn project_doc_service_for_multi_turn_text_loop(
-    context: &RunContext,
-) -> anyhow::Result<ProjectDocService> {
-    let repo_root = context
-        .workspace_root()
-        .context(
-            "multi-turn-text-loop requires --workspace-root <path> to enable project-doc service",
-        )?
-        .to_path_buf();
-    let allowlist_path = repo_root.join("config/project-doc-introspection.toml");
-    Ok(ProjectDocService::new(repo_root, allowlist_path))
-}
-
-fn responder_request_for_messages(
-    responder_role: &ModelRole,
-    messages: Vec<ModelMessage>,
-    context: &RunContext,
-    state: &SessionState,
-    registry: &ToolRegistry,
-    max_output_tokens: u32,
-    advertise_tools: bool,
-) -> ModelRequest {
-    let mut request = ModelRequest::new(responder_role.clone(), messages)
-        .with_session_id(context.run_id())
-        .with_model_name(&state.config.model_id)
-        .with_temperature(0.0)
-        .with_max_output_tokens(max_output_tokens);
-    if advertise_tools {
-        let allowed_tools = responder_role
-            .allowed_tools
-            .iter()
-            .map(String::as_str)
-            .collect::<Vec<_>>();
-        request = request.with_tools(registry.model_tool_definitions_for(&allowed_tools));
-    }
-    request
-}
-
-struct ToolExecution {
-    prompt_message: PromptToolMessage,
-    recall: Option<RecallRecord>,
-}
-
-fn execute_model_tool_calls(
-    context: &mut RunContext,
-    state: &SessionState,
-    project_docs: &ProjectDocService,
-    request: &ModelRequest,
-    registry: &ToolRegistry,
-    project_doc_budget: &mut crate::models::ProjectDocToolBudget,
-    tool_calls: &[ModelToolCall],
-) -> anyhow::Result<Vec<ToolExecution>> {
-    let tool_ctx = ResponderToolContext {
-        state,
-        project_docs,
-    };
-    let dispatch_started_at = Instant::now();
-    let tool_results = dispatch_model_tool_calls(
-        context,
-        request,
-        registry,
-        &tool_ctx,
-        project_doc_budget,
-        tool_calls,
-    )?;
-    let dispatch_latency_ms = elapsed_ms(dispatch_started_at);
-    let tool_latency_ms = dispatch_latency_ms / tool_results.len().max(1) as u64;
-    let mut executions = Vec::with_capacity(tool_results.len());
-
-    for (tool_call, result) in tool_calls.iter().zip(tool_results) {
-        let (prompt_message, recall) =
-            prompt_tool_message_from_result(context, state, tool_call, result, tool_latency_ms)?;
-        executions.push(ToolExecution {
-            prompt_message,
-            recall,
-        });
-    }
-
-    Ok(executions)
-}
-
-fn prompt_tool_message_from_result(
-    context: &mut RunContext,
-    state: &SessionState,
-    tool_call: &ModelToolCall,
-    result: ToolResult,
-    latency_ms: u64,
-) -> anyhow::Result<(PromptToolMessage, Option<RecallRecord>)> {
-    if result.tool_name == RECALL_TURN_TOOL_NAME {
-        let recall = recall_record_from_tool_result(tool_call, result, latency_ms)?;
-        record_recall_tool_trace(context, state, &recall)?;
-        let prompt_message = prompt_tool_message_from_recall(&recall);
-        return Ok((prompt_message, Some(recall)));
-    }
-
-    let prompt_message = PromptToolMessage {
-        tool_name: result.tool_name.clone(),
-        call_id: tool_call.call_id.clone(),
-        arguments: tool_call.arguments.clone(),
-        content: format_tool_result_message(&result),
-    };
-    Ok((prompt_message, None))
-}
-
-fn recall_record_from_tool_result(
-    tool_call: &ModelToolCall,
-    result: ToolResult,
-    latency_ms: u64,
-) -> anyhow::Result<RecallRecord> {
-    let turn_id = tool_call
-        .arguments
-        .get("turn_id")
-        .and_then(|value| value.as_u64())
-        .context("recall_turn requires integer argument `turn_id`")? as usize;
-    Ok(RecallRecord {
-        call_id: tool_call.call_id.clone(),
-        turn_id,
-        tool_name: result.tool_name,
-        category: result.category,
-        side_effect_level: result.side_effect_level,
-        verbatim_text: result.output_text,
-        latency_ms,
-    })
-}
-
-fn record_recall_tool_trace(
-    context: &mut RunContext,
-    state: &SessionState,
-    recall: &RecallRecord,
-) -> anyhow::Result<()> {
-    let trace = TraceRecord::new(
-        context.experiment_id(),
-        "session-recall-tool",
-        format!("recall_turn turn_id={}", recall.turn_id),
-        format!("recalled summarized turn {}", recall.turn_id),
-    )
-    .with_details(json!({
-        "session_id": context.run_id(),
-        "completed_turn_count": completed_turn_count(state),
-        "recall": recall,
-    }))
-    .with_latency_context("runtime", "recall-turn-tool")
-    .with_latency_ms(recall.latency_ms);
-    context.record_trace(trace)?;
-    Ok(())
-}
-
-fn format_recall_tool_message(recall: &RecallRecord) -> String {
-    format!(
-        "[recall_turn]\nturn_id: {}\n{}",
-        recall.turn_id,
-        recall.verbatim_text.trim()
-    )
-}
-
-fn prompt_tool_message_from_recall(recall: &RecallRecord) -> PromptToolMessage {
-    PromptToolMessage {
-        tool_name: recall.tool_name.clone(),
-        call_id: recall.call_id.clone(),
-        arguments: serde_json::json!({ "turn_id": recall.turn_id }),
-        content: format_recall_tool_message(recall),
-    }
-}
-
-fn format_tool_result_message(result: &ToolResult) -> String {
-    match result.tool_name.as_str() {
-        CALCULATOR_TOOL_NAME => {
-            format!(
-                "[calculator]\nexpression: {}\nresult: {}\n{}",
-                result.input,
-                result.output_text,
-                result.observation_summary.trim()
-            )
-        }
-        _ => result.observation_summary.clone(),
-    }
 }
 
 fn assemble_session_prompt(
@@ -1036,104 +776,6 @@ fn reload_session_memory_source_snapshot(
     ))
 }
 
-struct PhaseFourSessionMemorySource;
-
-impl SessionMemorySource for PhaseFourSessionMemorySource {
-    fn load(&self, _context: &mut RunContext) -> anyhow::Result<SessionMemorySourceSnapshot> {
-        Ok(SessionMemorySourceSnapshot::from_fixture(
-            "phase_four_fixture",
-            "crate::memory::phase_four_fixture",
-            phase_four_fixture(),
-        ))
-    }
-}
-
-struct FileSessionMemorySource {
-    path: PathBuf,
-}
-
-impl SessionMemorySource for FileSessionMemorySource {
-    fn load(&self, context: &mut RunContext) -> anyhow::Result<SessionMemorySourceSnapshot> {
-        match fs::read_to_string(&self.path)
-            .with_context(|| {
-                format!(
-                    "failed to read session memory file `{}`",
-                    self.path.display()
-                )
-            })
-            .and_then(|contents| {
-                serde_json::from_str::<MemoryFixture>(&contents).with_context(|| {
-                    format!(
-                        "failed to parse session memory file `{}`",
-                        self.path.display()
-                    )
-                })
-            }) {
-            Ok(fixture) => Ok(SessionMemorySourceSnapshot::from_fixture(
-                "file",
-                self.path.display().to_string(),
-                fixture,
-            )),
-            Err(error) => {
-                let error_summary = sanitize_error(&error.to_string());
-                context.record_event(
-                    EventType::ErrorOccurred,
-                    json!({
-                        "stage": "session-memory-source",
-                        "source": "file",
-                        "path": self.path.display().to_string(),
-                        "fallback": "phase_four_fixture",
-                        "error": error_summary,
-                    }),
-                    None,
-                )?;
-                Ok(SessionMemorySourceSnapshot::from_fixture(
-                    "phase_four_fixture",
-                    "fallback_after_file_error",
-                    phase_four_fixture(),
-                ))
-            }
-        }
-    }
-}
-
-struct MissingFileSessionMemorySource;
-
-impl SessionMemorySource for MissingFileSessionMemorySource {
-    fn load(&self, context: &mut RunContext) -> anyhow::Result<SessionMemorySourceSnapshot> {
-        context.record_event(
-            EventType::ErrorOccurred,
-            json!({
-                "stage": "session-memory-source",
-                "source": "file",
-                "missing_env_var": SESSION_MEMORY_FILE_ENV_VAR,
-                "fallback": "phase_four_fixture",
-                "error": format!("`{SESSION_MEMORY_FILE_ENV_VAR}` must be set when `{SESSION_MEMORY_SOURCE_ENV_VAR}=file`"),
-            }),
-            None,
-        )?;
-        Ok(SessionMemorySourceSnapshot::from_fixture(
-            "phase_four_fixture",
-            "fallback_after_missing_file_env",
-            phase_four_fixture(),
-        ))
-    }
-}
-
-fn build_session_memory_source_from_env() -> Box<dyn SessionMemorySource> {
-    let requested = std::env::var(SESSION_MEMORY_SOURCE_ENV_VAR)
-        .unwrap_or_else(|_| "phase_four_fixture".to_string());
-    match requested.trim().to_ascii_lowercase().as_str() {
-        "file" => std::env::var(SESSION_MEMORY_FILE_ENV_VAR)
-            .map(|path| {
-                Box::new(FileSessionMemorySource { path: path.into() })
-                    as Box<dyn SessionMemorySource>
-            })
-            .unwrap_or_else(|_| Box::new(MissingFileSessionMemorySource)),
-        _ => Box::new(PhaseFourSessionMemorySource),
-    }
-}
-
 #[derive(Clone, Debug, PartialEq, Serialize)]
 pub(crate) struct SessionMemorySourceSnapshot {
     source_name: String,
@@ -1269,224 +911,6 @@ fn record_context_assembly(
     let trace_id = trace.trace_id;
     context.record_trace(trace)?;
     Ok(trace_id)
-}
-
-fn print_memory_blocks<W: Write>(
-    output: &mut W,
-    assembly: &ContextAssembly,
-    color_mode: ColorMode,
-) -> std::io::Result<()> {
-    use crate::console::styling::{
-        STYLE_DIRECT_BODY, STYLE_DIRECT_HEADER, STYLE_HINT_BLOCK, paint,
-    };
-
-    let mut directs: Vec<String> = Vec::new();
-    let mut hints: Vec<String> = Vec::new();
-
-    for selection in &assembly.selected {
-        let line = format!(
-            "- {}: {}",
-            selection.fragment.fragment_id, selection.fragment.summary
-        );
-        match selection.fragment.source_kind {
-            ContextSourceKind::Memory => directs.push(line),
-            ContextSourceKind::MemoryHint => hints.push(line),
-            _ => {}
-        }
-    }
-
-    if !directs.is_empty() {
-        writeln!(
-            output,
-            "{}",
-            paint(
-                color_mode,
-                STYLE_DIRECT_HEADER,
-                "=== Memories retrieved for this turn ===",
-            )
-        )?;
-        for line in &directs {
-            writeln!(output, "{}", paint(color_mode, STYLE_DIRECT_BODY, line))?;
-        }
-    }
-
-    if !hints.is_empty() {
-        writeln!(
-            output,
-            "{}",
-            paint(
-                color_mode,
-                STYLE_HINT_BLOCK,
-                "=== Associated memories (hints - may or may not be relevant) ===",
-            )
-        )?;
-        for line in &hints {
-            writeln!(output, "{}", paint(color_mode, STYLE_HINT_BLOCK, line))?;
-        }
-    }
-
-    Ok(())
-}
-
-fn write_multi_turn_report(
-    context: &RunContext,
-    state: &SessionState,
-    memory_snapshot: &SessionMemorySourceSnapshot,
-) -> anyhow::Result<()> {
-    let mut markdown = String::new();
-    markdown.push_str("# Multi-Turn Text Loop\n\n");
-    markdown.push_str("## Configuration\n\n");
-    markdown.push_str(&format!("- Model: `{}`\n", state.config.model_id));
-    markdown.push_str(&format!("- Max turns: `{}`\n", state.config.max_turns));
-    markdown.push_str(&format!(
-        "- Warm threshold: `{}` active verbatim turns\n",
-        state.config.warm_threshold
-    ));
-    markdown.push_str(&format!(
-        "- Allow over limit: `{}`\n",
-        state.config.allow_over_limit
-    ));
-    markdown.push_str(&format!(
-        "- Requested memory source: `{}`\n",
-        state.config.memory_source.source
-    ));
-    markdown.push_str(&format!(
-        "- Loaded memory source: `{}`\n",
-        memory_snapshot.source_name
-    ));
-    markdown.push_str(&format!(
-        "- Loaded memory source reference: `{}`\n\n",
-        memory_snapshot.source_reference
-    ));
-    markdown.push_str("## Turns\n\n");
-    markdown.push_str("| Turn | Input tokens | Cached input tokens | Cache ratio | Output tokens | Latency ms | Hash prefix status |\n");
-    markdown.push_str("|---:|---:|---:|---:|---:|---:|---|\n");
-
-    for (index, turn) in state.turns.iter().enumerate() {
-        let ratio = if turn.input_tokens == 0 {
-            0.0
-        } else {
-            f64::from(turn.cached_input_tokens) / f64::from(turn.input_tokens)
-        };
-        let prefix_status = prompt_prefix_status_for_report(state, index);
-        markdown.push_str(&format!(
-            "| {} | {} | {} | {:.2} | {} | {} | {} |\n",
-            turn.index,
-            turn.input_tokens,
-            turn.cached_input_tokens,
-            ratio,
-            turn.output_tokens,
-            turn.model_latency_ms,
-            prefix_status
-        ));
-    }
-
-    markdown.push_str("\n## Cache Diagnostics\n\n");
-    let cache_misses_above_floor = state
-        .turns
-        .iter()
-        .filter(|turn| turn.input_tokens >= 1024 && turn.cached_input_tokens == 0)
-        .count();
-    markdown.push_str(&format!(
-        "- Cache misses at or above 1024 input tokens: `{cache_misses_above_floor}`\n"
-    ));
-    markdown.push_str("- Prompt cache floor: `1024` input tokens\n");
-    markdown.push_str(&format!(
-        "- Warm summaries produced: `{}`\n",
-        state.summarized_turns.len()
-    ));
-    let recall_count = state
-        .turns
-        .iter()
-        .map(|turn| turn.recalled_turns.len())
-        .sum::<usize>();
-    markdown.push_str(&format!("- Recall tool executions: `{recall_count}`\n"));
-    markdown.push_str("- Session state persistence: `continuity_manifest`\n\n");
-    markdown.push_str("## Warm Summaries\n\n");
-    if state.summarized_turns.is_empty() {
-        markdown.push_str("- None\n\n");
-    } else {
-        markdown.push_str(
-            "| Turn | Summary model | Latency ms | Input tokens | Output tokens | Summary |\n",
-        );
-        markdown.push_str("|---:|---|---:|---:|---:|---|\n");
-        for summary in &state.summarized_turns {
-            markdown.push_str(&format!(
-                "| {} | `{}` | {} | {} | {} | {} |\n",
-                summary.turn_index,
-                summary.model_id,
-                summary.model_latency_ms,
-                summary.input_tokens,
-                summary.output_tokens,
-                summary.summary.replace('|', "\\|")
-            ));
-        }
-        markdown.push('\n');
-    }
-    markdown.push_str("## Recall Tool\n\n");
-    if recall_count == 0 {
-        markdown.push_str("- None\n\n");
-    } else {
-        markdown.push_str("| Turn | Recalled turn | Call id | Latency ms |\n");
-        markdown.push_str("|---:|---:|---|---:|\n");
-        for turn in &state.turns {
-            for recall in &turn.recalled_turns {
-                markdown.push_str(&format!(
-                    "| {} | {} | `{}` | {} |\n",
-                    turn.index, recall.turn_id, recall.call_id, recall.latency_ms
-                ));
-            }
-        }
-        markdown.push('\n');
-    }
-    markdown.push_str("## Hashes\n\n");
-    for turn in &state.turns {
-        markdown.push_str(&format!(
-            "- Turn {}: `{}` messages=`{}`\n",
-            turn.index, turn.full_request_hash, turn.message_count
-        ));
-    }
-
-    fs::write(context.run_dir().join("multi-turn-text-loop.md"), markdown)
-        .context("failed to write multi-turn text loop report")
-}
-
-fn prompt_prefix_status_for_report(state: &SessionState, turn_position: usize) -> String {
-    if turn_position == 0 {
-        return "n/a".to_string();
-    }
-
-    let previous = &state.turns[turn_position - 1];
-    if state
-        .summarized_turns
-        .iter()
-        .any(|summary| summary.summarized_after_turn_index == previous.index)
-    {
-        return "invalidated_by_warm_summary".to_string();
-    }
-
-    let prompt_state = SessionState {
-        turns: state.turns[..turn_position].to_vec(),
-        summarized_turns: state
-            .summarized_turns
-            .iter()
-            .filter(|summary| summary.summarized_after_turn_index < turn_position)
-            .cloned()
-            .collect(),
-        live: crate::session::LiveSessionState::default(),
-        ..state.clone()
-    };
-    let turn = &state.turns[turn_position];
-    let prompt_assembly = assemble_session_prompt(
-        &prompt_state,
-        &turn.user_input,
-        &turn.retrieved_memory_block,
-        true,
-    );
-
-    (prompt::prior_request_prefix_hash(&prompt_assembly.messages, previous.message_count)
-        == Some(previous.full_request_hash))
-    .to_string()
 }
 
 #[cfg(test)]

@@ -2471,3 +2471,24 @@ crates/qsf_app/src/session/mod.rs,
 crates/qsf_app/src/experiments/multi_turn_text_loop.rs,
 crates/qsf_app/src/experiments/text_owned_voice_loop.rs,
 crates/qsf_app/src/experiments/multi_turn_text_loop/tests.rs
+
+## 2026-06-07 - Multi-turn text loop module split
+
+Phase 4 of the multi-turn text loop refactor landed: the experiment module now reads as
+orchestration, with console output, report generation, config parsing, and responder tool
+handling extracted into focused submodules.
+
+What changed:
+- Moved shared session env parsing into `crates/qsf_app/src/session/config.rs`.
+- Extracted text-loop console helpers, report rendering, and responder tool-runtime logic
+  into `crates/qsf_app/src/experiments/multi_turn_text_loop/{console,report,tool_runtime,config}.rs`.
+- Kept the existing multi-turn behavior and regression coverage intact while reducing the
+  top-level experiment module to orchestration and shared session-memory plumbing.
+
+Observed:
+- `cargo test -p qsf_app multi_turn_text_loop` passed.
+- `cargo clippy --all-targets -- -D warnings` passed.
+
+Refs: crates/qsf_app/src/experiments/multi_turn_text_loop.rs,
+crates/qsf_app/src/experiments/multi_turn_text_loop/{config,console,report,tool_runtime}.rs,
+crates/qsf_app/src/session/config.rs

@@ -6,6 +6,7 @@ use crate::context::ContextAssembly;
 use crate::conversation::ContentHash;
 
 pub mod ageing;
+pub mod config;
 pub mod continuation;
 pub mod exchange;
 pub mod live_memory;
