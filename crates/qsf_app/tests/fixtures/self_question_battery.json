@@ -1,0 +1,62 @@
+{
+  "questions": [
+    {
+      "id": "what_are_you",
+      "prompt": "What are you?",
+      "reply": "The project's accepted framing describes a runtime voice loop grounded in its own docs.",
+      "tool_calls": [
+        {
+          "round": 1,
+          "tool": "search_project_docs",
+          "arguments": {
+            "query": "vision"
+          }
+        }
+      ],
+      "expected_reply_contains": [
+        "accepted framing"
+      ],
+      "expected_reply_must_not_contain": []
+    },
+    {
+      "id": "framing_search_then_read",
+      "prompt": "What does the project say it is, in its own words?",
+      "reply": "The project's accepted framing says to keep the responder grounded in project docs.",
+      "tool_calls": [
+        {
+          "round": 1,
+          "tool": "search_project_docs",
+          "arguments": {
+            "query": "vision"
+          }
+        },
+        {
+          "round": 2,
+          "tool": "read_project_doc",
+          "arguments": {
+            "path": "docs/ProjectFrame/ProjectVision.md",
+            "focus": "vision",
+            "max_tokens": 400
+          }
+        }
+      ],
+      "expected_reply_contains": [
+        "the project"
+      ],
+      "expected_reply_must_not_contain": [
+        "I do",
+        "I have"
+      ]
+    },
+    {
+      "id": "off_topic_control",
+      "prompt": "What's the capital of France?",
+      "reply": "The capital of France is Paris.",
+      "tool_calls": [],
+      "expected_reply_contains": [],
+      "expected_reply_must_not_contain": [
+        "search_project_docs"
+      ]
+    }
+  ]
+}

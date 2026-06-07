@@ -30,49 +30,61 @@ choice ("plan-phase decision"), the plan picks one explicitly.
 
 ## Status
 
-Phases 1-5 have landed and are committed:
+Phases 1-6 have landed and are committed. The minimum viable channel is
+live: the `ConversationalResponder` advertises both project-doc tools in
+the multi-turn text loop, can run a bounded `search -> read -> answer`
+sequence inside one human turn under a true per-turn budget, and the
+dispatch layer emits success/refusal traces for every call.
 
-- **Phase 1** — the pure `ProjectDocService` library
+- **Phase 1** — pure `ProjectDocService` library
   (`crates/qsf_app/src/project_docs/`).
 - **Phase 2** — the two `Tool` implementations, `ToolPermission::read_only()`,
   the defaulted `ToolContext::project_doc_service()` accessor, and the
   standalone `ProjectDocToolContext`.
 - **Phase 3** — both tools wired into `ToolRegistry` (struct, `Default`,
-  and the three `match` sites in `metadata_for`, `dispatch`, and
-  `model_tool_definitions_for`).
-- **Phase 4** — the combined `ResponderToolContext` (answers both
-  `session_state()` and `project_doc_service()`) plus the true
-  per-human-turn `ProjectDocToolBudget`, with refusal telemetry
-  (`ToolFailed` event + refusal `TraceRecord`) for over-cap project-doc
-  calls.
+  and the three `match` sites).
+- **Phase 4** — the combined `ResponderToolContext` plus the true
+  per-human-turn `ProjectDocToolBudget`, with refusal telemetry for
+  over-cap project-doc calls.
 - **Phase 5** — success `TraceRecord` emission for executed
-  `search_project_docs` / `read_project_doc` calls (`refused == false`),
-  symmetric with the Phase 4 refusal traces and carrying the returned
-  content needed for Phase 8 overlap.
+  `search_project_docs` / `read_project_doc` calls (`refused == false`).
+- **Phase 6** — the responder role wired into the live multi-turn loop:
+  the four-tool advertisement, the bounded two-round tool loop
+  (`MAX_RESPONDER_TOOL_ROUNDS_PER_TURN = 2`) reusing one
+  `ProjectDocToolBudget` per turn, the `ResponderToolContext` constructed
+  over a `ProjectDocService` built from the absolute workspace root, a
+  `tool_result` appended for every returned `ToolResult` (executed or
+  refused), and the kind/maturity voicing block present on every
+  responder provider call in a project-doc turn — including the final
+  no-tools answer call.
 
-**Phase 6 (wiring the responder role + a bounded two-round tool loop) is
-the next implementation step.** It is the first phase to construct the
-`ResponderToolContext` and a per-turn `ProjectDocToolBudget` at a live
-call site, advertise the two tools to the `ConversationalResponder`, and
-permit a bounded `search -> read -> answer` sequence inside one human
-turn. Until Phase 6 lands, the dispatch-level machinery (Phases 3-5) is
-proven only in tests; no live call site advertises the tools.
+**Phase 7 (the offline self-question battery fixture test) is the next
+implementation step.** It is the first phase whose deliverable is a CI
+regression test rather than runtime wiring: it replays a fixed list of
+self-questions through the now-live bounded responder loop using a
+scripted `ModelClient` and asserts on the tool calls made (including
+round), the recorded events and traces, the voicing-block presence on
+every provider call, and the hedging language in the canned replies.
+Phase 8 adds the `influenced_reply` post-hoc enrichment, Phase 9 lands the
+documentation updates, Phase 10 records the live external verification,
+and Phase 11 is a future planning handoff.
 
 ## Background
 
 The design at `docs/Plans/Design.ProjectDocIntrospection.md` specifies a
 live-first introspection channel for project documents. This plan
-implements the v1 channel in sequential implementation and
-documentation phases that each produce something independently testable.
-Phases 1-6 are the minimum viable channel (tools work end-to-end and
-the responder can call them). Phase 7 delivers the offline
-self-question battery promised by the design's *Live-First Rationale*.
-Phase 8 adds the `influenced_reply` post-hoc enrichment. Phase 9 lands
-the documentation updates required by
+implements the v1 channel in sequential implementation and documentation
+phases that each produce something independently testable. Phases 1-6
+(landed) are the minimum viable channel: the tools work end-to-end and
+the responder can call them mid-dialogue. Phase 7 delivers the offline
+self-question battery promised by the design's *Live-First Rationale* as
+a deterministic, CI-runnable regression gate over the live loop's shape
+and voicing rules. Phase 8 adds the `influenced_reply` post-hoc
+enrichment. Phase 9 lands the documentation updates required by
 `docs/ProjectFrame/ProjectWorkflow.md`. Phase 10 records the live
 external verification step. Phase 11 is a future planning handoff for
-associative project-doc context pointers; it is not part of the v1
-tool implementation.
+associative project-doc context pointers; it is not part of the v1 tool
+implementation.
 
 ## Current Anchors
 
@@ -81,72 +93,79 @@ Code anchors:
 - `crates/qsf_app/src/project_docs/` — **landed (Phase 1).** Pure
   library: `Allowlist`, metadata extraction, lexical `search`, bounded
   `read`, and the `ProjectDocService` facade. Later phases consume it;
-  they do not modify it.
+  they do not modify it. Phase 8 adds an `influence` sibling module.
 - `crates/qsf_app/src/tools/mod.rs` — re-exports the tool surface,
   including `ProjectDocToolContext`, `SEARCH_PROJECT_DOCS_TOOL_NAME`,
-  `SearchProjectDocsTool`, `READ_PROJECT_DOC_TOOL_NAME`, and
-  `ReadProjectDocTool` (Phase 2), and `ResponderToolContext`
-  (**landed, Phase 4**).
+  `SearchProjectDocsTool`, `READ_PROJECT_DOC_TOOL_NAME`,
+  `ReadProjectDocTool` (Phase 2), and `ResponderToolContext` (Phase 4).
 - `crates/qsf_app/src/tools/tool_registry.rs` — `ToolRegistry`, `Tool`
-  trait, `ToolMetadata`, the `ToolContext` trait (both
-  `session_state()` and `project_doc_service()` defaulted to `None`),
-  and `EmptyToolContext`. **Landed (Phase 3):** the registry struct,
-  `Default`, and all three `match` sites route all four tools; tests
-  assert metadata/definition identity and dispatch for both project-doc
-  tools. Unchanged after Phase 3.
+  trait, `ToolMetadata`, the `ToolContext` trait, and `EmptyToolContext`.
+  **Landed (Phase 3):** all three `match` sites route all four tools.
 - `crates/qsf_app/src/tools/tool_request.rs` — `ToolPermission` has both
-  `compute_only()` and `read_only()` (Phase 2), plus `ToolRequest`,
-  `ToolCategory`, `ToolSideEffectLevel`.
+  `compute_only()` and `read_only()` (Phase 2).
 - `crates/qsf_app/src/tools/tool_result.rs` — `ToolResult` with fields
   `tool_name`, `category`, `side_effect_level`, `input`, `output_text`,
   `numeric_value`, `observation_summary`.
 - `crates/qsf_app/src/tools/recall_turn_tool.rs` — defines
-  `RecallTurnTool` **and** `SessionToolContext<'a> { state: &'a
-  SessionState }` (implements `session_state()` only). Reference for the
-  `Tool` trait and for the single-accessor context shape.
+  `RecallTurnTool` **and** `SessionToolContext`. Reference for the `Tool`
+  trait and the single-accessor context shape.
 - `crates/qsf_app/src/tools/project_doc_tool.rs` — **landed (Phase 2).**
-  `ProjectDocToolContext<'a> { service: &'a ProjectDocService }`
-  (implements `project_doc_service()` only).
+  `ProjectDocToolContext` (implements `project_doc_service()` only).
 - `crates/qsf_app/src/tools/responder_tool_context.rs` — **landed
   (Phase 4).** `ResponderToolContext<'a> { state, project_docs }`
-  implementing both accessors for live dispatch. **Phase 6** constructs
-  this type at the multi-turn call site.
+  implementing both accessors; constructed at the live multi-turn call
+  site in Phase 6.
 - `crates/qsf_app/src/tools/search_project_docs_tool.rs` and
   `crates/qsf_app/src/tools/read_project_doc_tool.rs` — **landed (Phase
-  2), wired (Phase 3).** The two `Tool` impls, routed by the registry.
+  2), wired (Phase 3).** The two `Tool` impls.
 - `crates/qsf_app/src/models/tool_dispatch.rs` —
-  `dispatch_model_tool_calls(context, request, registry, state_ctx,
-  project_doc_budget, tool_calls)`. Its loop checks `allowed_tools`,
-  builds a `ToolRequest` via `tool_request_from_model_tool_call`,
-  records `ToolRequested`, then `validate_and_execute` +
-  `ToolCompleted`/`ToolFailed`. **Phase 4 (landed)** added the
-  `ProjectDocToolBudget` parameter, the per-turn cap gate, the refusal
-  `ToolFailed`/`TraceRecord` path, and the
-  `sanitized_project_doc_arguments` helper. **Phase 5 (landed)** added
-  success traces (`project_doc_search` / `project_doc_read`,
-  `refused == false`) on the executed path, reusing that helper and the
-  budget's `turn_index`. No change in Phase 6.
-- `crates/qsf_app/src/models/model_role.rs` — `ModelRole::predefined`
-  for `ConversationalResponder`; `allowed_tools` is overridden by call
-  sites (see `multi_turn_text_loop.rs`).
-- `crates/qsf_app/src/experiments/multi_turn_text_loop.rs` — reference
-  for how a `ToolResult` becomes a `ModelMessage::tool_result` and is
-  appended before the next provider call; **Phase 6** call site that
-  constructs the `ResponderToolContext`, creates one
-  `ProjectDocToolBudget` per human turn, and permits a bounded
-  two-round tool loop (`search` then optional `read`) before the final
-  responder reply.
-- `crates/qsf_app/src/observability/trace.rs` — `TraceRecord::new(
-  experiment_id, operation, input_summary, output_summary)` with
-  builder methods `.with_details(Value)` and `.with_latency_ms(u64)`;
-  operations (`project_doc_search`, `project_doc_read`) ride in
-  `operation` + `details`, no schema change required.
+  `dispatch_model_tool_calls(...)` with the `ProjectDocToolBudget`
+  parameter, the per-turn cap gate, refusal traces (Phase 4), and
+  success traces (Phase 5). No change expected in Phase 7.
+- `crates/qsf_app/src/models/model_client.rs` — the `ModelClient` trait
+  (`complete(&self, request: &ModelRequest) -> Result<ModelResponse>`),
+  `ModelResponse` (`output_text`, `tool_calls`, `usage`, …), and
+  `ModelToolCall`. Phase 7's scripted stub implements this trait.
+- `crates/qsf_app/src/models/mock_model.rs` — `MockModelClient`, the
+  fixture-driven mock and the existing reference for deterministic
+  responder outputs.
+- `crates/qsf_app/src/experiments/multi_turn_text_loop.rs` — **landed
+  (Phase 6).** `run_one_turn` holds the bounded loop:
+  `MAX_RESPONDER_TOOL_ROUNDS_PER_TURN = 2`, one
+  `ProjectDocToolBudget::new(turn_index)` reused across batches,
+  `project_doc_service_for_multi_turn_text_loop(context)` (absolute
+  workspace root), `conversational_responder_role_with_session_and_project_doc_tools()`,
+  `responder_request_for_messages(..., advertise_tools)` and the
+  **`advertise_tools = tool_rounds < MAX_RESPONDER_TOOL_ROUNDS_PER_TURN`**
+  gate at the bottom of the loop (so tools are dropped from the request
+  only on the call that follows the second tool round), and
+  `execute_model_tool_calls(...)` which returns one execution per tool
+  call carrying the `call_id` for the appended `tool_result`. An
+  `ErrorOccurred` event (stage `bounded-tool-loop`) is recorded and the
+  turn bails if tool calls persist after the two rounds.
+- `crates/qsf_app/src/experiments/multi_turn_text_loop/tests.rs` —
+  **the proven in-crate harness Phase 7 reuses.** Contains
+  `SequencedResponderClient` + `PlannedResponderResponse` (a scripted
+  `ModelClient` that replays a fixed list of responses, with `.calls()`
+  capturing each request's `role_id`/`tools`/`messages`),
+  `run_with_io_and_components(...)`, `test_context(...)`,
+  `TestMemorySource`, `test_config_with_warm_threshold(...)`,
+  `responder_tool_names()`, and `parse_event_records` /
+  `parse_trace_records`. It already has
+  `responder_can_search_then_read_across_two_tool_batches`,
+  `responder_reuses_project_doc_budget_across_tool_batches`,
+  `follow_up_tool_calls_fail_without_appending_turn`, and the
+  voicing-block prompt tests driven by
+  `assemble_prompt_with_summaries_and_project_doc_channel(..., project_doc_channel_enabled)`.
+- `crates/qsf_app/src/observability/trace.rs` — `TraceRecord::new(...)`
+  with `.with_details(Value)` and `.with_latency_ms(u64)`.
 - `crates/qsf_app/src/observability/event_log.rs` —
-  `EventType::ToolRequested` / `ToolCompleted` / `ToolFailed`. No new
-  event type is added.
+  `EventType::ToolRequested` / `ToolCompleted` / `ToolFailed`.
 - `crates/qsf_app/src/runtime/run_context.rs` — `RunContext` exposes
-  `experiment_id()`, `run_id()`, `record_event(EventType, Value, None)`,
-  and `record_trace(TraceRecord) -> Result<TraceRecord>`.
+  `experiment_id()`, `run_id()`, `run_dir()`, `record_event(...)`, and
+  `record_trace(...)`; the workspace root supplied via `--workspace-root`
+  is canonicalized here and consumed by the live `ProjectDocService`
+  construction.
 
 Documentation anchors:
 
@@ -158,8 +177,7 @@ Documentation anchors:
   `maturity_tag` taxonomies; updated in Phase 9 to reference the
   allowlist file.
 - `docs/Architecture/Architecture.ToolSystem.md` — its *Implementation
-  Status* section is refreshed in Phase 9 to move the two new tools to
-  "Implemented today".
+  Status* section is refreshed in Phase 9.
 
 ## Open Questions To Surface During Implementation
 
@@ -170,69 +188,57 @@ differently, raise it before changing direction.
 1. **Config file path.** This plan uses
    `config/project-doc-introspection.toml` at the repo root (settled in
    Phase 1). *Path-resolution note (still binding):* `cargo test` runs
-   with the working directory at the package root
-   (`crates/qsf_app`), **not** the workspace root, so tests and
-   production code must never load the config via a bare relative path.
-   Tests resolve it from `CARGO_MANIFEST_DIR`; production wiring (Phase 6
-   onward) must construct `ProjectDocService` with an explicit absolute
-   repo root and an explicit absolute allowlist path, never relying on
-   the process working directory. **Resolved in Phase 6:** the experiment
-   runner accepts `--workspace-root`, canonicalizes it into `RunContext`,
-   and the launcher passes the script-derived repo root.
+   with the working directory at the package root (`crates/qsf_app`),
+   **not** the workspace root, so tests and production code must never
+   load the config via a bare relative path. Tests resolve it from
+   `CARGO_MANIFEST_DIR`; production wiring constructs `ProjectDocService`
+   with an explicit absolute repo root and an explicit absolute allowlist
+   path. **Resolved in Phase 6:** the experiment runner accepts
+   `--workspace-root`, canonicalizes it into `RunContext`, and the
+   launcher passes the script-derived repo root.
 2. **Combined `ToolContext` shape — DECIDED AND LANDED IN PHASE 4.** Live
    dispatch needs one context answering *both* `session_state()` and
    `project_doc_service()`. Phase 4 shipped a dedicated combined context
-   (`ResponderToolContext`) rather than extending `SessionToolContext`,
-   because the dedicated type is purely additive. The existing
-   single-accessor contexts are unchanged.
+   (`ResponderToolContext`). The single-accessor contexts are unchanged.
 3. **`influenced_reply` storage.** Phase 8 writes the marker as a
    follow-up `TraceRecord` referencing the original by `trace_id`. If an
    annotation on the original record is preferred, raise before Phase 8.
 4. **Module naming.** Per `Agents.md`, name modules after stable
-   behavior. This plan uses `project_docs` / `ProjectDocService`, and
-   the combined context is named for the role it serves
-   (`ResponderToolContext`), not a plan phase. Keep this discipline.
-5. **Hard latency cap.** Decision 4 of the spec sets a 1500 ms hard
-   cap. With lexical search over a small markdown corpus the cap is not
-   expected to fire, so this plan **deliberately defers**
-   cap-enforcement: `ProjectDocService` exposes synchronous
-   `search`/`read` with no deadline parameter. Record this as a
+   behavior. This plan uses `project_docs` / `ProjectDocService`, and the
+   combined context is named for the role it serves
+   (`ResponderToolContext`). Keep this discipline.
+5. **Hard latency cap.** Decision 4 of the spec sets a 1500 ms hard cap.
+   With lexical search over a small markdown corpus the cap is not
+   expected to fire, so this plan **deliberately defers** cap-enforcement
+   (synchronous `search`/`read`, no deadline parameter). Recorded as a
    conscious scope decision in `Design.ProjectDocIntrospection.md`
-   Decision 4 (one line in Phase 9). If real-run traces ever show
-   `latency_ms` over 1000, add enforcement **at the `ProjectDocService`
-   boundary**: thread a deadline / max-elapsed budget through
-   `search`/`read`, return partial results, and surface an
-   `omitted_due_to_budget` signal the success traces (Phase 5) can
-   record. Note the change in the diary when it happens.
-6. **Integration-test setup in the dispatch tests.** The plan uses
-   compact test sketches rather than fully inlined harness code, but the
-   assertions are binding. Mirror the existing `tool_dispatch.rs` tests:
-   `RunContext::create_in`, `ToolRegistry::default()`,
-   `ModelRequest::new(...).with_session_id(...).with_tools(...)`, parsed
-   `EventRecord`s from `events.jsonl`, and parsed `TraceRecord`s from
-   `traces.jsonl`. If an inline test module grows unwieldy, write a
-   focused integration test under
-   `crates/qsf_app/tests/project_doc_dispatch.rs` and treat the
-   skeletons as the assertion contract.
+   Decision 4 (Phase 9). If real-run traces ever show `latency_ms` over
+   1000, add enforcement **at the `ProjectDocService` boundary**.
+6. **Integration-test setup in the dispatch tests.** Mirror the existing
+   `tool_dispatch.rs` tests: `RunContext::create_in`,
+   `ToolRegistry::default()`, parsed `EventRecord`s from `events.jsonl`,
+   and parsed `TraceRecord`s from `traces.jsonl`.
 7. **Per-turn budget scope — DECIDED AND LANDED IN PHASE 4.** The caps
    apply across the whole human/responder turn, not merely one provider
-   tool-call batch. Phase 4 introduced explicit `ProjectDocToolBudget`
-   state, keyed by the current `turn_index`, threaded mutably through
-   `dispatch_model_tool_calls`. Phase 6 reuses the same budget across a
-   bounded two-round responder tool loop. If a future generic tool
-   runtime changes the loop structure, it must preserve this invariant:
-   fresh budget per human turn, shared budget across all provider calls
-   inside that turn.
-8. **Voicing-prompt scope across the turn — DECIDED HERE (review
-   P6-001).** The kind/maturity voicing block (Task 6.3) must be present
-   on **every** responder provider call in a turn where the project-doc
-   channel is enabled, *including the final no-tools answer call*. It is
-   therefore gated on channel/turn availability, not on whether the
-   current request's advertised `allowed_tools` happens to contain the
-   two tool names. Keying off the current request's tools would silently
-   drop the hedging instructions from the final answer step — exactly
-   when the model must apply kind/maturity hedging to the tool results
-   already in context.
+   tool-call batch. Phase 6 reuses the same budget across the bounded
+   two-round responder tool loop.
+8. **Voicing-prompt scope across the turn — DECIDED, LANDED IN PHASE 6.**
+   The kind/maturity voicing block is present on **every** responder
+   provider call in a project-doc turn, *including the final no-tools
+   answer call*. It is gated on channel/turn availability, not on whether
+   the current request advertises the two tool names. Phase 7 asserts
+   this invariant explicitly across the battery. Note this is distinct
+   from *tool advertisement*: the voicing block is present on every call,
+   whereas the four tool definitions are advertised only while
+   `tool_rounds < MAX_RESPONDER_TOOL_ROUNDS_PER_TURN` (see the Phase 7
+   loop-behavior note).
+9. **Phase 7 battery placement and live-read paths — SURFACE BEFORE
+   IMPLEMENTING (see Phase 7 intro).** The harness that drives the *real*
+   bounded loop (`SequencedResponderClient`, `run_with_io_and_components`,
+   `test_context`, …) is private to the `multi_turn_text_loop` test
+   module, and `read_project_doc` calls execute against the real
+   allowlisted corpus. Both points are decided with defaults in Phase 7;
+   confirm them before writing the test.
 
 ## Target Shape
 
@@ -267,9 +273,8 @@ user input
 **Status: landed and committed** ("ProjectDocIntrospection phase 1").
 Source of truth: `crates/qsf_app/src/project_docs/`.
 
-**What shipped:** a pure, side-effect-free `project_docs` module
-(`pub mod project_docs;` in `lib.rs`) with the surface later phases
-depend on — `types` (`DocKind`, `MaturityTag`, `MatchStrength`,
+A pure, side-effect-free `project_docs` module (`pub mod project_docs;`
+in `lib.rs`): `types` (`DocKind`, `MaturityTag`, `MatchStrength`,
 `DocHit`, `DocRead`), `allowlist` (`Allowlist::from_file`/`from_str`,
 exclude-then-include globs), `metadata` (`kind_for_path`, `maturity_for`,
 `last_reviewed_for` scoped to `## Implementation Status`, ISO-date
@@ -282,8 +287,7 @@ allowlist: `config/project-doc-introspection.toml`.
 **Binding constraints on later phases:**
 
 - **Path resolution (OQ #1).** Tests resolve from `CARGO_MANIFEST_DIR`;
-  production wiring (Phase 6 on) must use **absolute** repo-root and
-  allowlist paths.
+  production wiring uses **absolute** repo-root and allowlist paths.
 - **Path-safety lives in the library, not the tool.** Bounded `read`
   normalizes and confines caller-supplied paths *before* touching the
   allowlist or filesystem (rejects absolute paths and any `..`); the
@@ -294,17 +298,18 @@ allowlist: `config/project-doc-introspection.toml`.
   `docs/ProjectFrame/**` and `docs/DecisionLog.md`; picks up edits
   without a rebuild.
 - **Latency cap deferred (OQ #5).** Synchronous API, no deadline param.
+- **Live-read consequence (Phase 7).** Because `read` is path-confined
+  against the allowlist+corpus, any test that drives a *real*
+  `read_project_doc` (Phase 7's battery) must use paths that are
+  allowlisted and present, or the read returns a refusal/error rather
+  than a `refused == false` success trace.
 
 **Acceptance outcome (met):** `cargo test -p qsf_app project_docs`
-passes (allowlist precedence; kind/maturity/last-reviewed extraction with
-Implementation-Status scoping and malformed-date rejection; heading-first
-lexical search; bounded read with focus/truncation; traversal/absolute-
-path refusals; service-level hot-reload). Clippy and fmt clean.
+passes; clippy and fmt clean.
 
 **Diary follow-up constraint:** Phase 1 was committed as a standalone
 slice; the Phase 9 diary pass must explicitly account for the
-`project_docs` library work (fold into the Phases 1-8 entry or add a
-separate library-slice entry); do not silently skip it.
+`project_docs` library work, not silently skip it.
 
 ---
 
@@ -313,17 +318,14 @@ separate library-slice entry); do not silently skip it.
 **Status: landed and committed** ("ProjectDocIntrospection phase 2").
 Source of truth: `crates/qsf_app/src/tools/`.
 
-**What shipped:** `ToolPermission::read_only()` (grants
-`ReadOnly`/`ReadOnly`); a defaulted
+`ToolPermission::read_only()`; a defaulted
 `ToolContext::project_doc_service() -> Option<&ProjectDocService>`
-(returns `None`), leaving `EmptyToolContext`/`SessionToolContext`
-unchanged; `ProjectDocToolContext<'a> { service }` returning
-`Some(service)`; `SearchProjectDocsTool` (reads `query`/`max_results`,
-calls `service.search`, serializes `Vec<DocHit>`, **normalizes
+(returns `None`); `ProjectDocToolContext<'a> { service }`;
+`SearchProjectDocsTool` (reads `query`/`max_results`, **normalizes
 `max_results` into `1..=DEFAULT_MAX_RESULTS`**); `ReadProjectDocTool`
-(reads `path`/`focus`/`max_tokens`, calls `service.read`, serializes
-`DocRead`, **clamps `max_tokens` to `MAX_TOKENS_HARD_CAP` (4000)**,
-forwards the raw `path`). `tools/mod.rs` re-exports the names and types.
+(reads `path`/`focus`/`max_tokens`, **clamps `max_tokens` to
+`MAX_TOKENS_HARD_CAP` (4000)**, forwards the raw `path`).
+`tools/mod.rs` re-exports the names and types.
 
 **Binding constraints on later phases:**
 
@@ -336,644 +338,316 @@ forwards the raw `path`). `tools/mod.rs` re-exports the names and types.
   single Phase 9 diary entry; isolated merges carry a short standalone
   entry, reconciled (not duplicated) in Phase 9.
 
-**Acceptance outcome (met):** `cargo test -p qsf_app tools::` passes
-(read-only permission; both context accessors; search hit/metadata +
-`max_results` normalization + missing-context failure; read content +
-`max_tokens` clamp + out-of-allowlist refusal + missing-context
-failure). Clippy and fmt clean.
+**Acceptance outcome (met):** `cargo test -p qsf_app tools::` passes;
+clippy and fmt clean.
 
 ---
 
 ## Phase 3: `ToolRegistry` wiring — completed
 
-**Status: landed and committed** ("ProjectDocIntrospection phase 3: wire
-project-doc tools into ToolRegistry"). Source of truth:
-`crates/qsf_app/src/tools/tool_registry.rs`.
+**Status: landed and committed** ("ProjectDocIntrospection phase 3").
+Source of truth: `crates/qsf_app/src/tools/tool_registry.rs`.
 
-**What shipped:** the registry knows all four tools. The `ToolRegistry`
-struct and `Default` carry `search_project_docs: SearchProjectDocsTool`
-and `read_project_doc: ReadProjectDocTool`, and all three `match` sites
+The registry knows all four tools. The struct and `Default` carry
+`search_project_docs` and `read_project_doc`, and all three `match` sites
 (`metadata_for`, `dispatch`, `model_tool_definitions_for`) route both new
-tool names (via `super::SEARCH_PROJECT_DOCS_TOOL_NAME` /
-`super::READ_PROJECT_DOC_TOOL_NAME`, no duplicated literals). Because
+tool names via the shared constants (no duplicated literals). Because
 `tool_request_from_model_tool_call` routes unrecognized tools through its
-catch-all `_ =>` arm, the dispatch request-builder needed no change.
+catch-all arm, the dispatch request-builder needed no change.
 
 **Binding constraints on later phases:**
 
 - The registry holds no `ToolContext`; it receives one per call, so the
-  combined-context question (OQ #2) was settled in **Phase 4**, the first
-  phase to dispatch these tools through a live context alongside
-  `recall_turn`.
+  combined-context question (OQ #2) was settled in Phase 4.
 - No runtime call site changed in Phase 3.
 
-**Acceptance outcome (met):** registry tests assert `metadata_for`
-returns `Some` advertising `ReadOnly`/`ReadOnly` for both tools (by
-name); `model_tool_definitions_for(&[search, read])` returns exactly the
-two definitions under the correct names; **both** tools route through
-`dispatch`. Calculator/recall_turn/permission-rejection tests pass
-unchanged. Build, focused tests, clippy, fmt clean.
+**Acceptance outcome (met):** registry tests assert metadata, definitions,
+and dispatch for both tools; build, focused tests, clippy, fmt clean.
 
 ---
 
 ## Phase 4: Combined context + true per-turn budget state — completed
 
-**Status: landed and committed** ("ProjectDocIntrospection phase 4:
-Combined context + true per-turn budget state"). Source of truth:
-`crates/qsf_app/src/tools/responder_tool_context.rs` and
+**Status: landed and committed** ("ProjectDocIntrospection phase 4").
+Source of truth: `crates/qsf_app/src/tools/responder_tool_context.rs` and
 `crates/qsf_app/src/models/tool_dispatch.rs`.
 
-**What shipped:**
-
-- **Combined context (OQ #2).** `ResponderToolContext<'a> { state:
-  &'a SessionState, project_docs: &'a ProjectDocService }`, implementing
-  `ToolContext` so one `&dyn ToolContext` answers *both* accessors with
-  `Some(_)`. Re-exported from `crate::tools`. Dedicated type (purely
-  additive); single-accessor contexts unchanged.
-- **True per-turn budget.** Module-level caps
-  `PROJECT_DOC_SEARCH_CAP_PER_TURN = 2` and
+- **Combined context (OQ #2).** `ResponderToolContext<'a> { state,
+  project_docs }` so one `&dyn ToolContext` answers *both* accessors with
+  `Some(_)`. Dedicated, purely additive type; single-accessor contexts
+  unchanged.
+- **True per-turn budget.** `PROJECT_DOC_SEARCH_CAP_PER_TURN = 2` and
   `PROJECT_DOC_READ_CAP_PER_TURN = 1`, plus `ProjectDocToolBudget {
-  turn_index, search_calls, read_calls }` (`new(turn_index)`,
-  attempt-recording methods). Dispatcher signature became
-  `dispatch_model_tool_calls(context, request, registry, state_ctx,
-  project_doc_budget: &mut ProjectDocToolBudget, tool_calls)`. Callers
-  create one budget per human turn and reuse it across dispatch batches.
-- **Refusal path.** After the `allowed_tools` membership check and before
-  building a `ToolRequest`, the loop gates project-doc tools on the
-  budget. An over-cap call is refused *before* reaching the registry,
-  emitting only a `ToolFailed` event (no preceding `ToolRequested`, to
-  keep the `ToolRequested → ToolCompleted/Failed` symmetry intact for
-  executed calls) with `refusal_reason == "per_turn_cap"`, `cap`,
-  `attempted_count`, `turn_index`, and sanitized arguments; a refusal
-  `TraceRecord` (`operation` = `project_doc_search`/`project_doc_read`,
-  `details.refused == true`, same correlation fields); and a `ToolResult`
-  whose `observation_summary` names `per_turn_cap`.
+  turn_index, search_calls, read_calls }`. The dispatcher takes
+  `project_doc_budget: &mut ProjectDocToolBudget`; callers create one
+  budget per human turn and reuse it across batches.
+- **Refusal path.** An over-cap call is refused *before* reaching the
+  registry, emitting a `ToolFailed` event (no preceding `ToolRequested`,
+  preserving symmetry for executed calls) with `refusal_reason ==
+  "per_turn_cap"`, `cap`, `attempted_count`, `turn_index`, and sanitized
+  arguments; a refusal `TraceRecord` (`details.refused == true`); and a
+  `ToolResult` whose `observation_summary` names `per_turn_cap`.
 - **`sanitized_project_doc_arguments` helper.** Preserves only stable,
-  non-sensitive replay inputs (`query`/`max_results` for search;
-  `path`/`focus`/`max_tokens` for read), never dumping arbitrary JSON.
+  non-sensitive replay inputs.
 
 **Binding constraints on later phases:**
 
-- **Reuse, don't reinvent.** Success-path traces (Phase 5) reuse
-  `sanitized_project_doc_arguments` and the budget's `turn_index`, and
-  carry the same correlation fields (`session_id`, `role_id`, `call_id`,
-  `tool_name`, `turn_index`) as the refusal traces so refused and
-  executed calls join cleanly.
-- **Budget invariant (Phase 6).** Fresh `ProjectDocToolBudget` per human
-  turn, shared across all provider tool batches inside that turn;
-  calculator and `recall_turn` never consume the budget.
-- **Refused calls still return a `ToolResult` (Phase 6).** The over-cap
-  refusal path returns a `ToolResult` *without* executing the registry.
-  Phase 6's loop must still append a provider-native `tool_result`
-  message for it, so the provider receives a response for every
-  `tool_call_id` it emitted (review P6-002).
-- **Live wiring still pending.** Phase 4 proved the combined context and
-  budget in dispatch-level tests only; the `ResponderToolContext` is
-  *constructed* and the budget *created per turn* at the **Phase 6** call
-  site, where `ProjectDocService` must be built with absolute paths
-  (OQ #1).
+- **Reuse, don't reinvent.** Success-path traces (Phase 5) reuse this
+  helper, the budget's `turn_index`, and the same correlation fields, so
+  refused and executed calls join cleanly.
+- **Budget invariant (held in Phase 6).** Fresh `ProjectDocToolBudget`
+  per human turn, shared across all provider tool batches inside that
+  turn; calculator and `recall_turn` never consume the budget.
+- **Refused calls still return a `ToolResult`.** Phase 6 appends a
+  provider-native `tool_result` for it so the provider gets a response
+  for every `tool_call_id` it emitted.
 
-**Acceptance outcome (met):** both accessors return `Some(_)`; the budget
-enforces the 2-search / 1-read caps whether the over-cap call occurs in
-one batch or across two batches sharing one budget; a fresh budget resets
-counts next turn; a mixed `recall_turn` + `search_project_docs` batch
-dispatches through one `ResponderToolContext` with non-project-doc tools
-not consuming the budget; refusal telemetry includes session ID, call ID,
-tool name, turn index, cap, attempted count, sanitized arguments;
-existing dispatcher tests pass unchanged. Build, focused tests, clippy,
-fmt clean.
+**Acceptance outcome (met):** both accessors return `Some(_)`; caps
+enforced within one batch and across two batches sharing one budget;
+fresh budget resets next turn; refusal telemetry carries the full
+correlation fields. Build, focused tests, clippy, fmt clean.
 
-**Diary discipline (still binding):** as with Phases 1-3, an isolated
-Phase 4 merge ahead of the grouped feature carries a short standalone
-diary entry, reconciled (not duplicated) in Phase 9.
+**Diary discipline (still binding):** isolated-merge entries reconciled,
+not duplicated, in Phase 9.
 
 ---
 
 ## Phase 5: Success TraceRecord emission for project-doc calls — completed
 
-**Status: landed and committed** ("ProjectDocIntrospection phase 5:
-feat(dispatch): emit project_doc_search/read trace records on success").
+**Status: landed and committed** ("ProjectDocIntrospection phase 5").
 Source of truth: `crates/qsf_app/src/models/tool_dispatch.rs`.
 
-**What shipped:** symmetric *success* traces (`details.refused == false`)
-on the executed `search_project_docs` and `read_project_doc` paths, so a
-researcher can replay **every** project-doc call in a run's
-`traces.jsonl`, not just refusals. After the existing `ToolCompleted`
-event, the dispatch loop emits one `TraceRecord` per project-doc op
-(calculator and `recall_turn` untouched via the `_ => {}` arm):
+Symmetric *success* traces (`details.refused == false`) on the executed
+`search_project_docs` / `read_project_doc` paths, so a researcher can
+replay **every** project-doc call from a run's `traces.jsonl`:
 
 - `project_doc_search` stores the parsed `hits` array **and** an explicit
-  `details.hit_count` (= `hits.len()`).
+  `details.hit_count`.
 - `project_doc_read` stores the **parsed read output** (`details.read`) —
-  the bounded content/excerpt the tool returned (already `max_tokens`-
-  capped in Phase 2, no second cap) plus its metadata — alongside the
-  `is_full` / `omitted_sections` signals.
+  the bounded content/excerpt plus metadata — alongside `is_full` /
+  `omitted_sections`.
 
 **Binding constraints on later phases:**
 
-- **Replayability is the success criterion.** Phase 8's
-  `influenced_reply` enrichment computes reply-overlap directly from
-  these records: the search trace's `details.hits` and the read trace's
-  `details.read` are the source material. If either is missing or shaped
-  differently than recorded here, surface it before Phase 8's join rather
-  than re-deriving content elsewhere.
+- **Replayability is the success criterion.** Phase 8's `influenced_reply`
+  enrichment computes overlap directly from `details.hits` and
+  `details.read`. If either is missing or shaped differently, surface it
+  before Phase 8.
 - **Reuse discipline (held).** Traces reuse
-  `sanitized_project_doc_arguments`, the budget's `turn_index`, the
-  single `ToolCompleted` latency value (one clock read, shared via
-  `with_latency_ms`), and the Phase 4 correlation fields — so refused and
-  executed records union on `(session_id, turn_index, tool_name,
-  call_id)`. No new sanitizer or latency helper was added.
+  `sanitized_project_doc_arguments`, the budget's `turn_index`, the single
+  `ToolCompleted` latency value, and the Phase 4 correlation fields.
 - **Failure semantics.** A project-doc call that reaches execution and
-  **fails** writes `ToolFailed` and emits **no** `refused == false`
-  success trace; the success branch fires only on the executed success
-  path. The Phase 4 over-cap refusal path never reaches execution.
+  fails writes `ToolFailed` and emits **no** success trace; the over-cap
+  refusal path never reaches execution.
 
 **Acceptance outcome (met):** successful search/read dispatch each emit
 exactly one `project_doc_*` trace with `refused == false`, the explicit
 `hit_count` / bounded `read` content, sanitized arguments, `turn_index`,
-the full correlation fields, and a recorded latency — in addition to (not
-replacing) the `ToolCompleted` event; failed-execution and
-non-project-doc regression tests confirm no spurious success traces;
-existing dispatcher and Phase 4 refusal tests pass unchanged. Build,
-`cargo test -p qsf_app tool_dispatch`, clippy, fmt clean. Pure-Rust
-change, no external/human testing required (live behaviour is verified in
-Phase 7's battery and Phase 10's manual session).
+the full correlation fields, and a recorded latency; failed-execution and
+non-project-doc regression tests confirm no spurious success traces. Pure
+Rust; live behaviour is verified in Phase 7's battery and Phase 10's
+manual session.
 
-**Diary discipline (still binding):** Phase 5 commit is on the unmerged
-feature branch; if merged in isolation it carries a short standalone
-diary entry, reconciled (not duplicated) in Phase 9.
+**Diary discipline (still binding):** reconcile any isolated-merge entry
+in Phase 9.
 
 ---
 
-## Phase 6: Wire the responder role + bounded two-round tool loop
-
-Adds the two tools to the `ConversationalResponder` allowed-tools list
-used by the multi-turn text loop (and, by extension, the unified
-text/voice path once that lands), adds the bounded multi-round tool loop
-needed for `search_project_docs` followed by `read_project_doc` in the
-same human turn, and adds the voicing prompt block that teaches the model
-when and how to use the tools. That block is present on **every**
-responder provider call in a project-doc turn — including the final
-no-tools answer call, so the kind/maturity hedging instructions stay in
-context when the model writes the human-facing reply (Task 6.3, OQ #8,
-review finding P6-001).
-
-This is the first **live** call site, so the context constructed here and
-passed to `dispatch_model_tool_calls` **must** be the
-`ResponderToolContext` from Phase 4 (answers both `session_state()` and
-`project_doc_service()`). The `ProjectDocService` must be built once with
-**absolute** repo-root and allowlist paths (OQ #1), and one
-`ProjectDocToolBudget::new(turn_index)` must be created per human/
-responder turn and reused across every tool batch inside that turn
-(Phase 4 budget invariant; Phase 5 traces inherit `turn_index` from it).
-
-**Loop decision (review blocker P4-001, option 3 — DECIDED).** The
-responder may make at most **two provider tool-call batches** in one
-human turn:
-
-1. initial provider call with tools advertised;
-2. if it calls tools, dispatch the batch, append provider-native tool
-   messages (one per `ToolResult` returned, executed or refused), and
-   make one follow-up provider call with tools still advertised;
-3. if that follow-up calls tools, dispatch the second batch with the
-   **same** `ProjectDocToolBudget`, append tool messages, and make the
-   final provider call **without tools** (but with the voicing block
-   still present — see Task 6.3);
-4. if any provider response after the two permitted tool batches still
-   contains tool calls, record `ErrorOccurred` and fail the turn without
-   appending it, preserving the existing "no unbounded tool loop" safety
-   behavior.
-
-This is deliberately narrower than a generic autonomous tool loop. It is
-just enough for `search -> read -> answer`, while the Phase 4 budget
-state enforces the 2-search / 1-read per-turn caps across both batches.
-
-This phase is pure Rust with deterministic unit/integration coverage.
-Follow `superpowers:test-driven-development` (or plain TDD if that skill
-is unavailable): the failing test precedes the implementation in each
-task. A short manual smoke test is optional here; the full battery
-arrives in Phase 7 and the qualitative live gate in Phase 10.
-
-### Task 6.1: Extend `allowed_tools` and build responder tool context
-
-**Files:**
-- Modify: `crates/qsf_app/src/experiments/multi_turn_text_loop.rs`
-  (and any other call site that constructs a `ConversationalResponder`
-  request with explicit `allowed_tools` — grep for `allowed_tools`).
-
-- [ ] **Step 1: Enumerate the advertising call sites.**
-
-```bash
-grep -rn "allowed_tools" crates/qsf_app/src
-```
-
-Identify every call site that builds a request for the responder. The
-multi-turn loop currently advertises `calculator` and `recall_turn`;
-each such list must also include `SEARCH_PROJECT_DOCS_TOOL_NAME` and
-`READ_PROJECT_DOC_TOOL_NAME`. If the grep reveals a second live
-responder call site outside `multi_turn_text_loop.rs` that also dispatches
-tools, apply the same context/budget changes there; if it only builds a
-role without dispatching, advertising the tools is sufficient.
-
-- [ ] **Step 2: Write the failing tests — responder advertises the tools
-  *in the live request*.**
-
-A role-level helper assertion alone can pass while the live `ModelRequest`
-still omits the project-doc tool *definitions* (review P6-003). Cover
-**both** levels: the role/allowed-tools list, and the actual request the
-loop hands to the provider.
-
-```rust
-#[test]
-fn responder_advertises_project_doc_tools() {
-    let role = build_conversational_responder_with_tools();
-    assert!(role.allowed_tools.iter().any(|n| n == crate::tools::SEARCH_PROJECT_DOCS_TOOL_NAME));
-    assert!(role.allowed_tools.iter().any(|n| n == crate::tools::READ_PROJECT_DOC_TOOL_NAME));
-}
-
-#[test]
-fn live_responder_request_advertises_all_four_tool_definitions() {
-    // Drive the actual multi-turn request-assembly path (or a small pure
-    // helper it uses) and inspect the ModelRequest / model tool definitions
-    // it builds for the initial responder call.
-    let request = build_initial_responder_request_for_test(/* … */);
-    let names: Vec<&str> = request.tool_definitions().iter().map(|d| d.name()).collect();
-    for expected in [
-        "calculator",
-        "recall_turn",
-        crate::tools::SEARCH_PROJECT_DOCS_TOOL_NAME,
-        crate::tools::READ_PROJECT_DOC_TOOL_NAME,
-    ] {
-        assert!(names.contains(&expected), "missing tool definition: {expected}");
-    }
-}
-```
-
-If exposing the assembled request directly is awkward, extract a small
-pure helper (e.g. `responder_tool_names()` /
-`model_tool_definitions_for(...)` call site) that the live code actually
-uses, and assert against that — the point is to prove the *live path*, not
-a parallel fixture.
-
-- [ ] **Step 3: Run the tests; verify they fail.** Expected: FAIL (the
-  current list omits both names, so the live request omits both
-  definitions).
-
-- [ ] **Step 4: Update the call site(s).**
-
-Extend each existing `vec![...]` of tool names to include the two new
-constants (imported from `crate::tools`). At each updated call site,
-replace the `SessionToolContext` handed to `dispatch_model_tool_calls`
-with a `ResponderToolContext { state: &state, project_docs: &service }`,
-constructing the `ProjectDocService` **once** with absolute repo-root and
-allowlist paths (OQ #1) — otherwise `recall_turn` or the project-doc
-tools fail at runtime. Update the dispatch call to pass a
-`ProjectDocToolBudget`, using a fresh budget for the existing
-single-batch path until Task 6.2 introduces the two-round loop.
-
-> **Resolved after review P6-004:** the live loop receives the absolute
-> repo root through the experiment runner's `--workspace-root` option,
-> which is canonicalized into `RunContext`; `scripts/qsf.ps1` passes the
-> launcher-derived project root. The live service construction must use
-> that runtime accessor and must not derive production paths from
-> `CARGO_MANIFEST_DIR` or the process working directory.
-
-- [ ] **Step 5: Run tests.** Expected: PASS.
-
-- [ ] **Step 6: Commit.**
-
-```bash
-git add crates/qsf_app/src/experiments
-git commit -m "feat(responder): advertise project-doc tools in multi-turn loop"
-```
-
-### Task 6.2: Bounded two-round responder tool loop
-
-**Files:**
-- Modify: `crates/qsf_app/src/experiments/multi_turn_text_loop.rs`
-
-- [ ] **Step 1: Write the failing tests.**
-
-Add tests near the existing multi-turn tool-call tests, using the same
-mock-client style as `RepeatingToolCallClient` and the same assertions
-over `events.jsonl`, `traces.jsonl`, and completed turn counts.
-
-```rust
-#[test]
-fn responder_can_search_then_read_across_two_tool_batches() {
-    // Mock client sequence for one user input:
-    //   1. initial responder call returns search_project_docs
-    //   2. follow-up responder call, after the search tool result, returns read_project_doc
-    //   3. final responder call, after the read tool result, returns natural text
-    // Assert one turn completed, both tool results were appended before the
-    // final answer, ToolCompleted events exist for search and read, and the
-    // project_doc_* success traces share the same turn_index.
-}
-
-#[test]
-fn responder_reuses_project_doc_budget_across_tool_batches() {
-    // Mock client returns read_project_doc in batch 1 and read_project_doc
-    // again in batch 2. The second read is refused by the shared
-    // ProjectDocToolBudget with attempted_count == 2 (per_turn_cap), then the
-    // final no-tools response still completes the turn with the refusal tool
-    // message appended in context (a tool_result for the refused call_id).
-}
-
-#[test]
-fn third_tool_batch_is_rejected_without_appending_turn() {
-    // Mock client returns tool calls in the initial call, in the first
-    // follow-up, and again in the final no-tools response. Assert an
-    // ErrorOccurred event records that the bounded tool loop was exceeded
-    // (stage = "bounded-tool-loop") and no TurnCompleted event is appended
-    // for that input.
-}
-
-#[test]
-fn ordinary_no_tool_response_still_completes_one_turn() {
-    // Regression: a normal answer with no tool calls takes the same path as
-    // before and creates no project-doc traces.
-}
-```
-
-- [ ] **Step 2: Run tests; verify they fail.**
-
-Run: `cargo test -p qsf_app multi_turn_text_loop`
-Expected: FAIL (the current loop makes only one tool-follow-up request,
-without tools, and rejects further tool calls).
-
-- [ ] **Step 3: Implement the bounded loop.**
-
-Add a named constant near the other loop policy constants:
-
-```rust
-const MAX_RESPONDER_TOOL_ROUNDS_PER_TURN: usize = 2;
-```
-
-Refactor the current one-shot `if !response.tool_calls.is_empty()` block
-inside `run_one_turn` into an explicit loop:
-
-```text
-create ProjectDocToolBudget::new(turn_index)
-tool_round = 0
-while response has tool_calls and tool_round < MAX_RESPONDER_TOOL_ROUNDS_PER_TURN:
-  dispatch tool_calls with the same ResponderToolContext and the same budget
-  append assistant tool-call message and one provider-native tool-result
-    message per ToolResult returned by dispatch (executed OR refused)
-  record PromptAssembled for the augmented prompt
-  tool_round += 1
-  if tool_round < MAX_RESPONDER_TOOL_ROUNDS_PER_TURN:
-    invoke responder again with tools still advertised
-  else:
-    invoke responder again with no tools advertised (voicing block still present)
-
-if the response after the loop still has tool_calls:
-  record ErrorOccurred with stage = "bounded-tool-loop"
-  bail without appending the turn
-```
-
-Important details:
-- Reuse the same `ProjectDocToolBudget` for every dispatch inside the
-  human turn; this is what makes Phase 4's true per-turn cap meaningful
-  and what lets Phase 5's traces share `turn_index` across batches.
-- **Append a `ModelMessage::tool_result` for *every* `ToolResult`
-  returned by `dispatch_model_tool_calls`, including per-turn-cap
-  refusals and validation failures** (which return a `ToolResult` without
-  executing the registry), preserving `call_id` correlation for each
-  model tool call dispatch handled. The provider must receive a response
-  for every `tool_call_id` it emitted, or the follow-up call errors
-  (review P6-002). Do **not** append only for executed calls.
-- Preserve the existing usage accounting: total latency, input tokens,
-  cached input tokens, and output tokens must include every provider call
-  in the turn.
-- Preserve the existing provider-native message shape:
-  `ModelMessage::assistant_tool_calls(...)` followed by one
-  `ModelMessage::tool_result(...)` per `ToolResult`.
-- Continue to collect `recalled_turns` from `recall_turn` executions in
-  both tool rounds.
-- The final no-tools request must still use
-  `ModelRole::predefined(ModelRoleId::ConversationalResponder)` and the
-  same model settings, but no `with_tools(...)` call — this keeps the
-  final answer step from starting an unbounded tool loop. **The voicing
-  prompt block (Task 6.3) must still be present on this final call**,
-  because the project-doc channel is enabled for the turn; otherwise the
-  model loses the kind/maturity hedging instructions exactly when it
-  writes the human-facing reply (review P6-001, OQ #8). Drive this by
-  gating the block on channel/turn state, not on the call's advertised
-  tools (see Task 6.3).
-
-- [ ] **Step 4: Run tests.** Expected: PASS.
-
-- [ ] **Step 5: Commit.**
-
-```bash
-git add crates/qsf_app/src/experiments/multi_turn_text_loop.rs
-git commit -m "feat(responder): allow bounded search-read tool loop"
-```
-
-### Task 6.3: Voicing prompt block, present across the whole turn
-
-**Files:**
-- Modify: `crates/qsf_app/src/conversation/prompt.rs` (or whichever
-  module assembles the system prompt for the responder; grep for
-  `ConversationalResponder` and `system` to find it).
-
-The block is the verbatim text from `Design.ProjectDocIntrospection.md`
-Decision 3, *Voicing prompt*. It is appended to the responder's system
-prompt **on every responder provider call in a turn where the
-project-doc channel is enabled** — including the final no-tools answer
-call — and omitted entirely in responder contexts where the channel is
-unavailable. Gate it on channel/turn state, **not** on whether the
-current request's advertised `allowed_tools` happens to contain the two
-tool names (review P6-001, OQ #8): the final answer call advertises no
-tools yet must still carry the hedging instructions for the tool results
-already in context.
-
-- [ ] **Step 1: Add a constant.**
-
-```rust
-// in crates/qsf_app/src/conversation/prompt.rs (or a new sibling module)
-pub const PROJECT_DOC_INTROSPECTION_PROMPT: &str = "\
-You can consult the project's own documents to ground questions about \
-Qualia Signal Foundry. Use search_project_docs to find relevant material, \
-then read_project_doc to pull a focused excerpt or a bounded slice from \
-the most promising one.\n\
-\n\
-Every result carries a kind (Frame, Concept, Research, Plan, Idea, Design, \
-Architecture, ExperimentSpec, ExperimentReport, Decision, Diary, or \
-Unknown) and, where applicable, a maturity tag (Brainstorm, Sketch, \
-Candidate, Accepted, Implemented, Deprecated, or Unknown).\n\
-\n\
-Attribute lightly in your reply, using kind and maturity to hedge:\n\
-  - \"The project's accepted framing says...\"         (Frame, or Accepted Concept)\n\
-  - \"An accepted decision records that...\"           (DecisionLog entry)\n\
-  - \"There's a candidate architecture sketch for...\" (Candidate Architecture)\n\
-  - \"A brainstorm idea explores...\"                  (Idea, or Brainstorm Concept)\n\
-  - \"I found a document but couldn't classify it...\" (Unknown kind or maturity)\n\
-\n\
-Do not claim current behavior from a Plan, Idea, or Concept; those describe \
-intent. Source code is the only authority for what runs today, and is not \
-available to this channel. If a read was truncated or limited to a single \
-section, mention that. When nothing relevant comes back, or when the \
-metadata is Unknown, say so plainly rather than improvising.";
-```
-
-- [ ] **Step 2: Write the failing tests.**
-
-Cover all three states: channel enabled (tool-advertising call), the
-final no-tools answer call in a channel-enabled turn, and channel
-disabled.
-
-```rust
-#[test]
-fn responder_system_prompt_includes_introspection_block_when_channel_enabled() {
-    let prompt = build_system_prompt(/* project_doc_channel_enabled = */ true /*, … */);
-    assert!(prompt.contains("search_project_docs"));
-    assert!(prompt.contains("kind and maturity"));
-}
-
-#[test]
-fn final_no_tools_answer_call_still_includes_introspection_block() {
-    // The final provider call in a project-doc turn advertises no tools but
-    // the channel is still enabled, so the block must remain present so the
-    // model applies kind/maturity hedging to the tool results already in
-    // context (review P6-001).
-    let prompt = build_system_prompt_for_final_answer(/* channel_enabled = */ true /*, … */);
-    assert!(prompt.contains("kind and maturity"));
-}
-
-#[test]
-fn responder_system_prompt_omits_block_when_channel_disabled() {
-    let prompt = build_system_prompt(/* project_doc_channel_enabled = */ false /*, … */);
-    assert!(!prompt.contains("search_project_docs"));
-}
-```
-
-- [ ] **Step 3: Run tests; verify they fail.** Expected: FAIL (the block
-  is not yet appended, and the final-answer case is not yet wired to the
-  channel flag).
-
-- [ ] **Step 4: Append the block whenever the project-doc channel is
-  enabled for the turn.**
-
-In the prompt-assembly path that builds the responder's system message,
-append `PROJECT_DOC_INTROSPECTION_PROMPT` whenever the project-doc
-channel is enabled for the responder turn. Derive that from turn/channel
-state — e.g. a `project_doc_channel_enabled: bool` threaded from the
-Task 6.1/6.2 call site that constructed the `ResponderToolContext` —
-**not** from the current request's advertised `allowed_tools`. Keying off
-the current request's tools would drop the block on the final no-tools
-answer call (review P6-001), exactly when the model must apply
-kind/maturity hedging to the tool results already in context. Still omit
-the block entirely in responder contexts where the project-doc channel is
-unavailable. Keep entry-point files (`main.rs`/`mod.rs`/`lib.rs`) thin and
-any prompt-assembly helper pure/unit-testable per `Agents.md`.
-
-- [ ] **Step 5: Run tests.** Expected: PASS.
-
-- [ ] **Step 6: Commit.**
-
-```bash
-git add crates/qsf_app/src/conversation
-git commit -m "feat(prompt): append project-doc voicing block across responder turn"
-```
-
-### Phase 6 verification
-
-Per `Agents.md`, build first, then focused tests, then the lint/format
-gates:
-
-```bash
-cargo build
-cargo test -p qsf_app multi_turn_text_loop
-cargo test -p qsf_app project_doc       # context/prompt/dispatch coverage touched here
-cargo clippy --all-targets -- -D warnings
-cargo fmt
-```
-
-Expect all clean. At this point the responder can call the tools
-end-to-end against the real `docs/` tree, including `search -> read ->
-answer` in one human turn. A short manual smoke test (run the multi-turn
-text loop, ask "what are you?") is optional here; the full fixture
-battery arrives in Phase 7 and the qualitative live gate in Phase 10.
-
-**Acceptance criteria for Phase 6:**
-
-- The `ConversationalResponder` request built by the multi-turn loop
-  advertises `calculator`, `recall_turn`, `search_project_docs`, and
-  `read_project_doc`; every other live responder call site found by the
-  `allowed_tools` grep is updated consistently. A test exercises the
-  **live** request-assembly path (not just a role helper) and asserts the
-  assembled `ModelRequest` / tool definitions include all four names
-  (review P6-003).
-- Each live dispatch passes a `ResponderToolContext` (both accessors
-  return `Some(_)`) built over a `ProjectDocService` constructed with
-  **absolute** paths from `RunContext::workspace_root()` (the runtime
-  root supplied by `--workspace-root`; review P6-004), and a single
-  `ProjectDocToolBudget::new(turn_index)` reused across every tool batch
-  inside the human turn.
-- The responder completes a bounded `search -> read -> answer` sequence
-  across two provider tool-call batches in one human turn, appending both
-  tool results before the final answer; the two project-doc success
-  traces share the same `turn_index`.
-- Every `ToolResult` returned by dispatch — executed, validation-failed,
-  or per-turn-cap refused — is appended as a `ModelMessage::tool_result`
-  with its `call_id`, so the provider has a response for every tool call
-  it emitted (review P6-002).
-- A second `read` (or a third project-doc call) inside the same turn is
-  refused by the shared budget (`per_turn_cap`, `attempted_count`), the
-  refusal tool message is appended to context, and the turn still
-  completes from the final no-tools response.
-- A provider response that still contains tool calls after the two
-  permitted batches records `ErrorOccurred` (stage `bounded-tool-loop`)
-  and does **not** append the turn; an ordinary no-tool answer completes
-  exactly one turn with no project-doc traces.
-- The responder system prompt includes `PROJECT_DOC_INTROSPECTION_PROMPT`
-  on **every** responder provider call in a project-doc-enabled turn,
-  **including the final no-tools answer call**, and omits it entirely
-  when the channel is unavailable — gated on channel/turn state, not the
-  current request's advertised tools (review P6-001, OQ #8).
-- Usage accounting (latency, input/cached/output tokens) includes every
-  provider call in the turn; provider-native message shape
-  (`assistant_tool_calls` + one `tool_result` per `ToolResult`) is
-  preserved; `recall_turn` recalls are collected across both rounds.
-- `cargo build`, the focused tests above,
-  `cargo clippy --all-targets -- -D warnings`, and `cargo fmt` are clean.
-  No registry, library, or dispatch-layer change is expected — if one
-  proves necessary, surface it before proceeding.
-
-**Diary discipline for this phase.** As with Phases 1-5, the application
-work of Phases 1-8 is grouped under the single Phase 9 diary entry, so
-Phase 6 is not considered complete or mergeable until that entry lands.
-If Phase 6 is merged in isolation ahead of the grouped feature, a short
-standalone Phase 6 diary entry must accompany that merge (read the
-*Instructions how to use* at the top of `docs/EngineeringDiary.md`
-first); reconcile, don't duplicate, in Phase 9.
+## Phase 6: Responder role wired + bounded two-round tool loop — completed
+
+**Status: landed and committed** ("ProjectDocIntrospection phase 6: wire
+responder introspection loop"). Source of truth:
+`crates/qsf_app/src/experiments/multi_turn_text_loop.rs` (and its
+`/tests.rs`).
+
+This is the first **live** call site for the channel. `run_one_turn` now:
+
+- **Advertises all four tools.**
+  `conversational_responder_role_with_session_and_project_doc_tools()`
+  lists `calculator`, `recall_turn`, `search_project_docs`, and
+  `read_project_doc`; `responder_request_for_messages(role, messages,
+  context, state, registry, max_output_tokens, advertise_tools)` builds
+  each provider request, and the live request-assembly path is covered by
+  a test asserting the assembled tool definitions include all four names.
+- **Builds a live `ResponderToolContext` over absolute paths (OQ #1).**
+  `project_doc_service_for_multi_turn_text_loop(context)` constructs the
+  `ProjectDocService` once from `RunContext`'s canonicalized
+  `--workspace-root`, never from `CARGO_MANIFEST_DIR` or the process
+  working directory.
+- **Runs a bounded two-round tool loop.** A `loop` makes the initial
+  provider call (tools advertised), and while the response carries tool
+  calls and fewer than `MAX_RESPONDER_TOOL_ROUNDS_PER_TURN = 2` rounds
+  have run, dispatches the batch through `execute_model_tool_calls(...)`,
+  appends one `ModelMessage::assistant_tool_calls(...)` plus one
+  `ModelMessage::tool_result(call_id, …)` **per returned `ToolResult`
+  (executed OR refused)**, records `PromptAssembled`, and re-invokes the
+  responder. The next request's tools are governed by
+  `advertise_tools = tool_rounds < MAX_RESPONDER_TOOL_ROUNDS_PER_TURN`:
+  tools are still advertised on the second round and dropped only on the
+  call that follows the second tool round (the final answer call). A
+  single `ProjectDocToolBudget::new(turn_index)` is reused across both
+  batches.
+- **Guards against an unbounded loop.** If a response still carries tool
+  calls after the two permitted rounds, an `ErrorOccurred` event (stage
+  `bounded-tool-loop`) is recorded and the turn bails without being
+  appended.
+- **Keeps the voicing block present across the whole turn (OQ #8).**
+  `assemble_prompt_with_summaries_and_project_doc_channel(..., project_doc_channel_enabled)`
+  appends the kind/maturity voicing block to the responder system prompt
+  on **every** provider call in a project-doc turn, including the final
+  no-tools answer call; it is gated on channel/turn state, not on the
+  request's advertised tools.
+- **Preserves accounting and recalls.** Latency and
+  input/cached/output tokens accumulate across every provider call in the
+  turn; `recalled_turns` are collected from `recall_turn` executions in
+  both rounds.
+
+**Binding constraints on later phases (Phase 7 especially):**
+
+- **Reuse the in-crate harness.** The deterministic way to drive the real
+  bounded loop is the test scaffolding already in
+  `crates/qsf_app/src/experiments/multi_turn_text_loop/tests.rs`:
+  `SequencedResponderClient::new(Vec<PlannedResponderResponse>)` (a
+  scripted `ModelClient` whose `.calls()` capture each request's
+  `role_id`/`tools`/`messages`), `PlannedResponderResponse::tool_call(...)`
+  / `::text(...)`, `run_with_io_and_components(...)`,
+  `test_context(...)`, `TestMemorySource`,
+  `test_config_with_warm_threshold(...)`, `responder_tool_names()`, and
+  `parse_event_records` / `parse_trace_records`. This scaffolding is
+  **private to that module** — reuse it in place rather than widening the
+  public surface (see Phase 7 OQ #9).
+- **Round semantics.** Planned-response index `0` (first provider call)
+  is "round 1", index `1` is "round 2", index `2` is the final no-tools
+  answer. A search at index 0 and a read at index 1 exercises the
+  two-batch `search -> read -> answer` path; the final response must
+  carry no tool calls or the turn bails.
+- **Tool advertisement vs. response tool calls.** Because
+  `advertise_tools = tool_rounds < 2`, the request that follows a *single*
+  tool round still advertises the four tools; the request tools are
+  emptied only on the call following the *second* tool round. So a final
+  answer call's *advertised tools* is empty only for a two-round
+  (search-then-read) question; for one-tool and no-tool questions the
+  final/only request still advertises the tools, and what distinguishes
+  the final call is that its *response* carries no tool calls. Phase 7
+  asserts accordingly (see its loop-behavior note).
+- **Live reads execute.** `read_project_doc` runs against the real
+  allowlisted corpus; fixtures that expect a `refused == false` read
+  trace must point at an allowlisted, present document (e.g.
+  `docs/ProjectFrame/ProjectVision.md`, proven in
+  `responder_can_search_then_read_across_two_tool_batches`).
+
+**Acceptance outcome (met):** the live request advertises all four tool
+definitions; the responder completes a bounded `search -> read -> answer`
+sequence across two batches in one turn with both tool results appended
+before the final answer and the two success traces sharing one
+`turn_index`; a second read inside the turn is refused by the shared
+budget (`per_turn_cap`) with its refusal tool message still appended; a
+third tool batch records `ErrorOccurred` (stage `bounded-tool-loop`) and
+does not append the turn; the voicing block is present on every call
+including the final no-tools answer; an ordinary no-tool answer completes
+exactly one turn with no project-doc traces. Build,
+`cargo test -p qsf_app multi_turn_text_loop`, clippy, fmt clean.
+
+**Diary discipline (still binding):** reconcile any isolated-merge entry
+in Phase 9.
 
 ---
 
 ## Phase 7: Self-question battery fixture test
 
-A small structured offline test that exercises the responder with a
-fixed list of self-questions and asserts on the calls made and the
-hedging language used. Runs as a normal `cargo test` so it is part of
-CI.
+A small structured offline test that exercises the now-live bounded
+responder loop with a fixed list of self-questions and asserts on the
+calls made (including round), the recorded events and traces, the
+voicing-block presence, and the hedging language. It runs as a normal
+`cargo test` so it is part of CI, complementing the single inline
+two-batch test from Phase 6 with a data-driven battery (multiple
+questions, the search-then-read path, and an off-topic control).
 
-### Task 7.1: Battery fixture and harness
+**What this phase verifies — and what it deliberately does not.** The
+responder is driven by a *scripted* `ModelClient`, so the battery proves
+the **plumbing and voicing rules**, not the model's natural-language
+choices: the bounded loop wires `search -> read -> answer` across two
+provider batches; the per-turn budget is shared; the voicing block is
+present on every provider call (including the final no-tools answer); the
+off-topic control routes through the loop while making zero project-doc
+calls; and events/traces are emitted with the right shape. Reply-text
+`contains` / `must_not_contain` assertions run against the *canned*
+fixture replies — they pin the intended voicing contract and guard
+against fixture-authoring drift, but the genuine behavioral signal lives
+in the captured `client.calls()` (round/tool shape, advertised tools),
+the system-prompt voicing-block checks, and the `project_doc_*` traces.
+True behavioral verification of reply quality is the **live Phase 10
+gate**; this battery is the deterministic regression gate.
+
+**Loop-behavior note the assertions must respect (verified against
+`multi_turn_text_loop.rs:527`).** The bounded loop advertises tools on
+the *next* provider call whenever
+`tool_rounds < MAX_RESPONDER_TOOL_ROUNDS_PER_TURN` (= 2). Consequences
+the battery must encode rather than fight:
+
+- The request `tools` list is emptied **only** on the call that follows
+  the *second* tool round. So the final answer call has empty advertised
+  tools **only for the two-round search-then-read question**.
+- After a *single* tool round, the next (final) call still advertises the
+  four responder tools. The off-topic control's single, no-tool call also
+  advertises tools.
+- Therefore: assert empty advertised `tools` **only** on the final call
+  of the two-round question; for one-tool and off-topic questions assert
+  that the final *response* carried no `tool_calls` instead of asserting
+  the *request* advertised none.
+- The kind/maturity *voicing block* is orthogonal to tool advertisement:
+  it is present on **every** provider call (OQ #8), including calls that
+  no longer advertise tools.
+
+**Open questions to confirm before implementing (OQ #9):**
+
+1. **Test placement — DEFAULT: in-crate, reusing the private harness.**
+   The harness that drives the real bounded loop
+   (`SequencedResponderClient`, `run_with_io_and_components`,
+   `test_context`, `TestMemorySource`, `responder_tool_names`,
+   `parse_*`) is private to the `multi_turn_text_loop` test module. An
+   external integration test under `crates/qsf_app/tests/` cannot reach
+   it without promoting a public, test-only loop/stub entry point, which
+   would widen the public surface purely for testing and cut against
+   "keep entry points thin." **This plan therefore adds the battery
+   inside `crates/qsf_app/src/experiments/multi_turn_text_loop/tests.rs`
+   (or a sibling `#[cfg(test)]` module that shares its helpers), not as a
+   new file under `crates/qsf_app/tests/`.** This is a deliberate change
+   from the original sketch's external-`tests/`-file location. *If a
+   genuinely external, public-API-only battery is required (e.g. for
+   cross-crate reuse), raise it before writing the harness — that path
+   needs a separate task to expose a minimal public entry and is out of
+   scope here.* The JSON fixture data file still lives under
+   `crates/qsf_app/tests/fixtures/` and is loaded via
+   `CARGO_MANIFEST_DIR`.
+2. **Live-read paths must be real.** Each `read_project_doc` call in the
+   battery executes against the production allowlist + `docs/` corpus, so
+   every fixture `read` path must resolve to an allowlisted, present
+   document or its success-trace assertion will fail. Default: reuse
+   known-good paths (e.g. `docs/ProjectFrame/ProjectVision.md`) and
+   verify any new path against `config/project-doc-introspection.toml`
+   and the actual tree during implementation. If a question's theme has
+   no suitable allowlisted doc, either pick a different doc or assert a
+   refusal trace for that case instead of a success trace.
+
+This phase is pure Rust with deterministic coverage. Follow
+`superpowers:test-driven-development` (or plain TDD): add the harness and
+one question first, watch it drive the real loop and pass, then extend
+the fixture and assertions incrementally. The battery test *is* the
+deliverable and its own verification artifact.
+
+### Task 7.1: Encode the battery fixture
 
 **Files:**
-- Create: `crates/qsf_app/tests/project_doc_self_question_battery.rs`
 - Create: `crates/qsf_app/tests/fixtures/self_question_battery.json`
 
-The harness uses a mock provider (mirror the existing `MockResponder`
-test pattern) to produce predetermined tool calls and replies, then
-asserts on the recorded events and traces. The intent is to verify
-plumbing and voicing rules, not to test the model's natural-language
-choices. For questions that expect both `search_project_docs` and
-`read_project_doc`, the mock provider should emit them in separate
-provider tool-call batches so the battery exercises Phase 6's bounded
-`search -> read -> answer` loop and Phase 4's shared per-turn budget.
+Encode each question as a self-driving record: the `tool_calls` array
+carries both the `round` and the concrete `arguments` the scripted stub
+should emit (so the fixture drives the loop), and the `expected_reply_*`
+fields plus the `arguments` carry the assertions. This refines the
+original sketch, which conflated "what to emit" with "what to assert".
 
-- [ ] **Step 1: Encode the battery.**
+- [ ] **Step 1: Write the fixture.**
 
 ```json
 {
@@ -981,156 +655,270 @@ provider tool-call batches so the battery exercises Phase 6's bounded
     {
       "id": "what_are_you",
       "prompt": "What are you?",
-      "expected_calls": [{ "tool": "search_project_docs", "query_contains": "vision" }],
-      "expected_reply_contains": ["accepted framing"]
-    },
-    {
-      "id": "sleep_phase_implemented",
-      "prompt": "Is the sleep phase implemented?",
-      "expected_calls": [
-        { "tool": "search_project_docs", "round": 1, "query_contains": "sleep" },
-        { "tool": "read_project_doc", "round": 2, "path_contains": "Architecture.SleepPhase.md" }
+      "reply": "The project's accepted framing describes a runtime voice loop grounded in its own docs.",
+      "tool_calls": [
+        { "round": 1, "tool": "search_project_docs", "arguments": { "query": "vision" } }
       ],
-      "expected_reply_must_not_contain": ["I do", "I have"],
-      "expected_reply_contains": ["the project"]
+      "expected_reply_contains": ["accepted framing"],
+      "expected_reply_must_not_contain": []
     },
     {
-      "id": "goal_system",
-      "prompt": "Tell me about the goal system.",
-      "expected_calls": [{ "tool": "search_project_docs", "query_contains": "goal" }],
-      "expected_reply_contains": ["brainstorm"]
+      "id": "framing_search_then_read",
+      "prompt": "What does the project say it is, in its own words?",
+      "reply": "The project's accepted framing says to keep the responder grounded in project docs.",
+      "tool_calls": [
+        { "round": 1, "tool": "search_project_docs", "arguments": { "query": "vision" } },
+        { "round": 2, "tool": "read_project_doc",
+          "arguments": { "path": "docs/ProjectFrame/ProjectVision.md", "focus": "vision", "max_tokens": 400 } }
+      ],
+      "expected_reply_contains": ["the project"],
+      "expected_reply_must_not_contain": ["I do", "I have"]
     },
     {
-      "id": "off_topic",
+      "id": "off_topic_control",
       "prompt": "What's the capital of France?",
-      "expected_calls": [],
+      "reply": "The capital of France is Paris.",
+      "tool_calls": [],
+      "expected_reply_contains": [],
       "expected_reply_must_not_contain": ["search_project_docs"]
     }
   ]
 }
 ```
 
-- [ ] **Step 2: Write the harness.**
+Notes:
+- Every `read_project_doc` `path` must be allowlisted and present (OQ #9
+  point 2). Verify against `config/project-doc-introspection.toml` and
+  `docs/` while implementing; swap any path that does not resolve.
+- The `framing_search_then_read` question intentionally splits search
+  (round 1) and read (round 2) so the battery exercises the bounded
+  two-round loop and the shared per-turn budget. It is the **only**
+  fixture whose final answer call advertises an empty `tools` list (it
+  follows the second tool round); the one-tool `what_are_you` and the
+  no-tool `off_topic_control` final calls still advertise the four tools
+  per the loop-behavior note above.
+- Keep the fixture small; add more questions only once the harness and
+  assertions are proven.
 
-```rust
-// crates/qsf_app/tests/project_doc_self_question_battery.rs
-//! Offline self-question battery for the project-doc introspection channel.
-//!
-//! Replays a fixed list of self-questions against a stubbed responder that
-//! emits predetermined tool calls, then asserts on the recorded events and
-//! traces and on the hedging language present in the final reply.
+### Task 7.2: Fixture-driven harness over the real bounded loop
 
-use serde::Deserialize;
-use std::path::PathBuf;
+**Files:**
+- Modify: `crates/qsf_app/src/experiments/multi_turn_text_loop/tests.rs`
+  (add the battery alongside the existing tests, reusing its helpers —
+  see OQ #9). If the module grows unwieldy, extract the new code into a
+  sibling `#[cfg(test)]` module declared from `multi_turn_text_loop.rs`
+  and make the shared helpers (`SequencedResponderClient`,
+  `PlannedResponderResponse`, `CapturedRequest`, `test_context`,
+  `TestMemorySource`, `responder_tool_names`, `parse_event_records`,
+  `parse_trace_records`) `pub(super)` rather than duplicating them.
 
-#[derive(Debug, Deserialize)]
-struct Battery {
-    questions: Vec<Question>,
-}
+- [ ] **Step 1: Define the fixture types and loader.**
 
-#[derive(Debug, Deserialize)]
-struct Question {
-    id: String,
-    prompt: String,
-    expected_calls: Vec<ExpectedCall>,
-    #[serde(default)]
-    expected_reply_contains: Vec<String>,
-    #[serde(default)]
-    expected_reply_must_not_contain: Vec<String>,
-}
+Add `serde::Deserialize` structs mirroring the JSON (`Battery`,
+`Question`, `ToolCallFixture { round, tool, arguments: serde_json::Value }`)
+and load via
+`PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/self_question_battery.json")`.
 
-#[derive(Debug, Deserialize)]
-struct ExpectedCall {
-    tool: String,
-    #[serde(default)]
-    round: Option<usize>,
-    #[serde(default)]
-    query_contains: Option<String>,
-    #[serde(default)]
-    path_contains: Option<String>,
-}
+- [ ] **Step 2: Validate fixture rounds before driving (P7-002).**
 
-#[test]
-fn battery_runs_against_stubbed_responder() {
-    let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("tests/fixtures/self_question_battery.json");
-    let raw = std::fs::read_to_string(&path).unwrap();
-    let battery: Battery = serde_json::from_str(&raw).unwrap();
+The single-call harness emits exactly one
+`PlannedResponderResponse::tool_call` per fixture entry, in `round`
+order, so the `round` values are load-bearing and must be checked rather
+than merely sorted. When loading each `Question`, assert its
+`tool_calls` rounds are:
 
-    for question in &battery.questions {
-        let outcome = run_question_through_stubbed_responder(&question.prompt);
+- unique (no two calls share a round),
+- 1-based and contiguous (1, then 2, …), and
+- never greater than `MAX_RESPONDER_TOOL_ROUNDS_PER_TURN` (2).
 
-        assert_eq!(
-            outcome.calls.len(),
-            question.expected_calls.len(),
-            "question {}: expected {} calls, got {}",
-            question.id,
-            question.expected_calls.len(),
-            outcome.calls.len()
-        );
+Fail the test with the offending `question.id` if any rule is violated.
+This prevents a fixture from silently mislabeling a round (which the bare
+"sort, then emit one response each" approach would not catch) and makes
+the round assertions in Task 7.3 meaningful. *(If a future fixture truly
+needs more than one tool call inside one provider round, extend
+`PlannedResponderResponse` to carry multiple `ModelToolCall`s grouped by
+round instead of emitting one response per call — out of scope here.)*
 
-        for (expected, actual) in question.expected_calls.iter().zip(&outcome.calls) {
-            assert_eq!(actual.tool, expected.tool, "question {}", question.id);
-            if let Some(round) = expected.round {
-                assert_eq!(actual.round, round, "question {}", question.id);
-            }
-            if let Some(needle) = &expected.query_contains {
-                let query = actual.arguments.get("query").and_then(|v| v.as_str()).unwrap_or("");
-                assert!(
-                    query.to_ascii_lowercase().contains(&needle.to_ascii_lowercase()),
-                    "question {}: query `{query}` missing `{needle}`",
-                    question.id
-                );
-            }
-            if let Some(needle) = &expected.path_contains {
-                let path = actual.arguments.get("path").and_then(|v| v.as_str()).unwrap_or("");
-                assert!(path.contains(needle), "question {}", question.id);
-            }
-        }
+- [ ] **Step 3: Build the per-question driver.**
 
-        for needle in &question.expected_reply_contains {
-            assert!(
-                outcome.reply.to_ascii_lowercase().contains(&needle.to_ascii_lowercase()),
-                "question {}: reply missing `{needle}`",
-                question.id
-            );
-        }
-        for forbidden in &question.expected_reply_must_not_contain {
-            assert!(
-                !outcome.reply.contains(forbidden),
-                "question {}: reply contained forbidden `{forbidden}`",
-                question.id
-            );
-        }
+For each `Question`, build the scripted responses in (already-validated)
+round order, then a final text reply, and drive the existing loop entry
+point:
+
+```text
+fn run_question(question) -> Outcome:
+    // rounds already validated as unique, 1-based, contiguous, <= 2
+    sort question.tool_calls by round
+    let mut responses = vec![]
+    for call in sorted tool_calls:
+        responses.push(PlannedResponderResponse::tool_call(
+            "scripted tool round",
+            format!("{}-{}", question.id, call.round),   // stable call_id
+            call.tool,
+            call.arguments.clone(),
+        ))
+    responses.push(PlannedResponderResponse::text(question.reply))
+
+    let client = SequencedResponderClient::new(responses)
+    let base_dir = temp_dir().join(format!("qsf-battery-{}-{}", question.id, Uuid::new_v4()))
+    let mut context = test_context(&base_dir, "multi-turn-text-loop")
+    let input = Cursor::new(format!("{}\n:quit\n", question.prompt))
+    run_with_io_and_components(&mut context, input, &mut Vec::new(), &client,
+                               &TestMemorySource, test_config_with_warm_threshold(10, 10))?
+    let events = parse_event_records(&read(context.run_dir().join("events.jsonl")))
+    return Outcome {
+        calls: client.calls(),
+        events,
+        traces: parse_trace_records(&read(context.run_dir().join("traces.jsonl"))),
+        // Read the reply from the single TurnCompleted event payload — NOT
+        // from ExperimentOutcome or formatted console output, which carry
+        // loop framing. Confirm the exact field name against the event
+        // shape during implementation (e.g. turn.assistant_response).
+        reply: <assistant response text from the TurnCompleted event>,
+        base_dir,
     }
-}
-
-// run_question_through_stubbed_responder is implemented in this same file
-// using a small stub model client. The stub should drive the actual bounded
-// responder tool loop from Phase 6, not call dispatch directly, so expected
-// round numbers prove that search and read can span two provider batches.
-// Implementation mirrors the test patterns in
-// crates/qsf_app/src/models/openai_tool_client.rs which already use
-// MockResponder for deterministic outputs.
 ```
 
-The stub model client is the work of the task — it should issue the
-expected tool calls for each prompt and produce a canned reply that
-exercises the assertions. Use the existing `MockResponder`
-infrastructure as a starting point.
+Use one fresh `test_context` per question so each question's
+`events.jsonl` / `traces.jsonl` are isolated. Clean up `base_dir` after
+asserting, matching the existing tests' `fs::remove_dir_all` pattern.
 
-- [ ] **Step 3: Run the battery.**
+**Reply extraction (P7-003).** `run_with_io_and_components` returns an
+`ExperimentOutcome`, not the last responder text, and the captured
+console output includes loop framing/formatting. The deterministic source
+for `Outcome.reply` is the single `TurnCompleted` event's assistant
+response payload; read it from the parsed events (confirm the exact field
+during implementation) rather than from `ExperimentOutcome` or console
+output.
 
-Run: `cargo test -p qsf_app --test project_doc_self_question_battery`
-Expected: PASS.
+### Task 7.3: Battery assertions and run
 
-- [ ] **Step 4: Commit.**
+**Files:**
+- Modify: same module as Task 7.2.
+
+- [ ] **Step 1: Write the battery test.**
+
+Iterate the loaded `Battery` and, per question, assert:
+
+- **Provider-call shape.** `outcome.calls.len() == tool_calls.len() + 1`
+  for tool-emitting questions, and `== 1` for the off-topic control.
+  Each tool-emitting round's call advertises the four tools:
+  `calls[round - 1].tools == responder_tool_names()`. For the *final*
+  call:
+  - the two-round `framing_search_then_read` question's final answer call
+    advertises an **empty** `tools` list (it follows the second tool
+    round, so `advertise_tools` is false);
+  - the one-tool `what_are_you` and no-tool `off_topic_control`
+    final/only calls still advertise `responder_tool_names()` (because
+    `tool_rounds < 2`) — for these, assert that the final *response*
+    carried no `tool_calls` rather than asserting the request advertised
+    none.
+- **Voicing block on every call (OQ #8).** Every captured call's first
+  message is the system prompt and contains both `"search_project_docs"`
+  and `"kind and maturity"` — including the final answer call of every
+  question, whether or not that call still advertises tools.
+- **Executed tool calls via traces.** For each expected
+  `search_project_docs` / `read_project_doc` call there is a matching
+  `project_doc_*` trace with `details.refused == false`; the sanitized
+  `query` / `path` in the trace matches the fixture `arguments`
+  (substring match on `query` / equality or substring on `path`). For
+  the `framing_search_then_read` question, the search and read traces
+  share one `turn_index`.
+- **Events.** Exactly one `TurnCompleted` per question; a `ToolCompleted`
+  event exists for each emitted tool name.
+- **Off-topic control.** Zero `project_doc_*` traces, no `ToolCompleted`
+  for either project-doc tool, and exactly one provider call — while the
+  voicing block is still present (channel enabled for the turn) and that
+  single call still advertises the four tools (no tool round occurred, so
+  `advertise_tools` stays true).
+- **Reply text.** `outcome.reply` contains every
+  `expected_reply_contains` string (case-insensitive) and none of the
+  `expected_reply_must_not_contain` strings. (As noted in the phase
+  intro, these guard the canned fixtures, not model behavior.)
+
+Include the failing `question.id` in every assertion message so a battery
+failure pinpoints the offending question.
+
+- [ ] **Step 2: Run the battery.**
 
 ```bash
-git add crates/qsf_app/tests/project_doc_self_question_battery.rs \
-        crates/qsf_app/tests/fixtures
-git commit -m "test(project_docs): self-question battery against stubbed responder"
+cargo test -p qsf_app multi_turn_text_loop
 ```
+
+Run the focused battery test name as well if you gave it one, e.g.
+`cargo test -p qsf_app self_question_battery`. Expected: PASS.
+
+- [ ] **Step 3: Commit.**
+
+```bash
+git add crates/qsf_app/tests/fixtures/self_question_battery.json \
+        crates/qsf_app/src/experiments/multi_turn_text_loop/tests.rs
+git commit -m "test(project_docs): self-question battery over the live responder loop"
+```
+
+**Do not merge this commit in isolation without satisfying the repo diary
+rule (P7-004).** The repo instructions require implementation changes to
+be documented in `docs/EngineeringDiary.md`. This phase's grouped diary
+coverage lives in Phase 9, so either (a) keep the Phase 7 commit unmerged
+until the Phase 9 diary commit is on the same branch, or (b) add a short
+standalone Phase 7 diary entry to this commit/branch (read the
+*Instructions how to use* at the top of `docs/EngineeringDiary.md`
+first). See *Diary discipline for this phase* below; reconcile, don't
+duplicate, in Phase 9.
+
+### Phase 7 verification
+
+Per `Agents.md`, build first, then focused tests, then the lint/format
+gates:
+
+```bash
+cargo build
+cargo test -p qsf_app multi_turn_text_loop
+cargo test -p qsf_app project_doc
+cargo clippy --all-targets -- -D warnings
+cargo fmt
+```
+
+Expect all clean. No registry, library, dispatch-layer, or loop change is
+expected — Phase 7 only adds a test and a fixture. If the battery cannot
+be expressed without a production-code change, **surface it before
+proceeding** rather than quietly editing runtime code from a test phase.
+
+**Acceptance criteria for Phase 7:**
+
+- A data-driven battery loads `self_question_battery.json`, validates each
+  question's `round` values (unique, 1-based, contiguous, ≤ 2), and drives
+  each question through the **real** bounded responder loop via
+  `run_with_io_and_components` and a `SequencedResponderClient`, not by
+  calling `dispatch_model_tool_calls` directly.
+- A search-then-read question exercises the two-round path: search in
+  round 1, read in round 2, a final no-tools answer (the only question
+  whose final call advertises an empty `tools` list), with both
+  `project_doc_*` success traces sharing one `turn_index`.
+- Every provider call's system prompt carries the voicing block,
+  including each question's final answer call — regardless of whether that
+  call still advertises tools.
+- The off-topic control makes zero project-doc calls (no `project_doc_*`
+  traces, no project-doc `ToolCompleted`) and completes exactly one turn
+  while still carrying the voicing block; its single call advertises the
+  four tools and its response carries no tool calls.
+- Each emitted tool call is observable in the traces with
+  `refused == false` and arguments matching the fixture; each question
+  completes exactly one `TurnCompleted`, and the reply is read from that
+  event payload.
+- Every `read_project_doc` fixture path resolves to an allowlisted,
+  present document (or the question asserts a refusal trace by design).
+- The battery runs under `cargo test -p qsf_app` as a CI regression gate;
+  `cargo build`, the focused tests above,
+  `cargo clippy --all-targets -- -D warnings`, and `cargo fmt` are clean.
+
+**Diary discipline for this phase.** As with Phases 1-6, the application
+work of Phases 1-8 is grouped under the single Phase 9 diary entry, so
+Phase 7 is not considered complete or mergeable until that entry lands.
+If Phase 7 is merged in isolation ahead of the grouped feature, a short
+standalone Phase 7 diary entry must accompany that merge (read the
+*Instructions how to use* at the top of `docs/EngineeringDiary.md`
+first); reconcile, don't duplicate, in Phase 9.
 
 ---
 
@@ -1400,8 +1188,8 @@ slice, make sure this entry (or a separate library-slice entry)
 explicitly accounts for the `project_docs` library work, not only Phases
 2-8.** If any of Phases 2-8 were merged in isolation ahead of this pass
 and already carry their own standalone diary entries (per the diary
-discipline noted in those phases), reconcile rather than duplicate them
-here.
+discipline noted in those phases — including a possible standalone Phase 7
+entry per Task 7.3), reconcile rather than duplicate them here.
 
 Template:
 
@@ -1438,6 +1226,7 @@ What changed:
 
 Refs: crates/qsf_app/src/project_docs, crates/qsf_app/src/tools,
 crates/qsf_app/src/models/tool_dispatch.rs,
+crates/qsf_app/src/experiments/multi_turn_text_loop.rs,
 config/project-doc-introspection.toml; implements: Project-doc
 introspection v1 scope (DecisionLog.md).
 ```
@@ -1626,8 +1415,8 @@ Run after Phases 1-10 land:
 - [ ] Verify the `ToolRegistry` routes **both** project-doc tools through
   `metadata_for`, `dispatch`, and `model_tool_definitions_for`, with
   metadata advertising `ReadOnly`/`ReadOnly` and definitions returned
-  under the correct names (Phase 3 tests should already cover this in CI
-  — search *and* read dispatch tests).
+  under the correct names (Phase 3 tests should already cover this in
+  CI — search *and* read dispatch tests).
 - [ ] Verify a combined `ResponderToolContext` answers both
   `session_state()` and `project_doc_service()`, and that one
   `ProjectDocToolBudget` is reused across dispatch batches inside the
@@ -1658,12 +1447,21 @@ Run after Phases 1-10 land:
   project-doc turn (including the final no-tools answer call) and omitted
   when the channel is unavailable (Phase 6 tests should already cover
   this in CI).
+- [ ] Verify the Phase 7 self-question battery loads its fixture,
+  validates fixture rounds, drives each question through the **real**
+  bounded responder loop (not a direct dispatch call), asserts the
+  search-then-read two-round path with shared `turn_index` and an empty
+  advertised-tools list only on that question's final answer call,
+  asserts the voicing block on every provider call including each
+  question's final answer call, and asserts the off-topic control makes
+  zero project-doc calls — all under `cargo test -p qsf_app`.
 - [ ] Verify `Architecture.ToolSystem.md`'s *Implementation Status*
   section lists the two new tools under "Implemented today" with code
   refs and a refreshed `Last reviewed:` date.
 - [ ] Confirm there is exactly one diary entry covering Phases 1-8 (or,
   since Phase 1 was committed independently, a standalone library-slice
   entry plus the Phases 2-8 entry), with any isolated-merge diary entries
-  reconciled rather than duplicated.
+  (including a possible standalone Phase 7 entry) reconciled rather than
+  duplicated.
 - [ ] Confirm Phase 11 remains a follow-on planning handoff unless it has
   been promoted into a separate detailed design or implementation plan.

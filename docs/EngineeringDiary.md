@@ -2492,3 +2492,17 @@ Observed:
 Refs: crates/qsf_app/src/experiments/multi_turn_text_loop.rs,
 crates/qsf_app/src/experiments/multi_turn_text_loop/{config,console,report,tool_runtime}.rs,
 crates/qsf_app/src/session/config.rs
+
+## 2026-06-07 - Project-doc self-question battery
+
+Added an in-crate regression battery for the live multi-turn responder loop so scripted
+project-doc questions can exercise the bounded `search -> read -> answer` path, the
+voicing block, and trace/event recording end to end.
+
+What changed:
+- Added `crates/qsf_app/tests/fixtures/self_question_battery.json` with search/read/off-topic cases.
+- Added `self_question_battery_drives_real_bounded_loop` in `crates/qsf_app/src/experiments/multi_turn_text_loop/tests.rs`.
+- Verified reply extraction from `TurnCompleted` along with project-doc traces and provider-call shapes.
+
+Refs: crates/qsf_app/src/experiments/multi_turn_text_loop/tests.rs,
+crates/qsf_app/tests/fixtures/self_question_battery.json

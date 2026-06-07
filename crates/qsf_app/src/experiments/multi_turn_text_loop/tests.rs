@@ -3,6 +3,7 @@ use std::io::Cursor;
 use std::path::{Path, PathBuf};
 
 use crate::audio::{SimulatedSpeechOutputProvider, SimulatedTranscriptProvider};
+use serde::Deserialize;
 use serde_json::{Value, json};
 use uuid::Uuid;
 
@@ -2661,6 +2662,207 @@ fn ordinary_no_tool_response_still_completes_one_turn() {
 }
 
 #[test]
+fn self_question_battery_drives_real_bounded_loop() {
+    let battery = load_self_question_battery();
+
+    for question in battery.questions {
+        let outcome = run_self_question_battery_question(&question);
+
+        assert_eq!(
+            outcome.calls.len(),
+            question.tool_calls.len() + 1,
+            "question {}: expected one provider call per tool round plus the final answer",
+            question.id
+        );
+
+        for tool_call in &question.tool_calls {
+            let call_index = tool_call.round - 1;
+            assert_eq!(
+                outcome.calls[call_index].tools,
+                responder_tool_names(),
+                "question {}: round {} should advertise the responder tools",
+                question.id,
+                tool_call.round
+            );
+        }
+
+        if question.tool_calls.len() == super::MAX_RESPONDER_TOOL_ROUNDS_PER_TURN {
+            assert!(
+                outcome
+                    .calls
+                    .last()
+                    .expect("final call present")
+                    .tools
+                    .is_empty(),
+                "question {}: the final answer after the second tool round should stop advertising tools",
+                question.id
+            );
+        } else {
+            assert_eq!(
+                outcome.calls.last().expect("final call present").tools,
+                responder_tool_names(),
+                "question {}: the final or only call should still advertise the responder tools when the second tool round has not been reached",
+                question.id
+            );
+        }
+
+        for call in &outcome.calls {
+            let system_message = call
+                .messages
+                .first()
+                .expect("provider request should include a system prompt");
+            assert_eq!(
+                system_message.role,
+                crate::models::ModelMessageRole::System,
+                "question {}: every provider call should begin with the system prompt",
+                question.id
+            );
+            assert!(
+                system_message.content.contains("search_project_docs"),
+                "question {}: the voicing block should mention search_project_docs on every provider call",
+                question.id
+            );
+            assert!(
+                system_message.content.contains("kind and maturity"),
+                "question {}: the voicing block should mention kind and maturity on every provider call",
+                question.id
+            );
+        }
+
+        let turn_completed_records = outcome
+            .event_records
+            .iter()
+            .filter(|record| record.event_type == EventType::TurnCompleted)
+            .collect::<Vec<_>>();
+        assert_eq!(
+            turn_completed_records.len(),
+            1,
+            "question {}: each battery question should complete exactly one turn",
+            question.id
+        );
+
+        assert_eq!(
+            outcome.reply, question.reply,
+            "question {}: the scripted reply should round-trip through the turn payload",
+            question.id
+        );
+
+        let expected_tool_names = question
+            .tool_calls
+            .iter()
+            .map(|call| call.tool.as_str())
+            .collect::<Vec<_>>();
+
+        for tool_name in &expected_tool_names {
+            assert!(
+                outcome.event_records.iter().any(|record| {
+                    record.event_type == EventType::ToolCompleted
+                        && record.payload["tool_name"] == *tool_name
+                }),
+                "question {}: expected a ToolCompleted event for {tool_name}",
+                question.id
+            );
+        }
+
+        let project_doc_traces = outcome
+            .trace_records
+            .iter()
+            .filter(|record| record.operation.starts_with("project_doc_"))
+            .collect::<Vec<_>>();
+
+        if question.tool_calls.is_empty() {
+            assert!(
+                project_doc_traces.is_empty(),
+                "question {}: the off-topic control should not emit project-doc traces",
+                question.id
+            );
+            assert!(
+                outcome.event_records.iter().all(|record| {
+                    !(record.event_type == EventType::ToolCompleted
+                        && matches!(record.payload["tool_name"].as_str(), Some(name) if name == SEARCH_PROJECT_DOCS_TOOL_NAME || name == READ_PROJECT_DOC_TOOL_NAME))
+                }),
+                "question {}: the off-topic control should not complete any project-doc tools",
+                question.id
+            );
+        } else {
+            for tool_call in &question.tool_calls {
+                let operation = match tool_call.tool.as_str() {
+                    SEARCH_PROJECT_DOCS_TOOL_NAME => "project_doc_search",
+                    READ_PROJECT_DOC_TOOL_NAME => "project_doc_read",
+                    other => panic!("question {}: unexpected tool {other}", question.id),
+                };
+                let trace = outcome
+                    .trace_records
+                    .iter()
+                    .find(|record| record.operation == operation)
+                    .unwrap_or_else(|| {
+                        panic!("question {}: missing trace for {}", question.id, operation)
+                    });
+                assert_eq!(
+                    trace.details["refused"], false,
+                    "question {}: {} should have executed successfully",
+                    question.id, operation
+                );
+                assert_eq!(
+                    trace.details["turn_index"],
+                    project_doc_traces
+                        .first()
+                        .expect("project-doc trace present")
+                        .details["turn_index"],
+                    "question {}: all project-doc traces in the turn should share the same turn_index",
+                    question.id
+                );
+
+                match tool_call.tool.as_str() {
+                    SEARCH_PROJECT_DOCS_TOOL_NAME => {
+                        assert_eq!(
+                            trace.details["arguments"]["query"], tool_call.arguments["query"],
+                            "question {}: search trace should preserve the scripted query",
+                            question.id
+                        );
+                    }
+                    READ_PROJECT_DOC_TOOL_NAME => {
+                        assert_eq!(
+                            trace.details["arguments"]["path"], tool_call.arguments["path"],
+                            "question {}: read trace should preserve the scripted path",
+                            question.id
+                        );
+                    }
+                    _ => unreachable!(),
+                }
+            }
+
+            if question.id == "framing_search_then_read" {
+                let search_trace = outcome
+                    .trace_records
+                    .iter()
+                    .find(|record| record.operation == "project_doc_search")
+                    .expect("search trace present");
+                let read_trace = outcome
+                    .trace_records
+                    .iter()
+                    .find(|record| record.operation == "project_doc_read")
+                    .expect("read trace present");
+                assert_eq!(
+                    search_trace.details["turn_index"], read_trace.details["turn_index"],
+                    "question {}: search and read should share one turn_index",
+                    question.id
+                );
+            }
+        }
+
+        assert_reply_expectations(
+            &outcome.reply,
+            &question.expected_reply_contains,
+            &question.expected_reply_must_not_contain,
+            &question.id,
+        );
+
+        fs::remove_dir_all(outcome.base_dir).unwrap();
+    }
+}
+
+#[test]
 fn report_marks_warm_invalidation_then_stable_prefix_resume() {
     let config = test_config_with_warm_threshold(5, 2);
     let summary = TurnSummary {
@@ -3263,6 +3465,162 @@ fn responder_tool_names() -> Vec<String> {
         SEARCH_PROJECT_DOCS_TOOL_NAME.to_string(),
         READ_PROJECT_DOC_TOOL_NAME.to_string(),
     ]
+}
+
+#[derive(Debug, Deserialize)]
+struct SelfQuestionBattery {
+    questions: Vec<SelfQuestion>,
+}
+
+#[derive(Debug, Deserialize)]
+struct SelfQuestion {
+    id: String,
+    prompt: String,
+    reply: String,
+    tool_calls: Vec<ToolCallFixture>,
+    expected_reply_contains: Vec<String>,
+    expected_reply_must_not_contain: Vec<String>,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+struct ToolCallFixture {
+    round: usize,
+    tool: String,
+    arguments: Value,
+}
+
+struct SelfQuestionOutcome {
+    calls: Vec<CapturedRequest>,
+    event_records: Vec<EventRecord>,
+    trace_records: Vec<TraceRecord>,
+    reply: String,
+    base_dir: PathBuf,
+}
+
+fn load_self_question_battery() -> SelfQuestionBattery {
+    let path =
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/self_question_battery.json");
+    let json = fs::read_to_string(&path).unwrap_or_else(|error| {
+        panic!(
+            "failed to read self-question battery fixture at {}: {error}",
+            path.display()
+        )
+    });
+    serde_json::from_str(&json).unwrap_or_else(|error| {
+        panic!(
+            "failed to parse self-question battery fixture at {}: {error}",
+            path.display()
+        )
+    })
+}
+
+fn run_self_question_battery_question(question: &SelfQuestion) -> SelfQuestionOutcome {
+    let tool_calls = validated_sorted_tool_calls(question);
+    let mut responses = tool_calls
+        .iter()
+        .map(|call| {
+            PlannedResponderResponse::tool_call(
+                format!("{} round {}", question.id, call.round),
+                format!("{}-{}", question.id, call.round),
+                call.tool.clone(),
+                call.arguments.clone(),
+            )
+        })
+        .collect::<Vec<_>>();
+    responses.push(PlannedResponderResponse::text(question.reply.clone()));
+
+    let client = SequencedResponderClient::new(responses);
+    let base_dir = std::env::temp_dir().join(format!(
+        "qsf-self-question-battery-{}-{}",
+        question.id,
+        Uuid::new_v4()
+    ));
+    let mut context = test_context(&base_dir, "multi-turn-text-loop");
+    let input = Cursor::new(format!("{}\n:quit\n", question.prompt));
+    let mut output = Vec::new();
+    let memory_source = TestMemorySource;
+
+    run_with_io_and_components(
+        &mut context,
+        input,
+        &mut output,
+        &client,
+        &memory_source,
+        test_config_with_warm_threshold(10, 10),
+    )
+    .unwrap();
+
+    let event_records =
+        parse_event_records(&fs::read_to_string(context.run_dir().join("events.jsonl")).unwrap());
+    let trace_records =
+        parse_trace_records(&fs::read_to_string(context.run_dir().join("traces.jsonl")).unwrap());
+    let turn_completed = event_records
+        .iter()
+        .find(|record| record.event_type == EventType::TurnCompleted)
+        .expect("turn completed event present");
+    let turn: Turn = serde_json::from_value(turn_completed.payload["turn"].clone())
+        .expect("turn payload should deserialize");
+
+    SelfQuestionOutcome {
+        calls: client.calls(),
+        event_records,
+        trace_records,
+        reply: turn.assistant_response,
+        base_dir,
+    }
+}
+
+fn validated_sorted_tool_calls(question: &SelfQuestion) -> Vec<ToolCallFixture> {
+    let mut tool_calls = question.tool_calls.clone();
+    tool_calls.sort_by_key(|tool_call| tool_call.round);
+
+    let rounds = tool_calls
+        .iter()
+        .map(|tool_call| tool_call.round)
+        .collect::<Vec<_>>();
+    let expected_rounds = (1..=tool_calls.len()).collect::<Vec<_>>();
+    assert_eq!(
+        rounds, expected_rounds,
+        "question {}: tool call rounds must be unique, 1-based, and contiguous",
+        question.id
+    );
+    assert!(
+        tool_calls
+            .iter()
+            .all(|tool_call| tool_call.round <= super::MAX_RESPONDER_TOOL_ROUNDS_PER_TURN),
+        "question {}: tool call rounds must not exceed {}",
+        question.id,
+        super::MAX_RESPONDER_TOOL_ROUNDS_PER_TURN
+    );
+
+    tool_calls
+}
+
+fn assert_reply_expectations(
+    reply: &str,
+    expected_contains: &[String],
+    expected_must_not_contain: &[String],
+    question_id: &str,
+) {
+    let lower_reply = reply.to_ascii_lowercase();
+
+    for needle in expected_contains {
+        assert!(
+            lower_reply.contains(&needle.to_ascii_lowercase()),
+            "question {}: reply should contain `{}`",
+            question_id,
+            needle
+        );
+    }
+
+    for needle in expected_must_not_contain {
+        assert!(
+            !lower_reply.contains(&needle.to_ascii_lowercase()),
+            "question {}: reply should not contain `{}`",
+            question_id,
+            needle
+        );
+    }
 }
 
 fn test_context(base_dir: impl AsRef<Path>, experiment_id: &str) -> RunContext {
