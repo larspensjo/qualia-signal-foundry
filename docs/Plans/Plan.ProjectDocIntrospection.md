@@ -30,11 +30,13 @@ choice ("plan-phase decision"), the plan picks one explicitly.
 
 ## Status
 
-Phases 1-6 have landed and are committed. The minimum viable channel is
-live: the `ConversationalResponder` advertises both project-doc tools in
-the multi-turn text loop, can run a bounded `search -> read -> answer`
-sequence inside one human turn under a true per-turn budget, and the
-dispatch layer emits success/refusal traces for every call.
+Phases 1-7 have landed and are committed. The minimum viable channel is
+live and guarded by a CI regression battery: the `ConversationalResponder`
+advertises both project-doc tools in the multi-turn text loop, can run a
+bounded `search -> read -> answer` sequence inside one human turn under a
+true per-turn budget, the dispatch layer emits success/refusal traces for
+every call, and an offline self-question battery replays a fixed list of
+questions through the live bounded loop as a deterministic regression gate.
 
 - **Phase 1** — pure `ProjectDocService` library
   (`crates/qsf_app/src/project_docs/`).
@@ -57,17 +59,19 @@ dispatch layer emits success/refusal traces for every call.
   refused), and the kind/maturity voicing block present on every
   responder provider call in a project-doc turn — including the final
   no-tools answer call.
+- **Phase 7** — the offline self-question battery: a data-driven test
+  that drives the real bounded responder loop with a scripted
+  `ModelClient` and asserts on the tool calls made (including round),
+  recorded events and traces, the voicing-block presence on every
+  provider call, and the hedging language in the canned replies.
 
-**Phase 7 (the offline self-question battery fixture test) is the next
-implementation step.** It is the first phase whose deliverable is a CI
-regression test rather than runtime wiring: it replays a fixed list of
-self-questions through the now-live bounded responder loop using a
-scripted `ModelClient` and asserts on the tool calls made (including
-round), the recorded events and traces, the voicing-block presence on
-every provider call, and the hedging language in the canned replies.
-Phase 8 adds the `influenced_reply` post-hoc enrichment, Phase 9 lands the
-documentation updates, Phase 10 records the live external verification,
-and Phase 11 is a future planning handoff.
+**Phase 8 (the `influenced_reply` post-hoc enrichment) is the next
+implementation step.** It is the first phase that consumes a *finished*
+run's artifacts: it joins each `project_doc_*` trace to the same-turn
+final assistant reply and writes a follow-up `project_doc_influence`
+trace marking whether the reply overlapped the returned content. Phase 9
+lands the documentation updates, Phase 10 records the live external
+verification, and Phase 11 is a future planning handoff.
 
 ## Background
 
@@ -76,11 +80,11 @@ live-first introspection channel for project documents. This plan
 implements the v1 channel in sequential implementation and documentation
 phases that each produce something independently testable. Phases 1-6
 (landed) are the minimum viable channel: the tools work end-to-end and
-the responder can call them mid-dialogue. Phase 7 delivers the offline
-self-question battery promised by the design's *Live-First Rationale* as
-a deterministic, CI-runnable regression gate over the live loop's shape
-and voicing rules. Phase 8 adds the `influenced_reply` post-hoc
-enrichment. Phase 9 lands the documentation updates required by
+the responder can call them mid-dialogue. Phase 7 (landed) delivered the
+offline self-question battery promised by the design's *Live-First
+Rationale* as a deterministic, CI-runnable regression gate over the live
+loop's shape and voicing rules. Phase 8 adds the `influenced_reply`
+post-hoc enrichment. Phase 9 lands the documentation updates required by
 `docs/ProjectFrame/ProjectWorkflow.md`. Phase 10 records the live
 external verification step. Phase 11 is a future planning handoff for
 associative project-doc context pointers; it is not part of the v1 tool
@@ -93,7 +97,11 @@ Code anchors:
 - `crates/qsf_app/src/project_docs/` — **landed (Phase 1).** Pure
   library: `Allowlist`, metadata extraction, lexical `search`, bounded
   `read`, and the `ProjectDocService` facade. Later phases consume it;
-  they do not modify it. Phase 8 adds an `influence` sibling module.
+  they do not modify it. Phase 8 adds `influence` and `enrichment`
+  sibling modules. The public `DocHit` carries textual fields `snippet`
+  and `section_hint`; `DocRead` carries `content` (see
+  `crates/qsf_app/src/project_docs/types.rs`) — Phase 8's overlap check
+  consumes these.
 - `crates/qsf_app/src/tools/mod.rs` — re-exports the tool surface,
   including `ProjectDocToolContext`, `SEARCH_PROJECT_DOCS_TOOL_NAME`,
   `SearchProjectDocsTool`, `READ_PROJECT_DOC_TOOL_NAME`,
@@ -121,51 +129,50 @@ Code anchors:
 - `crates/qsf_app/src/models/tool_dispatch.rs` —
   `dispatch_model_tool_calls(...)` with the `ProjectDocToolBudget`
   parameter, the per-turn cap gate, refusal traces (Phase 4), and
-  success traces (Phase 5). No change expected in Phase 7.
-- `crates/qsf_app/src/models/model_client.rs` — the `ModelClient` trait
-  (`complete(&self, request: &ModelRequest) -> Result<ModelResponse>`),
-  `ModelResponse` (`output_text`, `tool_calls`, `usage`, …), and
-  `ModelToolCall`. Phase 7's scripted stub implements this trait.
+  success traces (Phase 5). The `project_doc_*` trace `details` carry
+  `turn_index`, `refused`, sanitized arguments, and (on success) the
+  returned content — the search trace stores `details.hits` (array of
+  serialized `DocHit`, each with `snippet`/`section_hint`) plus
+  `details.hit_count`; the read trace stores `details.read` (serialized
+  `DocRead`, with `content`). Not modified by Phase 8.
+- `crates/qsf_app/src/models/model_client.rs` — the `ModelClient` trait,
+  `ModelResponse`, and `ModelToolCall`.
 - `crates/qsf_app/src/models/mock_model.rs` — `MockModelClient`, the
-  fixture-driven mock and the existing reference for deterministic
-  responder outputs.
+  fixture-driven mock.
 - `crates/qsf_app/src/experiments/multi_turn_text_loop.rs` — **landed
-  (Phase 6).** `run_one_turn` holds the bounded loop:
-  `MAX_RESPONDER_TOOL_ROUNDS_PER_TURN = 2`, one
-  `ProjectDocToolBudget::new(turn_index)` reused across batches,
-  `project_doc_service_for_multi_turn_text_loop(context)` (absolute
-  workspace root), `conversational_responder_role_with_session_and_project_doc_tools()`,
-  `responder_request_for_messages(..., advertise_tools)` and the
-  **`advertise_tools = tool_rounds < MAX_RESPONDER_TOOL_ROUNDS_PER_TURN`**
-  gate at the bottom of the loop (so tools are dropped from the request
-  only on the call that follows the second tool round), and
-  `execute_model_tool_calls(...)` which returns one execution per tool
-  call carrying the `call_id` for the appended `tool_result`. An
-  `ErrorOccurred` event (stage `bounded-tool-loop`) is recorded and the
-  turn bails if tool calls persist after the two rounds.
+  (Phase 6).** `run_one_turn` holds the bounded loop. **Relevant to
+  Phase 8:** `turn_index = completed_turn_count(state)` is computed
+  *before* the turn is pushed (line ~355) and is used both for the
+  `ProjectDocToolBudget` (and therefore the `project_doc_*` trace
+  `details.turn_index`) and as the completed turn's index, so the trace
+  turn index and the `TurnCompleted` event's `turn.index` align.
 - `crates/qsf_app/src/experiments/multi_turn_text_loop/tests.rs` —
-  **the proven in-crate harness Phase 7 reuses.** Contains
-  `SequencedResponderClient` + `PlannedResponderResponse` (a scripted
-  `ModelClient` that replays a fixed list of responses, with `.calls()`
-  capturing each request's `role_id`/`tools`/`messages`),
-  `run_with_io_and_components(...)`, `test_context(...)`,
-  `TestMemorySource`, `test_config_with_warm_threshold(...)`,
-  `responder_tool_names()`, and `parse_event_records` /
-  `parse_trace_records`. It already has
-  `responder_can_search_then_read_across_two_tool_batches`,
-  `responder_reuses_project_doc_budget_across_tool_batches`,
-  `follow_up_tool_calls_fail_without_appending_turn`, and the
-  voicing-block prompt tests driven by
-  `assemble_prompt_with_summaries_and_project_doc_channel(..., project_doc_channel_enabled)`.
+  **the in-crate harness Phase 7 reused** (`SequencedResponderClient`,
+  `PlannedResponderResponse`, `run_with_io_and_components`,
+  `test_context`, `TestMemorySource`, `responder_tool_names`,
+  `parse_event_records`, `parse_trace_records`).
 - `crates/qsf_app/src/observability/trace.rs` — `TraceRecord::new(...)`
-  with `.with_details(Value)` and `.with_latency_ms(u64)`.
+  with `.with_details(Value)`, `.with_latency_ms(u64)`, and the public
+  fields `trace_id`, `operation`, `details`. `TraceRecord` derives both
+  `Serialize` and `Deserialize`, so Phase 8 can parse `traces.jsonl`
+  lines straight back into `TraceRecord`. Note `TraceLogWriter::create`
+  opens with `truncate(true)`; Phase 8 must therefore append with its own
+  open-options writer, not via that constructor (see Task 8.2).
 - `crates/qsf_app/src/observability/event_log.rs` —
-  `EventType::ToolRequested` / `ToolCompleted` / `ToolFailed`.
+  `EventType::ToolRequested` / `ToolCompleted` / `ToolFailed`, and
+  `EventType::TurnCompleted`. The `TurnCompleted` event payload is
+  `{ session_id, turn, full_request_hash }`; the assistant reply is
+  `payload.turn.assistant_response` and the turn index is
+  `payload.turn.index` (`Turn` defined in
+  `crates/qsf_app/src/session/mod.rs` ~120; serialized in
+  `crates/qsf_app/src/session/runtime.rs` ~289).
 - `crates/qsf_app/src/runtime/run_context.rs` — `RunContext` exposes
   `experiment_id()`, `run_id()`, `run_dir()`, `record_event(...)`, and
   `record_trace(...)`; the workspace root supplied via `--workspace-root`
   is canonicalized here and consumed by the live `ProjectDocService`
-  construction.
+  construction. Its constructors create a fresh run directory with a
+  `truncate`-mode `TraceLogWriter`, so there is **no** safe reopened-context
+  append path today — Phase 8 appends directly with open-options.
 
 Documentation anchors:
 
@@ -200,13 +207,23 @@ differently, raise it before changing direction.
    dispatch needs one context answering *both* `session_state()` and
    `project_doc_service()`. Phase 4 shipped a dedicated combined context
    (`ResponderToolContext`). The single-accessor contexts are unchanged.
-3. **`influenced_reply` storage.** Phase 8 writes the marker as a
-   follow-up `TraceRecord` referencing the original by `trace_id`. If an
-   annotation on the original record is preferred, raise before Phase 8.
+3. **`influenced_reply` storage — ACTIVE IN PHASE 8.** Phase 8 writes the
+   marker as a follow-up `TraceRecord` (operation = `project_doc_influence`)
+   referencing the original `project_doc_*` record by `trace_id`. The pass
+   is **idempotent by `source_trace_id`**: re-running `enrich` over a
+   directory that already holds influence records appends nothing for
+   already-enriched sources (see Task 8.2). If an annotation on the
+   original record is preferred instead, raise it before Task 8.2. A
+   **second, distinct** Phase 8 decision — *where the final reply text is
+   read from* — is surfaced inside Phase 8 itself because it was
+   discovered to differ from the original sketch (the reply is in the
+   `TurnCompleted` **event**, not in any trace).
 4. **Module naming.** Per `Agents.md`, name modules after stable
-   behavior. This plan uses `project_docs` / `ProjectDocService`, and the
+   behavior. This plan uses `project_docs` / `ProjectDocService`; the
    combined context is named for the role it serves
-   (`ResponderToolContext`). Keep this discipline.
+   (`ResponderToolContext`); the Phase 8 modules are named for stable
+   behavior (`influence`, `enrichment`), not the plan phase. Keep this
+   discipline.
 5. **Hard latency cap.** Decision 4 of the spec sets a 1500 ms hard cap.
    With lexical search over a small markdown corpus the cap is not
    expected to fire, so this plan **deliberately defers** cap-enforcement
@@ -222,23 +239,23 @@ differently, raise it before changing direction.
    apply across the whole human/responder turn, not merely one provider
    tool-call batch. Phase 6 reuses the same budget across the bounded
    two-round responder tool loop.
-8. **Voicing-prompt scope across the turn — DECIDED, LANDED IN PHASE 6.**
-   The kind/maturity voicing block is present on **every** responder
-   provider call in a project-doc turn, *including the final no-tools
-   answer call*. It is gated on channel/turn availability, not on whether
-   the current request advertises the two tool names. Phase 7 asserts
-   this invariant explicitly across the battery. Note this is distinct
-   from *tool advertisement*: the voicing block is present on every call,
-   whereas the four tool definitions are advertised only while
-   `tool_rounds < MAX_RESPONDER_TOOL_ROUNDS_PER_TURN` (see the Phase 7
-   loop-behavior note).
-9. **Phase 7 battery placement and live-read paths — SURFACE BEFORE
-   IMPLEMENTING (see Phase 7 intro).** The harness that drives the *real*
-   bounded loop (`SequencedResponderClient`, `run_with_io_and_components`,
-   `test_context`, …) is private to the `multi_turn_text_loop` test
-   module, and `read_project_doc` calls execute against the real
-   allowlisted corpus. Both points are decided with defaults in Phase 7;
-   confirm them before writing the test.
+8. **Voicing-prompt scope across the turn — DECIDED, LANDED IN PHASE 6,
+   ASSERTED IN PHASE 7.** The kind/maturity voicing block is present on
+   **every** responder provider call in a project-doc turn, *including the
+   final no-tools answer call*. It is gated on channel/turn availability,
+   not on whether the current request advertises the two tool names. This
+   is distinct from *tool advertisement*: the voicing block is present on
+   every call, whereas the four tool definitions are advertised only while
+   `tool_rounds < MAX_RESPONDER_TOOL_ROUNDS_PER_TURN`.
+9. **Phase 7 battery placement and live-read paths — RESOLVED AND LANDED
+   IN PHASE 7.** The battery lives inside the `multi_turn_text_loop` test
+   module, reusing the private harness in place; the fixture JSON lives
+   under `crates/qsf_app/tests/fixtures/` and is loaded via
+   `CARGO_MANIFEST_DIR`; `read_project_doc` fixtures point at
+   allowlisted, present documents. The Phase 7 outcome carries one
+   binding constraint forward to Phase 8: **the final assistant reply is
+   read from the `TurnCompleted` event payload, not from a trace** —
+   `traces.jsonl` has no assistant-reply record.
 
 ## Target Shape
 
@@ -261,9 +278,11 @@ user input
      (operation = "project_doc_read") emitted
   -> final provider call is made without tools but WITH the voicing block
      still present; provider produces the human-facing reply with
-     kind/maturity hedging
-  -> post-hoc enrichment pass marks influenced_reply on traces whose
-     content overlapped the final reply
+     kind/maturity hedging; the reply is recorded in the TurnCompleted
+     event (NOT in traces.jsonl)
+  -> post-hoc enrichment pass (Phase 8) joins each project_doc_* trace to
+     the same-turn TurnCompleted reply and writes a project_doc_influence
+     trace marking whether the reply overlapped the returned content
 ```
 
 ---
@@ -298,11 +317,11 @@ allowlist: `config/project-doc-introspection.toml`.
   `docs/ProjectFrame/**` and `docs/DecisionLog.md`; picks up edits
   without a rebuild.
 - **Latency cap deferred (OQ #5).** Synchronous API, no deadline param.
-- **Live-read consequence (Phase 7).** Because `read` is path-confined
-  against the allowlist+corpus, any test that drives a *real*
-  `read_project_doc` (Phase 7's battery) must use paths that are
-  allowlisted and present, or the read returns a refusal/error rather
-  than a `refused == false` success trace.
+- **Live-read consequence (Phase 7, held).** Because `read` is
+  path-confined against the allowlist+corpus, any test that drives a
+  *real* `read_project_doc` must use paths that are allowlisted and
+  present, or the read returns a refusal/error rather than a
+  `refused == false` success trace.
 
 **Acceptance outcome (met):** `cargo test -p qsf_app project_docs`
 passes; clippy and fmt clean.
@@ -400,7 +419,9 @@ Source of truth: `crates/qsf_app/src/tools/responder_tool_context.rs` and
   turn; calculator and `recall_turn` never consume the budget.
 - **Refused calls still return a `ToolResult`.** Phase 6 appends a
   provider-native `tool_result` for it so the provider gets a response
-  for every `tool_call_id` it emitted.
+  for every `tool_call_id` it emitted. **Phase 8 note:** refused traces
+  carry `turn_index` but no returned content, so the enrichment pass
+  skips them (nothing to overlap).
 
 **Acceptance outcome (met):** both accessors return `Some(_)`; caps
 enforced within one batch and across two batches sharing one budget;
@@ -422,17 +443,18 @@ Symmetric *success* traces (`details.refused == false`) on the executed
 replay **every** project-doc call from a run's `traces.jsonl`:
 
 - `project_doc_search` stores the parsed `hits` array **and** an explicit
-  `details.hit_count`.
+  `details.hit_count`. Each hit is a serialized `DocHit` whose textual
+  fields are `snippet` and (optional) `section_hint`.
 - `project_doc_read` stores the **parsed read output** (`details.read`) —
-  the bounded content/excerpt plus metadata — alongside `is_full` /
-  `omitted_sections`.
+  a serialized `DocRead` whose body text is `content` — alongside
+  `is_full` / `omitted_sections`.
 
-**Binding constraints on later phases:**
+**Binding constraints on later phases (Phase 8 in particular):**
 
 - **Replayability is the success criterion.** Phase 8's `influenced_reply`
-  enrichment computes overlap directly from `details.hits` and
-  `details.read`. If either is missing or shaped differently, surface it
-  before Phase 8.
+  enrichment computes overlap directly from `details.hits[].snippet`
+  (search) and `details.read.content` (read). If either is missing or
+  shaped differently than recorded here, surface it before Task 8.2.
 - **Reuse discipline (held).** Traces reuse
   `sanitized_project_doc_arguments`, the budget's `turn_index`, the single
   `ToolCompleted` latency value, and the Phase 4 correlation fields.
@@ -444,9 +466,7 @@ replay **every** project-doc call from a run's `traces.jsonl`:
 exactly one `project_doc_*` trace with `refused == false`, the explicit
 `hit_count` / bounded `read` content, sanitized arguments, `turn_index`,
 the full correlation fields, and a recorded latency; failed-execution and
-non-project-doc regression tests confirm no spurious success traces. Pure
-Rust; live behaviour is verified in Phase 7's battery and Phase 10's
-manual session.
+non-project-doc regression tests confirm no spurious success traces.
 
 **Diary discipline (still binding):** reconcile any isolated-merge entry
 in Phase 9.
@@ -460,92 +480,49 @@ responder introspection loop"). Source of truth:
 `crates/qsf_app/src/experiments/multi_turn_text_loop.rs` (and its
 `/tests.rs`).
 
-This is the first **live** call site for the channel. `run_one_turn` now:
+This is the first **live** call site for the channel. `run_one_turn`:
 
-- **Advertises all four tools.**
+- **Advertises all four tools** via
   `conversational_responder_role_with_session_and_project_doc_tools()`
-  lists `calculator`, `recall_turn`, `search_project_docs`, and
-  `read_project_doc`; `responder_request_for_messages(role, messages,
-  context, state, registry, max_output_tokens, advertise_tools)` builds
-  each provider request, and the live request-assembly path is covered by
-  a test asserting the assembled tool definitions include all four names.
-- **Builds a live `ResponderToolContext` over absolute paths (OQ #1).**
-  `project_doc_service_for_multi_turn_text_loop(context)` constructs the
-  `ProjectDocService` once from `RunContext`'s canonicalized
-  `--workspace-root`, never from `CARGO_MANIFEST_DIR` or the process
-  working directory.
-- **Runs a bounded two-round tool loop.** A `loop` makes the initial
-  provider call (tools advertised), and while the response carries tool
-  calls and fewer than `MAX_RESPONDER_TOOL_ROUNDS_PER_TURN = 2` rounds
-  have run, dispatches the batch through `execute_model_tool_calls(...)`,
-  appends one `ModelMessage::assistant_tool_calls(...)` plus one
-  `ModelMessage::tool_result(call_id, …)` **per returned `ToolResult`
-  (executed OR refused)**, records `PromptAssembled`, and re-invokes the
-  responder. The next request's tools are governed by
-  `advertise_tools = tool_rounds < MAX_RESPONDER_TOOL_ROUNDS_PER_TURN`:
-  tools are still advertised on the second round and dropped only on the
-  call that follows the second tool round (the final answer call). A
-  single `ProjectDocToolBudget::new(turn_index)` is reused across both
-  batches.
-- **Guards against an unbounded loop.** If a response still carries tool
-  calls after the two permitted rounds, an `ErrorOccurred` event (stage
-  `bounded-tool-loop`) is recorded and the turn bails without being
-  appended.
-- **Keeps the voicing block present across the whole turn (OQ #8).**
-  `assemble_prompt_with_summaries_and_project_doc_channel(..., project_doc_channel_enabled)`
-  appends the kind/maturity voicing block to the responder system prompt
-  on **every** provider call in a project-doc turn, including the final
-  no-tools answer call; it is gated on channel/turn state, not on the
-  request's advertised tools.
-- **Preserves accounting and recalls.** Latency and
-  input/cached/output tokens accumulate across every provider call in the
-  turn; `recalled_turns` are collected from `recall_turn` executions in
-  both rounds.
+  and `responder_request_for_messages(..., advertise_tools)`.
+- **Builds a live `ResponderToolContext` over absolute paths (OQ #1)**
+  using `project_doc_service_for_multi_turn_text_loop(context)`, which
+  constructs the `ProjectDocService` once from `RunContext`'s
+  canonicalized `--workspace-root`.
+- **Runs a bounded two-round tool loop** capped by
+  `MAX_RESPONDER_TOOL_ROUNDS_PER_TURN = 2`, reusing a single
+  `ProjectDocToolBudget::new(turn_index)` across batches, appending one
+  `assistant_tool_calls` plus one `tool_result` per returned `ToolResult`
+  (executed OR refused), with
+  `advertise_tools = tool_rounds < MAX_RESPONDER_TOOL_ROUNDS_PER_TURN`
+  governing the next request's tools (dropped only on the call following
+  the second tool round).
+- **Guards against an unbounded loop:** a third tool batch records an
+  `ErrorOccurred` event (stage `bounded-tool-loop`) and bails without
+  appending the turn.
+- **Keeps the voicing block present across the whole turn (OQ #8)** via
+  `assemble_prompt_with_summaries_and_project_doc_channel(..., project_doc_channel_enabled)`,
+  including the final no-tools answer call.
+- **Preserves accounting and recalls** across every provider call.
 
-**Binding constraints on later phases (Phase 7 especially):**
+**Binding constraints on later phases:**
 
-- **Reuse the in-crate harness.** The deterministic way to drive the real
-  bounded loop is the test scaffolding already in
-  `crates/qsf_app/src/experiments/multi_turn_text_loop/tests.rs`:
-  `SequencedResponderClient::new(Vec<PlannedResponderResponse>)` (a
-  scripted `ModelClient` whose `.calls()` capture each request's
-  `role_id`/`tools`/`messages`), `PlannedResponderResponse::tool_call(...)`
-  / `::text(...)`, `run_with_io_and_components(...)`,
-  `test_context(...)`, `TestMemorySource`,
-  `test_config_with_warm_threshold(...)`, `responder_tool_names()`, and
-  `parse_event_records` / `parse_trace_records`. This scaffolding is
-  **private to that module** — reuse it in place rather than widening the
-  public surface (see Phase 7 OQ #9).
-- **Round semantics.** Planned-response index `0` (first provider call)
-  is "round 1", index `1` is "round 2", index `2` is the final no-tools
-  answer. A search at index 0 and a read at index 1 exercises the
-  two-batch `search -> read -> answer` path; the final response must
-  carry no tool calls or the turn bails.
-- **Tool advertisement vs. response tool calls.** Because
-  `advertise_tools = tool_rounds < 2`, the request that follows a *single*
-  tool round still advertises the four tools; the request tools are
-  emptied only on the call following the *second* tool round. So a final
-  answer call's *advertised tools* is empty only for a two-round
-  (search-then-read) question; for one-tool and no-tool questions the
-  final/only request still advertises the tools, and what distinguishes
-  the final call is that its *response* carries no tool calls. Phase 7
-  asserts accordingly (see its loop-behavior note).
-- **Live reads execute.** `read_project_doc` runs against the real
-  allowlisted corpus; fixtures that expect a `refused == false` read
-  trace must point at an allowlisted, present document (e.g.
-  `docs/ProjectFrame/ProjectVision.md`, proven in
-  `responder_can_search_then_read_across_two_tool_batches`).
+- **`turn_index` alignment (Phase 8).** `turn_index =
+  completed_turn_count(state)` is computed before the turn is pushed and
+  drives both the budget/`project_doc_*` trace `details.turn_index` and
+  the completed turn's `index`, so a `project_doc_*` trace and its
+  same-turn `TurnCompleted` event share one turn index.
+- **Live reads execute** against the real allowlisted corpus.
 
 **Acceptance outcome (met):** the live request advertises all four tool
 definitions; the responder completes a bounded `search -> read -> answer`
 sequence across two batches in one turn with both tool results appended
 before the final answer and the two success traces sharing one
-`turn_index`; a second read inside the turn is refused by the shared
-budget (`per_turn_cap`) with its refusal tool message still appended; a
-third tool batch records `ErrorOccurred` (stage `bounded-tool-loop`) and
-does not append the turn; the voicing block is present on every call
-including the final no-tools answer; an ordinary no-tool answer completes
-exactly one turn with no project-doc traces. Build,
+`turn_index`; a second read inside the turn is refused
+(`per_turn_cap`); a third batch records `ErrorOccurred` and does not
+append the turn; the voicing block is present on every call including the
+final no-tools answer; an ordinary no-tool answer completes exactly one
+turn with no project-doc traces. Build,
 `cargo test -p qsf_app multi_turn_text_loop`, clippy, fmt clean.
 
 **Diary discipline (still binding):** reconcile any isolated-merge entry
@@ -553,388 +530,169 @@ in Phase 9.
 
 ---
 
-## Phase 7: Self-question battery fixture test
+## Phase 7: Self-question battery fixture test — completed
 
-A small structured offline test that exercises the now-live bounded
-responder loop with a fixed list of self-questions and asserts on the
-calls made (including round), the recorded events and traces, the
-voicing-block presence, and the hedging language. It runs as a normal
-`cargo test` so it is part of CI, complementing the single inline
-two-batch test from Phase 6 with a data-driven battery (multiple
-questions, the search-then-read path, and an off-topic control).
+**Status: landed and committed** ("ProjectDocIntrospection Phase 7:
+Self-question battery fixture test"). Source of truth:
+`crates/qsf_app/src/experiments/multi_turn_text_loop/tests.rs` and
+`crates/qsf_app/tests/fixtures/self_question_battery.json`.
 
-**What this phase verifies — and what it deliberately does not.** The
-responder is driven by a *scripted* `ModelClient`, so the battery proves
-the **plumbing and voicing rules**, not the model's natural-language
-choices: the bounded loop wires `search -> read -> answer` across two
-provider batches; the per-turn budget is shared; the voicing block is
-present on every provider call (including the final no-tools answer); the
-off-topic control routes through the loop while making zero project-doc
-calls; and events/traces are emitted with the right shape. Reply-text
-`contains` / `must_not_contain` assertions run against the *canned*
-fixture replies — they pin the intended voicing contract and guard
-against fixture-authoring drift, but the genuine behavioral signal lives
-in the captured `client.calls()` (round/tool shape, advertised tools),
-the system-prompt voicing-block checks, and the `project_doc_*` traces.
-True behavioral verification of reply quality is the **live Phase 10
-gate**; this battery is the deterministic regression gate.
+A data-driven offline battery drives a fixed list of self-questions
+through the **real** bounded responder loop (Phase 6) via
+`run_with_io_and_components` and a scripted `SequencedResponderClient`.
+Because the responder is driven by a scripted `ModelClient`, the battery
+proves the **plumbing and voicing contract**, not the model's
+natural-language choices; reply-text assertions guard the canned fixtures
+against authoring drift.
 
-**Loop-behavior note the assertions must respect (verified against
-`multi_turn_text_loop.rs:527`).** The bounded loop advertises tools on
-the *next* provider call whenever
-`tool_rounds < MAX_RESPONDER_TOOL_ROUNDS_PER_TURN` (= 2). Consequences
-the battery must encode rather than fight:
+What landed:
 
-- The request `tools` list is emptied **only** on the call that follows
-  the *second* tool round. So the final answer call has empty advertised
-  tools **only for the two-round search-then-read question**.
-- After a *single* tool round, the next (final) call still advertises the
-  four responder tools. The off-topic control's single, no-tool call also
-  advertises tools.
-- Therefore: assert empty advertised `tools` **only** on the final call
-  of the two-round question; for one-tool and off-topic questions assert
-  that the final *response* carried no `tool_calls` instead of asserting
-  the *request* advertised none.
-- The kind/maturity *voicing block* is orthogonal to tool advertisement:
-  it is present on **every** provider call (OQ #8), including calls that
-  no longer advertise tools.
+- **Fixture `self_question_battery.json`** (loaded via
+  `CARGO_MANIFEST_DIR`) encodes each question's emitted tool calls (with
+  `round` + concrete `arguments`) and its `expected_reply_*` assertions.
+  The battery validates each question's rounds are unique, 1-based,
+  contiguous, and ≤ `MAX_RESPONDER_TOOL_ROUNDS_PER_TURN` (2) before
+  driving (P7-002), failing with the offending `question.id`.
+- **In-crate harness reused in place (OQ #9).** The battery reuses the
+  private `multi_turn_text_loop` test scaffolding
+  (`SequencedResponderClient`, `PlannedResponderResponse`,
+  `run_with_io_and_components`, `test_context`, `TestMemorySource`,
+  `responder_tool_names`, `parse_event_records`, `parse_trace_records`)
+  rather than widening the public surface.
+- **Assertions per question.** Provider-call shape (advertised tools per
+  the `advertise_tools = tool_rounds < 2` gate — empty advertised tools
+  only on the two-round search-then-read question's final answer call;
+  one-tool and off-topic questions' final calls still advertise the four
+  tools, so their final *response* carrying no tool calls is asserted
+  instead); the kind/maturity voicing block on **every** provider call
+  including the final answer call (OQ #8); one `project_doc_*` success
+  trace (`refused == false`) per emitted tool call with matching
+  sanitized arguments and a shared `turn_index` for the two-round
+  question; exactly one `TurnCompleted` per question; the canned reply's
+  `contains` / `must_not_contain` hedging assertions.
+- **Off-topic control** routes through the loop with zero project-doc
+  traces and no project-doc `ToolCompleted`, completing exactly one turn
+  while still carrying the voicing block.
+- **Reply extraction (P7-003).** The reply is read from the single
+  `TurnCompleted` event payload (`payload.turn.assistant_response`), not
+  from `ExperimentOutcome` or console output.
 
-**Open questions to confirm before implementing (OQ #9):**
+**Binding constraints on later phases (Phase 8 in particular):**
 
-1. **Test placement — DEFAULT: in-crate, reusing the private harness.**
-   The harness that drives the real bounded loop
-   (`SequencedResponderClient`, `run_with_io_and_components`,
-   `test_context`, `TestMemorySource`, `responder_tool_names`,
-   `parse_*`) is private to the `multi_turn_text_loop` test module. An
-   external integration test under `crates/qsf_app/tests/` cannot reach
-   it without promoting a public, test-only loop/stub entry point, which
-   would widen the public surface purely for testing and cut against
-   "keep entry points thin." **This plan therefore adds the battery
-   inside `crates/qsf_app/src/experiments/multi_turn_text_loop/tests.rs`
-   (or a sibling `#[cfg(test)]` module that shares its helpers), not as a
-   new file under `crates/qsf_app/tests/`.** This is a deliberate change
-   from the original sketch's external-`tests/`-file location. *If a
-   genuinely external, public-API-only battery is required (e.g. for
-   cross-crate reuse), raise it before writing the harness — that path
-   needs a separate task to expose a minimal public entry and is out of
-   scope here.* The JSON fixture data file still lives under
-   `crates/qsf_app/tests/fixtures/` and is loaded via
-   `CARGO_MANIFEST_DIR`.
-2. **Live-read paths must be real.** Each `read_project_doc` call in the
-   battery executes against the production allowlist + `docs/` corpus, so
-   every fixture `read` path must resolve to an allowlisted, present
-   document or its success-trace assertion will fail. Default: reuse
-   known-good paths (e.g. `docs/ProjectFrame/ProjectVision.md`) and
-   verify any new path against `config/project-doc-introspection.toml`
-   and the actual tree during implementation. If a question's theme has
-   no suitable allowlisted doc, either pick a different doc or assert a
-   refusal trace for that case instead of a success trace.
+- **The reply source is the event stream, not a trace.** The final
+  assistant reply lives in the `TurnCompleted` **event** in
+  `events.jsonl` (`payload.turn.assistant_response`, turn index
+  `payload.turn.index`), *not* in `traces.jsonl`. Phase 8's enrichment
+  join must read the reply from `events.jsonl` and the `project_doc_*`
+  records from `traces.jsonl`, matching on the (aligned) turn index.
+- **Live reads execute against the real corpus.** Fixture `read` paths
+  must remain allowlisted and present
+  (e.g. `docs/ProjectFrame/ProjectVision.md`).
+- **Scripted client proves plumbing, not reply quality.** True
+  reply-quality verification is the live Phase 10 gate.
 
-This phase is pure Rust with deterministic coverage. Follow
-`superpowers:test-driven-development` (or plain TDD): add the harness and
-one question first, watch it drive the real loop and pass, then extend
-the fixture and assertions incrementally. The battery test *is* the
-deliverable and its own verification artifact.
+**Acceptance outcome (met):** the battery loads and validates the
+fixture, drives each question through the real bounded loop, exercises
+the two-round search-then-read path with a shared `turn_index` and an
+empty advertised-tools list only on that question's final answer call,
+asserts the voicing block on every provider call, and confirms the
+off-topic control makes zero project-doc calls — all under
+`cargo test -p qsf_app`. Build, `cargo test -p qsf_app multi_turn_text_loop`,
+`cargo test -p qsf_app project_doc`, clippy, fmt clean. No registry,
+library, dispatch-layer, or loop change was needed.
 
-### Task 7.1: Encode the battery fixture
-
-**Files:**
-- Create: `crates/qsf_app/tests/fixtures/self_question_battery.json`
-
-Encode each question as a self-driving record: the `tool_calls` array
-carries both the `round` and the concrete `arguments` the scripted stub
-should emit (so the fixture drives the loop), and the `expected_reply_*`
-fields plus the `arguments` carry the assertions. This refines the
-original sketch, which conflated "what to emit" with "what to assert".
-
-- [ ] **Step 1: Write the fixture.**
-
-```json
-{
-  "questions": [
-    {
-      "id": "what_are_you",
-      "prompt": "What are you?",
-      "reply": "The project's accepted framing describes a runtime voice loop grounded in its own docs.",
-      "tool_calls": [
-        { "round": 1, "tool": "search_project_docs", "arguments": { "query": "vision" } }
-      ],
-      "expected_reply_contains": ["accepted framing"],
-      "expected_reply_must_not_contain": []
-    },
-    {
-      "id": "framing_search_then_read",
-      "prompt": "What does the project say it is, in its own words?",
-      "reply": "The project's accepted framing says to keep the responder grounded in project docs.",
-      "tool_calls": [
-        { "round": 1, "tool": "search_project_docs", "arguments": { "query": "vision" } },
-        { "round": 2, "tool": "read_project_doc",
-          "arguments": { "path": "docs/ProjectFrame/ProjectVision.md", "focus": "vision", "max_tokens": 400 } }
-      ],
-      "expected_reply_contains": ["the project"],
-      "expected_reply_must_not_contain": ["I do", "I have"]
-    },
-    {
-      "id": "off_topic_control",
-      "prompt": "What's the capital of France?",
-      "reply": "The capital of France is Paris.",
-      "tool_calls": [],
-      "expected_reply_contains": [],
-      "expected_reply_must_not_contain": ["search_project_docs"]
-    }
-  ]
-}
-```
-
-Notes:
-- Every `read_project_doc` `path` must be allowlisted and present (OQ #9
-  point 2). Verify against `config/project-doc-introspection.toml` and
-  `docs/` while implementing; swap any path that does not resolve.
-- The `framing_search_then_read` question intentionally splits search
-  (round 1) and read (round 2) so the battery exercises the bounded
-  two-round loop and the shared per-turn budget. It is the **only**
-  fixture whose final answer call advertises an empty `tools` list (it
-  follows the second tool round); the one-tool `what_are_you` and the
-  no-tool `off_topic_control` final calls still advertise the four tools
-  per the loop-behavior note above.
-- Keep the fixture small; add more questions only once the harness and
-  assertions are proven.
-
-### Task 7.2: Fixture-driven harness over the real bounded loop
-
-**Files:**
-- Modify: `crates/qsf_app/src/experiments/multi_turn_text_loop/tests.rs`
-  (add the battery alongside the existing tests, reusing its helpers —
-  see OQ #9). If the module grows unwieldy, extract the new code into a
-  sibling `#[cfg(test)]` module declared from `multi_turn_text_loop.rs`
-  and make the shared helpers (`SequencedResponderClient`,
-  `PlannedResponderResponse`, `CapturedRequest`, `test_context`,
-  `TestMemorySource`, `responder_tool_names`, `parse_event_records`,
-  `parse_trace_records`) `pub(super)` rather than duplicating them.
-
-- [ ] **Step 1: Define the fixture types and loader.**
-
-Add `serde::Deserialize` structs mirroring the JSON (`Battery`,
-`Question`, `ToolCallFixture { round, tool, arguments: serde_json::Value }`)
-and load via
-`PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/self_question_battery.json")`.
-
-- [ ] **Step 2: Validate fixture rounds before driving (P7-002).**
-
-The single-call harness emits exactly one
-`PlannedResponderResponse::tool_call` per fixture entry, in `round`
-order, so the `round` values are load-bearing and must be checked rather
-than merely sorted. When loading each `Question`, assert its
-`tool_calls` rounds are:
-
-- unique (no two calls share a round),
-- 1-based and contiguous (1, then 2, …), and
-- never greater than `MAX_RESPONDER_TOOL_ROUNDS_PER_TURN` (2).
-
-Fail the test with the offending `question.id` if any rule is violated.
-This prevents a fixture from silently mislabeling a round (which the bare
-"sort, then emit one response each" approach would not catch) and makes
-the round assertions in Task 7.3 meaningful. *(If a future fixture truly
-needs more than one tool call inside one provider round, extend
-`PlannedResponderResponse` to carry multiple `ModelToolCall`s grouped by
-round instead of emitting one response per call — out of scope here.)*
-
-- [ ] **Step 3: Build the per-question driver.**
-
-For each `Question`, build the scripted responses in (already-validated)
-round order, then a final text reply, and drive the existing loop entry
-point:
-
-```text
-fn run_question(question) -> Outcome:
-    // rounds already validated as unique, 1-based, contiguous, <= 2
-    sort question.tool_calls by round
-    let mut responses = vec![]
-    for call in sorted tool_calls:
-        responses.push(PlannedResponderResponse::tool_call(
-            "scripted tool round",
-            format!("{}-{}", question.id, call.round),   // stable call_id
-            call.tool,
-            call.arguments.clone(),
-        ))
-    responses.push(PlannedResponderResponse::text(question.reply))
-
-    let client = SequencedResponderClient::new(responses)
-    let base_dir = temp_dir().join(format!("qsf-battery-{}-{}", question.id, Uuid::new_v4()))
-    let mut context = test_context(&base_dir, "multi-turn-text-loop")
-    let input = Cursor::new(format!("{}\n:quit\n", question.prompt))
-    run_with_io_and_components(&mut context, input, &mut Vec::new(), &client,
-                               &TestMemorySource, test_config_with_warm_threshold(10, 10))?
-    let events = parse_event_records(&read(context.run_dir().join("events.jsonl")))
-    return Outcome {
-        calls: client.calls(),
-        events,
-        traces: parse_trace_records(&read(context.run_dir().join("traces.jsonl"))),
-        // Read the reply from the single TurnCompleted event payload — NOT
-        // from ExperimentOutcome or formatted console output, which carry
-        // loop framing. Confirm the exact field name against the event
-        // shape during implementation (e.g. turn.assistant_response).
-        reply: <assistant response text from the TurnCompleted event>,
-        base_dir,
-    }
-```
-
-Use one fresh `test_context` per question so each question's
-`events.jsonl` / `traces.jsonl` are isolated. Clean up `base_dir` after
-asserting, matching the existing tests' `fs::remove_dir_all` pattern.
-
-**Reply extraction (P7-003).** `run_with_io_and_components` returns an
-`ExperimentOutcome`, not the last responder text, and the captured
-console output includes loop framing/formatting. The deterministic source
-for `Outcome.reply` is the single `TurnCompleted` event's assistant
-response payload; read it from the parsed events (confirm the exact field
-during implementation) rather than from `ExperimentOutcome` or console
-output.
-
-### Task 7.3: Battery assertions and run
-
-**Files:**
-- Modify: same module as Task 7.2.
-
-- [ ] **Step 1: Write the battery test.**
-
-Iterate the loaded `Battery` and, per question, assert:
-
-- **Provider-call shape.** `outcome.calls.len() == tool_calls.len() + 1`
-  for tool-emitting questions, and `== 1` for the off-topic control.
-  Each tool-emitting round's call advertises the four tools:
-  `calls[round - 1].tools == responder_tool_names()`. For the *final*
-  call:
-  - the two-round `framing_search_then_read` question's final answer call
-    advertises an **empty** `tools` list (it follows the second tool
-    round, so `advertise_tools` is false);
-  - the one-tool `what_are_you` and no-tool `off_topic_control`
-    final/only calls still advertise `responder_tool_names()` (because
-    `tool_rounds < 2`) — for these, assert that the final *response*
-    carried no `tool_calls` rather than asserting the request advertised
-    none.
-- **Voicing block on every call (OQ #8).** Every captured call's first
-  message is the system prompt and contains both `"search_project_docs"`
-  and `"kind and maturity"` — including the final answer call of every
-  question, whether or not that call still advertises tools.
-- **Executed tool calls via traces.** For each expected
-  `search_project_docs` / `read_project_doc` call there is a matching
-  `project_doc_*` trace with `details.refused == false`; the sanitized
-  `query` / `path` in the trace matches the fixture `arguments`
-  (substring match on `query` / equality or substring on `path`). For
-  the `framing_search_then_read` question, the search and read traces
-  share one `turn_index`.
-- **Events.** Exactly one `TurnCompleted` per question; a `ToolCompleted`
-  event exists for each emitted tool name.
-- **Off-topic control.** Zero `project_doc_*` traces, no `ToolCompleted`
-  for either project-doc tool, and exactly one provider call — while the
-  voicing block is still present (channel enabled for the turn) and that
-  single call still advertises the four tools (no tool round occurred, so
-  `advertise_tools` stays true).
-- **Reply text.** `outcome.reply` contains every
-  `expected_reply_contains` string (case-insensitive) and none of the
-  `expected_reply_must_not_contain` strings. (As noted in the phase
-  intro, these guard the canned fixtures, not model behavior.)
-
-Include the failing `question.id` in every assertion message so a battery
-failure pinpoints the offending question.
-
-- [ ] **Step 2: Run the battery.**
-
-```bash
-cargo test -p qsf_app multi_turn_text_loop
-```
-
-Run the focused battery test name as well if you gave it one, e.g.
-`cargo test -p qsf_app self_question_battery`. Expected: PASS.
-
-- [ ] **Step 3: Commit.**
-
-```bash
-git add crates/qsf_app/tests/fixtures/self_question_battery.json \
-        crates/qsf_app/src/experiments/multi_turn_text_loop/tests.rs
-git commit -m "test(project_docs): self-question battery over the live responder loop"
-```
-
-**Do not merge this commit in isolation without satisfying the repo diary
-rule (P7-004).** The repo instructions require implementation changes to
-be documented in `docs/EngineeringDiary.md`. This phase's grouped diary
-coverage lives in Phase 9, so either (a) keep the Phase 7 commit unmerged
-until the Phase 9 diary commit is on the same branch, or (b) add a short
-standalone Phase 7 diary entry to this commit/branch (read the
-*Instructions how to use* at the top of `docs/EngineeringDiary.md`
-first). See *Diary discipline for this phase* below; reconcile, don't
-duplicate, in Phase 9.
-
-### Phase 7 verification
-
-Per `Agents.md`, build first, then focused tests, then the lint/format
-gates:
-
-```bash
-cargo build
-cargo test -p qsf_app multi_turn_text_loop
-cargo test -p qsf_app project_doc
-cargo clippy --all-targets -- -D warnings
-cargo fmt
-```
-
-Expect all clean. No registry, library, dispatch-layer, or loop change is
-expected — Phase 7 only adds a test and a fixture. If the battery cannot
-be expressed without a production-code change, **surface it before
-proceeding** rather than quietly editing runtime code from a test phase.
-
-**Acceptance criteria for Phase 7:**
-
-- A data-driven battery loads `self_question_battery.json`, validates each
-  question's `round` values (unique, 1-based, contiguous, ≤ 2), and drives
-  each question through the **real** bounded responder loop via
-  `run_with_io_and_components` and a `SequencedResponderClient`, not by
-  calling `dispatch_model_tool_calls` directly.
-- A search-then-read question exercises the two-round path: search in
-  round 1, read in round 2, a final no-tools answer (the only question
-  whose final call advertises an empty `tools` list), with both
-  `project_doc_*` success traces sharing one `turn_index`.
-- Every provider call's system prompt carries the voicing block,
-  including each question's final answer call — regardless of whether that
-  call still advertises tools.
-- The off-topic control makes zero project-doc calls (no `project_doc_*`
-  traces, no project-doc `ToolCompleted`) and completes exactly one turn
-  while still carrying the voicing block; its single call advertises the
-  four tools and its response carries no tool calls.
-- Each emitted tool call is observable in the traces with
-  `refused == false` and arguments matching the fixture; each question
-  completes exactly one `TurnCompleted`, and the reply is read from that
-  event payload.
-- Every `read_project_doc` fixture path resolves to an allowlisted,
-  present document (or the question asserts a refusal trace by design).
-- The battery runs under `cargo test -p qsf_app` as a CI regression gate;
-  `cargo build`, the focused tests above,
-  `cargo clippy --all-targets -- -D warnings`, and `cargo fmt` are clean.
-
-**Diary discipline for this phase.** As with Phases 1-6, the application
-work of Phases 1-8 is grouped under the single Phase 9 diary entry, so
-Phase 7 is not considered complete or mergeable until that entry lands.
-If Phase 7 is merged in isolation ahead of the grouped feature, a short
-standalone Phase 7 diary entry must accompany that merge (read the
-*Instructions how to use* at the top of `docs/EngineeringDiary.md`
-first); reconcile, don't duplicate, in Phase 9.
+**Diary discipline (still binding):** Phase 7's coverage is grouped into
+the single Phase 9 diary entry; if Phase 7 merged in isolation it carries
+a short standalone entry (per P7-004), reconciled — not duplicated — in
+Phase 9.
 
 ---
 
 ## Phase 8: `influenced_reply` post-hoc enrichment
 
-A small, deterministic pass that joins each `project_doc_*` trace record
-in a run's `traces.jsonl` to the same-turn final assistant reply and
-writes a follow-up `TraceRecord` (operation = `project_doc_influence`)
-marking whether the reply substantively overlapped the returned content.
+A small, deterministic, **read-mostly** post-run pass that joins each
+executed `project_doc_*` trace in a run's `traces.jsonl` to the same-turn
+final assistant reply and appends a follow-up `TraceRecord`
+(operation = `project_doc_influence`) marking whether the reply
+substantively overlapped the returned document content. The original
+record is referenced by `trace_id` (OQ #3); no existing record is mutated.
 
-This phase relies on the Phase 5 success traces carrying the returned
-content: the search trace's `details.hits` and the read trace's
-`details.read` bounded excerpt are the source material the overlap check
-runs against. If either is missing or shaped differently than Phase 5
-recorded, surface it before implementing the join rather than re-deriving
-content elsewhere.
+This phase consumes the Phase 5 success-trace content: the search trace's
+`details.hits` (each hit's `snippet` / `section_hint`) and the read
+trace's `details.read.content` bounded excerpt are the source material the
+overlap check runs against. Refused traces (`details.refused == true`)
+carry no content and are skipped.
+
+This is the only phase whose deliverable is a post-hoc analysis function
+plus its tests; it adds no runtime wiring to the live loop and changes no
+reducer, keeping entry points thin (per `Agents.md`). Follow
+`superpowers:test-driven-development` (or plain TDD): write the failing
+test first for each module, then implement.
+
+### Phase 8 open question to confirm before Task 8.2 (reply source)
+
+The original Phase 8 sketch assumed the final reply was stored as an
+`assistant_reply` **trace** in `traces.jsonl`. **That trace does not
+exist.** As confirmed in Phase 7 and against
+`crates/qsf_app/src/session/runtime.rs` (~289), the final assistant reply
+is recorded only in the `TurnCompleted` **event** in `events.jsonl`:
+
+```text
+events.jsonl line (TurnCompleted): payload.turn.assistant_response  (reply text)
+                                   payload.turn.index               (turn index)
+traces.jsonl line (project_doc_*): details.turn_index               (turn index)
+```
+
+Both turn-index keys derive from `completed_turn_count(state)` taken
+*before* the turn is pushed (`multi_turn_text_loop.rs` ~355), so a
+`project_doc_*` trace's `details.turn_index` equals its same-turn
+`TurnCompleted` event's `payload.turn.index`. The two are joinable.
+
+**Decision needed before implementing the join — DEFAULT chosen, raise if
+you disagree:**
+
+- **Default (recommended): join across files, no production change.**
+  `enrich` reads the reply from `events.jsonl` (`TurnCompleted` →
+  `payload.turn.assistant_response`, keyed by `payload.turn.index`) and
+  the `project_doc_*` records from `traces.jsonl` (keyed by
+  `details.turn_index`), and appends `project_doc_influence` records to
+  `traces.jsonl`. This keeps the live loop untouched and keeps the
+  enrichment a pure post-run consumer.
+- **Alternative (only if a single-file pass is required): emit an
+  assistant-reply trace at turn completion.** This would add a production
+  `record_trace` in the session runtime so `traces.jsonl` is
+  self-contained. It changes runtime behavior and touches an entry path,
+  so it is **out of scope for this phase** unless explicitly chosen —
+  raise it before Task 8.2 rather than adding it silently.
+
+The `Turn` field names (`index`, `assistant_response`) are confirmed in
+`crates/qsf_app/src/session/mod.rs` (~120); the hit/read JSON shapes
+(`DocHit.snippet`, `DocRead.content`) are confirmed in
+`crates/qsf_app/src/project_docs/types.rs`. Re-confirm against the actual
+artifacts while implementing (per the Phase 5 replayability constraint).
+
+### No-reply behavior (resolved — was contradictory in the original sketch)
+
+A `project_doc_*` trace whose turn never emitted a `TurnCompleted` reply
+(e.g. an aborted turn that executed a tool then hit the unbounded-loop
+guard in Phase 6) has **no reply to overlap**. **Decision: skip it** — do
+not append an influence record, and do not count it. `enrich` therefore
+appends and returns *one influence record per executed `project_doc_*`
+trace **that has a same-turn reply***, not per executed trace
+unconditionally. The acceptance criteria below reflect this. (The
+alternative — appending `influenced_reply == false` with a
+`details.reason = "no_reply"` note — is rejected for v1 to keep the
+appended set meaning "a reply existed and was checked"; raise it before
+Task 8.2 if a complete row-per-execution audit is preferred instead.)
+
+### Idempotency (per review P8-003)
+
+`enrich` must be **idempotent by `source_trace_id`**. Appending to the
+same `traces.jsonl` means a second naive run would duplicate every
+influence record and corrupt post-hoc counts. Before appending, `enrich`
+scans existing `project_doc_influence` records and collects their
+`details.source_trace_id` set; any source already enriched is skipped.
+Re-running `enrich` over an already-enriched directory appends `0` records.
 
 ### Task 8.1: Overlap check
 
@@ -942,26 +700,40 @@ content elsewhere.
 - Create: `crates/qsf_app/src/project_docs/influence.rs`
 - Modify: `crates/qsf_app/src/project_docs/mod.rs`
 
+A pure, dependency-free word-overlap predicate. False negatives are
+acceptable; false positives are guarded against by requiring a contiguous
+multi-word run. Comparison is at the **word** level (not raw substring),
+case-insensitive, and ignores surrounding punctuation, so ordinary
+markdown prose punctuation in either side does not defeat a real match.
+
 - [ ] **Step 1: Write the failing tests.**
 
 ```rust
 // crates/qsf_app/src/project_docs/influence.rs (test block)
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use super::reply_overlaps_excerpt;
 
     #[test]
     fn overlapping_reply_is_marked_influenced() {
-        let excerpt = "The project's accepted framing says X about Y.";
-        let reply = "Well, X about Y is what the project's framing says.";
+        // The reply quotes a contiguous run of >= MIN_NGRAM_SIZE qualifying
+        // (length >= 3) words from the excerpt: "project's accepted framing says".
+        let excerpt = "The project's accepted framing says autonomy is deferred.";
+        let reply = "As the project's accepted framing says, that part is deferred.";
         assert!(reply_overlaps_excerpt(reply, excerpt));
     }
 
     #[test]
     fn unrelated_reply_is_not_influenced() {
-        let excerpt = "The project's accepted framing says X about Y.";
+        let excerpt = "The project's accepted framing says autonomy is deferred.";
         let reply = "The capital of France is Paris.";
         assert!(!reply_overlaps_excerpt(reply, excerpt));
+    }
+
+    #[test]
+    fn short_excerpt_below_ngram_size_is_not_influenced() {
+        // Fewer than MIN_NGRAM_SIZE qualifying words => no false positive.
+        assert!(!reply_overlaps_excerpt("anything at all here", "tiny note"));
     }
 }
 ```
@@ -972,30 +744,47 @@ mod tests {
 // crates/qsf_app/src/project_docs/influence.rs
 //! Best-effort overlap check used to mark whether a tool-returned excerpt
 //! influenced the final assistant reply. False negatives are acceptable;
-//! false positives are guarded against by requiring multi-word overlap.
+//! false positives are guarded against by requiring a contiguous
+//! multi-word run. Comparison is word-level, case-insensitive, and
+//! punctuation-insensitive.
+
+use std::collections::HashSet;
 
 const MIN_NGRAM_SIZE: usize = 4;
+const MIN_WORD_LEN: usize = 3;
 
+/// Lowercased, punctuation-stripped words of length >= MIN_WORD_LEN.
+/// Apostrophes are preserved so possessives like "project's" stay one token.
+fn qualifying_words(text: &str) -> Vec<String> {
+    text.split(|c: char| !c.is_alphanumeric() && c != '\'')
+        .map(|word| word.trim_matches('\'').to_ascii_lowercase())
+        .filter(|word| word.len() >= MIN_WORD_LEN)
+        .collect()
+}
+
+/// Returns true when `reply` and `excerpt` share a contiguous run of at
+/// least `MIN_NGRAM_SIZE` qualifying words. Word n-grams (not raw
+/// substrings) so punctuation in either side does not defeat the match.
 pub fn reply_overlaps_excerpt(reply: &str, excerpt: &str) -> bool {
-    let reply_lower = reply.to_ascii_lowercase();
-    let words: Vec<&str> = excerpt
-        .split_whitespace()
-        .filter(|w| w.len() >= 3)
-        .collect();
-    if words.len() < MIN_NGRAM_SIZE {
+    let excerpt_words = qualifying_words(excerpt);
+    let reply_words = qualifying_words(reply);
+    if excerpt_words.len() < MIN_NGRAM_SIZE || reply_words.len() < MIN_NGRAM_SIZE {
         return false;
     }
-    words.windows(MIN_NGRAM_SIZE).any(|window| {
-        let phrase = window.join(" ").to_ascii_lowercase();
-        reply_lower.contains(&phrase)
-    })
+    let reply_ngrams: HashSet<String> = reply_words
+        .windows(MIN_NGRAM_SIZE)
+        .map(|window| window.join(" "))
+        .collect();
+    excerpt_words
+        .windows(MIN_NGRAM_SIZE)
+        .any(|window| reply_ngrams.contains(&window.join(" ")))
 }
 ```
 
 - [ ] **Step 3: Re-export and run tests.**
 
 ```rust
-// crates/qsf_app/src/project_docs/mod.rs
+// crates/qsf_app/src/project_docs/mod.rs  (add alongside the existing mods)
 pub mod influence;
 pub use influence::reply_overlaps_excerpt;
 ```
@@ -1017,52 +806,139 @@ git commit -m "feat(project_docs): post-hoc reply-overlap check"
 - Create: `crates/qsf_app/src/project_docs/enrichment.rs`
 - Modify: `crates/qsf_app/src/project_docs/mod.rs`
 
-A function that, given a run's `traces.jsonl` path, reads the trace
-records, pairs each `project_doc_*` operation with the same-turn final
-assistant reply, computes the overlap signal, and appends new
-`project_doc_influence` records.
+A function that, given a finished run's directory, reads the
+`TurnCompleted` replies from `events.jsonl` and the executed
+`project_doc_*` records from `traces.jsonl`, joins them on turn index,
+computes the overlap signal against the recorded content, and appends one
+`project_doc_influence` record per executed project-doc call that has a
+same-turn reply and is not already enriched.
 
-- [ ] **Step 1: Write the failing test.**
+**Shape (default join, per the reply-source open question above):**
+
+```text
+pub fn enrich(run_dir: &Path) -> anyhow::Result<usize>
+  // 1. Parse events.jsonl line by line. For each EventType::TurnCompleted,
+  //    extract (turn_index = payload.turn.index, reply = payload.turn.assistant_response)
+  //    into a turn_index -> reply map. (Field names confirmed in session/mod.rs.)
+  // 2. Parse traces.jsonl line by line into TraceRecord (it derives Deserialize).
+  //    a. First collect already_enriched: the set of details.source_trace_id from
+  //       every existing operation == "project_doc_influence" record (idempotency).
+  //    b. Keep source records whose operation is "project_doc_search" or
+  //       "project_doc_read" AND details.refused == false (skip refused: no
+  //       content) AND whose trace_id is not in already_enriched.
+  // 3. For each kept source record:
+  //    - Look up the same-turn reply by details.turn_index. If none (no
+  //      TurnCompleted for that turn), SKIP (no append, not counted) -- per the
+  //      no-reply decision above.
+  //    - Extract the source content:
+  //        - project_doc_search: concatenate each hit's "snippet" (and
+  //          "section_hint" when present) from details.hits.
+  //        - project_doc_read:   details.read.content.
+  //    - Compute influenced = reply_overlaps_excerpt(reply, content).
+  // 4. Append one TraceRecord per kept+matched source (operation
+  //    "project_doc_influence") to run_dir/traces.jsonl, details:
+  //      { source_trace_id, source_operation, turn_index, influenced_reply }
+  //    referencing the original by trace_id (OQ #3). Return the count appended.
+```
+
+**Append safely (per review P8-005).** `TraceLogWriter::create` opens with
+`truncate(true)`, and the current `RunContext` constructors create a fresh
+run directory with that same truncate-mode writer — there is **no** safe
+"reopen an existing run's context and append" API today. So `enrich` must
+append directly:
+`OpenOptions::new().create(true).append(true).open(run_dir.join("traces.jsonl"))`,
+writing each serialized `TraceRecord` followed by `\n`. Do **not** route
+this through `TraceLogWriter::create` or a reopened `RunContext` (either
+would truncate the run's existing records). If a reusable append-mode
+`TraceLogWriter` constructor is later wanted, that is a separate change;
+do not add it silently here.
+
+Reuse `TraceRecord` (`Deserialize`) for the trace lines and the existing
+`EventType` / event-record parsing for the event lines rather than
+hand-rolling new structs where existing ones fit. Surface any remaining
+naming/shape uncertainty (hit-field names beyond `snippet`/`section_hint`,
+the exact `TurnCompleted` payload nesting) as a question rather than
+guessing.
+
+- [ ] **Step 1: Write the failing tests.** Cover **both** the search and
+  read content paths (per review P8-002), the refused skip, and
+  idempotency.
 
 ```rust
 // crates/qsf_app/src/project_docs/enrichment.rs (test block)
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use std::io::Write;
-    use tempfile::NamedTempFile;
+    use super::enrich;
+    use std::fs;
+    use tempfile::tempdir;
 
     #[test]
-    fn enrichment_appends_influence_records() {
-        let mut file = NamedTempFile::new().unwrap();
-        // Write two records:
-        //   1. project_doc_search with hits containing an excerpt
-        //   2. assistant reply trace that quotes the excerpt
-        // (Schema: full TraceRecord JSON lines)
-        // Call enrich(file.path()).
-        // Re-read; assert a project_doc_influence record was appended
-        // with details.influenced_reply = true.
+    fn enrichment_appends_influence_record_for_search() {
+        let dir = tempdir().unwrap();
+        let run_dir = dir.path();
+
+        // events.jsonl: one TurnCompleted whose turn.index = 0 and whose
+        // turn.assistant_response quotes a >=4-qualifying-word run from the
+        // search snippet below. Match the real event/Turn JSON shape
+        // (session/runtime.rs TurnCompleted payload).
+        fs::write(run_dir.join("events.jsonl"), /* one TurnCompleted line */)
+            .unwrap();
+
+        // traces.jsonl: one project_doc_search trace, turn_index = 0,
+        // refused = false, details.hits[0].snippet carrying the excerpt text.
+        fs::write(run_dir.join("traces.jsonl"), /* one project_doc_search line */)
+            .unwrap();
+
+        let appended = enrich(run_dir).unwrap();
+        assert_eq!(appended, 1);
+
+        // Re-read traces.jsonl; assert a project_doc_influence record was
+        // appended with details.influenced_reply == true and
+        // details.source_trace_id == the original search trace_id, and that
+        // the original search line is still present (not truncated).
+    }
+
+    #[test]
+    fn enrichment_appends_influence_record_for_read() {
+        // Same as above but the source is a project_doc_read trace whose
+        // details.read.content is quoted by the reply; assert one appended
+        // project_doc_influence with influenced_reply == true.
+    }
+
+    #[test]
+    fn non_overlapping_reply_marks_not_influenced() {
+        // A read/search trace whose content is NOT quoted by the reply yields
+        // one influence record with influenced_reply == false.
+    }
+
+    #[test]
+    fn refused_traces_are_skipped() {
+        // A refused project_doc_* trace yields no influence record.
+    }
+
+    #[test]
+    fn enrich_is_idempotent() {
+        // First enrich appends N>0; a second enrich over the same dir appends 0
+        // (sources already enriched are skipped by source_trace_id).
     }
 }
 ```
 
-- [ ] **Step 2: Implement `enrich`.**
+- [ ] **Step 2: Implement `enrich`.** Follow the pattern of any existing
+  post-hoc artifact reader in `crates/qsf_app/src/` (e.g. the report
+  module that names `events.jsonl` / `traces.jsonl`) for path handling and
+  JSON-lines parsing, and the open-options append described above.
 
-The implementation reads `traces.jsonl` line by line, parses each
-`TraceRecord`, groups them by turn (carried in `details.turn_index`,
-present on both refused and executed project-doc traces after Phase 5;
-confirm against the actual trace shape during implementation), pairs each
-`project_doc_*` record with the final `assistant_reply` trace in the same
-turn, computes `reply_overlaps_excerpt` against the recorded content
-(search `details.hits`; read `details.read`), and appends one
-`project_doc_influence` record per pair.
+- [ ] **Step 3: Re-export and run tests.**
 
-This is plumbing work whose precise shape depends on existing trace
-conventions; follow the pattern of any other post-hoc analysis tool
-already in `crates/qsf_app/src/`. Surface naming choices as open
-questions if existing conventions are unclear.
+```rust
+// crates/qsf_app/src/project_docs/mod.rs
+pub mod enrichment;
+pub use enrichment::enrich;
+```
 
-- [ ] **Step 3: Run tests.** Expected: PASS.
+Run: `cargo test -p qsf_app project_docs::enrichment`
+Expected: PASS.
 
 - [ ] **Step 4: Commit.**
 
@@ -1071,6 +947,91 @@ git add crates/qsf_app/src/project_docs/enrichment.rs \
         crates/qsf_app/src/project_docs/mod.rs
 git commit -m "feat(project_docs): traces.jsonl post-hoc influenced_reply enrichment"
 ```
+
+### Task 8.3: Invocation point (decision + minimal wiring)
+
+`enrich` is a library function with deterministic tests; **whether and
+where it is invoked on real runs is a separate decision** that this phase
+must make explicitly rather than leave dangling.
+
+- **DEFAULT (recommended): ship as a library + tests only, no automatic
+  invocation in v1.** The live loop stays untouched and entry points stay
+  thin; there is **no operator-facing entry point in v1** — running it on
+  real artifacts requires calling the Rust function (e.g. from a test or a
+  follow-up binary). Phase 10's "optionally run the enrich pass" step is
+  therefore explicitly *not* operator-runnable yet (see review P8-006 and
+  the amended Phase 10 note).
+- **Follow-up (deferred, not in this phase):** if a researcher needs to
+  run `enrich` against a run directory without writing Rust, add a small
+  standalone analysis surface — a `cargo` subcommand / `xtask` / tiny
+  binary taking `run_dir`. Capture this as a backlog item; do **not**
+  build it here unless the project asks for it now.
+- If the project instead decides the enrichment must run automatically at
+  run completion, that adds a call from the run/experiment teardown path
+  and is a small, separable change; raise it before wiring, since it
+  touches a runtime entry path.
+
+- [ ] Record the chosen invocation decision (a one-line note in this task
+  and, if it is a standing behavior, a `docs/DecisionLog.md` entry folded
+  into Phase 9 Task 9.2 rather than a separate commit).
+
+### Phase 8 verification
+
+Per `Agents.md`, build first, then focused tests, then the lint/format
+gates:
+
+```bash
+cargo build
+cargo test -p qsf_app project_docs::influence
+cargo test -p qsf_app project_docs::enrichment
+cargo test -p qsf_app project_docs
+cargo clippy --all-targets -- -D warnings
+cargo fmt
+```
+
+Expect all clean. Phase 8 is pure Rust and deterministic — no live model
+provider is required; the overlap and enrichment behavior is fully
+exercised by unit tests over in-test `events.jsonl` / `traces.jsonl`
+fixtures.
+
+**Acceptance criteria for Phase 8:**
+
+- `reply_overlaps_excerpt` returns true on a reply that quotes a
+  contiguous ≥4-qualifying-word run from the excerpt and false on an
+  unrelated reply or an excerpt with too few qualifying words; matching is
+  word-level, case-insensitive, and punctuation-insensitive; it is
+  re-exported from `project_docs`.
+- `enrich` reads the final reply from the `TurnCompleted` event in
+  `events.jsonl` (keyed by `payload.turn.index`) and the executed
+  `project_doc_*` records from `traces.jsonl` (keyed by
+  `details.turn_index`), joins them on the aligned turn index, and
+  appends exactly one `project_doc_influence` record per executed
+  project-doc call **that has a same-turn `TurnCompleted` reply and is not
+  already enriched** — each referencing its source by `trace_id` and
+  carrying `details.influenced_reply`.
+- The overlap signal is computed from `details.hits[].snippet`
+  (`project_doc_search`) and `details.read.content` (`project_doc_read`);
+  **both** content paths are covered by tests.
+- Refused project-doc traces (`details.refused == true`) produce no
+  influence record.
+- A `project_doc_*` trace whose turn emitted no `TurnCompleted` reply is
+  skipped (no influence record, not counted).
+- `enrich` is **idempotent**: a second run over an already-enriched
+  directory appends `0` records (sources skipped by `source_trace_id`).
+- `enrich` appends to `traces.jsonl` via open-options append mode without
+  truncating the existing records (it does not use `TraceLogWriter::create`
+  or a reopened `RunContext`).
+- The reply-source, no-reply, and invocation-point decisions are taken
+  explicitly per the in-phase open questions; if any alternative
+  (production assistant-reply trace, append-false-on-no-reply, or
+  automatic/operator invocation) is chosen, it is surfaced before
+  implementation rather than added silently.
+- `cargo build`, the focused tests above,
+  `cargo clippy --all-targets -- -D warnings`, and `cargo fmt` are clean.
+
+**Diary discipline (still binding):** Phase 8 application work is grouped
+under the single Phase 9 diary entry; reconcile, don't duplicate, any
+isolated-merge entry there.
 
 ---
 
@@ -1123,6 +1084,10 @@ Consequences:
   write-capable, and non-live-role introspection are deferred to
   follow-on designs.
 ```
+
+If Phase 8 Task 8.3 chose automatic enrichment invocation as a standing
+behavior, fold that decision in here as a second entry rather than a
+separate commit.
 
 - [ ] Commit.
 
@@ -1189,7 +1154,7 @@ explicitly accounts for the `project_docs` library work, not only Phases
 2-8.** If any of Phases 2-8 were merged in isolation ahead of this pass
 and already carry their own standalone diary entries (per the diary
 discipline noted in those phases — including a possible standalone Phase 7
-entry per Task 7.3), reconcile rather than duplicate them here.
+entry per P7-004), reconcile rather than duplicate them here.
 
 Template:
 
@@ -1204,7 +1169,7 @@ hedging, bounded search-then-read tool rounds, and trace records.
 What changed:
 - New `project_docs` module: allowlist loader, metadata extraction,
   lexical search, bounded read (path-confined against traversal),
-  post-hoc reply-overlap check.
+  post-hoc reply-overlap check and traces.jsonl influence enrichment.
 - New tools `search_project_docs` and `read_project_doc` wired into
   `ToolRegistry`.
 - New `ResponderToolContext` combining session + project-doc accessors
@@ -1223,6 +1188,9 @@ What changed:
   no-tools answer call.
 - Self-question battery test exercises the responder end-to-end against
   the in-tree fixture corpus.
+- Post-hoc `influenced_reply` enrichment joins each project-doc trace to
+  the same-turn TurnCompleted reply (idempotent, skips refused and
+  no-reply turns).
 
 Refs: crates/qsf_app/src/project_docs, crates/qsf_app/src/tools,
 crates/qsf_app/src/models/tool_dispatch.rs,
@@ -1274,6 +1242,13 @@ acceptance gate.
   - Recorded `latency_ms` values stay well under 1000 ms; if any exceed
     it, follow OQ #5 and add a cap-enforcement task at the
     `ProjectDocService` boundary.
+- [ ] The Phase 8 `enrich` pass is **library-only in v1** (no
+  operator-facing entry point — see Task 8.3). Running it over a real run
+  directory requires invoking the Rust function (e.g. an ad-hoc test or
+  the deferred analysis subcommand), so it is **optional and not part of
+  the standard operator flow** for this phase. If you do invoke it,
+  spot-check that the appended `project_doc_influence` records agree with
+  your reading of which replies were grounded in fetched content.
 - [ ] If anything fails, do **not** patch the prompt to mask it — open a
   new diary entry describing the failure and add a follow-on ticket in
   the experiment backlog.
@@ -1352,8 +1327,9 @@ section or token budget.
 ### Planning work to flesh out later
 
 - Decide whether pointers are generated from the same allowlisted corpus
-  as `search_project_docs`, from post-hoc `project_doc_*` traces, from
-  curated stable project facts, or from a combination.
+  as `search_project_docs`, from post-hoc `project_doc_*` traces
+  (including the Phase 8 `project_doc_influence` signal), from curated
+  stable project facts, or from a combination.
 - Define the `ContextSource` / `ContextFragment` boundary that turns
   project-doc pointer candidates into active context.
 - Define ranking signals: query similarity, association strength,
@@ -1455,6 +1431,16 @@ Run after Phases 1-10 land:
   asserts the voicing block on every provider call including each
   question's final answer call, and asserts the off-topic control makes
   zero project-doc calls — all under `cargo test -p qsf_app`.
+- [ ] Verify the Phase 8 enrichment joins each executed `project_doc_*`
+  trace to its same-turn `TurnCompleted` reply (reply read from
+  `events.jsonl`, traces from `traces.jsonl`, matched on the aligned turn
+  index), appends exactly one `project_doc_influence` record per executed
+  call that has a same-turn reply (referencing the source by `trace_id`),
+  computes overlap from both `details.hits[].snippet` and
+  `details.read.content`, skips refused traces and no-reply turns, is
+  idempotent (a second `enrich` appends 0), and does not truncate
+  `traces.jsonl`; `reply_overlaps_excerpt` requires a contiguous
+  multi-word run (Phase 8 tests should already cover this in CI).
 - [ ] Verify `Architecture.ToolSystem.md`'s *Implementation Status*
   section lists the two new tools under "Implemented today" with code
   refs and a refreshed `Last reviewed:` date.
