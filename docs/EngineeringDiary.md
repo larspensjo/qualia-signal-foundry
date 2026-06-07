@@ -2395,3 +2395,21 @@ What changed:
 - Added turn-level coverage for search/read batching, refusal reuse, bounded-loop rejection, and the no-tool path.
 
 Refs: crates/qsf_app/src/experiments/multi_turn_text_loop.rs, crates/qsf_app/src/conversation/prompt.rs
+
+## 2026-06-07 - Multi-turn text-loop test module split
+
+Extracted the large inline `multi_turn_text_loop` test block into an adjacent
+`tests.rs` module and wired the parent experiment file to load it.
+
+What changed:
+- Added `#[cfg(test)] mod tests;` to `crates/qsf_app/src/experiments/multi_turn_text_loop.rs`.
+- Moved the copied test body into `crates/qsf_app/src/experiments/multi_turn_text_loop/tests.rs`.
+- Kept the tests using explicit `super::` references where they already relied on the
+  parent module's private helpers.
+
+Observed:
+- `cargo test -p qsf_app multi_turn_text_loop` passed.
+- `cargo clippy --all-targets -- -D warnings` passed.
+- `cargo fmt` passed.
+
+Refs: crates/qsf_app/src/experiments/multi_turn_text_loop.rs, crates/qsf_app/src/experiments/multi_turn_text_loop/tests.rs
