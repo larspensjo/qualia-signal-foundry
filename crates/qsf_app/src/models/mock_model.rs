@@ -182,6 +182,10 @@ impl ModelClient for MockModelClient {
                 .iter()
                 .any(|tool| tool.name == RECALL_TURN_TOOL_NAME)
                 && request
+                    .messages
+                    .iter()
+                    .all(|message| message.role != ModelMessageRole::Tool)
+                && request
                     .last_user_message()
                     .map(|message| message.to_ascii_lowercase().contains("recall turn"))
                     .unwrap_or(false)

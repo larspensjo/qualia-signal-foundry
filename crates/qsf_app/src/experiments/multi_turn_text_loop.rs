@@ -24,6 +24,7 @@ use crate::models::{
 };
 use crate::observability::event_log::EventType;
 use crate::observability::trace::{TraceRecord, elapsed_ms};
+use crate::project_docs::ProjectDocService;
 use crate::runtime::run_context::RunContext;
 use crate::session::{
     Exchange, ExchangeModelUse, ExchangeOutput, LiveSessionEvent, MemorySourceConfig, RecallRecord,
@@ -31,7 +32,8 @@ use crate::session::{
     StateDirectoryResolution, Turn, TurnRange, TurnSummary, is_turn_summarized,
 };
 use crate::tools::{
-    CALCULATOR_TOOL_NAME, RECALL_TURN_TOOL_NAME, SessionToolContext, ToolRegistry, ToolResult,
+    CALCULATOR_TOOL_NAME, READ_PROJECT_DOC_TOOL_NAME, RECALL_TURN_TOOL_NAME, ResponderToolContext,
+    SEARCH_PROJECT_DOCS_TOOL_NAME, ToolRegistry, ToolResult,
 };
 
 use super::registry::{Experiment, ExperimentName, ExperimentOutcome};
@@ -53,6 +55,7 @@ const HOT_HIGH_WATER_FRACTION: f64 = 0.80;
 const HOT_LOW_WATER_FRACTION: f64 = 0.50;
 const WARM_SUMMARY_MAX_OUTPUT_TOKENS: u32 = 80;
 const WARM_SUMMARY_RETRY_MAX_OUTPUT_TOKENS: u32 = 240;
+const MAX_RESPONDER_TOOL_ROUNDS_PER_TURN: usize = 2;
 
 pub struct MultiTurnTextLoopExperiment;
 
@@ -454,7 +457,7 @@ fn run_one_turn<W: Write>(
         Some(brief) => format!("{brief}\n\n{retrieved_memory_block}"),
         None => retrieved_memory_block,
     };
-    let base_prompt = assemble_session_prompt(state, user_input, &retrieved_memory_block);
+    let base_prompt = assemble_session_prompt(state, user_input, &retrieved_memory_block, true);
     verify_prompt_prefix(state, &base_prompt)?;
     apply_session_event(
         context,
@@ -468,47 +471,73 @@ fn run_one_turn<W: Write>(
     print_memory_blocks(output, &assembly, color_mode)?;
 
     let registry = ToolRegistry::default();
-    let responder_role = conversational_responder_role_with_session_tools();
-    let allowed_tools = responder_role
-        .allowed_tools
-        .iter()
-        .map(String::as_str)
-        .collect::<Vec<_>>();
-    let request = ModelRequest::new(responder_role.clone(), base_prompt.messages.clone())
-        .with_session_id(context.run_id())
-        .with_model_name(&state.config.model_id)
-        .with_temperature(0.0)
-        .with_max_output_tokens(max_output_tokens)
-        .with_tools(registry.model_tool_definitions_for(&allowed_tools));
-    let model_started_at = Instant::now();
-    let mut response = invoke_model_role(context, model_client, &request)?;
-    let mut model_latency_ms = elapsed_ms(model_started_at);
-    let mut input_tokens = response
-        .usage
-        .as_ref()
-        .map(|usage| usage.input_tokens)
-        .unwrap_or(0);
-    let mut cached_input_tokens = response
-        .usage
-        .as_ref()
-        .map(|usage| usage.cached_input_tokens)
-        .unwrap_or(0);
-    let mut output_tokens = response
-        .usage
-        .as_ref()
-        .map(|usage| usage.output_tokens)
-        .unwrap_or(0);
-    let mut recalled_turns = vec![];
+    let project_docs = project_doc_service_for_multi_turn_text_loop(context)?;
+    let responder_role = conversational_responder_role_with_session_and_project_doc_tools();
     let mut final_messages = base_prompt.messages.clone();
+    let mut project_doc_budget = crate::models::ProjectDocToolBudget::new(turn_index);
+    let mut model_latency_ms: u64 = 0;
+    let mut input_tokens: u32 = 0;
+    let mut cached_input_tokens: u32 = 0;
+    let mut output_tokens: u32 = 0;
+    let mut recalled_turns = vec![];
+    let mut tool_rounds = 0usize;
+    let mut response;
+    let mut current_request = responder_request_for_messages(
+        &responder_role,
+        base_prompt.messages.clone(),
+        context,
+        state,
+        &registry,
+        max_output_tokens,
+        true,
+    );
 
-    if !response.tool_calls.is_empty() {
+    loop {
+        let started_at = Instant::now();
+        response = invoke_model_role(context, model_client, &current_request)?;
+        model_latency_ms = model_latency_ms.saturating_add(elapsed_ms(started_at));
+        if let Some(usage) = response.usage.as_ref() {
+            input_tokens = input_tokens.saturating_add(usage.input_tokens);
+            cached_input_tokens = cached_input_tokens.saturating_add(usage.cached_input_tokens);
+            output_tokens = output_tokens.saturating_add(usage.output_tokens);
+        }
+
+        if response.tool_calls.is_empty() {
+            break;
+        }
+
+        if tool_rounds >= MAX_RESPONDER_TOOL_ROUNDS_PER_TURN {
+            context.record_event(
+                EventType::ErrorOccurred,
+                json!({
+                    "session_id": context.run_id(),
+                    "stage": "bounded-tool-loop",
+                    "error": "responder returned tool calls after the allowed tool rounds were exhausted",
+                    "tool_call_count": response.tool_calls.len(),
+                    "tool_calls": &response.tool_calls,
+                }),
+                None,
+            )?;
+            anyhow::bail!(
+                "responder returned tool calls after the allowed tool rounds were exhausted"
+            );
+        }
+
         let tool_calls = response.tool_calls.clone();
-        let tool_executions =
-            execute_model_tool_calls(context, state, &request, &registry, &tool_calls)?;
-        recalled_turns = tool_executions
-            .iter()
-            .filter_map(|execution| execution.recall.clone())
-            .collect();
+        let tool_executions = execute_model_tool_calls(
+            context,
+            state,
+            &project_docs,
+            &current_request,
+            &registry,
+            &mut project_doc_budget,
+            &tool_calls,
+        )?;
+        recalled_turns.extend(
+            tool_executions
+                .iter()
+                .filter_map(|execution| execution.recall.clone()),
+        );
         final_messages.push(ModelMessage::assistant_tool_calls(
             response.output_text.clone(),
             tool_calls,
@@ -531,38 +560,17 @@ fn run_one_turn<W: Write>(
             },
         )?;
 
-        let follow_up_request = ModelRequest::new(
-            ModelRole::predefined(ModelRoleId::ConversationalResponder),
+        tool_rounds += 1;
+        let advertise_tools = tool_rounds < MAX_RESPONDER_TOOL_ROUNDS_PER_TURN;
+        current_request = responder_request_for_messages(
+            &responder_role,
             final_messages.clone(),
-        )
-        .with_session_id(context.run_id())
-        .with_model_name(&state.config.model_id)
-        .with_temperature(0.0)
-        .with_max_output_tokens(max_output_tokens);
-        let follow_up_started_at = Instant::now();
-        response = invoke_model_role(context, model_client, &follow_up_request)?;
-        model_latency_ms = model_latency_ms.saturating_add(elapsed_ms(follow_up_started_at));
-        if let Some(usage) = response.usage.as_ref() {
-            input_tokens = input_tokens.saturating_add(usage.input_tokens);
-            cached_input_tokens = cached_input_tokens.saturating_add(usage.cached_input_tokens);
-            output_tokens = output_tokens.saturating_add(usage.output_tokens);
-        }
-        if !response.tool_calls.is_empty() {
-            context.record_event(
-                EventType::ErrorOccurred,
-                json!({
-                    "session_id": context.run_id(),
-                    "stage": "tool-follow-up",
-                    "error": "tool follow-up returned additional tool calls; multi-round tool calls are not supported",
-                    "tool_call_count": response.tool_calls.len(),
-                    "tool_calls": &response.tool_calls,
-                }),
-                None,
-            )?;
-            anyhow::bail!(
-                "tool follow-up returned additional tool calls; multi-round tool calls are not supported"
-            );
-        }
+            context,
+            state,
+            &registry,
+            max_output_tokens,
+            advertise_tools,
+        );
     }
 
     apply_live_session_event(
@@ -1162,13 +1170,53 @@ fn candidate_pair_count(retrieved: &[(String, f64)]) -> usize {
     pairs.len()
 }
 
-fn conversational_responder_role_with_session_tools() -> ModelRole {
+fn conversational_responder_role_with_session_and_project_doc_tools() -> ModelRole {
     let mut role = ModelRole::predefined(ModelRoleId::ConversationalResponder);
     role.allowed_tools = vec![
         RECALL_TURN_TOOL_NAME.to_string(),
         CALCULATOR_TOOL_NAME.to_string(),
+        SEARCH_PROJECT_DOCS_TOOL_NAME.to_string(),
+        READ_PROJECT_DOC_TOOL_NAME.to_string(),
     ];
     role
+}
+
+fn project_doc_service_for_multi_turn_text_loop(
+    context: &RunContext,
+) -> anyhow::Result<ProjectDocService> {
+    let repo_root = context
+        .workspace_root()
+        .context(
+            "multi-turn-text-loop requires --workspace-root <path> to enable project-doc service",
+        )?
+        .to_path_buf();
+    let allowlist_path = repo_root.join("config/project-doc-introspection.toml");
+    Ok(ProjectDocService::new(repo_root, allowlist_path))
+}
+
+fn responder_request_for_messages(
+    responder_role: &ModelRole,
+    messages: Vec<ModelMessage>,
+    context: &RunContext,
+    state: &SessionState,
+    registry: &ToolRegistry,
+    max_output_tokens: u32,
+    advertise_tools: bool,
+) -> ModelRequest {
+    let mut request = ModelRequest::new(responder_role.clone(), messages)
+        .with_session_id(context.run_id())
+        .with_model_name(&state.config.model_id)
+        .with_temperature(0.0)
+        .with_max_output_tokens(max_output_tokens);
+    if advertise_tools {
+        let allowed_tools = responder_role
+            .allowed_tools
+            .iter()
+            .map(String::as_str)
+            .collect::<Vec<_>>();
+        request = request.with_tools(registry.model_tool_definitions_for(&allowed_tools));
+    }
+    request
 }
 
 struct ToolExecution {
@@ -1179,22 +1227,23 @@ struct ToolExecution {
 fn execute_model_tool_calls(
     context: &mut RunContext,
     state: &SessionState,
+    project_docs: &ProjectDocService,
     request: &ModelRequest,
     registry: &ToolRegistry,
+    project_doc_budget: &mut crate::models::ProjectDocToolBudget,
     tool_calls: &[ModelToolCall],
 ) -> anyhow::Result<Vec<ToolExecution>> {
-    let tool_ctx = SessionToolContext { state };
+    let tool_ctx = ResponderToolContext {
+        state,
+        project_docs,
+    };
     let dispatch_started_at = Instant::now();
-    // When the responder grows multiple tool batches per human turn, lift this
-    // budget to the turn scope and thread it through each dispatch batch.
-    let mut project_doc_budget =
-        crate::models::ProjectDocToolBudget::new(completed_turn_count(state));
     let tool_results = dispatch_model_tool_calls(
         context,
         request,
         registry,
         &tool_ctx,
-        &mut project_doc_budget,
+        project_doc_budget,
         tool_calls,
     )?;
     let dispatch_latency_ms = elapsed_ms(dispatch_started_at);
@@ -1917,6 +1966,7 @@ fn assemble_session_prompt(
     state: &SessionState,
     user_input: &str,
     retrieved_memory_block: &str,
+    project_doc_channel_enabled: bool,
 ) -> PromptAssembly {
     let summarized_turns = state
         .summarized_turns
@@ -1942,11 +1992,12 @@ fn assemble_session_prompt(
         })
         .collect::<Vec<_>>();
 
-    prompt::assemble_prompt_with_summaries(
+    prompt::assemble_prompt_with_summaries_and_project_doc_channel(
         &summarized_turns,
         &prior_turns,
         user_input,
         retrieved_memory_block,
+        project_doc_channel_enabled,
     )
 }
 
@@ -2548,6 +2599,7 @@ fn prompt_prefix_status_for_report(state: &SessionState, turn_position: usize) -
         &prompt_state,
         &turn.user_input,
         &turn.retrieved_memory_block,
+        true,
     );
 
     (prompt::prior_request_prefix_hash(&prompt_assembly.messages, previous.message_count)
@@ -2583,7 +2635,7 @@ mod tests {
     };
     use crate::conversation::ContentHash;
     use crate::conversation::prompt::{
-        PromptTurn, PromptTurnSummary, assemble_prompt, assemble_prompt_with_summaries,
+        PromptTurn, PromptTurnSummary, assemble_prompt_with_summaries_and_project_doc_channel,
         prior_request_prefix_hash,
     };
     use crate::experiments::text_owned_voice_loop::SharedVoiceMemorySource;
@@ -2596,13 +2648,17 @@ mod tests {
         ModelToolCall, ModelUsage,
     };
     use crate::observability::event_log::{EventRecord, EventType};
+    use crate::observability::trace::TraceRecord;
     use crate::runtime::run_context::RunContext;
     use crate::session::{
         MemorySourceConfig, RecallRecord, SessionConfig, SessionEndReason, SessionEvent,
         SessionState, StateDirectoryResolution, Turn, TurnRange, TurnSummary, reduce_session,
         resume_breaking_config_changed,
     };
-    use crate::tools::{CALCULATOR_TOOL_NAME, RECALL_TURN_TOOL_NAME};
+    use crate::tools::{
+        CALCULATOR_TOOL_NAME, READ_PROJECT_DOC_TOOL_NAME, RECALL_TURN_TOOL_NAME,
+        SEARCH_PROJECT_DOCS_TOOL_NAME,
+    };
 
     #[test]
     fn live_retrieval_uses_keyword_tag_strategy() {
@@ -2823,7 +2879,7 @@ mod tests {
         let base_dir =
             std::env::temp_dir().join(format!("qsf-memory-hint-turn-{}", Uuid::new_v4()));
         let state_dir = base_dir.join("state/text-loop");
-        let mut context = RunContext::create_in(&base_dir, "multi-turn-text-loop").unwrap();
+        let mut context = test_context(&base_dir, "multi-turn-text-loop");
         let mut state = SessionState::new(test_config_with_warm_threshold(10, 10));
         let foo = memory_record(
             "memory.foo",
@@ -2918,7 +2974,7 @@ mod tests {
     fn run_one_turn_uses_default_turn_max_output_tokens() {
         let base_dir = std::env::temp_dir().join(format!("qsf-turn-output-cap-{}", Uuid::new_v4()));
         let state_dir = base_dir.join("state/text-loop");
-        let mut context = RunContext::create_in(&base_dir, "multi-turn-text-loop").unwrap();
+        let mut context = test_context(&base_dir, "multi-turn-text-loop");
         let mut state = SessionState::new(test_config_with_warm_threshold(10, 10));
         let mut memory_snapshot = super::SessionMemorySourceSnapshot::from_fixture(
             "test",
@@ -3040,7 +3096,7 @@ mod tests {
             memory_record("memory.c", "C", "C summary", vec!["c"], 10),
         ]);
         store.persist().unwrap();
-        let mut context = RunContext::create_in(&base_dir, "multi-turn-text-loop").unwrap();
+        let mut context = test_context(&base_dir, "multi-turn-text-loop");
         let mut state = SessionState::new_with_id("session-drop".to_string(), test_config(10));
         state.turns = vec![
             test_turn_with_memory_ids(0, &["memory.a"]),
@@ -3098,7 +3154,7 @@ mod tests {
             memory_record("memory.b", "B", "B summary", vec!["b"], 10),
         ]);
         store.persist().unwrap();
-        let mut context = RunContext::create_in(&base_dir, "multi-turn-text-loop").unwrap();
+        let mut context = test_context(&base_dir, "multi-turn-text-loop");
         let mut state = SessionState::new_with_id("session-drop-fail".to_string(), test_config(10));
         state.turns = vec![
             test_turn_with_memory_ids(0, &["memory.a"]),
@@ -3154,7 +3210,7 @@ mod tests {
             memory_record("memory.b", "B", "B summary", vec!["b"], 10),
         ]);
         store.persist().unwrap();
-        let mut context = RunContext::create_in(&base_dir, "multi-turn-text-loop").unwrap();
+        let mut context = test_context(&base_dir, "multi-turn-text-loop");
         let mut state = SessionState::new_with_id("session-flush".to_string(), test_config(10));
         state.turns = vec![
             test_turn_with_memory_ids(0, &["memory.a"]),
@@ -3212,7 +3268,7 @@ mod tests {
             },
         ]);
         store.persist().unwrap();
-        let mut context = RunContext::create_in(&base_dir, "multi-turn-text-loop").unwrap();
+        let mut context = test_context(&base_dir, "multi-turn-text-loop");
         let mut state =
             SessionState::new_with_id("session-flush-gaps".to_string(), test_config(10));
         state.turns = vec![
@@ -3254,7 +3310,7 @@ mod tests {
             memory_record("memory.b", "B", "B summary", vec!["b"], 10),
         ]);
         store.persist().unwrap();
-        let mut context = RunContext::create_in(&base_dir, "multi-turn-text-loop").unwrap();
+        let mut context = test_context(&base_dir, "multi-turn-text-loop");
         let mut state = SessionState::new_with_id("session-retry".to_string(), test_config(10));
         state.turns = vec![
             test_turn_with_memory_ids(0, &["memory.a"]),
@@ -3312,7 +3368,7 @@ mod tests {
     fn model_error_output_still_shows_assembled_memory_blocks() {
         let base_dir =
             std::env::temp_dir().join(format!("qsf-model-error-memory-blocks-{}", Uuid::new_v4()));
-        let mut context = RunContext::create_in(&base_dir, "multi-turn-text-loop").unwrap();
+        let mut context = test_context(&base_dir, "multi-turn-text-loop");
         let input = Cursor::new("associative memory\n:quit\n");
         let mut output = Vec::new();
         let memory_source = TestMemorySource;
@@ -3442,7 +3498,7 @@ mod tests {
     #[test]
     fn mock_model_session_records_turns_events_and_report() {
         let base_dir = std::env::temp_dir().join(format!("qsf-multi-turn-{}", Uuid::new_v4()));
-        let mut context = RunContext::create_in(&base_dir, "multi-turn-text-loop").unwrap();
+        let mut context = test_context(&base_dir, "multi-turn-text-loop");
         let input = Cursor::new(
             "What do you remember about context budgets?\nContinue that thought.\nWhat changed about model roles?\n:quit\n",
         );
@@ -3493,7 +3549,7 @@ mod tests {
         assert_eq!(turns[0].payload["turn"]["index"], 0);
         assert_eq!(turns[1].payload["turn"]["index"], 1);
         assert_eq!(turns[2].payload["turn"]["index"], 2);
-        assert_turn_prefix_hashes_are_stable(&turns);
+        assert_turn_prefix_hashes_are_stable(&turns, true);
 
         fs::remove_dir_all(base_dir).unwrap();
     }
@@ -3504,8 +3560,7 @@ mod tests {
         let state_dir = base_dir.join("state/text-loop");
         let memory_source = TestMemorySource;
 
-        let mut first_context =
-            RunContext::create_in(base_dir.join("first"), "multi-turn-text-loop").unwrap();
+        let mut first_context = test_context(base_dir.join("first"), "multi-turn-text-loop");
         let mut first_output = Vec::new();
         run_with_io_and_components_at_state_dir(
             &mut first_context,
@@ -3528,8 +3583,7 @@ mod tests {
         .unwrap();
         assert!(manifest.sleep_pending);
 
-        let mut second_context =
-            RunContext::create_in(base_dir.join("second"), "multi-turn-text-loop").unwrap();
+        let mut second_context = test_context(base_dir.join("second"), "multi-turn-text-loop");
         let mut second_output = Vec::new();
         let mut second_config = test_config(5);
         second_config.allow_over_limit = true;
@@ -3552,7 +3606,8 @@ mod tests {
         assert_eq!(second_state.turns[1].index, 1);
         assert_eq!(second_state.session_id, first_state.session_id);
         assert!(second_state.live.completed_exchanges.is_empty());
-        let resumed_prompt = assemble_prompt(
+        let resumed_prompt = assemble_prompt_with_summaries_and_project_doc_channel(
+            &[],
             &[PromptTurn {
                 user_input: &second_state.turns[0].user_input,
                 retrieved_memory_block: &second_state.turns[0].retrieved_memory_block,
@@ -3561,6 +3616,7 @@ mod tests {
             }],
             &second_state.turns[1].user_input,
             &second_state.turns[1].retrieved_memory_block,
+            true,
         );
         assert_eq!(
             prior_request_prefix_hash(
@@ -3596,8 +3652,7 @@ mod tests {
         store.persist().unwrap();
 
         let memory_source = TestMemorySource;
-        let mut context =
-            RunContext::create_in(base_dir.join("run"), "multi-turn-text-loop").unwrap();
+        let mut context = test_context(base_dir.join("run"), "multi-turn-text-loop");
         let mut output = Vec::new();
         run_with_io_and_components_at_state_dir(
             &mut context,
@@ -3707,8 +3762,7 @@ mod tests {
                         == Some(crate::memory::retrieval::RELEVANCE_GATE_SKIP_REASON))
         );
 
-        let mut context =
-            RunContext::create_in(base_dir.join("run"), "multi-turn-text-loop").unwrap();
+        let mut context = test_context(base_dir.join("run"), "multi-turn-text-loop");
         let state = SessionState::new(test_config(5));
         super::apply_live_memory_reinforcement(&mut context, &state, &state_dir, &retrieval)
             .unwrap();
@@ -3756,8 +3810,7 @@ mod tests {
             "Absolutely - you can call me Ari.",
         );
 
-        let mut context =
-            RunContext::create_in(base_dir.join("run"), "multi-turn-text-loop").unwrap();
+        let mut context = test_context(base_dir.join("run"), "multi-turn-text-loop");
         let mut output = Vec::new();
         run_with_io_and_components_at_state_dir(
             &mut context,
@@ -3839,8 +3892,7 @@ mod tests {
             "Absolutely - you can call me Ari. A good volition system should include needs/drives, goals, arbitration, and continuity.",
         );
 
-        let mut context =
-            RunContext::create_in(base_dir.join("run"), "multi-turn-text-loop").unwrap();
+        let mut context = test_context(base_dir.join("run"), "multi-turn-text-loop");
         let mut output = Vec::new();
         run_with_io_and_components_at_state_dir(
             &mut context,
@@ -3989,8 +4041,7 @@ mod tests {
         store.persist().unwrap();
 
         let memory_source = TestMemorySource;
-        let mut context =
-            RunContext::create_in(base_dir.join("run"), "multi-turn-text-loop").unwrap();
+        let mut context = test_context(base_dir.join("run"), "multi-turn-text-loop");
         let mut output = Vec::new();
         run_with_io_and_components_at_state_dir(
             &mut context,
@@ -4036,8 +4087,7 @@ mod tests {
         let state_dir = base_dir.join("state/text-loop");
         let memory_source = TestMemorySource;
 
-        let mut first_context =
-            RunContext::create_in(base_dir.join("first"), "multi-turn-text-loop").unwrap();
+        let mut first_context = test_context(base_dir.join("first"), "multi-turn-text-loop");
         let mut first_output = Vec::new();
         run_with_io_and_components_at_state_dir(
             &mut first_context,
@@ -4056,8 +4106,7 @@ mod tests {
         let mut changed_config = test_config(5);
         changed_config.model_id = "changed-model".to_string();
 
-        let mut second_context =
-            RunContext::create_in(base_dir.join("second"), "multi-turn-text-loop").unwrap();
+        let mut second_context = test_context(base_dir.join("second"), "multi-turn-text-loop");
         let mut second_output = Vec::new();
         run_with_io_and_components_at_state_dir(
             &mut second_context,
@@ -4129,8 +4178,7 @@ mod tests {
         .unwrap();
 
         let memory_source = TestMemorySource;
-        let mut context =
-            RunContext::create_in(base_dir.join("brief"), "multi-turn-text-loop").unwrap();
+        let mut context = test_context(base_dir.join("brief"), "multi-turn-text-loop");
         let mut output = Vec::new();
         run_with_io_and_components_at_state_dir(
             &mut context,
@@ -4228,8 +4276,7 @@ mod tests {
         .persist(legacy_state_dir.join("continuity-manifest.json"))
         .unwrap();
 
-        let mut context =
-            RunContext::create_in(base_dir.join("run"), "multi-turn-text-loop").unwrap();
+        let mut context = test_context(base_dir.join("run"), "multi-turn-text-loop");
         let mut output = Vec::new();
         let memory_source = TestMemorySource;
         run_with_io_and_components_at_state_resolution(
@@ -4295,8 +4342,7 @@ mod tests {
             .persist()
             .unwrap();
         let memory_source = TestMemorySource;
-        let mut context =
-            RunContext::create_in(base_dir.join("run"), "multi-turn-text-loop").unwrap();
+        let mut context = test_context(base_dir.join("run"), "multi-turn-text-loop");
 
         let snapshot = super::load_session_memory_snapshot(
             &mut context,
@@ -4321,8 +4367,7 @@ mod tests {
     fn run_voice_then_text(base_dir: &Path) {
         let state_dir = base_dir.join("state/session");
         let voice_memory_source = SharedVoiceMemorySource::new(&state_dir);
-        let mut voice_context =
-            RunContext::create_in(base_dir.join("voice"), "voice-loop").unwrap();
+        let mut voice_context = test_context(base_dir.join("voice"), "voice-loop");
         crate::experiments::text_owned_voice_loop::TextOwnedVoiceLoopExperiment
             .run_with_components_and_memory_source_at_state_dirs_with_config(
                 &mut voice_context,
@@ -4344,8 +4389,7 @@ mod tests {
             crate::session::persistence::load_session_state(state_dir.join("session-state.json"))
                 .unwrap();
 
-        let mut text_context =
-            RunContext::create_in(base_dir.join("text"), "multi-turn-text-loop").unwrap();
+        let mut text_context = test_context(base_dir.join("text"), "multi-turn-text-loop");
         let mut output = Vec::new();
         let text_memory_source = TestMemorySource;
         run_with_io_and_components_at_state_resolution(
@@ -4374,8 +4418,7 @@ mod tests {
 
     fn run_text_then_voice(base_dir: &Path) {
         let state_dir = base_dir.join("state/session");
-        let mut text_context =
-            RunContext::create_in(base_dir.join("text"), "multi-turn-text-loop").unwrap();
+        let mut text_context = test_context(base_dir.join("text"), "multi-turn-text-loop");
         let mut output = Vec::new();
         let text_memory_source = TestMemorySource;
         run_with_io_and_components_at_state_resolution(
@@ -4397,8 +4440,7 @@ mod tests {
                 .unwrap();
 
         let voice_memory_source = SharedVoiceMemorySource::new(&state_dir);
-        let mut voice_context =
-            RunContext::create_in(base_dir.join("voice"), "voice-loop").unwrap();
+        let mut voice_context = test_context(base_dir.join("voice"), "voice-loop");
         crate::experiments::text_owned_voice_loop::TextOwnedVoiceLoopExperiment
             .run_with_components_and_memory_source_at_state_dirs_with_config(
                 &mut voice_context,
@@ -4442,7 +4484,7 @@ mod tests {
     #[test]
     fn warm_threshold_summarizes_oldest_turns_without_dropping_turn_records() {
         let base_dir = std::env::temp_dir().join(format!("qsf-warm-tier-{}", Uuid::new_v4()));
-        let mut context = RunContext::create_in(&base_dir, "multi-turn-text-loop").unwrap();
+        let mut context = test_context(&base_dir, "multi-turn-text-loop");
         let input = Cursor::new("one\ntwo\nthree\n:quit\n");
         let mut output = Vec::new();
         let memory_source = TestMemorySource;
@@ -4498,7 +4540,7 @@ mod tests {
     fn warm_summary_retry_succeeds_after_truncation() {
         let base_dir =
             std::env::temp_dir().join(format!("qsf-warm-summary-retry-{}", Uuid::new_v4()));
-        let mut context = RunContext::create_in(&base_dir, "multi-turn-text-loop").unwrap();
+        let mut context = test_context(&base_dir, "multi-turn-text-loop");
         let input = Cursor::new("one\ntwo\nthree\n:quit\n");
         let mut output = Vec::new();
         let memory_source = TestMemorySource;
@@ -4568,7 +4610,7 @@ mod tests {
     fn warm_summary_double_truncation_leaves_turn_unsummarized() {
         let base_dir =
             std::env::temp_dir().join(format!("qsf-warm-summary-fail-{}", Uuid::new_v4()));
-        let mut context = RunContext::create_in(&base_dir, "multi-turn-text-loop").unwrap();
+        let mut context = test_context(&base_dir, "multi-turn-text-loop");
         let input = Cursor::new("one\ntwo\nthree\n:quit\n");
         let mut output = Vec::new();
         let memory_source = TestMemorySource;
@@ -4653,7 +4695,7 @@ mod tests {
     fn summarize_aged_turns_returns_empty_for_inverted_range() {
         let base_dir =
             std::env::temp_dir().join(format!("qsf-inverted-summary-range-{}", Uuid::new_v4()));
-        let mut context = RunContext::create_in(&base_dir, "multi-turn-text-loop").unwrap();
+        let mut context = test_context(&base_dir, "multi-turn-text-loop");
         let mut state = SessionState::new(test_config(10));
         state.turns = vec![test_turn(0), test_turn(1)];
 
@@ -4669,7 +4711,7 @@ mod tests {
     #[test]
     fn recall_tool_expands_summarized_turn_and_freezes_tool_message() {
         let base_dir = std::env::temp_dir().join(format!("qsf-recall-tool-{}", Uuid::new_v4()));
-        let mut context = RunContext::create_in(&base_dir, "multi-turn-text-loop").unwrap();
+        let mut context = test_context(&base_dir, "multi-turn-text-loop");
         let input = Cursor::new("one\ntwo\nthree\nplease recall turn 0\n:quit\n");
         let mut output = Vec::new();
         let memory_source = TestMemorySource;
@@ -4718,7 +4760,7 @@ mod tests {
         assert!(report.contains("Recall tool executions: `1`"));
         assert!(report.contains("| 3 | 0 | `mock-recall-0`"));
 
-        assert_turn_prefix_hashes_are_stable(&turn_records);
+        assert_turn_prefix_hashes_are_stable(&turn_records, true);
 
         fs::remove_dir_all(base_dir).unwrap();
     }
@@ -4726,7 +4768,7 @@ mod tests {
     #[test]
     fn calculator_tool_answers_arithmetic_turn_through_follow_up() {
         let base_dir = std::env::temp_dir().join(format!("qsf-calculator-tool-{}", Uuid::new_v4()));
-        let mut context = RunContext::create_in(&base_dir, "multi-turn-text-loop").unwrap();
+        let mut context = test_context(&base_dir, "multi-turn-text-loop");
         let input = Cursor::new("what is 1231231+12342134?\n:quit\n");
         let mut output = Vec::new();
         let memory_source = TestMemorySource;
@@ -4769,10 +4811,10 @@ mod tests {
     }
 
     #[test]
-    fn openai_recall_path_preserves_tool_call_id_and_hides_tools_on_follow_up() {
+    fn openai_recall_path_preserves_tool_call_id_across_batched_follow_up() {
         let base_dir =
             std::env::temp_dir().join(format!("qsf-openai-recall-path-{}", Uuid::new_v4()));
-        let mut context = RunContext::create_in(&base_dir, "multi-turn-text-loop").unwrap();
+        let mut context = test_context(&base_dir, "multi-turn-text-loop");
         let input = Cursor::new("one\ntwo\nthree\nplease recall turn 0\n:quit\n");
         let mut output = Vec::new();
         let memory_source = TestMemorySource;
@@ -4810,7 +4852,9 @@ mod tests {
             first_call.tools,
             vec![
                 RECALL_TURN_TOOL_NAME.to_string(),
-                CALCULATOR_TOOL_NAME.to_string()
+                CALCULATOR_TOOL_NAME.to_string(),
+                SEARCH_PROJECT_DOCS_TOOL_NAME.to_string(),
+                READ_PROJECT_DOC_TOOL_NAME.to_string(),
             ]
         );
         assert!(first_call.messages.iter().any(|message| message.role
@@ -4819,7 +4863,15 @@ mod tests {
 
         let second_call = &calls[tool_call_index + 1];
         assert_eq!(second_call.role_id, ModelRoleId::ConversationalResponder);
-        assert!(second_call.tools.is_empty());
+        assert_eq!(
+            second_call.tools,
+            vec![
+                RECALL_TURN_TOOL_NAME.to_string(),
+                CALCULATOR_TOOL_NAME.to_string(),
+                SEARCH_PROJECT_DOCS_TOOL_NAME.to_string(),
+                READ_PROJECT_DOC_TOOL_NAME.to_string(),
+            ]
+        );
         let tool_message_index = second_call
             .messages
             .iter()
@@ -4870,7 +4922,7 @@ mod tests {
     fn recall_tool_failure_does_not_append_turn() {
         let base_dir =
             std::env::temp_dir().join(format!("qsf-recall-tool-fail-{}", Uuid::new_v4()));
-        let mut context = RunContext::create_in(&base_dir, "multi-turn-text-loop").unwrap();
+        let mut context = test_context(&base_dir, "multi-turn-text-loop");
         let input = Cursor::new("one\nplease recall turn 0\n:quit\n");
         let mut output = Vec::new();
         let memory_source = TestMemorySource;
@@ -4905,7 +4957,7 @@ mod tests {
     fn follow_up_tool_calls_fail_without_appending_turn() {
         let base_dir =
             std::env::temp_dir().join(format!("qsf-recall-tool-loop-{}", Uuid::new_v4()));
-        let mut context = RunContext::create_in(&base_dir, "multi-turn-text-loop").unwrap();
+        let mut context = test_context(&base_dir, "multi-turn-text-loop");
         let input = Cursor::new("one\ntwo\nthree\nplease recall turn 0\n:quit\n");
         let mut output = Vec::new();
         let memory_source = TestMemorySource;
@@ -4930,7 +4982,311 @@ mod tests {
                 .count(),
             3
         );
-        assert!(events.contains("multi-round tool calls are not supported"));
+        assert!(events.contains("bounded-tool-loop"));
+
+        fs::remove_dir_all(base_dir).unwrap();
+    }
+
+    #[test]
+    fn responder_can_search_then_read_across_two_tool_batches() {
+        let base_dir =
+            std::env::temp_dir().join(format!("qsf-project-doc-search-read-{}", Uuid::new_v4()));
+        let mut context = test_context(&base_dir, "multi-turn-text-loop");
+        let input = Cursor::new("please summarize the project docs\n:quit\n");
+        let mut output = Vec::new();
+        let memory_source = TestMemorySource;
+        let client = SequencedResponderClient::new(vec![
+            PlannedResponderResponse::tool_call(
+                "search the docs",
+                "project-doc-search-0",
+                SEARCH_PROJECT_DOCS_TOOL_NAME,
+                json!({ "query": "vision" }),
+            ),
+            PlannedResponderResponse::tool_call(
+                "read the doc",
+                "project-doc-read-0",
+                READ_PROJECT_DOC_TOOL_NAME,
+                json!({
+                    "path": "docs/ProjectFrame/ProjectVision.md",
+                    "focus": "vision",
+                    "max_tokens": 400
+                }),
+            ),
+            PlannedResponderResponse::text(
+                "The project's accepted framing says to keep the responder grounded in project docs.",
+            ),
+        ]);
+
+        run_with_io_and_components(
+            &mut context,
+            input,
+            &mut output,
+            &client,
+            &memory_source,
+            test_config_with_warm_threshold(10, 10),
+        )
+        .unwrap();
+
+        let calls = client.calls();
+        assert_eq!(calls.len(), 3);
+        assert_eq!(calls[0].role_id, ModelRoleId::ConversationalResponder);
+        assert_eq!(calls[0].tools, responder_tool_names());
+        assert_eq!(calls[1].tools, responder_tool_names());
+        assert!(calls[2].tools.is_empty());
+        assert!(calls.iter().all(|call| {
+            call.messages
+                .first()
+                .map(|message| {
+                    message.role == crate::models::ModelMessageRole::System
+                        && message.content.contains("search_project_docs")
+                        && message.content.contains("kind and maturity")
+                })
+                .unwrap_or(false)
+        }));
+        assert!(
+            calls[2]
+                .messages
+                .first()
+                .unwrap()
+                .content
+                .contains("search_project_docs")
+        );
+
+        let events = fs::read_to_string(context.run_dir().join("events.jsonl")).unwrap();
+        let event_records = parse_event_records(&events);
+        assert_eq!(
+            event_records
+                .iter()
+                .filter(|record| record.event_type == EventType::TurnCompleted)
+                .count(),
+            1
+        );
+        assert!(event_records.iter().any(|record| {
+            record.event_type == EventType::ToolCompleted
+                && record.payload["tool_name"] == SEARCH_PROJECT_DOCS_TOOL_NAME
+        }));
+        assert!(event_records.iter().any(|record| {
+            record.event_type == EventType::ToolCompleted
+                && record.payload["tool_name"] == READ_PROJECT_DOC_TOOL_NAME
+        }));
+
+        let traces = fs::read_to_string(context.run_dir().join("traces.jsonl")).unwrap();
+        let trace_records = parse_trace_records(&traces);
+        let search_trace = trace_records
+            .iter()
+            .find(|record| {
+                record.operation == "project_doc_search"
+                    && !record.details["refused"].as_bool().unwrap_or(true)
+            })
+            .expect("search trace present");
+        let read_trace = trace_records
+            .iter()
+            .find(|record| {
+                record.operation == "project_doc_read"
+                    && !record.details["refused"].as_bool().unwrap_or(true)
+            })
+            .expect("read trace present");
+        assert_eq!(
+            search_trace.details["turn_index"],
+            read_trace.details["turn_index"]
+        );
+        assert_eq!(search_trace.details["refused"], false);
+        assert_eq!(read_trace.details["refused"], false);
+
+        fs::remove_dir_all(base_dir).unwrap();
+    }
+
+    #[test]
+    fn responder_reuses_project_doc_budget_across_tool_batches() {
+        let base_dir =
+            std::env::temp_dir().join(format!("qsf-project-doc-budget-{}", Uuid::new_v4()));
+        let mut context = test_context(&base_dir, "multi-turn-text-loop");
+        let input = Cursor::new("please summarize the project docs\n:quit\n");
+        let mut output = Vec::new();
+        let memory_source = TestMemorySource;
+        let client = SequencedResponderClient::new(vec![
+            PlannedResponderResponse::tool_call(
+                "read the doc",
+                "project-doc-read-0",
+                READ_PROJECT_DOC_TOOL_NAME,
+                json!({
+                    "path": "docs/ProjectFrame/ProjectVision.md",
+                    "focus": "vision",
+                    "max_tokens": 400
+                }),
+            ),
+            PlannedResponderResponse::tool_call(
+                "read the doc again",
+                "project-doc-read-1",
+                READ_PROJECT_DOC_TOOL_NAME,
+                json!({
+                    "path": "docs/ProjectFrame/ProjectVision.md",
+                    "focus": "vision",
+                    "max_tokens": 400
+                }),
+            ),
+            PlannedResponderResponse::text("The second read was refused by the per-turn cap."),
+        ]);
+
+        run_with_io_and_components(
+            &mut context,
+            input,
+            &mut output,
+            &client,
+            &memory_source,
+            test_config_with_warm_threshold(10, 10),
+        )
+        .unwrap();
+
+        let calls = client.calls();
+        assert_eq!(calls.len(), 3);
+        assert_eq!(calls[0].tools, responder_tool_names());
+        assert_eq!(calls[1].tools, responder_tool_names());
+        assert!(calls[2].tools.is_empty());
+        assert!(calls[2].messages.iter().any(|message| {
+            message.role == crate::models::ModelMessageRole::Tool
+                && message.content.contains("per_turn_cap")
+        }));
+
+        let events = fs::read_to_string(context.run_dir().join("events.jsonl")).unwrap();
+        let event_records = parse_event_records(&events);
+        assert_eq!(
+            event_records
+                .iter()
+                .filter(|record| record.event_type == EventType::TurnCompleted)
+                .count(),
+            1
+        );
+
+        let traces = fs::read_to_string(context.run_dir().join("traces.jsonl")).unwrap();
+        let trace_records = parse_trace_records(&traces);
+        let refusal_trace = trace_records
+            .iter()
+            .find(|record| {
+                record.operation == "project_doc_read" && record.details["refused"] == true
+            })
+            .expect("refusal trace present");
+        assert_eq!(refusal_trace.details["cap"], json!(1));
+        assert_eq!(refusal_trace.details["attempted_count"], json!(2));
+        assert_eq!(
+            refusal_trace.details["tool_name"],
+            READ_PROJECT_DOC_TOOL_NAME
+        );
+
+        fs::remove_dir_all(base_dir).unwrap();
+    }
+
+    #[test]
+    fn third_tool_batch_is_rejected_without_appending_turn() {
+        let base_dir =
+            std::env::temp_dir().join(format!("qsf-project-doc-bounded-loop-{}", Uuid::new_v4()));
+        let mut context = test_context(&base_dir, "multi-turn-text-loop");
+        let input = Cursor::new("please summarize the project docs\n:quit\n");
+        let mut output = Vec::new();
+        let memory_source = TestMemorySource;
+        let client = SequencedResponderClient::new(vec![
+            PlannedResponderResponse::tool_call(
+                "search the docs",
+                "project-doc-search-0",
+                SEARCH_PROJECT_DOCS_TOOL_NAME,
+                json!({ "query": "vision" }),
+            ),
+            PlannedResponderResponse::tool_call(
+                "read the doc",
+                "project-doc-read-0",
+                READ_PROJECT_DOC_TOOL_NAME,
+                json!({
+                    "path": "docs/ProjectFrame/ProjectVision.md",
+                    "focus": "vision",
+                    "max_tokens": 400
+                }),
+            ),
+            PlannedResponderResponse::tool_call(
+                "search again",
+                "project-doc-search-1",
+                SEARCH_PROJECT_DOCS_TOOL_NAME,
+                json!({ "query": "vision" }),
+            ),
+        ]);
+
+        run_with_io_and_components(
+            &mut context,
+            input,
+            &mut output,
+            &client,
+            &memory_source,
+            test_config_with_warm_threshold(10, 10),
+        )
+        .unwrap();
+
+        let events = fs::read_to_string(context.run_dir().join("events.jsonl")).unwrap();
+        let event_records = parse_event_records(&events);
+        assert!(event_records.iter().any(|record| {
+            record.event_type == EventType::ErrorOccurred
+                && record.payload["stage"] == "bounded-tool-loop"
+        }));
+        assert_eq!(
+            event_records
+                .iter()
+                .filter(|record| record.event_type == EventType::TurnCompleted)
+                .count(),
+            0
+        );
+
+        fs::remove_dir_all(base_dir).unwrap();
+    }
+
+    #[test]
+    fn ordinary_no_tool_response_still_completes_one_turn() {
+        let base_dir =
+            std::env::temp_dir().join(format!("qsf-project-doc-no-tool-{}", Uuid::new_v4()));
+        let mut context = test_context(&base_dir, "multi-turn-text-loop");
+        let input = Cursor::new("what are you?\n:quit\n");
+        let mut output = Vec::new();
+        let memory_source = TestMemorySource;
+        let client = SequencedResponderClient::new(vec![PlannedResponderResponse::text(
+            "I am a conversational responder.",
+        )]);
+
+        run_with_io_and_components(
+            &mut context,
+            input,
+            &mut output,
+            &client,
+            &memory_source,
+            test_config_with_warm_threshold(10, 10),
+        )
+        .unwrap();
+
+        let calls = client.calls();
+        assert_eq!(calls.len(), 1);
+        assert_eq!(calls[0].tools, responder_tool_names());
+        assert!(
+            calls[0]
+                .messages
+                .first()
+                .unwrap()
+                .content
+                .contains("search_project_docs")
+        );
+
+        let events = fs::read_to_string(context.run_dir().join("events.jsonl")).unwrap();
+        let event_records = parse_event_records(&events);
+        assert_eq!(
+            event_records
+                .iter()
+                .filter(|record| record.event_type == EventType::TurnCompleted)
+                .count(),
+            1
+        );
+
+        let traces = fs::read_to_string(context.run_dir().join("traces.jsonl")).unwrap();
+        let trace_records = parse_trace_records(&traces);
+        assert!(
+            trace_records
+                .iter()
+                .all(|record| !record.operation.starts_with("project_doc_"))
+        );
 
         fs::remove_dir_all(base_dir).unwrap();
     }
@@ -4947,13 +5303,14 @@ mod tests {
             input_tokens: 0,
             output_tokens: 0,
         };
-        let turn0_prompt = assemble_prompt(&[], "input 0", "");
+        let turn0_prompt =
+            assemble_prompt_with_summaries_and_project_doc_channel(&[], &[], "input 0", "", true);
         let turn0 = test_turn_with_hash(
             0,
             turn0_prompt.full_request_hash,
             turn0_prompt.message_count,
         );
-        let turn1_prompt = assemble_prompt_with_summaries(
+        let turn1_prompt = assemble_prompt_with_summaries_and_project_doc_channel(
             &[PromptTurnSummary {
                 turn_index: 0,
                 summary: &summary.summary,
@@ -4961,13 +5318,14 @@ mod tests {
             &[],
             "input 1",
             "",
+            true,
         );
         let turn1 = test_turn_with_hash(
             1,
             turn1_prompt.full_request_hash,
             turn1_prompt.message_count,
         );
-        let turn2_prompt = assemble_prompt_with_summaries(
+        let turn2_prompt = assemble_prompt_with_summaries_and_project_doc_channel(
             &[PromptTurnSummary {
                 turn_index: 0,
                 summary: &summary.summary,
@@ -4980,6 +5338,7 @@ mod tests {
             }],
             "input 2",
             "",
+            true,
         );
         let turn2 = test_turn_with_hash(
             2,
@@ -5004,7 +5363,7 @@ mod tests {
     fn warm_age_out_can_summarize_multiple_oldest_turns() {
         let base_dir =
             std::env::temp_dir().join(format!("qsf-warm-multi-summary-{}", Uuid::new_v4()));
-        let mut context = RunContext::create_in(&base_dir, "multi-turn-text-loop").unwrap();
+        let mut context = test_context(&base_dir, "multi-turn-text-loop");
         let mut state = SessionState::new(test_config_with_warm_threshold(10, 2));
         let state_dir = base_dir.join("state/text-loop");
         state.turns = (0..5).map(test_turn).collect();
@@ -5034,7 +5393,7 @@ mod tests {
     fn missing_file_memory_source_logs_fallback_event() {
         let base_dir =
             std::env::temp_dir().join(format!("qsf-missing-session-memory-{}", Uuid::new_v4()));
-        let mut context = RunContext::create_in(&base_dir, "multi-turn-text-loop").unwrap();
+        let mut context = test_context(&base_dir, "multi-turn-text-loop");
 
         let snapshot = super::MissingFileSessionMemorySource
             .load(&mut context)
@@ -5213,6 +5572,92 @@ mod tests {
         }
     }
 
+    #[derive(Clone)]
+    struct PlannedResponderResponse {
+        output_text: String,
+        finish_reason: String,
+        tool_calls: Vec<ModelToolCall>,
+    }
+
+    impl PlannedResponderResponse {
+        fn text(output_text: impl Into<String>) -> Self {
+            Self {
+                output_text: output_text.into(),
+                finish_reason: "stop".to_string(),
+                tool_calls: vec![],
+            }
+        }
+
+        fn tool_call(
+            output_text: impl Into<String>,
+            tool_call_id: impl Into<String>,
+            tool_name: impl Into<String>,
+            arguments: serde_json::Value,
+        ) -> Self {
+            Self {
+                output_text: output_text.into(),
+                finish_reason: "tool_calls".to_string(),
+                tool_calls: vec![ModelToolCall::new(tool_call_id, tool_name, arguments)],
+            }
+        }
+    }
+
+    #[derive(Default)]
+    struct SequencedResponderClient {
+        calls: std::sync::Mutex<Vec<CapturedRequest>>,
+        responses: Vec<PlannedResponderResponse>,
+        response_index: std::sync::Mutex<usize>,
+    }
+
+    impl SequencedResponderClient {
+        fn new(responses: Vec<PlannedResponderResponse>) -> Self {
+            Self {
+                calls: std::sync::Mutex::new(Vec::new()),
+                responses,
+                response_index: std::sync::Mutex::new(0),
+            }
+        }
+
+        fn calls(&self) -> Vec<CapturedRequest> {
+            self.calls.lock().unwrap().clone()
+        }
+    }
+
+    impl ModelClient for SequencedResponderClient {
+        fn client_name(&self) -> &str {
+            "sequenced-responder"
+        }
+
+        fn complete(&self, request: &ModelRequest) -> anyhow::Result<ModelResponse> {
+            self.calls.lock().unwrap().push(CapturedRequest {
+                role_id: request.role.role_id,
+                max_output_tokens: request.max_output_tokens,
+                tools: request.tools.iter().map(|tool| tool.name.clone()).collect(),
+                messages: request.messages.clone(),
+            });
+
+            let mut response_index = self.response_index.lock().unwrap();
+            let selected_index = (*response_index).min(self.responses.len().saturating_sub(1));
+            let planned = self.responses[selected_index].clone();
+            *response_index += 1;
+
+            let usage = ModelUsage::new(10, 5).with_estimated_cost_usd(0.0);
+            let mut response = ModelResponse::from_text(
+                request,
+                self.client_name(),
+                request.model_name.clone(),
+                planned.output_text,
+            )
+            .with_usage(usage)
+            .with_finish_reason(planned.finish_reason);
+            if !planned.tool_calls.is_empty() {
+                response = response.with_tool_calls(planned.tool_calls);
+            }
+
+            Ok(response)
+        }
+    }
+
     #[derive(Default)]
     struct CapturingOpenAiRecallClient {
         calls: std::sync::Mutex<Vec<CapturedRequest>>,
@@ -5253,6 +5698,10 @@ mod tests {
                     .tools
                     .iter()
                     .any(|tool| tool.name == RECALL_TURN_TOOL_NAME)
+                && request
+                    .messages
+                    .iter()
+                    .all(|message| message.role != crate::models::ModelMessageRole::Tool)
                 && request
                     .last_user_message()
                     .map(|message| message.to_ascii_lowercase().contains("recall turn"))
@@ -5435,6 +5884,36 @@ mod tests {
             .collect()
     }
 
+    fn parse_trace_records(traces: &str) -> Vec<TraceRecord> {
+        traces
+            .lines()
+            .map(|line| serde_json::from_str::<Value>(line).unwrap())
+            .map(|value| serde_json::from_value::<TraceRecord>(value).unwrap())
+            .collect()
+    }
+
+    fn responder_tool_names() -> Vec<String> {
+        vec![
+            RECALL_TURN_TOOL_NAME.to_string(),
+            CALCULATOR_TOOL_NAME.to_string(),
+            SEARCH_PROJECT_DOCS_TOOL_NAME.to_string(),
+            READ_PROJECT_DOC_TOOL_NAME.to_string(),
+        ]
+    }
+
+    fn test_context(base_dir: impl AsRef<Path>, experiment_id: &str) -> RunContext {
+        RunContext::create_in_with_workspace_root(
+            base_dir,
+            experiment_id,
+            Some(workspace_root_for_tests()),
+        )
+        .unwrap()
+    }
+
+    fn workspace_root_for_tests() -> PathBuf {
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..")
+    }
+
     fn assert_event_order(records: &[EventRecord], first: EventType, second: EventType) {
         let first_index = records
             .iter()
@@ -5448,7 +5927,10 @@ mod tests {
         assert!(first_index < second_index);
     }
 
-    fn assert_turn_prefix_hashes_are_stable(turn_records: &[&EventRecord]) {
+    fn assert_turn_prefix_hashes_are_stable(
+        turn_records: &[&EventRecord],
+        project_doc_channel_enabled: bool,
+    ) {
         let turns = turn_records
             .iter()
             .map(|record| serde_json::from_value::<Turn>(record.payload["turn"].clone()).unwrap())
@@ -5470,10 +5952,12 @@ mod tests {
                     assistant_response: &turn.assistant_response,
                 })
                 .collect::<Vec<_>>();
-            let prompt = assemble_prompt(
+            let prompt = assemble_prompt_with_summaries_and_project_doc_channel(
+                &[],
                 &prior_turns,
                 &current.user_input,
                 &current.retrieved_memory_block,
+                project_doc_channel_enabled,
             );
 
             assert_eq!(

@@ -661,3 +661,22 @@ Refs: crates/qsf_app/src/session/sleep_records.rs,
 crates/qsf_app/src/experiments/sleep_phase_session_summary.rs,
 docs/Architecture/Architecture.AudioLoop.md,
 docs/Architecture/Architecture.SleepPhase.md
+
+## 2026-06-07 - Experiment runner supplies workspace root
+Decision: Experiments that need repository-relative resources receive the
+workspace root through an explicit experiment-runner `--workspace-root` option,
+which is canonicalized into `RunContext` and exposed by accessor. Production code
+must not derive the live workspace root from `CARGO_MANIFEST_DIR` or the process
+current directory.
+Context: The project-doc introspection channel needs absolute paths for its
+repo-root search corpus and allowlist, and the existing runtime context only
+tracked per-run artifact paths. The launcher already knows the repository root,
+so the runner boundary is the appropriate place to pass it explicitly.
+Consequences: Launcher-backed app runs pass the script-derived repo root; direct
+CLI runs of workspace-dependent experiments must pass `--workspace-root <path>`.
+Future repo-relative runtime resources should reuse the `RunContext` accessor
+rather than adding ad hoc path resolution.
+Refs: crates/qsf_app/src/cli.rs,
+crates/qsf_app/src/experiments/registry.rs,
+crates/qsf_app/src/runtime/run_context.rs,
+scripts/qsf.ps1

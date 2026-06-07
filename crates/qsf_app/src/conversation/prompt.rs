@@ -11,6 +11,20 @@ use crate::models::{ModelMessage, ModelMessageRole, ModelToolCall};
 /// Constant system-prompt prefix; warm-tier summaries are appended at assembly time.
 pub const SESSION_SYSTEM_PROMPT: &str = "You are a concise conversational responder. Treat this as one continuous human-driven text session. Use retrieved memory as context, keep prior turns stable, and never initiate a turn without user input. If an older summarized turn needs exact details, request recall_turn with its turn_id; only summarized turns can be recalled. If the user asks for arithmetic or exact numeric calculation, request calculator with the expression instead of estimating mentally.";
 
+pub const PROJECT_DOC_INTROSPECTION_PROMPT: &str = "\
+You can consult the project's own documents to ground questions about Qualia Signal Foundry. Use search_project_docs to find relevant material, then read_project_doc to pull a focused excerpt or a bounded slice from the most promising one.\n\
+\n\
+Every result carries a kind (Frame, Concept, Research, Plan, Idea, Design, Architecture, ExperimentSpec, ExperimentReport, Decision, Diary, or Unknown) and, where applicable, a maturity tag (Brainstorm, Sketch, Candidate, Accepted, Implemented, Deprecated, or Unknown).\n\
+\n\
+Attribute lightly in your reply, using kind and maturity to hedge:\n\
+  - \"The project's accepted framing says...\"         (Frame, or Accepted Concept)\n\
+  - \"An accepted decision records that...\"           (DecisionLog entry)\n\
+  - \"There's a candidate architecture sketch for...\" (Candidate Architecture)\n\
+  - \"A brainstorm idea explores...\"                  (Idea, or Brainstorm Concept)\n\
+  - \"I found a document but couldn't classify it...\" (Unknown kind or maturity)\n\
+\n\
+Do not claim current behavior from a Plan, Idea, or Concept; those describe intent. Source code is the only authority for what runs today, and is not available to this channel. If a read was truncated or limited to a single section, mention that. When nothing relevant comes back, or when the metadata is Unknown, say so plainly rather than improvising.";
+
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct ContentHash(pub [u8; 32]);
 
@@ -75,7 +89,13 @@ pub fn assemble_prompt(
     input: &str,
     retrieved: &str,
 ) -> PromptAssembly {
-    assemble_prompt_with_summaries(&[], prior_turns, input, retrieved)
+    assemble_prompt_with_summaries_and_project_doc_channel(
+        &[],
+        prior_turns,
+        input,
+        retrieved,
+        false,
+    )
 }
 
 pub fn assemble_prompt_with_summaries(
@@ -83,6 +103,22 @@ pub fn assemble_prompt_with_summaries(
     prior_turns: &[PromptTurn<'_>],
     input: &str,
     retrieved: &str,
+) -> PromptAssembly {
+    assemble_prompt_with_summaries_and_project_doc_channel(
+        summarized_turns,
+        prior_turns,
+        input,
+        retrieved,
+        false,
+    )
+}
+
+pub fn assemble_prompt_with_summaries_and_project_doc_channel(
+    summarized_turns: &[PromptTurnSummary<'_>],
+    prior_turns: &[PromptTurn<'_>],
+    input: &str,
+    retrieved: &str,
+    project_doc_channel_enabled: bool,
 ) -> PromptAssembly {
     let mut messages = vec![ModelMessage::system(format_system_prompt(summarized_turns))];
 
@@ -105,7 +141,15 @@ pub fn assemble_prompt_with_summaries(
     }
 
     messages.push(ModelMessage::user(format_new_turn(input, retrieved)));
-    prompt_assembly_from_messages(messages)
+    let mut assembly = prompt_assembly_from_messages(messages);
+    if project_doc_channel_enabled {
+        assembly.messages[0].content = format!(
+            "{}\n\n{}",
+            assembly.messages[0].content, PROJECT_DOC_INTROSPECTION_PROMPT
+        );
+        assembly = prompt_assembly_from_messages(assembly.messages);
+    }
+    assembly
 }
 
 pub fn prompt_assembly_from_messages(messages: Vec<ModelMessage>) -> PromptAssembly {
@@ -270,9 +314,10 @@ mod tests {
     };
 
     use super::{
-        PromptTurn, PromptTurnSummary, SESSION_SYSTEM_PROMPT, assemble_prompt,
-        assemble_prompt_with_summaries, canonical_hash, format_new_turn, prior_request_prefix_hash,
-        retrieved_memory_block,
+        PROJECT_DOC_INTROSPECTION_PROMPT, PromptTurn, PromptTurnSummary, SESSION_SYSTEM_PROMPT,
+        assemble_prompt, assemble_prompt_with_summaries,
+        assemble_prompt_with_summaries_and_project_doc_channel, canonical_hash, format_new_turn,
+        prior_request_prefix_hash, retrieved_memory_block,
     };
     use crate::models::{ModelMessage, ModelMessageRole};
 
@@ -428,6 +473,28 @@ mod tests {
         assert!(prompt.messages[0].content.contains(
             "[Earlier in this session]\n- Turn 0: The opening turn established continuity."
         ));
+    }
+
+    #[test]
+    fn project_doc_prompt_appends_when_channel_enabled() {
+        let prompt =
+            assemble_prompt_with_summaries_and_project_doc_channel(&[], &[], "next", "", true);
+
+        assert!(
+            prompt.messages[0]
+                .content
+                .contains(PROJECT_DOC_INTROSPECTION_PROMPT)
+        );
+        assert!(prompt.messages[0].content.contains("search_project_docs"));
+        assert!(prompt.messages[0].content.contains("kind and maturity"));
+    }
+
+    #[test]
+    fn project_doc_prompt_is_omitted_when_channel_disabled() {
+        let prompt =
+            assemble_prompt_with_summaries_and_project_doc_channel(&[], &[], "next", "", false);
+
+        assert_eq!(prompt.messages[0].content, SESSION_SYSTEM_PROMPT);
     }
 
     #[test]

@@ -425,6 +425,7 @@ Defaults:
   Browser store: $defaultStore
   Browser host:  127.0.0.1
   Browser port:  3939
+  App workspace root: $projectRoot
   Text-loop session memory through launcher: empty file source; persisted store wins
   Text-loop session limit through launcher: allow over limit
   UI directory:  crates/qsf_browser_server/ui
@@ -707,7 +708,16 @@ function Invoke-App {
     }
 
     Invoke-WithEnvironmentDelta -Delta $delta -ScriptBlock {
-        Invoke-LoggedCommand -Executable "cargo" -Arguments @("run", "-p", "qsf_app", "--", "experiment", $Experiment)
+        Invoke-LoggedCommand -Executable "cargo" -Arguments @(
+            "run",
+            "-p",
+            "qsf_app",
+            "--",
+            "experiment",
+            $Experiment,
+            "--workspace-root",
+            $projectRoot
+        )
     }
 }
 

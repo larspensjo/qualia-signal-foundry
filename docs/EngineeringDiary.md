@@ -2381,3 +2381,17 @@ Observed:
 - `cargo build`, `cargo test -p qsf_app responder_tool_context`, `cargo test -p qsf_app tool_dispatch`, `cargo clippy --all-targets -- -D warnings`, and `cargo fmt` passed.
 
 Refs: crates/qsf_app/src/tools/responder_tool_context.rs, crates/qsf_app/src/tools/mod.rs, crates/qsf_app/src/models/tool_dispatch.rs, crates/qsf_app/src/models/mod.rs, crates/qsf_app/src/experiments/multi_turn_text_loop.rs
+
+## 2026-06-07 - Project-doc responder turn wiring
+
+The conversational responder now advertises the project-doc tools in its live request path and can run a bounded `search -> read -> answer` turn with the project-doc voicing block carried through the final answer call.
+
+What changed:
+- Extended the responder tool list to include `search_project_docs` and `read_project_doc`.
+- Wired the live turn loop to use `ResponderToolContext`, a turn-scoped `ProjectDocToolBudget`, and a bounded multi-round tool loop.
+- Added the project-doc voicing block to the responder system prompt whenever that channel is enabled for a turn.
+- Added an explicit `--workspace-root` experiment-runner option and launcher wiring so the live project-doc service receives a runtime repository root.
+- Fixed the report prefix-stability helper to reconstruct prompts with the project-doc channel enabled, matching live turns.
+- Added turn-level coverage for search/read batching, refusal reuse, bounded-loop rejection, and the no-tool path.
+
+Refs: crates/qsf_app/src/experiments/multi_turn_text_loop.rs, crates/qsf_app/src/conversation/prompt.rs

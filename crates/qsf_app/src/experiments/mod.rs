@@ -18,5 +18,5 @@ mod voice_loop;
 
 pub use registry::{
     Experiment, ExperimentInfo, ExperimentName, ExperimentOutcome, ExperimentRunSummary,
-    available_experiments, run_experiment, run_experiment_in,
+    available_experiments, run_experiment, run_experiment_in, run_experiment_with_workspace_root,
 };

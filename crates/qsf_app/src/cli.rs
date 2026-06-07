@@ -1,3 +1,5 @@
+use std::path::PathBuf;
+
 use clap::{CommandFactory, Parser, Subcommand};
 
 use crate::experiments::{self, ExperimentName};
@@ -21,6 +23,10 @@ enum Command {
     Experiment {
         /// Experiment id, such as framework-skeleton-mvp.
         name: ExperimentName,
+
+        /// Repository/workspace root used by experiments that need repo-relative resources.
+        #[arg(long, value_name = "PATH")]
+        workspace_root: Option<PathBuf>,
     },
 
     /// List experiments available in this build.
@@ -32,8 +38,11 @@ pub fn run() -> anyhow::Result<()> {
     crate::console::styling::set_no_color_flag(cli.no_color);
 
     match cli.command {
-        Some(Command::Experiment { name }) => {
-            let summary = experiments::run_experiment(name)?;
+        Some(Command::Experiment {
+            name,
+            workspace_root,
+        }) => {
+            let summary = experiments::run_experiment_with_workspace_root(name, workspace_root)?;
             println!(
                 "Experiment `{}` completed. Run artifacts: {}",
                 summary.experiment_id,

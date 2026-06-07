@@ -178,16 +178,32 @@ pub fn available_experiments() -> Vec<ExperimentInfo> {
 }
 
 pub fn run_experiment(name: ExperimentName) -> anyhow::Result<ExperimentRunSummary> {
-    run_experiment_in("runs", name)
+    run_experiment_in_with_workspace_root("runs", name, None::<PathBuf>)
+}
+
+pub fn run_experiment_with_workspace_root(
+    name: ExperimentName,
+    workspace_root: Option<PathBuf>,
+) -> anyhow::Result<ExperimentRunSummary> {
+    run_experiment_in_with_workspace_root("runs", name, workspace_root)
 }
 
 pub fn run_experiment_in(
     base_dir: impl AsRef<Path>,
     name: ExperimentName,
 ) -> anyhow::Result<ExperimentRunSummary> {
+    run_experiment_in_with_workspace_root(base_dir, name, None::<PathBuf>)
+}
+
+pub fn run_experiment_in_with_workspace_root(
+    base_dir: impl AsRef<Path>,
+    name: ExperimentName,
+    workspace_root: Option<impl AsRef<Path>>,
+) -> anyhow::Result<ExperimentRunSummary> {
     let experiment = experiment_for(name);
     let started_at = Instant::now();
-    let mut context = RunContext::create_in(base_dir, experiment.id())?;
+    let mut context =
+        RunContext::create_in_with_workspace_root(base_dir, experiment.id(), workspace_root)?;
     context.initialize_engine_logging();
 
     engine_logging::engine_info!(

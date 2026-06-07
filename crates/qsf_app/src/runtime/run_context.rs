@@ -12,6 +12,7 @@ pub struct RunContext {
     experiment_id: String,
     run_id: String,
     run_dir: PathBuf,
+    workspace_root: Option<PathBuf>,
     event_log: EventLogWriter,
     trace_log: TraceLogWriter,
     event_count: usize,
@@ -27,6 +28,14 @@ impl RunContext {
         base_dir: impl AsRef<Path>,
         experiment_id: impl Into<String>,
     ) -> anyhow::Result<Self> {
+        Self::create_in_with_workspace_root(base_dir, experiment_id, None::<PathBuf>)
+    }
+
+    pub fn create_in_with_workspace_root(
+        base_dir: impl AsRef<Path>,
+        experiment_id: impl Into<String>,
+        workspace_root: Option<impl AsRef<Path>>,
+    ) -> anyhow::Result<Self> {
         let experiment_id = experiment_id.into();
         let run_id = format!(
             "{}-{}",
@@ -34,12 +43,16 @@ impl RunContext {
             experiment_id
         );
         let run_dir = base_dir.as_ref().join(&run_id);
+        let workspace_root = workspace_root
+            .map(|path| path.as_ref().canonicalize())
+            .transpose()?;
 
         fs::create_dir_all(&run_dir)?;
 
         Ok(Self {
             experiment_id,
             run_id,
+            workspace_root,
             event_log: EventLogWriter::create(run_dir.join("events.jsonl"))?,
             trace_log: TraceLogWriter::create(run_dir.join("traces.jsonl"))?,
             run_dir,
@@ -62,6 +75,10 @@ impl RunContext {
 
     pub fn run_dir(&self) -> &Path {
         &self.run_dir
+    }
+
+    pub fn workspace_root(&self) -> Option<&Path> {
+        self.workspace_root.as_deref()
     }
 
     pub fn engine_log_path(&self) -> PathBuf {
