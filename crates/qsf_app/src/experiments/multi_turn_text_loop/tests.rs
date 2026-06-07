@@ -7,9 +7,9 @@ use serde_json::{Value, json};
 use uuid::Uuid;
 
 use super::{
-    DEFAULT_SESSION_MODEL, SessionMemorySource, age_out_warm_turns,
-    prompt_prefix_status_for_report, run_one_turn, run_with_io_and_components,
-    run_with_io_and_components_at_state_dir, run_with_io_and_components_at_state_resolution,
+    DEFAULT_SESSION_MODEL, SessionMemorySource, prompt_prefix_status_for_report, run_one_turn,
+    run_with_io_and_components, run_with_io_and_components_at_state_dir,
+    run_with_io_and_components_at_state_resolution,
 };
 use crate::context::{
     ContextAssembly, ContextBudget, ContextFragment, ContextSelection, ContextSourceKind,
@@ -31,6 +31,7 @@ use crate::models::{
 use crate::observability::event_log::{EventRecord, EventType};
 use crate::observability::trace::TraceRecord;
 use crate::runtime::run_context::RunContext;
+use crate::session::ageing;
 use crate::session::{
     MemorySourceConfig, RecallRecord, SessionConfig, SessionEndReason, SessionEvent, SessionState,
     StateDirectoryResolution, Turn, TurnRange, TurnSummary, reduce_session,
@@ -193,7 +194,7 @@ fn print_drop_marker_renders_expected_format() {
 
     let mut buf: Vec<u8> = Vec::new();
 
-    super::print_drop_marker(&mut buf, 3, 2, 5, ColorMode::Disabled).unwrap();
+    ageing::print_drop_marker(&mut buf, 3, 2, 5, ColorMode::Disabled).unwrap();
 
     let text = String::from_utf8(buf).unwrap();
     assert!(text.contains("aged 3 turns from prompt"));
@@ -207,7 +208,7 @@ fn print_session_end_flush_marker_renders_expected_format() {
 
     let mut buf: Vec<u8> = Vec::new();
 
-    super::print_session_end_flush(&mut buf, 4, 1, ColorMode::Disabled).unwrap();
+    ageing::print_session_end_flush(&mut buf, 4, 1, ColorMode::Disabled).unwrap();
 
     let text = String::from_utf8(buf).unwrap();
     assert!(text.contains("session-end flush"));
@@ -408,7 +409,7 @@ fn reducer_appends_turns_in_order() {
 fn token_budget_drop_plan_ages_oldest_active_block_to_low_water() {
     let state = synthetic_state_with_verbatim_sizes(&[200, 200, 200, 200, 200, 200]);
 
-    let plan = super::plan_token_budget_drop(&state, 1_000, 0.80, 0.50).unwrap();
+    let plan = ageing::plan_token_budget_drop(&state, 1_000, 0.80, 0.50).unwrap();
 
     assert_eq!(plan.first_turn_index, 0);
     assert_eq!(plan.last_turn_index, 3);
@@ -421,7 +422,7 @@ fn token_budget_drop_plan_ages_oldest_active_block_to_low_water() {
 fn token_budget_drop_plan_noops_below_high_water() {
     let state = synthetic_state_with_verbatim_sizes(&[100, 100, 100]);
 
-    let plan = super::plan_token_budget_drop(&state, 1_000, 0.80, 0.50);
+    let plan = ageing::plan_token_budget_drop(&state, 1_000, 0.80, 0.50);
 
     assert!(plan.is_none());
 }
@@ -479,7 +480,7 @@ fn token_budget_drop_persists_associations_and_processed_range() {
         test_turn_with_memory_ids(1, &["memory.b"]),
         test_turn_with_memory_ids(2, &["memory.c"]),
     ];
-    let plan = super::TokenBudgetDropPlan {
+    let plan = ageing::TokenBudgetDropPlan {
         first_turn_index: 0,
         last_turn_index: 1,
         aged_count: 2,
@@ -487,7 +488,7 @@ fn token_budget_drop_persists_associations_and_processed_range() {
         hot_tokens_after: 400,
     };
 
-    let event = super::run_token_budget_drop_side_effect(
+    let event = ageing::run_token_budget_drop_side_effect(
         &mut context,
         &state,
         &state_dir,
@@ -536,7 +537,7 @@ fn token_budget_drop_persists_processed_range_before_summary_failure() {
         test_turn_with_memory_ids(0, &["memory.a"]),
         test_turn_with_memory_ids(1, &["memory.b"]),
     ];
-    let plan = super::TokenBudgetDropPlan {
+    let plan = ageing::TokenBudgetDropPlan {
         first_turn_index: 0,
         last_turn_index: 1,
         aged_count: 2,
@@ -548,7 +549,7 @@ fn token_budget_drop_persists_processed_range_before_summary_failure() {
         SummaryReply::new("Still truncated.", "max_tokens"),
     ]);
 
-    let error = super::run_token_budget_drop_side_effect(
+    let error = ageing::run_token_budget_drop_side_effect(
         &mut context,
         &state,
         &state_dir,
@@ -592,11 +593,16 @@ fn session_end_flush_covers_remaining_hot_turns_idempotently() {
         test_turn_with_memory_ids(0, &["memory.a"]),
         test_turn_with_memory_ids(1, &["memory.b"]),
     ];
+    let mut output = Vec::new();
+    let color_mode = crate::console::styling::ColorMode::Disabled;
 
-    let first = super::run_session_end_flush(&mut context, &state, &state_dir)
-        .unwrap()
-        .expect("expected first flush");
-    let second = super::run_session_end_flush(&mut context, &state, &state_dir).unwrap();
+    let first =
+        ageing::run_session_end_flush(&mut context, &state, &state_dir, &mut output, color_mode)
+            .unwrap()
+            .expect("expected first flush");
+    let second =
+        ageing::run_session_end_flush(&mut context, &state, &state_dir, &mut output, color_mode)
+            .unwrap();
     let reloaded = MemoryStore::load_or_empty(&store_path).unwrap();
 
     assert_eq!(first.new_associations, 1);
@@ -652,10 +658,13 @@ fn session_end_flush_preserves_non_contiguous_processed_ranges() {
         test_turn_with_memory_ids(3, &["memory.b"]),
         test_turn_with_memory_ids(4, &["memory.a"]),
     ];
+    let mut output = Vec::new();
+    let color_mode = crate::console::styling::ColorMode::Disabled;
 
-    let outcome = super::run_session_end_flush(&mut context, &state, &state_dir)
-        .unwrap()
-        .expect("expected non-contiguous flush");
+    let outcome =
+        ageing::run_session_end_flush(&mut context, &state, &state_dir, &mut output, color_mode)
+            .unwrap()
+            .expect("expected non-contiguous flush");
     let reloaded = MemoryStore::load_or_empty(&store_path).unwrap();
     let session_end_ranges = reloaded
         .contents()
@@ -689,7 +698,7 @@ fn cross_turn_persist_skips_already_processed_anchors_on_retry() {
         test_turn_with_memory_ids(0, &["memory.a"]),
         test_turn_with_memory_ids(1, &["memory.b"]),
     ];
-    let request = super::CrossTurnPersistRequest {
+    let request = ageing::CrossTurnPersistRequest {
         first_turn_index: 0,
         last_turn_index: 0,
         kind: qsf_memory::ProcessedRangeKind::LiveBatch,
@@ -698,12 +707,12 @@ fn cross_turn_persist_skips_already_processed_anchors_on_retry() {
     };
 
     let first =
-        super::persist_cross_turn_range(&mut context, &state, &store_path, request).unwrap();
-    let second = super::persist_cross_turn_range(
+        ageing::persist_cross_turn_range(&mut context, &state, &store_path, request).unwrap();
+    let second = ageing::persist_cross_turn_range(
         &mut context,
         &state,
         &store_path,
-        super::CrossTurnPersistRequest {
+        ageing::CrossTurnPersistRequest {
             first_turn_index: 0,
             last_turn_index: 0,
             kind: qsf_memory::ProcessedRangeKind::LiveBatch,
@@ -715,7 +724,7 @@ fn cross_turn_persist_skips_already_processed_anchors_on_retry() {
     let reloaded = MemoryStore::load_or_empty(&store_path).unwrap();
 
     assert_eq!(first.unwrap().new_associations, 1);
-    assert_eq!(second.unwrap(), super::CrossTurnPersistOutcome::default());
+    assert_eq!(second.unwrap(), ageing::CrossTurnPersistOutcome::default());
     assert_eq!(reloaded.contents().associations.len(), 1);
     assert_eq!(reloaded.contents().processed_ranges.len(), 1);
 
@@ -1959,8 +1968,8 @@ fn warm_summary_retry_succeeds_after_truncation() {
     assert_eq!(
         client.summarizer_max_output_tokens(),
         vec![
-            Some(super::WARM_SUMMARY_MAX_OUTPUT_TOKENS),
-            Some(super::WARM_SUMMARY_RETRY_MAX_OUTPUT_TOKENS)
+            Some(ageing::WARM_SUMMARY_MAX_OUTPUT_TOKENS),
+            Some(ageing::WARM_SUMMARY_RETRY_MAX_OUTPUT_TOKENS)
         ]
     );
     assert_eq!(
@@ -2067,7 +2076,7 @@ fn summarize_aged_turns_returns_empty_for_inverted_range() {
     state.turns = vec![test_turn(0), test_turn(1)];
 
     let summaries =
-        super::summarize_aged_turns(&mut context, &state, 1, 0, &MockModelClient::default())
+        ageing::summarize_aged_turns(&mut context, &state, 1, 0, &MockModelClient::default())
             .unwrap();
 
     assert!(summaries.is_empty());
@@ -2727,7 +2736,7 @@ fn warm_age_out_can_summarize_multiple_oldest_turns() {
     let state_dir = base_dir.join("state/text-loop");
     state.turns = (0..5).map(test_turn).collect();
 
-    age_out_warm_turns(
+    ageing::age_out_warm_turns(
         &mut context,
         &mut state,
         &state_dir,

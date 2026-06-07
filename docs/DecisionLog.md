@@ -680,3 +680,18 @@ Refs: crates/qsf_app/src/cli.rs,
 crates/qsf_app/src/experiments/registry.rs,
 crates/qsf_app/src/runtime/run_context.rs,
 scripts/qsf.ps1
+
+## 2026-06-07 - Session ageing lives under session
+Decision: Warm-turn summarization retries, token-budget ageing, cross-turn
+co-retrieval persistence, and session-end flush behavior belong to
+`crate::session::ageing` rather than the multi-turn text experiment.
+Context: Phase 3 needed one shared ageing boundary so the text loop and future
+session-owned callers can share the same policy and side effects while reducers
+stay pure and emit `SessionEvent`s.
+Consequences: Ageing policy changes should land in `session/ageing.rs`; the
+experiment should only orchestrate inputs, outputs, and shared ageing calls.
+Future voice or session surfaces that need the same ageing behavior should call
+the shared module instead of copying the text-loop implementation.
+Refs: crates/qsf_app/src/session/ageing.rs,
+crates/qsf_app/src/experiments/multi_turn_text_loop.rs,
+crates/qsf_app/src/experiments/text_owned_voice_loop.rs

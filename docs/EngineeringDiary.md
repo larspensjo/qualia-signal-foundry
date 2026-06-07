@@ -2438,3 +2438,36 @@ crates/qsf_app/src/experiments/multi_turn_text_loop.rs,
 crates/qsf_app/src/experiments/text_owned_voice_loop.rs,
 crates/qsf_app/src/experiments/multi_turn_text_loop/tests.rs;
 implements: 2026-06-07 - Shared live memory runtime belongs under session
+
+## 2026-06-07 - Shared session ageing runtime
+
+Moved warm-turn summarization retries, token-budget ageing, cross-turn
+co-retrieval persistence, and session-end flush behavior into
+`crates/qsf_app/src/session/ageing.rs` so the text loop, text-owned voice loop, and
+ageing tests share one runtime boundary.
+
+What changed:
+- Added a shared session-ageing module for warm summarization retries,
+  token-budget drop planning, cross-turn persistence, and session-end flushes.
+- Routed the multi-turn text loop and text-owned voice loop through the shared
+  ageing boundary.
+- Deleted the copied test-only ageing planner, side-effect helpers, persistence
+  helpers, and console marker copies from `multi_turn_text_loop.rs`.
+- Switched the multi-turn text-loop tests to import the shared ageing module
+  directly.
+- Removed the module-wide dead-code suppression from the shared ageing module.
+- Kept the existing reducer events intact, including `TurnsAgedAndCoRetrieved`.
+
+Observed:
+- `cargo build`
+- `cargo test -p qsf_app warm`
+- `cargo test -p qsf_app token_budget`
+- `cargo test -p qsf_app session_end_flush`
+- `cargo clippy --all-targets -- -D warnings`
+- `cargo fmt`
+
+Refs: crates/qsf_app/src/session/ageing.rs,
+crates/qsf_app/src/session/mod.rs,
+crates/qsf_app/src/experiments/multi_turn_text_loop.rs,
+crates/qsf_app/src/experiments/text_owned_voice_loop.rs,
+crates/qsf_app/src/experiments/multi_turn_text_loop/tests.rs

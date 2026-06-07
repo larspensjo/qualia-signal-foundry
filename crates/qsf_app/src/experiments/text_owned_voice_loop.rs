@@ -515,7 +515,7 @@ impl TextOwnedVoiceLoopExperiment {
             &mut state,
             SessionEvent::TurnCompleted(turn),
         )?;
-        super::multi_turn_text_loop::age_out_warm_turns(
+        crate::session::ageing::age_out_warm_turns(
             context,
             &mut state,
             &state_resolution.persist_state_dir,

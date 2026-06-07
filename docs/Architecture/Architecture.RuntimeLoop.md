@@ -69,18 +69,15 @@ document as a candidate design that real experiments incrementally fill in.
   [experiments/multi_turn_text_loop.rs](../../crates/qsf_app/src/experiments/multi_turn_text_loop.rs),
   [experiments/text_owned_voice_loop.rs](../../crates/qsf_app/src/experiments/text_owned_voice_loop.rs),
   [experiments/voice_loop.rs](../../crates/qsf_app/src/experiments/voice_loop.rs))
-- Multi-turn hot context aging now composes the existing active-turn warm threshold
-  with a token-budget high-water policy. Aging side effects run cross-turn
-  co-retrieval first, persist association deltas and `processed_ranges`, retry
-  once when a warm summary truncates, and only commit the summary if the retry
-  finishes normally; a second truncation logs an error and leaves the turn hot
-  for a later attempt. Successful aging then feeds `TurnsAgedAndCoRetrieved`
-  through the reducer while keeping `state.turns` append-only
-  ([experiments/multi_turn_text_loop.rs](../../crates/qsf_app/src/experiments/multi_turn_text_loop.rs),
-  [session/mod.rs](../../crates/qsf_app/src/session/mod.rs))
-- Clean `:quit` and EOF exits run a session-end cross-turn flush for remaining hot
-  turns before recording `SessionEnded`; flush failures are logged and deferred to
-  the sleep safety-net path rather than blocking exit
+- Shared session ageing policy now lives in `session/ageing.rs`, so warm-threshold
+  summarization retries, token-budget high-water planning, cross-turn
+  co-retrieval persistence, and clean session-end flushes are available to the
+  text loop as one shared boundary. Successful aging still feeds
+  `TurnsAgedAndCoRetrieved` through the reducer while keeping `state.turns`
+  append-only
+  ([session/ageing.rs](../../crates/qsf_app/src/session/ageing.rs),
+  [experiments/multi_turn_text_loop.rs](../../crates/qsf_app/src/experiments/multi_turn_text_loop.rs),
+  [experiments/text_owned_voice_loop.rs](../../crates/qsf_app/src/experiments/text_owned_voice_loop.rs))
 
 **Partial:**
 
@@ -106,11 +103,12 @@ document as a candidate design that real experiments incrementally fill in.
   experiment code
 - Full turn-taking policy beyond deterministic interruption recording
 
-Last reviewed: 2026-06-07 against the shared live-memory-runtime phase — realtime
+Last reviewed: 2026-06-07 against the shared session-ageing phase — realtime
 provider sessions now persist shared exchanges for transcript, provider
 preamble/lifecycle, interruption, and tool-request facts while both text and
-voice loops reuse the shared live-memory runtime boundary and sleep/safety-net
-consolidation reads the shared normalized turn/exchange view.
+voice loops reuse the shared live-memory runtime boundary, hot-context ageing
+lives under `session/ageing.rs`, and sleep/safety-net consolidation reads the
+shared normalized turn/exchange view.
 
 ## Purpose
 

@@ -5,6 +5,7 @@ use serde::{Deserialize, Serialize};
 use crate::context::ContextAssembly;
 use crate::conversation::ContentHash;
 
+pub mod ageing;
 pub mod continuation;
 pub mod exchange;
 pub mod live_memory;
