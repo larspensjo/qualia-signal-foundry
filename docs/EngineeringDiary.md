@@ -2528,3 +2528,28 @@ Refs: crates/qsf_app/src/project_docs/influence.rs,
 crates/qsf_app/src/project_docs/enrichment.rs,
 crates/qsf_app/src/project_docs/mod.rs; implements: 2026-06-07 - Project-doc
 introspection v1 scope
+
+## 2026-06-07 - Project-doc live verification failure
+
+Manual live verification of the project-doc introspection channel produced a negative
+Phase 10 result. The first self-description turn completed without tool calls, and the
+sleep-phase question exercised two `search_project_docs` calls, but both returned zero
+hits; the following autonomous-agency prompt then failed before the provider call because
+the prompt-prefix guard reported that the new prompt did not contain the previous request
+prefix.
+
+Observed:
+- Run `runs/2026-06-07-185955-multi-turn-text-loop` completed only two assistant turns.
+- `engine.log` records `new prompt did not contain the previous request prefix` for the
+  repeated autonomous-agency prompt and for `:q`; the console surfaced this as `model
+  unavailable`.
+- `traces.jsonl` shows two successful `project_doc_search` calls for sleep-phase queries,
+  both with `hit_count: 0`, followed by no model-role trace for the autonomous-agency
+  prompt.
+
+Open question:
+- Should project-doc tool-call messages be preserved in completed turn prompt history, or
+  should the next turn intentionally invalidate the prompt-prefix cache after tool rounds?
+
+Refs: runs/2026-06-07-185955-multi-turn-text-loop,
+docs/Experiments/Experiment.Backlog.md

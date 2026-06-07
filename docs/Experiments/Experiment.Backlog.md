@@ -48,6 +48,7 @@ Later
 | `Experiment.EventLogAndTraceMVP` | High | Completed | What minimal event log and trace format is useful for understanding system behavior? |
 | `Experiment.ContextBudgetRetrievalTest` | High | Completed | How should the system select memories under a small context budget? |
 | `Experiment.SleepPhaseSessionSummary` | High | Completed | Does a session-end summary improve continuity in the next session? |
+| `Experiment.ProjectDocLiveRegressionAudit` | High | Proposed | Can live project-doc tool turns preserve prompt-prefix continuity and retrieve expected docs? |
 | `Experiment.StreamingTranscriptionMVP` | Medium | Completed | Can live speech be represented as observable partial and final transcript events? |
 | `Experiment.AudioLoopMVP` | Medium | Superseded | Can a minimal audio loop create a stronger sense of presence than text-only interaction? |
 | `Experiment.ToolAsPerceptionCalculator` | Medium | Completed | How should a simple read-only computational tool be represented as perception? |
@@ -230,6 +231,33 @@ Possible success criteria:
 - It identifies unresolved questions.
 - It does not silently create accepted decisions.
 - The output is inspectable.
+
+### Experiment.ProjectDocLiveRegressionAudit
+
+**Priority:** High  
+**Status:** Proposed
+
+Audit the live multi-turn project-doc introspection path after manual verification found
+that a project-doc tool turn could make the next prompt fail the prefix-continuity guard,
+and that lexical project-doc search returned no hits for an expected sleep-phase question.
+
+Related documents:
+
+```text
+Architecture/Architecture.ToolSystem.md
+Architecture/Architecture.ContextManagement.md
+Plans/Design.ProjectDocIntrospection.md
+Experiments/Experiment.Backlog.md
+```
+
+Possible success criteria:
+
+- A live turn after a `search_project_docs` tool round preserves the prompt-prefix
+  invariant or records an intentional invalidation.
+- Expected project-self prompts can find relevant allowlisted project documents.
+- The console error distinguishes local prompt assembly failures from provider
+  unavailability.
+- The trace is sufficient to explain any remaining retrieval miss.
 
 ## Medium-Priority Experiments
 
