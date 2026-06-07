@@ -201,6 +201,14 @@ fn format_tool_result_message(result: &ToolResult) -> String {
                 result.observation_summary.trim()
             )
         }
+        SEARCH_PROJECT_DOCS_TOOL_NAME | READ_PROJECT_DOC_TOOL_NAME => {
+            format!(
+                "[{}]\n{}\n{}",
+                result.tool_name,
+                result.observation_summary.trim(),
+                result.output_text.trim()
+            )
+        }
         _ => result.observation_summary.clone(),
     }
 }

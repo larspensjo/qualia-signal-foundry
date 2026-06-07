@@ -9,8 +9,8 @@ use crate::runtime::run_context::RunContext;
 
 use super::manifest::{ContinuityManifest, ResumeMode};
 use super::{
-    LiveSessionEvent, MemorySourceConfig, SessionConfig, SessionEvent, SessionLimit, SessionState,
-    reduce_live_session,
+    LiveSessionEvent, MemorySourceConfig, PromptPrefixInvalidation, SessionConfig, SessionEvent,
+    SessionLimit, SessionState, reduce_live_session,
 };
 
 pub struct SessionBootRequest {
@@ -185,6 +185,18 @@ pub fn reduce_session_in_place(state: &mut SessionState, event: SessionEvent) {
         SessionEvent::TurnCompleted(turn) => {
             state.turns.push(turn);
         }
+        SessionEvent::PromptPrefixInvalidated {
+            after_turn_index,
+            reason,
+        } => {
+            state
+                .prompt_prefix_invalidations
+                .push(PromptPrefixInvalidation {
+                    after_turn_index,
+                    reason,
+                });
+            state.prefix_invalidated_since_last_prompt = true;
+        }
         SessionEvent::ExchangeRecorded { exchange, .. } => {
             state.exchanges.push(*exchange);
         }
@@ -293,6 +305,20 @@ pub fn record_session_event(context: &mut RunContext, event: &SessionEvent) -> a
                     "session_id": context.run_id(),
                     "turn": turn,
                     "full_request_hash": turn.full_request_hash.hex(),
+                }),
+                None,
+            )?;
+        }
+        SessionEvent::PromptPrefixInvalidated {
+            after_turn_index,
+            reason,
+        } => {
+            context.record_event(
+                EventType::PromptPrefixInvalidated,
+                json!({
+                    "session_id": context.run_id(),
+                    "after_turn_index": after_turn_index,
+                    "reason": reason,
                 }),
                 None,
             )?;

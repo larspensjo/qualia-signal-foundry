@@ -146,6 +146,13 @@ pub(crate) fn prompt_prefix_status_for_report(
     {
         return "invalidated_by_warm_summary".to_string();
     }
+    if let Some(invalidation) = state
+        .prompt_prefix_invalidations
+        .iter()
+        .find(|invalidation| invalidation.after_turn_index == previous.index)
+    {
+        return format!("invalidated_by_{}", invalidation.reason);
+    }
 
     let prompt_state = SessionState {
         turns: state.turns[..turn_position].to_vec(),

@@ -748,6 +748,27 @@ fn reducer_records_model_failure_without_appending_turn() {
 }
 
 #[test]
+fn reducer_records_prompt_prefix_invalidation() {
+    let state = SessionState::new(test_config(3));
+
+    let state = reduce_session(
+        state,
+        SessionEvent::PromptPrefixInvalidated {
+            after_turn_index: 2,
+            reason: "non_replayed_tool_messages".to_string(),
+        },
+    );
+
+    assert!(state.prefix_invalidated_since_last_prompt);
+    assert_eq!(state.prompt_prefix_invalidations.len(), 1);
+    assert_eq!(state.prompt_prefix_invalidations[0].after_turn_index, 2);
+    assert_eq!(
+        state.prompt_prefix_invalidations[0].reason,
+        "non_replayed_tool_messages"
+    );
+}
+
+#[test]
 fn model_error_output_still_shows_assembled_memory_blocks() {
     let base_dir =
         std::env::temp_dir().join(format!("qsf-model-error-memory-blocks-{}", Uuid::new_v4()));
@@ -771,6 +792,20 @@ fn model_error_output_still_shows_assembled_memory_blocks() {
     assert!(output.contains("model unavailable, try again or :quit"));
 
     fs::remove_dir_all(base_dir).unwrap();
+}
+
+#[test]
+fn prompt_continuity_errors_get_runtime_retry_message() {
+    assert_eq!(
+        super::retry_message_for_turn_error(
+            "prompt continuity error before turn 2: new prompt did not contain the previous request prefix"
+        ),
+        "runtime prompt continuity error; see engine.log, then try again or :quit"
+    );
+    assert_eq!(
+        super::retry_message_for_turn_error("provider unavailable"),
+        "model unavailable, try again or :quit"
+    );
 }
 
 #[test]
@@ -2425,6 +2460,29 @@ fn responder_can_search_then_read_across_two_tool_batches() {
             .content
             .contains("search_project_docs")
     );
+    let search_tool_message = calls[1]
+        .messages
+        .iter()
+        .find(|message| message.role == crate::models::ModelMessageRole::Tool)
+        .expect("search follow-up should include tool result");
+    assert!(
+        search_tool_message
+            .content
+            .contains("[search_project_docs]")
+    );
+    assert!(
+        search_tool_message
+            .content
+            .contains("docs/ProjectFrame/ProjectVision.md")
+    );
+    let read_tool_message = calls[2]
+        .messages
+        .iter()
+        .rev()
+        .find(|message| message.role == crate::models::ModelMessageRole::Tool)
+        .expect("final response request should include read tool result");
+    assert!(read_tool_message.content.contains("[read_project_doc]"));
+    assert!(read_tool_message.content.contains("Project Vision"));
 
     let events = fs::read_to_string(context.run_dir().join("events.jsonl")).unwrap();
     let event_records = parse_event_records(&events);
@@ -2466,6 +2524,67 @@ fn responder_can_search_then_read_across_two_tool_batches() {
     );
     assert_eq!(search_trace.details["refused"], false);
     assert_eq!(read_trace.details["refused"], false);
+
+    fs::remove_dir_all(base_dir).unwrap();
+}
+
+#[test]
+fn non_replayed_project_doc_tool_turn_invalidates_next_prompt_prefix() {
+    let base_dir = std::env::temp_dir().join(format!(
+        "qsf-project-doc-prefix-invalidation-{}",
+        Uuid::new_v4()
+    ));
+    let mut context = test_context(&base_dir, "multi-turn-text-loop");
+    let input = Cursor::new("please search the project docs\nwhat next?\n:quit\n");
+    let mut output = Vec::new();
+    let memory_source = TestMemorySource;
+    let client = SequencedResponderClient::new(vec![
+        PlannedResponderResponse::tool_call(
+            "search the docs",
+            "project-doc-search-0",
+            SEARCH_PROJECT_DOCS_TOOL_NAME,
+            json!({ "query": "vision" }),
+        ),
+        PlannedResponderResponse::text(
+            "The project's accepted framing says the docs can ground project-self replies.",
+        ),
+        PlannedResponderResponse::text("We can continue with another project-doc question."),
+    ]);
+
+    run_with_io_and_components(
+        &mut context,
+        input,
+        &mut output,
+        &client,
+        &memory_source,
+        test_config_with_warm_threshold(10, 10),
+    )
+    .unwrap();
+
+    let calls = client.calls();
+    assert_eq!(calls.len(), 3);
+
+    let events = fs::read_to_string(context.run_dir().join("events.jsonl")).unwrap();
+    let event_records = parse_event_records(&events);
+    assert_eq!(
+        event_records
+            .iter()
+            .filter(|record| record.event_type == EventType::TurnCompleted)
+            .count(),
+        2
+    );
+    let invalidation = event_records
+        .iter()
+        .find(|record| record.event_type == EventType::PromptPrefixInvalidated)
+        .expect("prompt-prefix invalidation event present");
+    assert_eq!(invalidation.payload["after_turn_index"], json!(0));
+    assert_eq!(
+        invalidation.payload["reason"],
+        json!("non_replayed_tool_messages")
+    );
+
+    let report = fs::read_to_string(context.run_dir().join("multi-turn-text-loop.md")).unwrap();
+    assert!(report.contains("invalidated_by_non_replayed_tool_messages"));
 
     fs::remove_dir_all(base_dir).unwrap();
 }

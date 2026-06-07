@@ -40,6 +40,7 @@ pub enum EventType {
     SessionStarted,
     SessionResumed,
     PromptAssembled,
+    PromptPrefixInvalidated,
     TurnCompleted,
     TurnSummarized,
     TurnsAgedAndCoRetrieved,

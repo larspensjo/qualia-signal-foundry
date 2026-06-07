@@ -65,6 +65,8 @@ pub struct SessionState {
     pub last_input: Option<String>,
     pub last_prompt_hash: Option<ContentHash>,
     pub prefix_invalidated_since_last_prompt: bool,
+    #[serde(default)]
+    pub prompt_prefix_invalidations: Vec<PromptPrefixInvalidation>,
     pub last_model_error: Option<String>,
     pub limit_reached: Option<SessionLimit>,
 }
@@ -89,6 +91,7 @@ impl SessionState {
             last_input: None,
             last_prompt_hash: None,
             prefix_invalidated_since_last_prompt: false,
+            prompt_prefix_invalidations: vec![],
             last_model_error: None,
             limit_reached: None,
         }
@@ -133,6 +136,12 @@ pub struct Turn {
     pub output_tokens: u32,
     pub full_request_hash: ContentHash,
     pub message_count: usize,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct PromptPrefixInvalidation {
+    pub after_turn_index: usize,
+    pub reason: String,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -202,6 +211,10 @@ pub enum SessionEvent {
         error_summary: String,
     },
     TurnCompleted(Turn),
+    PromptPrefixInvalidated {
+        after_turn_index: usize,
+        reason: String,
+    },
     ExchangeRecorded {
         session_id: String,
         exchange: Box<Exchange>,

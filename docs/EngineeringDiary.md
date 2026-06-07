@@ -2553,3 +2553,50 @@ Open question:
 
 Refs: runs/2026-06-07-185955-multi-turn-text-loop,
 docs/Experiments/Experiment.Backlog.md
+
+## 2026-06-07 - Non-replayed tool turns invalidate prompt prefix
+
+Fixed the live text-loop continuity failure observed after a project-doc tool turn by
+recording an explicit prompt-prefix invalidation whenever a responder turn includes tool
+messages that are not replayed in future prompt history.
+
+What changed:
+- Added `PromptPrefixInvalidated` session/event records and persisted invalidation
+  metadata on session state.
+- Marked project-doc and calculator-style tool turns as `non_replayed_tool_messages`
+  while leaving `recall_turn` cache-stable because its tool messages are replayed from
+  `RecallRecord`.
+- Updated the multi-turn report to show
+  `invalidated_by_non_replayed_tool_messages` for the next turn after such a tool round.
+- Changed prompt-continuity failures to print a runtime prompt-continuity message instead
+  of the generic provider-unavailable retry text.
+- Changed project-doc search from exact full-query substring matching to token matching
+  with stopword filtering, so expected queries such as sleep-phase implementation status
+  can match allowlisted docs without control questions matching on common words.
+- Included structured project-doc search/read JSON in model-visible tool result messages;
+  the previous prompt message only said how many hits were found, which let the model
+  guess an invalid memory id as the `read_project_doc` path.
+- Added regressions for reducer state, operator error text, and a project-doc tool turn
+  followed by another user prompt.
+- Added project-doc search regressions for multi-term queries and stopword-only
+  controls.
+- Added a regression that a `search_project_docs` follow-up request can see real
+  allowlisted `docs/...` paths and that the final answer request can see read document
+  content.
+
+Observed:
+- `cargo test -p qsf_app multi_turn_text_loop` passed.
+- `cargo test -p qsf_app project_docs` passed.
+- Run `runs/2026-06-07-192600-multi-turn-text-loop` showed the search fix returning
+  five hits, but exposed that the model-visible tool message omitted those hit paths and
+  the model therefore called `read_project_doc` with
+  `memory.sleep.2026-05-26-133723-sleep-phase-session-summary.001`, which is not an
+  allowlisted document path.
+
+Refs: crates/qsf_app/src/session/mod.rs,
+crates/qsf_app/src/session/runtime.rs,
+crates/qsf_app/src/experiments/multi_turn_text_loop.rs,
+crates/qsf_app/src/experiments/multi_turn_text_loop/report.rs,
+crates/qsf_app/src/experiments/multi_turn_text_loop/tests.rs,
+crates/qsf_app/src/experiments/multi_turn_text_loop/tool_runtime.rs,
+crates/qsf_app/src/project_docs/search.rs

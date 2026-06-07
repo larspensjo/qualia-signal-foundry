@@ -8,6 +8,11 @@ use super::metadata::{kind_for_path, last_reviewed_for, maturity_for};
 use super::{Allowlist, DocHit, MatchStrength};
 
 const SNIPPET_BYTES: usize = 800;
+const STOPWORDS: &[&str] = &[
+    "about", "after", "again", "against", "are", "can", "could", "does", "for", "from", "how",
+    "into", "its", "matching", "not", "the", "that", "this", "try", "what", "when", "where",
+    "which", "with", "your",
+];
 
 struct MatchAnalysis {
     best_offset: usize,
@@ -24,6 +29,10 @@ pub fn search(
 ) -> Result<Vec<DocHit>> {
     let needle = query.trim().to_ascii_lowercase();
     if needle.is_empty() {
+        return Ok(Vec::new());
+    }
+    let terms = query_terms(&needle);
+    if terms.is_empty() {
         return Ok(Vec::new());
     }
 
@@ -45,7 +54,7 @@ pub fn search(
         }
 
         let body = fs::read_to_string(entry.path()).with_context(|| format!("read `{rel}`"))?;
-        let Some(analysis) = analyze_matches(&body, &needle) else {
+        let Some(analysis) = analyze_matches(&body, &terms) else {
             continue;
         };
         let MatchAnalysis {
@@ -92,8 +101,8 @@ pub fn search(
         .collect())
 }
 
-fn analyze_matches(body: &str, needle: &str) -> Option<MatchAnalysis> {
-    let occurrences = count_occurrences(body, needle);
+fn analyze_matches(body: &str, terms: &[String]) -> Option<MatchAnalysis> {
+    let occurrences = count_occurrences(body, terms);
     if occurrences == 0 {
         return None;
     }
@@ -111,7 +120,7 @@ fn analyze_matches(body: &str, needle: &str) -> Option<MatchAnalysis> {
             current_heading = Some(trimmed.strip_prefix("## ").unwrap().trim().to_string());
         }
 
-        if let Some(local_offset) = find_match_offset(line, needle) {
+        if let Some(local_offset) = find_match_offset(line, terms) {
             let absolute_offset = offset + local_offset;
             if is_heading {
                 match heading_best {
@@ -152,12 +161,30 @@ fn analyze_matches(body: &str, needle: &str) -> Option<MatchAnalysis> {
     })
 }
 
-fn count_occurrences(body: &str, needle: &str) -> usize {
-    body.to_ascii_lowercase().matches(needle).count()
+fn query_terms(needle: &str) -> Vec<String> {
+    let mut terms = Vec::new();
+    for term in needle
+        .split(|character: char| !character.is_ascii_alphanumeric())
+        .filter(|term| term.len() >= 3 && !STOPWORDS.contains(term))
+    {
+        if !terms.iter().any(|existing| existing == term) {
+            terms.push(term.to_string());
+        }
+    }
+    terms
 }
 
-fn find_match_offset(line: &str, needle: &str) -> Option<usize> {
-    line.to_ascii_lowercase().find(needle)
+fn count_occurrences(body: &str, terms: &[String]) -> usize {
+    let haystack = body.to_ascii_lowercase();
+    terms
+        .iter()
+        .map(|term| haystack.matches(term).count())
+        .sum()
+}
+
+fn find_match_offset(line: &str, terms: &[String]) -> Option<usize> {
+    let haystack = line.to_ascii_lowercase();
+    terms.iter().filter_map(|term| haystack.find(term)).min()
 }
 
 fn extract_snippet(body: &str, around: usize, byte_budget: usize) -> String {
@@ -214,6 +241,31 @@ mod tests {
             hits[0].match_strength,
             crate::project_docs::MatchStrength::High
         );
+    }
+
+    #[test]
+    fn multi_term_query_matches_individual_terms() {
+        let hits = search(
+            &fixtures_root(),
+            &fixture_allowlist(),
+            "implementation status accepted",
+            6,
+        )
+        .unwrap();
+
+        assert!(!hits.is_empty());
+        assert_eq!(hits[0].path, "sample_architecture.md");
+        assert_eq!(
+            hits[0].section_hint.as_deref(),
+            Some("Implementation Status")
+        );
+    }
+
+    #[test]
+    fn stopword_only_query_returns_no_results() {
+        let hits = search(&fixtures_root(), &fixture_allowlist(), "what are you", 6).unwrap();
+
+        assert!(hits.is_empty());
     }
 
     #[test]

@@ -60,6 +60,7 @@ pub(crate) use tool_runtime::{
 const SESSION_RETRIEVAL_LIMIT: usize = 8;
 const SESSION_RETRIEVAL_STRATEGY: RetrievalStrategy = RetrievalStrategy::KeywordTag;
 const MAX_RESPONDER_TOOL_ROUNDS_PER_TURN: usize = 2;
+const NON_REPLAYED_TOOL_PROMPT_PREFIX_INVALIDATION: &str = "non_replayed_tool_messages";
 
 pub struct MultiTurnTextLoopExperiment;
 
@@ -254,7 +255,7 @@ pub(crate) fn run_with_io_and_components_at_state_resolution(
                         error_summary: error_summary.clone(),
                     },
                 );
-                writeln!(output, "model unavailable, try again or :quit")?;
+                writeln!(output, "{}", retry_message_for_turn_error(&error_summary))?;
                 engine_logging::engine_error!(
                     "multi-turn model call failed: run_id={} error={}",
                     context.run_id(),
@@ -444,6 +445,7 @@ fn run_one_turn<W: Write>(
     let mut output_tokens: u32 = 0;
     let mut recalled_turns = vec![];
     let mut tool_rounds = 0usize;
+    let mut has_non_replayed_tool_messages = false;
     let mut response;
     let mut current_request = responder_request_for_messages(
         &responder_role,
@@ -496,6 +498,9 @@ fn run_one_turn<W: Write>(
             &mut project_doc_budget,
             &tool_calls,
         )?;
+        has_non_replayed_tool_messages |= tool_executions
+            .iter()
+            .any(|execution| execution.recall.is_none());
         recalled_turns.extend(
             tool_executions
                 .iter()
@@ -604,7 +609,18 @@ fn run_one_turn<W: Write>(
             completed_exchange.index
         )
     })?;
+    let completed_turn_index = turn.index;
     apply_session_event(context, state, SessionEvent::TurnCompleted(turn))?;
+    if has_non_replayed_tool_messages {
+        apply_session_event(
+            context,
+            state,
+            SessionEvent::PromptPrefixInvalidated {
+                after_turn_index: completed_turn_index,
+                reason: NON_REPLAYED_TOOL_PROMPT_PREFIX_INVALIDATION.to_string(),
+            },
+        )?;
+    }
     age_out_warm_turns(context, state, state_dir, model_client)?;
     let store_path = state_dir.join("memory-store.json");
     if store_path.exists() {
@@ -678,15 +694,28 @@ fn verify_prompt_prefix(
             &prompt_assembly.messages,
             previous_turn.message_count,
         )
-        .context("new prompt did not contain the previous request prefix")?;
+        .with_context(|| {
+            format!(
+                "prompt continuity error before turn {}: new prompt did not contain the previous request prefix",
+                completed_turn_count(state)
+            )
+        })?;
         anyhow::ensure!(
             prefix_hash == previous_turn.full_request_hash,
-            "prompt prefix hash mismatch before turn {}",
+            "prompt continuity error before turn {}: prompt prefix hash mismatch",
             completed_turn_count(state)
         );
     }
 
     Ok(())
+}
+
+fn retry_message_for_turn_error(error_summary: &str) -> &'static str {
+    if error_summary.contains("prompt continuity error") {
+        "runtime prompt continuity error; see engine.log, then try again or :quit"
+    } else {
+        "model unavailable, try again or :quit"
+    }
 }
 
 fn apply_session_event(
