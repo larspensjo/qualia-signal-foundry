@@ -66,6 +66,11 @@ future retrieval backends.
   metadata
   ([memory/live_capture.rs](../../crates/qsf_app/src/memory/live_capture.rs),
   [experiments/multi_turn_text_loop.rs](../../crates/qsf_app/src/experiments/multi_turn_text_loop.rs))
+- Shared live-memory reinforcement and capture now sit in `session/live_memory.rs`
+  so text and voice loops reuse the same persistence and trace logic
+  ([session/live_memory.rs](../../crates/qsf_app/src/session/live_memory.rs),
+  [experiments/multi_turn_text_loop.rs](../../crates/qsf_app/src/experiments/multi_turn_text_loop.rs),
+  [experiments/text_owned_voice_loop.rs](../../crates/qsf_app/src/experiments/text_owned_voice_loop.rs))
 - Live-loop cross-turn co-retrieval when turns age out through the warm threshold
   or token-budget batch policy, plus a clean-exit session-end flush for remaining
   hot turns
@@ -92,11 +97,11 @@ future retrieval backends.
 - Sleep-side consolidation over voice exchanges is now shared with text turns,
   but richer semantic typing of the resulting memories is still shallow
 
-Last reviewed: 2026-06-06 against the shared sleep-view phase —
+Last reviewed: 2026-06-07 against the shared live-memory-runtime phase —
 live-loop co-retrieval handles mechanical edges, sleep contributes safety-net and
 LLM-candidate associations through the proposer interface, and both text and voice
-sessions flow through the shared memory store and sleep consolidation path by
-default.
+sessions flow through the shared memory store, shared live-memory runtime, and
+sleep consolidation path by default.
 
 ## Purpose
 

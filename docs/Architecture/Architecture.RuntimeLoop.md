@@ -47,10 +47,14 @@ document as a candidate design that real experiments incrementally fill in.
   ([experiments/text_owned_voice_loop.rs](../../crates/qsf_app/src/experiments/text_owned_voice_loop.rs))
 - Memory retrieval before context assembly, then model invocation, then output and
   trace emission
-- Live memory capture after the model response now persists assistant-name,
-  user-name, and remembered-topic candidates before the next turn begins
-  ([memory/live_capture.rs](../../crates/qsf_app/src/memory/live_capture.rs),
-  [experiments/multi_turn_text_loop.rs](../../crates/qsf_app/src/experiments/multi_turn_text_loop.rs))
+- Shared live-memory reinforcement and capture after the model response now live
+  under `session/live_memory.rs`, so both the multi-turn text loop and the
+  text-owned voice loop persist assistant-name, user-name, and remembered-topic
+  candidates before the next turn begins
+  ([session/live_memory.rs](../../crates/qsf_app/src/session/live_memory.rs),
+  [memory/live_capture.rs](../../crates/qsf_app/src/memory/live_capture.rs),
+  [experiments/multi_turn_text_loop.rs](../../crates/qsf_app/src/experiments/multi_turn_text_loop.rs),
+  [experiments/text_owned_voice_loop.rs](../../crates/qsf_app/src/experiments/text_owned_voice_loop.rs))
 - Retrieval traces now surface omitted candidate skip reasons, so unrelated
   identity memories can be observed rather than silently reinforced
 - Warm-turn summarization retries once on truncation and fails closed on a second
@@ -102,10 +106,11 @@ document as a candidate design that real experiments incrementally fill in.
   experiment code
 - Full turn-taking policy beyond deterministic interruption recording
 
-Last reviewed: 2026-06-06 against the shared sleep-view phase — realtime provider
-sessions now persist shared exchanges for transcript, provider preamble/lifecycle,
-interruption, and tool-request facts while sleep and safety-net consolidation read
-the shared normalized turn/exchange view.
+Last reviewed: 2026-06-07 against the shared live-memory-runtime phase — realtime
+provider sessions now persist shared exchanges for transcript, provider
+preamble/lifecycle, interruption, and tool-request facts while both text and
+voice loops reuse the shared live-memory runtime boundary and sleep/safety-net
+consolidation reads the shared normalized turn/exchange view.
 
 ## Purpose
 

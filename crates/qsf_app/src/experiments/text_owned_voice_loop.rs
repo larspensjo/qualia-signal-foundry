@@ -431,13 +431,13 @@ impl TextOwnedVoiceLoopExperiment {
                 audio_marker: None,
             }),
         );
-        super::multi_turn_text_loop::apply_live_memory_reinforcement(
+        crate::session::apply_live_memory_reinforcement(
             context,
             &state,
             &state_resolution.persist_state_dir,
             &memory_retrieval,
         )?;
-        super::multi_turn_text_loop::apply_live_memory_capture(
+        crate::session::apply_live_memory_capture(
             context,
             &state,
             &state_resolution.persist_state_dir,

@@ -7,6 +7,7 @@ use crate::conversation::ContentHash;
 
 pub mod continuation;
 pub mod exchange;
+pub mod live_memory;
 pub mod live_state;
 pub mod manifest;
 pub mod persistence;
@@ -20,6 +21,7 @@ pub use exchange::{
     ExchangeTurnConversionError, InterruptionAction, InterruptionRecord, InterruptionStopOutcome,
     ProviderEventKind, ProviderEventRecord, ToolRequestRecord, UtteranceRecord,
 };
+pub(crate) use live_memory::{apply_live_memory_capture, apply_live_memory_reinforcement};
 pub use live_state::{
     ActiveResponseState, AgedCoRetrievalRecord, LiveCaptureContext, LiveSessionEvent,
     LiveSessionState, PartialTranscript, ResponseStatus, RuntimePhase, reduce_live_session,

@@ -21,8 +21,8 @@ use crate::conversation::prompt::{
 };
 use crate::experiments::text_owned_voice_loop::SharedVoiceMemorySource;
 use crate::memory::{
-    Association, MemoryFixture, MemoryRecord, MemoryRecordKind, MemoryStore, RetrievalStrategy,
-    phase_four_fixture, retrieve_memories,
+    Association, LiveCaptureInput, MemoryFixture, MemoryRecord, MemoryRecordKind, MemoryStore,
+    RetrievalStrategy, capture_live_memory_candidates, phase_four_fixture, retrieve_memories,
 };
 use crate::models::{
     MockModelClient, ModelClient, ModelMessage, ModelRequest, ModelResponse, ModelRoleId,
@@ -64,7 +64,7 @@ fn allow_over_limit_change_does_not_break_awake_resume() {
 
 #[test]
 fn accepted_assistant_name_assignment_becomes_live_memory_candidate() {
-    let candidates = super::capture_live_memory_candidates(&super::LiveCaptureInput {
+    let candidates = capture_live_memory_candidates(&LiveCaptureInput {
         user_input: "I want you to use the name Ari.",
         assistant_response: "Absolutely - you can call me Ari.",
         previous_turn_index: None,
@@ -1136,7 +1136,8 @@ fn live_loop_does_not_reinforce_relevance_skipped_memory() {
 
     let mut context = test_context(base_dir.join("run"), "multi-turn-text-loop");
     let state = SessionState::new(test_config(5));
-    super::apply_live_memory_reinforcement(&mut context, &state, &state_dir, &retrieval).unwrap();
+    crate::session::apply_live_memory_reinforcement(&mut context, &state, &state_dir, &retrieval)
+        .unwrap();
 
     let reloaded = crate::memory::MemoryStore::load_or_empty(&memory_store_path).unwrap();
     let ari = reloaded

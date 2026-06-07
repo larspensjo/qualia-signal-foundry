@@ -2413,3 +2413,28 @@ Observed:
 - `cargo fmt` passed.
 
 Refs: crates/qsf_app/src/experiments/multi_turn_text_loop.rs, crates/qsf_app/src/experiments/multi_turn_text_loop/tests.rs
+
+## 2026-06-07 - Shared live memory runtime moved under session
+
+Extracted the live-memory reinforcement and capture helpers into
+`crates/qsf_app/src/session/live_memory.rs` so the text and text-owned voice loops
+share one session-owned runtime boundary.
+
+What changed:
+- Moved live-memory reinforcement and capture from `multi_turn_text_loop.rs` into
+  `session/live_memory.rs`.
+- Updated the multi-turn text loop, text-owned voice loop, and live-memory tests to
+  call the shared session module directly.
+- Kept the live capture candidate extraction in `crate::memory` and left the reducer
+  flow unchanged.
+
+Observed:
+- The shared code path still records the same `MemoryReinforced`,
+  `MemoryStorePersisted`, and live-memory trace artifacts.
+
+Refs: crates/qsf_app/src/session/live_memory.rs,
+crates/qsf_app/src/session/mod.rs,
+crates/qsf_app/src/experiments/multi_turn_text_loop.rs,
+crates/qsf_app/src/experiments/text_owned_voice_loop.rs,
+crates/qsf_app/src/experiments/multi_turn_text_loop/tests.rs;
+implements: 2026-06-07 - Shared live memory runtime belongs under session
