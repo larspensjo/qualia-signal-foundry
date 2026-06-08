@@ -2626,3 +2626,20 @@ Observed:
 
 Refs: crates/qsf_app/src/experiments/multi_turn_text_loop.rs,
 crates/qsf_app/src/experiments/multi_turn_text_loop/turn_runtime.rs
+
+## 2026-06-08 - Multi-turn text loop test split
+
+Split the large multi-turn text loop unit test file into topic-focused include files while
+preserving the existing private test module boundary and helper visibility.
+
+What changed:
+- Kept shared imports in the test harness and moved test groups into smaller files under
+  `crates/qsf_app/src/experiments/multi_turn_text_loop/tests/`.
+- Moved mock clients, fixtures, and shared assertions into a dedicated support include.
+
+Observed:
+- `cargo test -p qsf_app experiments::multi_turn_text_loop::tests -- --nocapture`
+  passed.
+
+Refs: crates/qsf_app/src/experiments/multi_turn_text_loop/tests.rs,
+crates/qsf_app/src/experiments/multi_turn_text_loop/tests/
