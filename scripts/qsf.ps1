@@ -33,6 +33,39 @@ $profilesPath = Join-Path $PSScriptRoot "qsf.profiles.json"
 $script:QsfExitCode = 0
 $script:QsfScriptBoundParameters = @{} + $PSBoundParameters
 
+# Launcher controls all non-secret QSF_* environment variables to ensure deterministic behavior.
+# Tests can use Get-TestEnvironmentDelta to see the effective changes made by the launcher.
+$script:QsfKnownManagedEnvironmentVariables = @(
+    "QSF_ACCEPT_MEMORY_DRAFT",
+    "QSF_CONVERSATION_MODEL",
+    "QSF_MODEL_PROVIDER",
+    "QSF_OPENAI_REALTIME_TIMEOUT_MS",
+    "QSF_REALTIME_SESSION_INPUT_SOURCE",
+    "QSF_REALTIME_SESSION_MIC_DEVICE",
+    "QSF_REALTIME_SESSION_MIC_DURATION_MS",
+    "QSF_REALTIME_SESSION_PROVIDER",
+    "QSF_REALTIME_SESSION_WAV_PATH",
+    "QSF_REVIEWED_MEMORY_SLEEP_REPORT",
+    "QSF_SESSION_ALLOW_OVER_LIMIT",
+    "QSF_SESSION_MAX_TURNS",
+    "QSF_SESSION_MEMORY_FILE",
+    "QSF_SESSION_MEMORY_SOURCE",
+    "QSF_SESSION_TURN_MAX_OUTPUT_TOKENS",
+    "QSF_SESSION_WARM_THRESHOLD",
+    "QSF_SPEECH_OUTPUT_MODE",
+    "QSF_SPEECH_OUTPUT_MODEL",
+    "QSF_SPEECH_OUTPUT_PROVIDER",
+    "QSF_SPEECH_OUTPUT_VOICE",
+    "QSF_STATE_DIR",
+    "QSF_TRANSCRIPT_INPUT_SOURCE",
+    "QSF_TRANSCRIPT_MIC_DEVICE",
+    "QSF_TRANSCRIPT_MIC_DURATION_MS",
+    "QSF_TRANSCRIPT_PROVIDER",
+    "QSF_TRANSCRIPT_WAV_PATH",
+    "QSF_VOICE_MEMORY_FILE",
+    "QSF_VOICE_MEMORY_SOURCE"
+)
+
 function Format-Command {
     param(
         [Parameter(Mandatory = $true)]
@@ -106,6 +139,16 @@ function Format-EnvValue {
     }
 
     return $Value
+}
+
+function Get-ManagedQsfEnvironmentVariableNames {
+    $ambientQsfNames = @(
+        [System.Environment]::GetEnvironmentVariables("Process").Keys |
+        ForEach-Object { [string]$_ } |
+        Where-Object { $_ -match '^QSF_' -and -not (Test-SecretLikeName -Name $_) }
+    )
+
+    return @($script:QsfKnownManagedEnvironmentVariables + $ambientQsfNames | Sort-Object -Unique)
 }
 
 function Get-ProfileDefinitions {
@@ -186,7 +229,7 @@ function Get-StringList {
 
 function Get-ProfileEnvironmentDelta {
     $envSets = [ordered]@{}
-    $clearEnv = @()
+    $clearEnv = @(Get-ManagedQsfEnvironmentVariableNames)
 
     if (-not [string]::IsNullOrWhiteSpace($LaunchProfile)) {
         $profileDefinition = Get-ProfileDefinition -Name $LaunchProfile
@@ -206,19 +249,17 @@ function Get-ProfileEnvironmentDelta {
         foreach ($name in Get-PropertyNames -Object $profileDefinition.env) {
             $envSets[$name] = [string]$profileDefinition.env.$name
         }
-        $clearEnv = @(Get-StringList -Value $profileDefinition.clear_env)
+        $clearEnv += @(Get-StringList -Value $profileDefinition.clear_env)
     }
 
     if (-not [string]::IsNullOrWhiteSpace($VoiceMemoryFile)) {
         if ([string]::IsNullOrWhiteSpace($Experiment)) {
             Write-Error "-VoiceMemoryFile is only meaningful with app -Experiment."
         }
+        $envSets["QSF_VOICE_MEMORY_SOURCE"] = "file"
         $envSets["QSF_VOICE_MEMORY_FILE"] = $VoiceMemoryFile
     }
 
-    # The checked-in file-memory profile sets QSF_VOICE_MEMORY_SOURCE=file; this
-    # companion path is still modeled as a launcher flag until profile flag
-    # requirements become a real schema need.
     if (-not [string]::IsNullOrWhiteSpace($LaunchProfile) -and $LaunchProfile -eq "file-memory" -and [string]::IsNullOrWhiteSpace($VoiceMemoryFile)) {
         Write-Error "Profile 'file-memory' requires -VoiceMemoryFile <path>."
     }
@@ -292,7 +333,7 @@ function Get-ProfileEnvironmentDelta {
     $clearEnv = @($clearEnv | Where-Object { -not $envSets.Contains($_) } | Sort-Object -Unique)
 
     return [pscustomobject]@{
-        Sets = $envSets
+        Sets   = $envSets
         Clears = $clearEnv
     }
 }
@@ -426,6 +467,7 @@ Defaults:
   Browser host:  127.0.0.1
   Browser port:  3939
   App workspace root: $projectRoot
+    App environment: clears non-secret QSF_* values before applying launcher settings
   Text-loop session memory through launcher: empty file source; persisted store wins
   Text-loop session limit through launcher: allow over limit
   UI directory:  crates/qsf_browser_server/ui
@@ -459,8 +501,8 @@ function New-DoctorCheck {
     )
 
     [pscustomobject]@{
-        Status = $Status
-        Name = $Name
+        Status  = $Status
+        Name    = $Name
         Message = $Message
     }
 }
@@ -789,41 +831,48 @@ function Invoke-Workbench {
     }
 }
 
-switch ($Command.ToLowerInvariant()) {
-    "help" {
-        Show-Help
-    }
-    "app" {
-        Invoke-App
-    }
-    "browser" {
-        Invoke-Browser
-    }
-    "ui" {
-        Invoke-Ui
-    }
-    "workbench" {
-        Invoke-Workbench
-    }
-    "doctor" {
-        Invoke-Doctor
-    }
-    "list" {
-        switch ($Subject.ToLowerInvariant()) {
-            "experiments" {
-                Invoke-LoggedCommand -Executable "cargo" -Arguments @("run", "-p", "qsf_app", "--", "list-experiments")
-            }
-            "profiles" {
-                Show-Profiles
-            }
-            default {
-                Write-Error "Unknown list target '$Subject'. Supported targets: experiments, profiles"
-            }
-        }
-    }
-    default {
-        Write-Error "Unknown command '$Command'. Run .\scripts\qsf.ps1 help for usage."
-    }
+function Test-QsfAutoRunEnabled {
+    $skipAutoRun = Get-Variable -Name "QsfSkipAutoRun" -Scope Script -ValueOnly -ErrorAction SilentlyContinue
+    return -not ($skipAutoRun -is [bool] -and $skipAutoRun)
 }
 
-exit $script:QsfExitCode
+if (Test-QsfAutoRunEnabled) {
+    switch ($Command.ToLowerInvariant()) {
+        "help" {
+            Show-Help
+        }
+        "app" {
+            Invoke-App
+        }
+        "browser" {
+            Invoke-Browser
+        }
+        "ui" {
+            Invoke-Ui
+        }
+        "workbench" {
+            Invoke-Workbench
+        }
+        "doctor" {
+            Invoke-Doctor
+        }
+        "list" {
+            switch ($Subject.ToLowerInvariant()) {
+                "experiments" {
+                    Invoke-LoggedCommand -Executable "cargo" -Arguments @("run", "-p", "qsf_app", "--", "list-experiments")
+                }
+                "profiles" {
+                    Show-Profiles
+                }
+                default {
+                    Write-Error "Unknown list target '$Subject'. Supported targets: experiments, profiles"
+                }
+            }
+        }
+        default {
+            Write-Error "Unknown command '$Command'. Run .\scripts\qsf.ps1 help for usage."
+        }
+    }
+
+    exit $script:QsfExitCode
+}

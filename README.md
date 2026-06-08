@@ -159,10 +159,12 @@ List the checked-in launch profiles:
 .\scripts\qsf.ps1 list profiles
 ```
 
-Profiles apply environment variables only to the launched child process and print the
-effective environment changes before running Cargo. Checked-in profiles do not contain
-secrets. `-Profile` remains accepted as a compatibility alias, but new examples use
-`-LaunchProfile`:
+Before launching `qsf_app`, the launcher clears known and ambient non-secret `QSF_*`
+variables from the child process, then applies launcher defaults, explicit flags, and
+the selected profile. API keys and other secret-like variables remain inherited and are
+checked only when a profile requires them. The effective environment changes are printed
+before running Cargo. Checked-in profiles do not contain secrets. `-Profile` remains
+accepted as a compatibility alias, but new examples use `-LaunchProfile`:
 
 ```powershell
 .\scripts\qsf.ps1 app -Experiment multi-turn-text-loop -LaunchProfile mock

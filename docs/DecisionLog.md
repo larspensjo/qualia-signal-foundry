@@ -725,3 +725,16 @@ rather than hidden shortcuts. Human limitations should be simulated only when
 they create useful presence, continuity, or research contrast.
 Refs: README.md, docs/ProjectFrame/ProjectVision.md,
 docs/ProjectFrame/NonGoals.md
+
+## 2026-06-08 - Launcher owns non-secret QSF environment
+Decision: `scripts/qsf.ps1` clears all known and ambient non-secret `QSF_*` process
+variables from launched app child processes before applying launcher defaults,
+explicit launcher flags, and selected profile values. Secret-like variables, including
+API keys, remain inherited and are checked only as profile prerequisites.
+Context: Local runs could change behavior based on stale `QSF_*` variables left in the
+operator shell, which made the launcher less reproducible than its documented defaults.
+Consequences: Launcher-backed app runs are deterministic with respect to non-secret
+QSF runtime configuration. New non-secret app environment knobs should be added to the
+launcher-managed list or exposed as launcher flags/profiles; raw Cargo runs remain free
+to use ambient environment variables directly.
+Refs: scripts/qsf.ps1, scripts/qsf.Tests.ps1, README.md
