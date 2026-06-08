@@ -2643,3 +2643,20 @@ Observed:
 
 Refs: crates/qsf_app/src/experiments/multi_turn_text_loop/tests.rs,
 crates/qsf_app/src/experiments/multi_turn_text_loop/tests/
+
+## 2026-06-08 - Launcher owns non-secret QSF environment
+
+Made `scripts/qsf.ps1` deterministic against ambient `QSF_*` process variables by
+clearing managed non-secret runtime knobs before applying launcher defaults, flags, and
+profiles.
+
+What changed:
+- Added a managed non-secret `QSF_*` environment list and included ambient non-secret
+  `QSF_*` names in the child-process clear set.
+- Made `-VoiceMemoryFile` select file-backed voice memory directly instead of relying
+  on an ambient source variable.
+- Added Pester coverage for default clearing, launcher defaults, profile overlays, and
+  secret-like variable preservation.
+- Documented the deterministic environment contract in the README and decision log.
+
+Refs: scripts/qsf.ps1, scripts/qsf.Tests.ps1, README.md, docs/DecisionLog.md

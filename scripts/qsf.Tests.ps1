@@ -1,0 +1,89 @@
+BeforeAll {
+    $script:LauncherScript = Join-Path $PSScriptRoot "qsf.ps1"
+
+    $script:OriginalEnvironment = @{}
+    $script:TestEnvironmentNames = @(
+        "OPENAI_API_KEY",
+        "QSF_ACCEPT_MEMORY_DRAFT",
+        "QSF_CUSTOM_API_KEY",
+        "QSF_MODEL_PROVIDER",
+        "QSF_SESSION_MAX_TURNS",
+        "QSF_SESSION_MEMORY_SOURCE"
+    )
+
+    foreach ($name in $script:TestEnvironmentNames) {
+        $script:OriginalEnvironment[$name] = [System.Environment]::GetEnvironmentVariable($name, "Process")
+    }
+
+    function Get-TestEnvironmentDelta {
+        param(
+            [string]$Experiment = "text-owned-voice-loop",
+            [string]$LaunchProfile = ""
+        )
+
+        $script:QsfSkipAutoRun = $true
+        if (-not [string]::IsNullOrWhiteSpace($LaunchProfile)) {
+            . $script:LauncherScript -Command "app" -Experiment $Experiment -LaunchProfile $LaunchProfile
+        }
+        else {
+            . $script:LauncherScript -Command "app" -Experiment $Experiment
+        }
+        return Get-ProfileEnvironmentDelta
+    }
+}
+
+AfterAll {
+    foreach ($name in $script:TestEnvironmentNames) {
+        [System.Environment]::SetEnvironmentVariable($name, $script:OriginalEnvironment[$name], "Process")
+    }
+}
+
+Describe "qsf.ps1 deterministic environment" {
+    BeforeEach {
+        foreach ($name in $script:TestEnvironmentNames) {
+            [System.Environment]::SetEnvironmentVariable($name, $null, "Process")
+        }
+    }
+
+    It "clears ambient non-secret QSF variables by default" {
+        [System.Environment]::SetEnvironmentVariable("QSF_MODEL_PROVIDER", "openai", "Process")
+        [System.Environment]::SetEnvironmentVariable("QSF_SESSION_MAX_TURNS", "2", "Process")
+        [System.Environment]::SetEnvironmentVariable("QSF_ACCEPT_MEMORY_DRAFT", "runs/draft.json", "Process")
+
+        $delta = Get-TestEnvironmentDelta
+
+        $delta.Sets.Contains("QSF_MODEL_PROVIDER") | Should -BeFalse
+        $delta.Clears | Should -Contain "QSF_MODEL_PROVIDER"
+        $delta.Clears | Should -Contain "QSF_SESSION_MAX_TURNS"
+        $delta.Clears | Should -Contain "QSF_ACCEPT_MEMORY_DRAFT"
+    }
+
+    It "applies launcher defaults after ambient QSF values are cleared" {
+        [System.Environment]::SetEnvironmentVariable("QSF_SESSION_MEMORY_SOURCE", "phase_four_fixture", "Process")
+
+        $delta = Get-TestEnvironmentDelta -Experiment "multi-turn-text-loop"
+
+        $delta.Sets["QSF_SESSION_MEMORY_SOURCE"] | Should -Be "file"
+        $delta.Sets["QSF_SESSION_MEMORY_FILE"] | Should -Be "docs/Experiments/Fixtures/session-memory.empty.json"
+        $delta.Sets["QSF_SESSION_ALLOW_OVER_LIMIT"] | Should -Be "true"
+        $delta.Clears | Should -Not -Contain "QSF_SESSION_MEMORY_SOURCE"
+    }
+
+    It "overlays profile values onto the managed clear list" {
+        [System.Environment]::SetEnvironmentVariable("OPENAI_API_KEY", "test-key", "Process")
+
+        $delta = Get-TestEnvironmentDelta -LaunchProfile "openai-text"
+
+        $delta.Sets["QSF_MODEL_PROVIDER"] | Should -Be "openai"
+        $delta.Clears | Should -Not -Contain "QSF_MODEL_PROVIDER"
+        $delta.Clears | Should -Contain "QSF_TRANSCRIPT_PROVIDER"
+    }
+
+    It "does not manage secret-like QSF variables" {
+        [System.Environment]::SetEnvironmentVariable("QSF_CUSTOM_API_KEY", "test-secret", "Process")
+
+        $delta = Get-TestEnvironmentDelta
+
+        $delta.Clears | Should -Not -Contain "QSF_CUSTOM_API_KEY"
+    }
+}
