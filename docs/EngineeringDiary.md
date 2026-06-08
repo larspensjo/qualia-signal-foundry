@@ -2600,3 +2600,29 @@ crates/qsf_app/src/experiments/multi_turn_text_loop/report.rs,
 crates/qsf_app/src/experiments/multi_turn_text_loop/tests.rs,
 crates/qsf_app/src/experiments/multi_turn_text_loop/tool_runtime.rs,
 crates/qsf_app/src/project_docs/search.rs
+
+## 2026-06-08 - Multi-turn text turn runtime extraction
+
+Simplified the text loop's per-turn orchestration by moving the per-turn runtime into
+an adjacent module with focused helper steps for context/prompt assembly, bounded
+responder execution, post-response session updates, and ageing refreshes.
+
+What changed:
+- `run_one_turn` now reads as a small pipeline over `TurnContextAssembly` and
+  `ResponderExecution` result structs.
+- Context retrieval, hint expansion, context assembly, and base prompt assembly moved
+  into `assemble_turn_context` in the turn runtime module.
+- Tool-loop model execution moved into `execute_responder_turn`; post-response memory,
+  turn completion, and prompt-prefix invalidation updates moved into
+  `apply_post_response_updates`; ageing refreshes moved into `run_turn_ageing`.
+- `multi_turn_text_loop.rs` now keeps the experiment boot/input loop and shared helpers,
+  while `multi_turn_text_loop/turn_runtime.rs` owns per-turn orchestration.
+
+Observed:
+- `cargo test -p qsf_app multi_turn_text_loop` passed.
+- `cargo test -p qsf_app text_owned_voice_loop` passed.
+- Manual mock smoke run completed one text turn and exited on `:quit`:
+  `runs/2026-06-08-044214-multi-turn-text-loop`.
+
+Refs: crates/qsf_app/src/experiments/multi_turn_text_loop.rs,
+crates/qsf_app/src/experiments/multi_turn_text_loop/turn_runtime.rs
