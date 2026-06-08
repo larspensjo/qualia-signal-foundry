@@ -80,7 +80,7 @@ The project should allow multiple competing models to be tested.
 
 ## Non-Goal: Perfectly Imitate Humans
 
-Human cognition is an inspiration, not a strict blueprint.
+Human cognition is an inspiration, not a strict blueprint or an upper limit.
 
 The project may explore human-like mechanisms such as:
 
@@ -92,7 +92,19 @@ The project may explore human-like mechanisms such as:
 
 But it does not need to reproduce all human limitations.
 
-It is acceptable to explore non-human or super-human forms of simulated cognition, such as broader memory, faster reflection, or more structured self-observation.
+It is acceptable to explore non-human or super-human forms of simulated cognition, such as broader memory, exact temporal awareness, faster reflection, parallel cognitive roles, or more structured self-observation.
+
+This does not mean bypassing the simulation with unobservable shortcuts. When a
+super-human capacity is introduced, it should be represented explicitly enough
+to inspect, test, and compare. The project may ask both:
+
+```text
+What human-like limitation creates useful continuity or presence?
+What non-human capacity makes this simulated mind more coherent, legible, or interesting?
+```
+
+The aim is not to copy a human mind exactly. The aim is to build a simulated
+mind-like system whose limits and enhancements are deliberate research choices.
 
 ## Non-Goal: Give the System Uncontrolled Agency
 

@@ -4,6 +4,13 @@
 
 The project investigates how a software system can model presence, continuity, memory, perception, reflection, and interaction over time. The goal is not to build a productivity assistant, but to create a research playground for experimenting with artificial agents that feel more continuous, situated, and internally coherent.
 
+Human minds are an important source of inspiration here, but not a ceiling. The
+simulation may borrow from human cognition while also exploring super-human
+traits such as exact temporal awareness, broader memory access, faster
+reflection, richer self-observation, or multiple cognitive roles working in
+parallel. Those capabilities should be explicit and observable rather than
+hidden shortcuts.
+
 This project is currently in an early research and prototyping phase.
 
 ## Goals
@@ -19,6 +26,7 @@ The project explores ideas such as:
 - context-budgeted cognition
 - multiple AI model roles
 - simulated continuity of identity
+- non-human or super-human cognitive traits when they clarify the simulation
 
 Many design questions are still open. The repository should be treated as a working lab, not a finished framework.
 

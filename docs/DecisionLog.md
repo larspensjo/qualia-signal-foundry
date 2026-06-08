@@ -709,3 +709,19 @@ Consequences: Active-self, episodic-self, pattern-self, meta-memory, source-code
 write-capable, and non-live-role introspection are deferred to follow-on designs.
 Refs: docs/Plans/Design.ProjectDocIntrospection.md,
 docs/Plans/Plan.ProjectDocIntrospection.md, config/project-doc-introspection.toml
+
+## 2026-06-08 - Human inspiration is not a human ceiling
+Decision: Qualia Signal Foundry uses human cognition as an inspiration and
+comparison point, but the simulated mind may deliberately include non-human or
+super-human capabilities when they serve the research goal.
+Context: The project aims to simulate consciousness-like behavior while also
+exploring capacities that biological humans do not have, such as exact temporal
+awareness, broader memory access, faster reflection, parallel cognitive roles,
+and structured self-observation.
+Consequences: Designs should state whether a capability is human-like,
+non-human, or super-human. Super-human capabilities should be represented as
+explicit, inspectable signals, state, tools, model roles, or traceable processes
+rather than hidden shortcuts. Human limitations should be simulated only when
+they create useful presence, continuity, or research contrast.
+Refs: README.md, docs/ProjectFrame/ProjectVision.md,
+docs/ProjectFrame/NonGoals.md

@@ -6,6 +6,10 @@ Qualia Signal Foundry is an experimental platform for exploring simulations of c
 
 The project investigates how a software system can create the impression of presence, continuity, memory, attention, perception, and reflection over time. The purpose is not to build a productivity assistant, but to create a research environment where different models of artificial inner life can be tested.
 
+The project uses the human mind as a major source of inspiration, but not as a
+strict template or upper bound. A simulated mind in this project may be
+human-like in some ways and deliberately non-human or super-human in others.
+
 The project is intentionally open-ended. Many core ideas are still speculative and should be explored through small prototypes, experiments, and documented decisions.
 
 ## Core Purpose
@@ -20,8 +24,10 @@ This includes questions such as:
 - How can tools act as extensions of perception rather than merely commands?
 - How can reflection, sleep-like consolidation, and memory decay create richer long-term behavior?
 - How can multiple AI functions work together to create a coherent simulated mind?
+- Which human limitations are useful to simulate, and which should be replaced
+  by explicitly super-human capabilities?
 
-The goal is not to prove that the system is conscious. The goal is to create a practical research platform for exploring consciousness-like structures and behaviors.
+The goal is not to prove that the system is conscious. The goal is to create a practical research platform for exploring consciousness-like structures and behaviors, including structures that are inspired by human minds without being limited to human capacities.
 
 ## What This Project Is
 
@@ -136,6 +142,18 @@ Instead of loading everything, the system should retrieve, summarize, and select
 The project does not need to imitate human limitations exactly.
 
 Human-like memory decay, attention, and perception may be useful inspirations, but the system may also explore forms of “super-consciousness” with broader memory, faster reflection, or richer parallel structure.
+
+This is a deliberate design stance. Human cognition is useful as a reference
+model because it gives the project concrete phenomena to study: forgetting,
+attention, association, continuity, sleep, self-reflection, and embodied timing.
+But the simulation may also use capacities humans do not have, such as exact
+time perception, high-fidelity recall, parallel specialist roles, or structured
+introspection over its own state and project record.
+
+The important rule is that super-human capacity should not become invisible
+magic. If a capability changes behavior, it should enter the architecture as a
+named signal, state object, tool, model role, or traceable process so researchers
+can inspect how it affected the simulated mind.
 
 ## Early Focus
 
