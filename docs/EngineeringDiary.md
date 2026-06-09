@@ -2660,3 +2660,28 @@ What changed:
 - Documented the deterministic environment contract in the README and decision log.
 
 Refs: scripts/qsf.ps1, scripts/qsf.Tests.ps1, README.md, docs/DecisionLog.md
+
+## 2026-06-09 - qsf_session extraction and completion identity update
+
+Extracted the pure session surface into a new `qsf_session` crate, kept `qsf_app`
+as the effectful facade, and made live exchange completion identity-explicit.
+
+What changed:
+- Moved the shared pure session DTOs, reducers, persistence, resume classification,
+  continuity manifest, sleep records, and foundational context/content-hash types
+  into `crates/qsf_session`.
+- Replaced the `qsf_app` session modules with thin compatibility wrappers and kept
+  the resume schema-upgrade log in the `qsf_app` wrapper.
+- Added `exchange_index` to `LiveSessionEvent::ExchangeCompleted` and updated the
+  affected voice/text completion call sites.
+- Relocated the legacy session-state fixture into `qsf_session/tests/fixtures/`
+  and added a golden/schema regression test for legacy and current session state.
+
+Observed:
+- `cargo build` passed.
+- `cargo test` passed across the workspace.
+
+Refs: crates/qsf_session/src/*, crates/qsf_session/tests/*,
+crates/qsf_app/src/session/*, crates/qsf_app/src/experiments/*,
+docs/Architecture/Architecture.StateAndObservability.md,
+docs/DecisionLog.md

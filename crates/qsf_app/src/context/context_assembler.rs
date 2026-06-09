@@ -1,37 +1,7 @@
-use serde::{Deserialize, Serialize};
+use qsf_session::context::{ContextAssembly, ContextOmission, ContextSelection};
 
 use super::context_budget::ContextBudget;
-use super::context_fragment::{ContextFragment, ContextSourceKind};
-
-#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
-pub struct ContextSelection {
-    pub fragment: ContextFragment,
-    pub cumulative_estimated_tokens: usize,
-}
-
-#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
-pub struct ContextOmission {
-    pub fragment: ContextFragment,
-    pub reason: String,
-}
-
-#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
-pub struct ContextAssembly {
-    pub budget: ContextBudget,
-    pub selected: Vec<ContextSelection>,
-    pub omitted: Vec<ContextOmission>,
-    pub used_estimated_tokens: usize,
-}
-
-impl ContextAssembly {
-    pub fn retrieved_memory_ids(&self) -> Vec<String> {
-        self.selected
-            .iter()
-            .filter(|selection| selection.fragment.source_kind == ContextSourceKind::Memory)
-            .map(|selection| selection.fragment.fragment_id.clone())
-            .collect()
-    }
-}
+use super::context_fragment::ContextFragment;
 
 pub fn assemble_context(fragments: Vec<ContextFragment>, budget: ContextBudget) -> ContextAssembly {
     let mut sorted = fragments;

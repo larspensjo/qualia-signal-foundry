@@ -13,43 +13,39 @@ const SESSION_WARM_THRESHOLD_ENV_VAR: &str = "QSF_SESSION_WARM_THRESHOLD";
 const SESSION_MEMORY_SOURCE_ENV_VAR: &str = "QSF_SESSION_MEMORY_SOURCE";
 const SESSION_MEMORY_FILE_ENV_VAR: &str = "QSF_SESSION_MEMORY_FILE";
 
-impl SessionConfig {
-    pub(crate) fn from_env() -> Self {
-        let model_id = std::env::var(SESSION_MODEL_ENV_VAR)
-            .unwrap_or_else(|_| DEFAULT_SESSION_MODEL.to_string());
-        let max_turns = std::env::var(SESSION_MAX_TURNS_ENV_VAR)
-            .ok()
-            .and_then(|value| value.parse::<usize>().ok())
-            .filter(|value| *value > 0)
-            .unwrap_or(DEFAULT_MAX_TURNS);
-        let warm_threshold = std::env::var(SESSION_WARM_THRESHOLD_ENV_VAR)
-            .ok()
-            .and_then(|value| value.parse::<usize>().ok())
-            .filter(|value| *value > 0)
-            .unwrap_or(DEFAULT_WARM_THRESHOLD);
-        let allow_over_limit = std::env::var(SESSION_ALLOW_OVER_LIMIT_ENV_VAR)
-            .map(|value| value.eq_ignore_ascii_case("true"))
-            .unwrap_or(false);
-        let memory_source = MemorySourceConfig::from_env();
+pub(crate) fn session_config_from_env() -> SessionConfig {
+    let model_id =
+        std::env::var(SESSION_MODEL_ENV_VAR).unwrap_or_else(|_| DEFAULT_SESSION_MODEL.to_string());
+    let max_turns = std::env::var(SESSION_MAX_TURNS_ENV_VAR)
+        .ok()
+        .and_then(|value| value.parse::<usize>().ok())
+        .filter(|value| *value > 0)
+        .unwrap_or(DEFAULT_MAX_TURNS);
+    let warm_threshold = std::env::var(SESSION_WARM_THRESHOLD_ENV_VAR)
+        .ok()
+        .and_then(|value| value.parse::<usize>().ok())
+        .filter(|value| *value > 0)
+        .unwrap_or(DEFAULT_WARM_THRESHOLD);
+    let allow_over_limit = std::env::var(SESSION_ALLOW_OVER_LIMIT_ENV_VAR)
+        .map(|value| value.eq_ignore_ascii_case("true"))
+        .unwrap_or(false);
+    let memory_source = memory_source_config_from_env();
 
-        Self {
-            model_id,
-            max_turns,
-            warm_threshold,
-            allow_over_limit,
-            memory_source,
-        }
+    SessionConfig {
+        model_id,
+        max_turns,
+        warm_threshold,
+        allow_over_limit,
+        memory_source,
     }
 }
 
-impl MemorySourceConfig {
-    pub(crate) fn from_env() -> Self {
-        let source = std::env::var(SESSION_MEMORY_SOURCE_ENV_VAR)
-            .unwrap_or_else(|_| "phase_four_fixture".to_string());
-        let file = std::env::var(SESSION_MEMORY_FILE_ENV_VAR)
-            .ok()
-            .map(PathBuf::from);
+pub(crate) fn memory_source_config_from_env() -> MemorySourceConfig {
+    let source = std::env::var(SESSION_MEMORY_SOURCE_ENV_VAR)
+        .unwrap_or_else(|_| "phase_four_fixture".to_string());
+    let file = std::env::var(SESSION_MEMORY_FILE_ENV_VAR)
+        .ok()
+        .map(PathBuf::from);
 
-        Self { source, file }
-    }
+    MemorySourceConfig { source, file }
 }

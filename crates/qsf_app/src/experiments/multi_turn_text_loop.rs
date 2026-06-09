@@ -68,7 +68,7 @@ impl Experiment for MultiTurnTextLoopExperiment {
     }
 
     fn run(&self, context: &mut RunContext) -> anyhow::Result<ExperimentOutcome> {
-        let config = SessionConfig::from_env();
+        let config = crate::session::config::session_config_from_env();
         let state_resolution = crate::session::resolve_shared_state_directory_from_env();
         let model_client = build_client(requested_provider_from_env())?;
         let memory_source = build_session_memory_source_from_env();

@@ -15,8 +15,8 @@ use crate::observability::trace::TraceRecord;
 use crate::runtime::run_context::RunContext;
 use crate::session::{
     Exchange, ExchangeOutput, InterruptionAction, InterruptionRecord, InterruptionStopOutcome,
-    LiveSessionEvent, ProviderEventKind, ProviderEventRecord, SessionBootRequest, SessionConfig,
-    SessionEndReason, SessionEvent, StateDirectoryResolution, ToolRequestRecord, UtteranceRecord,
+    LiveSessionEvent, ProviderEventKind, ProviderEventRecord, SessionBootRequest, SessionEndReason,
+    SessionEvent, StateDirectoryResolution, ToolRequestRecord, UtteranceRecord,
 };
 
 use super::failure::{SanitizedFailure, record_sanitized_failure};
@@ -66,7 +66,7 @@ impl RealtimeVoiceSessionExperiment {
         provider: &dyn RealtimeSessionProvider,
         state_resolution: StateDirectoryResolution,
     ) -> anyhow::Result<ExperimentOutcome> {
-        let config = SessionConfig::from_env();
+        let config = crate::session::config::session_config_from_env();
         let boot = crate::session::boot_session(
             context,
             SessionBootRequest {
@@ -338,9 +338,16 @@ fn bridge_realtime_session_into_shared_state(
             )),
         }),
     );
+    let exchange_index = state
+        .live
+        .active_exchange
+        .as_ref()
+        .map(|exchange| exchange.index)
+        .context("active exchange missing before ExchangeCompleted")?;
     crate::session::apply_live_session_event(
         state,
         LiveSessionEvent::ExchangeCompleted {
+            exchange_index,
             completed_at: SystemTime::now(),
         },
     );

@@ -420,7 +420,13 @@ fn apply_post_response_updates(
     }
 
     let completed_at = SystemTime::now();
-    apply_live_session_event(state, LiveSessionEvent::ExchangeCompleted { completed_at });
+    apply_live_session_event(
+        state,
+        LiveSessionEvent::ExchangeCompleted {
+            exchange_index: turn_index,
+            completed_at,
+        },
+    );
     let completed_exchange = state
         .live
         .completed_exchanges

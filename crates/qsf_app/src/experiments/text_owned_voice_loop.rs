@@ -133,7 +133,7 @@ impl TextOwnedVoiceLoopExperiment {
         memory_source: &dyn VoiceLoopMemorySource,
         state_resolution: StateDirectoryResolution,
     ) -> anyhow::Result<ExperimentOutcome> {
-        let config = SessionConfig::from_env();
+        let config = crate::session::config::session_config_from_env();
         self.run_with_components_and_memory_source_at_state_dirs_with_config(
             context,
             transcript_provider,
@@ -492,9 +492,16 @@ impl TextOwnedVoiceLoopExperiment {
             latency_trace_id,
         )?;
 
+        let exchange_index = state
+            .live
+            .active_exchange
+            .as_ref()
+            .map(|exchange| exchange.index)
+            .context("active exchange missing before ExchangeCompleted")?;
         crate::session::apply_live_session_event(
             &mut state,
             LiveSessionEvent::ExchangeCompleted {
+                exchange_index,
                 completed_at: SystemTime::now(),
             },
         );
@@ -2040,7 +2047,7 @@ mod tests {
             std::env::temp_dir().join(format!("qsf-text-owned-legacy-fallback-{}", Uuid::new_v4()));
         let legacy_state_dir = base_dir.join("state/text-loop");
         let shared_state_dir = base_dir.join("state/session");
-        let config = SessionConfig::from_env();
+        let config = crate::session::config::session_config_from_env();
         let mut previous =
             crate::session::SessionState::new_with_id("legacy-text-session".to_string(), config);
         previous.turns.push(crate::session::tests::fake_turn(0));

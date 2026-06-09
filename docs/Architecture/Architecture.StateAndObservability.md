@@ -52,7 +52,10 @@ candidate categories listed below still have no shared module.
 
 - **Runtime State** lives in experiments rather than a shared module
 - **Session State** is implemented for the multi-turn text loop and shared voice
-  surfaces ([session/mod.rs](../../crates/qsf_app/src/session/mod.rs))
+  surfaces in `qsf_session`, with `qsf_app` retaining thin compatibility wrappers
+  ([qsf_session/src/state.rs](../../crates/qsf_session/src/state.rs),
+  [qsf_session/src/live_state.rs](../../crates/qsf_session/src/live_state.rs),
+  [qsf_app/src/session/mod.rs](../../crates/qsf_app/src/session/mod.rs))
 - **Memory State** is partial: records, associations, decay inputs, and live
   reinforcement are maintained for the text loop and shared voice surfaces, but
   graph inspection and contradiction handling are not implemented

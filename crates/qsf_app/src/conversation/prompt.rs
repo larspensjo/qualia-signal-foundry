@@ -1,12 +1,9 @@
-use std::fmt;
-use std::fmt::Write as _;
-
-use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use sha2::{Digest, Sha256};
 
 use crate::context::ContextAssembly;
 use crate::models::{ModelMessage, ModelMessageRole, ModelToolCall};
+use qsf_session::ContentHash;
 
 /// Constant system-prompt prefix; warm-tier summaries are appended at assembly time.
 pub const SESSION_SYSTEM_PROMPT: &str = "You are a concise conversational responder. Treat this as one continuous human-driven text session. Use retrieved memory as context, keep prior turns stable, and never initiate a turn without user input. If an older summarized turn needs exact details, request recall_turn with its turn_id; only summarized turns can be recalled. If the user asks for arithmetic or exact numeric calculation, request calculator with the expression instead of estimating mentally.";
@@ -24,25 +21,6 @@ Attribute lightly in your reply, using kind and maturity to hedge:\n\
   - \"I found a document but couldn't classify it...\" (Unknown kind or maturity)\n\
 \n\
 Do not claim current behavior from a Plan, Idea, or Concept; those describe intent. Source code is the only authority for what runs today, and is not available to this channel. If a read was truncated or limited to a single section, mention that. When nothing relevant comes back, or when the metadata is Unknown, say so plainly rather than improvising.";
-
-#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
-pub struct ContentHash(pub [u8; 32]);
-
-impl ContentHash {
-    pub fn hex(self) -> String {
-        let mut output = String::with_capacity(64);
-        for byte in self.0 {
-            write!(&mut output, "{byte:02x}").expect("writing to a String cannot fail");
-        }
-        output
-    }
-}
-
-impl fmt::Display for ContentHash {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        formatter.write_str(&self.hex())
-    }
-}
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct PromptTurn<'a> {

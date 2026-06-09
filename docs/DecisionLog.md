@@ -742,15 +742,16 @@ Refs: scripts/qsf.ps1, scripts/qsf.Tests.ps1, README.md
 ## 2026-06-09 - Lean session crate owns pure session contracts
 Decision: A lean `qsf_session` crate will own the shared pure session surface:
 session events, live-session reducer/state, `Exchange`, persistence DTOs,
-continuity manifest, and the event-record/`EventType` contract. `RunContext`,
-provider clients, memory retrieval, tools, OpenAI dependencies, and CPAL
-dependencies stay outside that crate.
+continuity manifest, and the per-`Exchange` provider event records/kinds.
+`RunContext`, provider clients, memory retrieval, tools, OpenAI dependencies,
+CPAL dependencies, and the run-log `EventType` taxonomy stay outside that crate.
 Context: The realtime voice server needs reducer and persistence contracts without
 pulling the full `qsf_app` runtime or audio/model provider graph into a live
 server crate.
 Consequences: Session extraction is a behavior-preserving refactor. `qsf_app`
 may re-export the session surface, but provider, memory, tool, and runtime context
-dependencies must cross explicit adapter boundaries.
+dependencies must cross explicit adapter boundaries. `EventType` remains in
+`qsf_app`; `qsf_session` owns the provider-event records embedded in `Exchange`.
 Refs: docs/Plans/Design.RealtimeVoiceConversation.md,
 docs/Architecture/Architecture.RealtimeSessionServer.md
 
@@ -864,3 +865,19 @@ Refs: README.md, docs/ProjectFrame/ProjectVision.md,
 docs/Plans/Plan.RealtimeVoiceConversation.md,
 docs/Plans/Design.RealtimeVoiceConversation.md,
 docs/Architecture/Architecture.RealtimeSessionServer.md, scripts/qsf.ps1
+
+## 2026-06-09 - qsf_session extraction shipped with qsf_app compatibility wrappers
+Decision: `qsf_session` owns the pure session contracts, including the live and
+persisted state DTOs, reducer functions, exchange records, continuation/resume
+classification, continuity manifest, sleep records, and the foundational context
+and content-hash value types. `qsf_app` keeps the effectful launcher/runtime edge,
+compatibility wrappers, and resume schema-upgrade logging.
+Context: Phase 1 completed the crate extraction and the reducer completion identity
+update. The resume loader also had to preserve the existing schema-upgrade log in
+`qsf_app` while moving the file I/O and schema upgrade logic into `qsf_session`.
+Consequences: Future crates such as the realtime server can depend on
+`qsf_session` without the heavy `qsf_app` graph. `qsf_app` remains the thin facade
+for existing call sites until later phases replace them.
+Refs: crates/qsf_session/src/*, crates/qsf_app/src/session/*,
+docs/Plans/Design.RealtimeVoiceConversation.md,
+docs/Architecture/Architecture.StateAndObservability.md
