@@ -193,10 +193,20 @@ async fn exchange_sdp_impl(
     let headers = response.headers().clone();
     let answer_sdp = response.text().await?;
     if !status.is_success() {
-        anyhow::bail!(
-            "OpenAI realtime calls returned {} for session `{}`",
+        // The error body is OpenAI's diagnostic (e.g. which field was rejected),
+        // never a credential. Cap the length defensively on a char boundary.
+        let detail: String = answer_sdp.trim().chars().take(1000).collect();
+        log::warn!(
+            "OpenAI realtime calls returned {} for session `{}`: {}",
             status,
-            request.qsf_session_id
+            request.qsf_session_id,
+            detail
+        );
+        anyhow::bail!(
+            "OpenAI realtime calls returned {} for session `{}`: {}",
+            status,
+            request.qsf_session_id,
+            detail
         );
     }
     let call_id = extract_call_id(headers.get(header::LOCATION))
@@ -760,7 +770,9 @@ mod tests {
         );
         assert!(request.safety_identifier.is_some());
         assert!(request.body.contains("offer-sdp"));
-        assert!(request.body.contains("\"reasoning_effort\":\"medium\""));
+        // `reasoning_effort` is QSF session metadata only; the OpenAI realtime
+        // calls session object rejects it, so it must not be forwarded.
+        assert!(!request.body.contains("reasoning_effort"));
         assert!(!request.body.contains("test-api-key"));
 
         let runtime = state

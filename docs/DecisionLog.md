@@ -960,3 +960,23 @@ stale response ids after interruption or completion, and leaves provider event
 `event_id` deduplication to the server translator boundary.
 Refs: crates/qsf_session/src/live_state.rs,
 crates/qsf_realtime_server/src/realtime/routes.rs
+
+## 2026-06-09 - Provider drift: `reasoning_effort` is not forwarded to OpenAI realtime calls
+Decision: The accepted Phase-2 session default `reasoning_effort = medium` is
+kept as QSF session metadata (still returned to the browser in the allocation
+response) but is **not** forwarded in the OpenAI `/v1/realtime/calls` session
+object.
+Context: First live verification of the server-side SDP exchange (Phase 2)
+returned `400 unknown_parameter` for `session.reasoning_effort`. The realtime
+calls session schema does not accept that field; `gpt-realtime-2` itself passed
+schema validation. Recorded here per Plan decision 4 ("record any drift
+explicitly before changing accepted defaults"). The SDP handler also now
+surfaces the provider error body instead of swallowing it.
+Consequences: `OpenAiRealtimeSessionRequest` drops `reasoning_effort`; a
+regression test asserts it is absent from the forwarded body while the
+browser-facing default keeps it. Remaining accepted defaults
+(`gpt-realtime-2`/`marin`/`["audio"]`/`server_vad`) are unverified past this
+point and may surface further drift on continued live testing.
+Refs: crates/qsf_realtime_server/src/state.rs,
+crates/qsf_realtime_server/src/realtime/routes.rs,
+docs/Plans/Plan.RealtimeVoiceConversation.md

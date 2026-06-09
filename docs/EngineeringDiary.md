@@ -2723,3 +2723,40 @@ docs/Architecture/Architecture.RealtimeSessionServer.md,
 docs/Architecture/Architecture.AudioLoop.md,
 docs/Architecture/Architecture.StateAndObservability.md, README.md,
 docs/DecisionLog.md
+
+## 2026-06-09 - Realtime browser voice works end-to-end (first live conversation)
+
+First live human test of the browser voice preview surfaced three defects between
+the dev UI, the server, and the provider; all three are fixed and a full-duplex
+spoken conversation now works in the browser.
+
+What changed:
+- Vite dev proxy: the `/api` entry only proxied HTTP, so the relay
+  `WebSocket("/api/realtime/events")` upgrade was dropped and the client failed
+  with "failed to open relay websocket". Switched to the object form with
+  `ws: true`.
+- SDP handler: it read the provider's error body into the answer string and then
+  discarded it, reporting only the HTTP status. It now logs and returns OpenAI's
+  error body (capped, char-boundary safe), which is a diagnostic and never a
+  credential.
+- Session config: OpenAI `/v1/realtime/calls` rejected the request with
+  `400 unknown_parameter` for `session.reasoning_effort`. `reasoning_effort` is
+  kept as QSF session metadata (still in the browser allocation response) but is
+  no longer forwarded in the provider session object.
+
+Observed:
+- `cargo test -p qsf_realtime_server` passes (9 tests), including a regression
+  asserting `reasoning_effort` is absent from the forwarded SDP body; `cargo
+  clippy --all-targets -- -D warnings` clean; `cargo fmt` applied;
+  `npm run check`/`npm run fmt` green in `crates/qsf_realtime_server/ui/`.
+- Live: start a session, speak, hear a streamed reply, barge-in works; diagnostic
+  exchanges land under the run-scoped diagnostics store, not the shared
+  continuity root. `gpt-realtime-2` was accepted by the provider.
+
+Open question:
+- End-to-end and per-stage latency for presence research is not yet measured.
+
+Refs: crates/qsf_realtime_server/ui/vite.config.ts,
+crates/qsf_realtime_server/src/realtime/routes.rs,
+crates/qsf_realtime_server/src/state.rs; implements: Provider drift:
+`reasoning_effort` is not forwarded to OpenAI realtime calls

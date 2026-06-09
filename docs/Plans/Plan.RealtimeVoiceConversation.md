@@ -49,7 +49,7 @@ QSF.
 |-------|-------|-------|-------------|
 | 0 | Decisions & contracts (complete, accepted 2026-06-09) | No | No |
 | 1 | Extract `qsf_session` crate (pure refactor) — complete | Yes | No |
-| 2 | Thin media plane — live browser voice — **active** | Yes | **Yes** |
+| 2 | Thin media plane — live browser voice — implemented, human-tested 2026-06-09 | Yes | ✅ |
 | 3 | Authoritative sideband + memory injection | Yes | **Yes** |
 | 4 | Model-invoked read-only perception tools | Yes | **Yes** |
 | 5 | Live memory extraction + presence refinement | Yes | **Yes** |
@@ -134,12 +134,22 @@ for later phases:
 
 ---
 
-## Phase 2 — Thin media plane: live browser voice — active  *(first time you can talk)*
+## Phase 2 — Thin media plane: live browser voice — implemented, human-tested 2026-06-09  *(first time you can talk)*
 
-**Status.** Active / next to implement. This is the first phase with live audio and
-**required human testing**. It introduces the `crates/qsf_realtime_server` axum crate
-and a browser WebRTC client. Persisted exchanges this phase are **untrusted,
-diagnostic-only**.
+**Status.** Implemented and human-tested 2026-06-09: a live, full-duplex spoken
+browser conversation works end-to-end via `gpt-realtime-2`, with barge-in, and
+diagnostic exchanges persisted outside the shared continuity root. It introduces the
+`crates/qsf_realtime_server` axum crate and a browser WebRTC client. Persisted
+exchanges this phase are **untrusted, diagnostic-only**.
+
+**First live verification (2026-06-09) — drift recorded.** Three defects surfaced on
+the first human test and were fixed: the Vite dev proxy needed `ws: true` to relay the
+events WebSocket; the SDP handler now surfaces the provider error body instead of
+swallowing it; and OpenAI `/v1/realtime/calls` rejected `session.reasoning_effort`
+(`unknown_parameter`), so `reasoning_effort` is kept as QSF session metadata but no
+longer forwarded (see `DecisionLog.md`). `gpt-realtime-2` / `marin` / `["audio"]` /
+`server_vad` were accepted by the provider. Remaining open: end-to-end / per-stage
+latency measurement for presence research (carried to Phase 5).
 
 **Outcome.** A human can open a browser, speak, and hear a streamed spoken reply via
 `gpt-realtime-2`. A new `qsf_realtime_server` performs the **server-side SDP exchange**

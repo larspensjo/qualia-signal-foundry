@@ -166,7 +166,11 @@ impl BrowserSessionConfig {
         OpenAiRealtimeSessionRequest {
             kind: "realtime".to_string(),
             model: self.model.clone(),
-            reasoning_effort: self.reasoning_effort.clone(),
+            // `reasoning_effort` is QSF session metadata, not a field the OpenAI
+            // `/v1/realtime/calls` session object accepts — it rejects the
+            // request with `unknown_parameter`. Keep it on BrowserSessionConfig
+            // (and in the browser-facing allocation response) but do not forward
+            // it to the provider.
             instructions: self.instructions.clone(),
             output_modalities: self.output_modalities.clone(),
             audio: OpenAiRealtimeSessionAudio {
@@ -239,7 +243,6 @@ pub struct OpenAiRealtimeSessionRequest {
     #[serde(rename = "type")]
     pub kind: String,
     pub model: String,
-    pub reasoning_effort: String,
     pub instructions: String,
     pub output_modalities: Vec<String>,
     pub audio: OpenAiRealtimeSessionAudio,
