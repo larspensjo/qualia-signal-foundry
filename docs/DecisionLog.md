@@ -980,3 +980,28 @@ point and may surface further drift on continued live testing.
 Refs: crates/qsf_realtime_server/src/state.rs,
 crates/qsf_realtime_server/src/realtime/routes.rs,
 docs/Plans/Plan.RealtimeVoiceConversation.md
+
+## 2026-06-09 - Live Activation Dashboard merges into the realtime operator page
+Decision: The live activation dashboard and the live voice-conversation controls are one
+web app at a single URL, split into two strictly separated planes — a control plane (the
+conversation, side-effecting) and an observation plane (the dashboard, read-only,
+one-way, and non-blocking: it never feeds an action back into the runtime and its failure
+cannot affect the conversation). The signal projector and activation/decay state live in
+TypeScript; Rust stays domain-pure, emitting domain events/traces (and, for live use, a
+read-only one-way event stream) but never dashboard signals. Rust owns the event/trace
+schema; the signal schema is a TypeScript-owned presentation contract. Offline replay
+stays a separate mode of the same view, fed from sealed run artifacts.
+Context: Phase 2 made a live browser voice session work, which already emits the live
+event stream the dashboard's deferred live-tail phase needed; a researcher wanting to
+"talk and watch the mind light up" should not juggle two pages. Keeping presentation
+logic out of Rust preserves the project's control-versus-observation boundary and matches
+the intended split (Rust internals, TypeScript presentation, future WebGL/3D on the GPU).
+Consequences: The dashboard lives under `crates/qsf_realtime_server/ui/`, sharing the app
+shell with the conversation controls; the realtime server gains a read-only event-stream
+endpoint but emits no presentation signals. Live tail and offline replay share one
+TypeScript projector over one event schema (deterministic, Vitest-tested). A blinded,
+replay-only/metadata-only mode stays available to avoid live-dashboard experiment bias.
+The read-only memory association browser remains a separate surface, foldable in later.
+Refs: docs/Plans/Idea.LiveActivationDashboard.md,
+docs/Plans/Design.LiveActivationDashboard.md,
+docs/Architecture/Architecture.RealtimeSessionServer.md, crates/qsf_realtime_server/ui/

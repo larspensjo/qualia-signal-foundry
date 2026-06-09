@@ -120,6 +120,47 @@ Relevant existing material:
 The new contribution is not the existence of observability. The new contribution is a
 visual, ambient, live presentation layer over observability.
 
+## Unified Operator Surface (Live)
+
+In its live form the dashboard does not need its own web page. The live activation
+dashboard and the live voice-conversation controls are the same operator surface,
+opened at a single URL: you start a conversation and watch the system's activity in the
+same place.
+
+This is one web *page* with two strictly separated *planes*:
+
+- A **control plane** — the conversation (start/stop, microphone, transcript, status) —
+  that drives live side effects.
+- An **observation plane** — the activation dashboard — that only renders activity.
+
+The planes share a page and a visual language, not a data path. The observation plane is
+**read-only, one-way, and non-blocking**: it consumes a projected view of runtime
+activity, never feeds an action back into the runtime, and if it fails the conversation
+keeps working. This preserves the project's control-versus-observation boundary even
+though both live on one page.
+
+The same separation decides where the projection logic lives:
+
+- **Rust stays domain-pure.** It emits domain events and traces and knows nothing about
+  channels, intensities, decay curves, colour, or any other presentation concept. For
+  the live dashboard it exposes a read-only, one-way stream of those domain events — not
+  dashboard signals.
+- **TypeScript owns the presentation** — the signal projector, the activation
+  decay/reinforcement state, and the renderer (including any future WebGL or 3D layer).
+  The projector turns domain events into visual signals; the renderer draws them.
+
+Because Rust emits domain events rather than visual signals, live tail and offline replay
+share one TypeScript projector over one event schema — live mode reads the server's event
+stream, replay mode reads a sealed run's `events.jsonl` / `traces.jsonl`, and both produce
+identical signals. Offline replay therefore stays a distinct *mode* of the same view, with
+the conversation controls hidden, which keeps the "prove the projector on sealed runs
+first" discipline intact.
+
+A blinded, replay-only (or metadata-only) mode stays available for experiments where a
+live dashboard could bias the researcher's behaviour. The read-only memory association
+browser remains its own surface for now; it can fold in later as a third observation view
+without changing this boundary.
+
 ## Candidate Activation Channels
 
 The dashboard could start with a small set of channels derived from existing event
@@ -801,7 +842,8 @@ Test:
   researcher-only tool?
 - What is the minimum signal schema that can support multiple renderers?
 - Should the dashboard be a separate process, a browser tab, or an optional native
-  window?
+  window? *(Leaning: not separate — in its live form it shares one web page with the
+  live conversation controls; see "Unified Operator Surface (Live)".)*
 - Should activation channels be fixed globally, or configured per experiment?
 - Should dashboard snapshots become run artifacts?
 - What minimum activation duration is needed for very short events to be perceptible?

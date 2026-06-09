@@ -11,7 +11,9 @@ runtime activity. It starts as an offline replay tool that reads completed run
 artifacts, projects events and traces into activation signals, and renders an
 animated dashboard in a regular web browser. If replay proves useful, the same
 signal and rendering model can later be used for a live dashboard that tails an
-active run.
+active run. In its live form the dashboard shares one web page with the live
+voice-conversation controls — a single operator surface with strictly separated control
+and observation planes (see Architecture).
 
 The dashboard is a visualization layer over runtime evidence. It does not own
 simulation state, mutate runtime state, make model decisions, change memory, or
@@ -47,6 +49,8 @@ prototype.
 - Preserve logs, traces, reports, and run artifacts as the source of truth.
 - Make source events and traces inspectable from visual activations.
 - Keep the first prototype small enough to discard or reshape after review.
+- Co-locate the live dashboard with the live conversation controls in one web app,
+  keeping the observation plane read-only and non-blocking.
 
 ## Non-Goals
 
@@ -79,15 +83,22 @@ The renderer consumes those signals, but it should not need to know the full
 runtime event vocabulary.
 
 For live use, the front of the pipeline changes but the rest should stay the
-same:
+same. The realtime conversation server exposes a read-only, one-way stream of the
+domain events it already handles, and the same projector consumes it:
 
 ```text
-active run event stream
-  -> local tail/WebSocket bridge
-  -> signal projector
+realtime server domain-event stream (read-only, one-way)
+  -> signal projector (TypeScript)
   -> activation state
   -> PixiJS/WebGL renderer
 ```
+
+The live dashboard renders in the same web app, at the same URL, as the live
+conversation controls: one operator surface with two strictly separated planes — a
+control plane (the conversation, side-effecting) and an observation plane (the
+dashboard, read-only and non-blocking). The server emits domain events, never dashboard
+signals, so it stays presentation-agnostic, and a dashboard failure cannot affect the
+conversation.
 
 Live streaming is a later phase. The first prototype should prove replay and
 projection against sealed run artifacts.
@@ -131,6 +142,22 @@ TypeScript should be used for the browser prototype. The dashboard has
 structured data models, and types help keep runtime events, trace records,
 dashboard signals, activation channels, and renderer inputs from drifting.
 
+### Signal Projector (TypeScript, Not Rust)
+
+The projector and activation state belong to the presentation layer, so they live in
+TypeScript. Rust stays domain-pure: it emits domain events and traces, and for live use
+exposes a read-only, one-way event stream — it never produces dashboard signals and
+knows nothing about channels, intensities, decay curves, or colour. Rust's canonical
+contract is the event/trace schema; the signal schema is a TypeScript-owned presentation
+contract.
+
+Because the server emits domain events rather than visual signals, live tail and offline
+replay share one projector over one event schema: live mode reads the server's event
+stream, replay mode reads a sealed run's `events.jsonl` / `traces.jsonl`, and both
+produce identical signals — which also keeps the projector deterministic and unit-testable
+with Vitest. Performance-sensitive work (advanced WebGL, 3D, large-graph layout) is a
+TypeScript/GPU concern and, if needed, moves to a WebWorker rather than to Rust.
+
 ### Vite
 
 Vite is the preferred first dev server and bundler. It gives the prototype a
@@ -164,26 +191,27 @@ incremental layout without blocking animation.
 
 ## Candidate Directory Shape
 
-The first prototype can live under a dashboard-focused folder. The exact path is
-deferred until implementation, but a likely shape is:
+The dashboard lives inside the realtime server's web app rather than as a separate
+project, so the live conversation controls and the live dashboard share one app shell
+and one build. A likely shape, extending the existing `crates/qsf_realtime_server/ui/`:
 
 ```text
-dashboard/
-  package.json
-  vite.config.ts
-  src/
-    main.ts
+crates/qsf_realtime_server/ui/src/
+  main.ts            (app shell: routes between conversation and dashboard views)
+  realtime.ts        (existing conversation control plane)
+  dashboard/
     qsfEvents.ts
     qsfTraces.ts
     signalProjector.ts
     activationState.ts
     pixiRenderer.ts
     timeline.ts
-    style.css
 ```
 
-If the dashboard becomes part of the Rust workspace later, the location can be
-revisited. The first concern is proving the artifact-to-signal-to-visual loop.
+Offline replay is a mode of the dashboard view that loads a sealed run's artifacts (file
+picker or a read-only artifact endpoint) instead of the live stream, and hides the
+conversation controls. The first concern is still proving the
+artifact-to-signal-to-visual loop.
 
 ## Data Loading
 
@@ -407,10 +435,12 @@ Verify:
 
 ## Phase 3: Live Tail Dashboard
 
-If offline replay proves useful, add a local bridge that streams active run
-events to the browser.
+If offline replay proves useful, add a live event stream to the browser. There are two
+natural sources, both read-only and one-way: the realtime conversation server's own
+event stream (the live-conversation case, co-located with the controls), and a tail of an
+active experiment run's append-only artifacts (the `qsf_app` experiment case).
 
-Likely shape:
+Likely shape for the artifact-tail source:
 
 ```text
 QSF run artifact writer
@@ -515,9 +545,14 @@ localhost artifact server only if needed.
 
 ## Open Questions
 
-- Where should the browser dashboard live in the repository?
-- Should the projector be TypeScript-only at first, or should Rust own the
-  canonical signal projection model?
+- Resolved: the browser dashboard lives inside the realtime server UI
+  (`crates/qsf_realtime_server/ui/`), sharing the app shell with the live conversation
+  controls.
+- Resolved: TypeScript owns the projector and activation state; Rust stays domain-pure
+  and emits domain events/traces (and a read-only live event stream), never dashboard
+  signals. Rust's canonical contract is the event/trace schema; the signal schema is a
+  TypeScript-owned presentation contract. Future WebGL/3D and performance-sensitive
+  rendering are TypeScript/GPU concerns.
 - Should the first artifact loader use a dev server, drag-and-drop files, or a
   small QSF localhost helper?
 - Which run should be the first visual target: associative memory, tool as
@@ -540,4 +575,7 @@ localhost artifact server only if needed.
 - docs/Architecture/Architecture.RuntimeLoop.md
 - docs/Architecture/Architecture.MemorySystem.md
 - docs/Architecture/Architecture.ToolSystem.md
+- docs/Architecture/Architecture.RealtimeSessionServer.md
+- docs/Plans/Plan.RealtimeVoiceConversation.md
+- crates/qsf_realtime_server/ui/
 - docs/DecisionLog.md
