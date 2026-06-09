@@ -167,6 +167,14 @@ pub struct ProviderEventRecord {
     pub provider_id: String,
     pub received_at: SystemTime,
     #[serde(default)]
+    pub call_id: Option<String>,
+    #[serde(default)]
+    pub event_id: Option<String>,
+    #[serde(default)]
+    pub item_id: Option<String>,
+    #[serde(default)]
+    pub previous_item_id: Option<String>,
+    #[serde(default)]
     pub response_id: Option<String>,
     #[serde(default)]
     pub text: Option<String>,

@@ -13,31 +13,41 @@ realtime conversation mode, not a one-off experiment server.
 
 **Implemented today:**
 
-- No `qsf_realtime_server` crate exists yet.
-- The reusable source material is the one-shot realtime voice provider and shared
-  session reducer in `qsf_app`
-  ([voice_session_provider.rs](../../crates/qsf_app/src/audio/voice_session_provider.rs),
-  [live_state.rs](../../crates/qsf_app/src/session/live_state.rs)).
+- `qsf_realtime_server` exists as a thin axum/tokio crate with `main.rs`,
+  `lib.rs`, `cli.rs`, `state.rs`, a `/health` route, the realtime routes, and a
+  server-owned diagnostic JSONL writer.
+- `POST /api/realtime/session` allocates a `qsf_session_id` and returns the
+  accepted non-secret session config.
+- `POST /api/realtime/sdp` performs the server-side SDP rendezvous against the
+  OpenAI realtime calls endpoint with the server-held API key, captures
+  `call_id`, stores the `{ qsf_session_id <-> call_id }` binding, and returns
+  the SDP answer.
+- `WS /api/realtime/events` accepts typed browser relay envelopes, validates
+  them, deduplicates provider `event_id`, maps them into `qsf_session` live
+  events, and persists diagnostic-only exchanges with explicit trust/source
+  markers.
+- `POST /api/realtime/stop` invalidates the binding and finalizes any open
+  diagnostic exchange.
+- `crates/qsf_realtime_server/ui/` is a dedicated Vite + TypeScript + Biome +
+  Vitest browser preview surface with a minimal WebRTC client and relay-envelope
+  mapping tests.
+- The shared reducer overlap matrix now handles the phase-2 out-of-order and
+  interruption cases inside `qsf_session`.
 
 **Partial:**
 
-- `qsf_browser_server` is an axum/tokio browser server, but it is intentionally a
-  read-only inspection server and is not the live realtime server.
-- The existing realtime voice-session experiment maps provider facts into shared
-  `Exchange` records, but it is single-turn and has no browser media plane,
-  sideband attachment, or live audio playback.
+- The transport slice exists, but the live browser audio experience still needs
+  human verification for spoken output, interruption, and barge-in.
+- `qsf_browser_server` remains a read-only inspection server and is not the live
+  realtime server.
 
 **Not yet implemented:**
 
-- `qsf_realtime_server` crate.
-- Browser WebRTC realtime voice UI.
-- Ephemeral client-secret route.
-- SDP proxy and `{ qsf_session_id <-> provider call_id }` binding store.
-- Browser-relayed diagnostic event WebSocket.
-- Server-side sideband adapter.
+- Phase 3 authoritative sideband attachment.
 - Live context injection and live realtime tool execution.
+- Phase 5 memory extraction / presence refinement for the browser live mode.
 
-Last reviewed: 2026-06-09 against the Phase-0 realtime voice conversation decisions.
+Last reviewed: 2026-06-09 against the implemented Phase-2 transport slice.
 
 ## Purpose
 
@@ -47,8 +57,8 @@ the WebRTC rendezvous, records observable session facts, and later attaches a
 server-side sideband to inject context and return tool results.
 
 It exists separately from `qsf_browser_server` because the browser server is for
-read-only post-hoc inspection. Live realtime voice needs token minting, provider
-rendezvous, reducer access, sideband control, and tool execution boundaries.
+read-only post-hoc inspection. Live realtime voice needs provider rendezvous,
+reducer access, sideband control, and tool execution boundaries.
 
 The implementation may be validated through experiment docs and fixture-backed
 tests, but the intended operator experience is a normal realtime conversation mode.
@@ -65,7 +75,8 @@ experiments, not the final shape for this server.
 - Output modality: `["audio"]`.
 - Turn detection: provider `server_vad`, with automatic response creation and
   interruption enabled.
-- Browser token: provider-returned `client_secret.expires_at` is authoritative.
+- Browser session config: `POST /api/realtime/session` returns non-secret
+  accepted defaults; the browser receives no client secret.
 - `call_id` binding: active-call scoped, invalidated on stop/error/expiry, with
   only a short cleanup grace for diagnostics.
 
@@ -74,19 +85,20 @@ experiments, not the final shape for this server.
 ```text
 Browser
   -> POST /api/realtime/session
-     <- ephemeral client secret
+     <- qsf_session_id + non-secret session config
 
 Browser
   -> POST /api/realtime/sdp
-     -> QSF server proxies SDP to OpenAI realtime calls endpoint
-     <- SDP answer and provider call_id binding
+     -> QSF server proxies SDP to OpenAI realtime calls endpoint with the
+        server-held API key
+     <- SDP answer + server-captured call_id binding
 
 Browser <-> OpenAI
   WebRTC media flows directly
 
 Browser
   -> WS /api/realtime/events
-     -> diagnostic provider events only
+     -> diagnostic provider events only (untrusted)
 
 QSF server
   -> Phase 3 sideband WebSocket with call_id
@@ -115,7 +127,7 @@ authoritative source for provider facts, so relayed events are:
 - size-limited,
 - deduplicated by provider event id where possible,
 - marked untrusted,
-- persisted only as diagnostic artifacts,
+- persisted only as diagnostic artifacts with explicit source/trust markers,
 - excluded from sleep consolidation and continuity promotion.
 
 Phase 3 introduces the server-side sideband. Events observed through that sideband
@@ -123,7 +135,8 @@ are authoritative and may produce trusted, sleep-eligible exchanges.
 
 ## Provider Event Mapping Contract
 
-The reducer must not assume a single active exchange in full-duplex mode.
+The reducer keeps a single active exchange in full-duplex mode and finalizes the
+prior exchange when a new user turn starts.
 
 Speech-to-speech exchange boundary:
 
@@ -171,7 +184,7 @@ phases may add explicit dependencies or adapter crates for:
 
 Phase 2 automated verification:
 
-- token route tested with mocked provider response,
+- session route returns non-secret defaults,
 - SDP proxy stores `call_id`,
 - event relay rejects malformed or oversized payloads,
 - event mapping persists diagnostic exchanges,

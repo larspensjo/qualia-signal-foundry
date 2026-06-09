@@ -30,6 +30,11 @@ implemented yet.
   requests routed into QSF events and persisted shared exchange records rather than
   executed directly
   ([audio/voice_session_provider.rs](../../crates/qsf_app/src/audio/voice_session_provider.rs))
+- `qsf_realtime_server` plus its dedicated `ui/` preview surface for the browser
+  WebRTC transport slice, including server-side SDP rendezvous and diagnostic
+  browser relay
+  ([crates/qsf_realtime_server/src](../../crates/qsf_realtime_server/src),
+  [crates/qsf_realtime_server/ui](../../crates/qsf_realtime_server/ui))
 - Text-owned voice loop where QSF owns interpretation, shared session continuity,
   memory retrieval, context assembly, model-role invocation, and `OutputProduced`
   text
@@ -63,22 +68,21 @@ implemented yet.
 **Partial:**
 
 - Voice Activity Detection is at the provider boundary; no separate VAD module
-- Operating modes: turn-based is implemented; full-duplex browser realtime voice is
-  planned but not implemented
+- Operating modes: turn-based is implemented; the browser realtime preview path
+  exists, but human-verified end-to-end barge-in evaluation is still pending
 
 **Not yet implemented:**
 
 - Render-only TTS for live spoken answers (current speech output is metadata-only)
-- Browser WebRTC media plane with audible realtime model output
-- Dedicated `qsf_realtime_server` for token minting, SDP rendezvous, diagnostic
-  event relay, and later sideband control
+- Human-verified browser WebRTC conversation with barge-in acceptance remains
+  pending
 - Full interruption / barge-in policy beyond persisted provider interruption facts
 - Always-listening mode outside explicit browser session start/stop
 - Translation provider (`gpt-realtime-translate`) integration
 - A live debug UI for audio state
 
-Last reviewed: 2026-06-09 against the accepted realtime voice conversation
-Phase-0 decisions.
+Last reviewed: 2026-06-09 against the implemented Phase-2 browser transport
+slice and the still-pending human audio verification.
 
 ## Summary
 
@@ -283,7 +287,7 @@ SpeechOutputProvider
 
 RealtimeSessionProvider
   -> existing gpt-realtime-2 one-shot adapter
-  -> planned browser realtime voice conversation via qsf_realtime_server
+  -> browser realtime voice preview transport via qsf_realtime_server
 
 TranslationProvider
   -> gpt-realtime-translate adapter for separate translation experiments
@@ -715,8 +719,8 @@ memory retrieval, response text, shared continuity, and latency tracing.
 The next live audio step is the browser realtime voice MVP described in
 `docs/Plans/Plan.RealtimeVoiceConversation.md` and
 `docs/Architecture/Architecture.RealtimeSessionServer.md`: WebRTC media in the
-browser, `qsf_realtime_server` for token and SDP rendezvous, diagnostic-only event
-relay in Phase 2, and authoritative sideband control in Phase 3.
+browser, `qsf_realtime_server` for server-side SDP rendezvous, diagnostic-only
+event relay in Phase 2, and authoritative sideband control in Phase 3.
 
 Do not let the realtime model become the whole simulated mind. The media plane may
 be provider-owned, but memory, context injection, tool permission, event logs, sleep

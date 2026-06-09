@@ -63,6 +63,9 @@ Currently implemented experiment paths include:
   selected through configuration.
 - **Streaming transcription** of microphone or WAV input via the OpenAI realtime
   transcription adapter.
+- **Realtime voice session preview** via `qsf_realtime_server` plus its dedicated
+  browser UI, using server-side SDP rendezvous and diagnostic-only browser relay
+  events.
 - **Realtime voice session**, a **text-owned voice loop**, and a peer **voice-loop**
   surface that share the `state/session/` continuity root, retrieve memory before
   context assembly, and route any provider-requested tool calls through the QSF tool
@@ -85,7 +88,7 @@ path.
 
 Not yet implemented (documented as concepts, plans, or ideas):
 
-- the primary browser-based realtime voice conversation mode
+- the first-class, human-verified browser-based realtime voice conversation mode
 - a first-class launcher command for that realtime mode
 - a volition or goal system
 - self-reflection through project-document introspection

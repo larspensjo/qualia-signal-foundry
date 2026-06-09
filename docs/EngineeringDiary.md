@@ -2685,3 +2685,41 @@ Refs: crates/qsf_session/src/*, crates/qsf_session/tests/*,
 crates/qsf_app/src/session/*, crates/qsf_app/src/experiments/*,
 docs/Architecture/Architecture.StateAndObservability.md,
 docs/DecisionLog.md
+
+## 2026-06-09 - Realtime voice preview scaffold
+
+Implemented browser voice preview slice: the shared session reducer
+now handles the overlap policy and provider identity fields, `qsf_realtime_server`
+owns the server-side SDP rendezvous and diagnostic relay, and the dedicated
+realtime UI lives under `crates/qsf_realtime_server/ui/`.
+
+What changed:
+- Extended `qsf_session` live-state handling for overlap/finalization behavior
+  and provider identity markers.
+- Added `qsf_realtime_server` with health, session, SDP, relay, and stop routes
+  plus a JSONL diagnostic writer.
+- Added a dedicated Vite + TypeScript UI with a minimal WebRTC client and relay
+  mapping tests.
+- Tightened the staged-review fixes: HTTP stop now persists the finalized
+  diagnostic exchange, the UI ignores unsupported provider events instead of
+  raising a connection error, relay per-message errors stay local, and the SDP
+  payload forwards the accepted reasoning-effort default.
+- Refreshed the architecture notes, decision log, and README to describe the
+  preview path.
+
+Observed:
+- `cargo test -p qsf_realtime_server` passed with mocked SDP, stop persistence,
+  relay dedupe, malformed relay payload, and diagnostic persistence coverage.
+- `cargo test -p qsf_session` passed earlier in the work.
+- `npm run check` and `npm run fmt` passed in
+  `crates/qsf_realtime_server/ui/`.
+
+Open question:
+- Human browser audio, interruption, and barge-in still need live verification.
+
+Refs: crates/qsf_session/src/live_state.rs, crates/qsf_session/src/exchange.rs,
+crates/qsf_realtime_server/src/*, crates/qsf_realtime_server/ui/*,
+docs/Architecture/Architecture.RealtimeSessionServer.md,
+docs/Architecture/Architecture.AudioLoop.md,
+docs/Architecture/Architecture.StateAndObservability.md, README.md,
+docs/DecisionLog.md

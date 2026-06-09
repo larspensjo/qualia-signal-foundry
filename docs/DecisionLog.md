@@ -917,3 +917,46 @@ Refs: docs/Plans/Plan.RealtimeVoiceConversation.md,
 docs/Plans/Design.RealtimeVoiceConversation.md,
 docs/Architecture/Architecture.RealtimeSessionServer.md,
 https://developers.openai.com/api/docs/guides/realtime-webrtc
+
+## 2026-06-09 - Realtime browser UI lives under qsf_realtime_server/ui
+Decision: The live browser surface for realtime voice conversation lives in a
+dedicated Vite + TypeScript + Biome + Vitest project at
+`crates/qsf_realtime_server/ui/`, separate from `qsf_browser_server/ui/`.
+Context: The read-only browser server must stay decoupled from live voice
+concerns, and the realtime server needs its own build and verification boundary.
+Consequences: Launcher wiring, frontend checks, and UI assets for the realtime
+slice target the dedicated crate-local UI directory instead of reusing the
+inspection server UI.
+Refs: crates/qsf_realtime_server/ui/*,
+docs/Architecture/Architecture.RealtimeSessionServer.md
+
+## 2026-06-09 - Phase-2 relay artifacts stay diagnostic-only and self-describing
+Decision: Browser-relayed provider events are persisted only as untrusted
+diagnostics outside the shared continuity root, and the diagnostic records carry
+explicit source/trust markers plus the provider identity fields needed for
+correlation and replay.
+Context: Phase 2 intentionally keeps the browser relay untrusted. The same
+artifacts must remain understandable when Phase 3 adds authoritative sideband
+events, so the record shape needs to declare its trust level instead of relying
+on storage location alone.
+Consequences: Phase-2 relay events do not feed sleep consolidation or continuity
+promotion. Diagnostic persistence must record `call_id`, `event_id`, `item_id`,
+`previous_item_id`, and `response_id` alongside the exchange payload.
+Refs: crates/qsf_realtime_server/src/diagnostics.rs,
+crates/qsf_realtime_server/src/realtime/routes.rs,
+crates/qsf_session/src/exchange.rs,
+docs/Architecture/Architecture.StateAndObservability.md
+
+## 2026-06-09 - Realtime reducer overlap finalizes the prior exchange
+Decision: When a new user turn arrives before the previous response finishes,
+the live reducer finalizes the prior exchange first, marks it interrupted if the
+response was still streaming, and treats late lifecycle events for that exchange
+as no-ops.
+Context: Phase-2 speech-to-speech exchanges can arrive out of order and can be
+interrupted mid-response. The single-active-exchange reducer must stay stable in
+the face of duplicate or stale provider events.
+Consequences: The live reducer keeps one active exchange at a time, suppresses
+stale response ids after interruption or completion, and leaves provider event
+`event_id` deduplication to the server translator boundary.
+Refs: crates/qsf_session/src/live_state.rs,
+crates/qsf_realtime_server/src/realtime/routes.rs

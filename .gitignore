@@ -22,6 +22,10 @@ engine.log
 crates/qsf_browser_server/ui/node_modules/
 crates/qsf_browser_server/ui/dist/
 
+# qsf_realtime_server frontend build artifacts
+crates/qsf_realtime_server/ui/node_modules/
+crates/qsf_realtime_server/ui/dist/
+
 # RustRover
 #  JetBrains specific template is maintained in a separate JetBrains.gitignore that can
 #  be found at https://github.com/github/gitignore/blob/main/Global/JetBrains.gitignore
