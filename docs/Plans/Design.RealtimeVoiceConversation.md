@@ -18,6 +18,10 @@ Candidate; Phase 0 decisions accepted on 2026-06-09.
 > adapter built from reusable protocol helpers (not the one-shot client); a
 > provider-event mapping contract precedes Phase 2; and tool execution records
 > permission/result, not just `auto_executed`.
+>
+> Further revised 2026-06-09 (Phase-2 plan review): WebRTC initialization uses a
+> **server-side SDP exchange with the `OPENAI_API_KEY`**; the ephemeral-token flow is
+> dropped (see the `DecisionLog.md` reversal).
 
 ## Summary
 
@@ -61,7 +65,7 @@ existing **pure session reducer**, preserving the project's
   and behavioral instructions (control plane).
 - The model can call **read-only** perception tools that QSF executes and returns,
   with the permission decision and result observable.
-- No invisible magic: ephemeral tokens, the provider `call_id` binding, injected
+- No invisible magic: the SDP rendezvous, the provider `call_id` binding, injected
   context, tool calls, and interruptions are all observable as events/traces.
 
 ## Non-Goals
@@ -117,13 +121,13 @@ Reusable assets (and their real shape, per the review):
 │                                                                  barge-in)     │
 │      ▲ SDP offer/answer relayed THROUGH the QSF server (signaling only)        │
 └──────┼─────────────────────────────────────────────────────────────────────────┘
-       │ (1) POST /api/realtime/session   → ephemeral client secret
+       │ (1) POST /api/realtime/session   → allocate qsf_session_id + session config (no secret)
        │ (2) POST /api/realtime/sdp       → server proxies SDP to OpenAI,
        │                                     captures + stores provider call_id
        │ (3) WS  /api/realtime/events     → browser relays observed events (DIAGNOSTIC)
        ▼
 ┌──────────────────── RUST SERVER (qsf_realtime_server, axum) ──────────────────┐
-│  • mints ephemeral token (holds OPENAI_API_KEY — key NEVER reaches browser)    │
+│  • holds OPENAI_API_KEY — NO credential ever reaches the browser               │
 │  • proxies SDP, stores {qsf_session_id ↔ provider call_id} binding             │
 │         ▼ translate                                                            │
 │   LiveSessionEvent ──► pure session reducer (qsf_session) ──► SessionState     │
@@ -142,7 +146,7 @@ Plane → component homes:
 
 | Plane | Component | Home | First active |
 |-------|-----------|------|--------------|
-| Media | WebRTC client, mic/speaker, token fetch, SDP relay | `ui/src/` (new TS) + `qsf_realtime_server` routes | Phase 2 |
+| Media | WebRTC client, mic/speaker, SDP offer + relay | `ui/src/` (new TS) + `qsf_realtime_server` routes | Phase 2 |
 | Memory (record) | event relay → reducer → persist `Exchange` | `qsf_realtime_server` + `qsf_session` | Phase 2 (diagnostic) / Phase 3 (trusted) |
 | Control/context | sideband WS → `session.update` + memory packets | new async sideband adapter | Phase 3 |
 | Tool | model tool-call → QSF registry → result back | existing tool registry + new result records | Phase 4 |
@@ -174,8 +178,10 @@ revision.
 - **Turn detection:** provider `server_vad` with automatic response creation and
   automatic response interruption enabled. `semantic_vad` remains an experiment
   candidate after baseline latency and interruption behavior are measured.
-- **Browser client secret:** treat provider-returned `client_secret.expires_at` as
-  authoritative; never send `OPENAI_API_KEY` to the browser.
+- **WebRTC initialization:** *(superseded 2026-06-09 — see the `DecisionLog.md`
+  reversal)* the server performs the SDP exchange with the `OPENAI_API_KEY` and
+  returns no credential to the browser; there is no browser client secret. The
+  `OPENAI_API_KEY` is never sent to the browser.
 - **`call_id` binding:** active-call scoped, invalidated on stop/error/expiry, and
   retained only for a short cleanup grace for diagnostics.
 - **Lean `qsf_session`:** extract reducer/state/event contracts, `Exchange`,
@@ -190,10 +196,15 @@ revision.
 The browser and the QSF server must attach to the **same** realtime call so the
 server can become the authoritative event source and inject context.
 
-- The browser fetches a short-lived **ephemeral client secret** from the server.
+- The browser asks the server for a session (`POST /api/realtime/session`), which
+  allocates a `qsf_session_id` and returns the non-secret session config. **No
+  credential is returned** — the server holds the `OPENAI_API_KEY` and is the only
+  party that talks to OpenAI's REST surface (revised 2026-06-09; see the
+  `DecisionLog.md` reversal).
 - The browser creates its `RTCPeerConnection` and produces an **SDP offer**. It
-  sends the offer to the QSF server (`POST /api/realtime/sdp`), which forwards it
-  to OpenAI's realtime SDP endpoint and reads the provider **`call_id`** from the
+  sends the offer to the QSF server (`POST /api/realtime/sdp`), which forwards it to
+  OpenAI's realtime calls endpoint **authenticated with the server-held
+  `OPENAI_API_KEY`** and reads the provider **`call_id`** first-hand from the
   response (`Location` header), returning the SDP answer to the browser. Media
   (audio RTP) still flows **directly** browser↔OpenAI — only signaling is proxied,
   so no media latency is added.
@@ -235,16 +246,17 @@ Full-duplex provider events are multi-ID and can overlap; the current single-
 ### Crate / Component Ownership
 
 `qsf_browser_server` is, by its own contract, a read-only inspection server. Rather
-than overload it with live side effects (token minting, SDP proxy, reducer access,
-sideband control, tool execution), this design introduces a dedicated
+than overload it with live side effects (SDP proxy, credential handling, reducer
+access, sideband control, tool execution), this design introduces a dedicated
 **`qsf_realtime_server`** crate for the live runtime. `qsf_browser_server` stays
 the read-only memory browser. The realtime server depends on `qsf_session` (Phase
 1) plus the specific `qsf_app` capabilities it needs (memory retrieval, sleep
 proposers, tool registry, realtime protocol helpers) — surfaced explicitly as that
 dependency graph grows across phases.
 
-**Security:** `OPENAI_API_KEY` stays server-side; the browser only ever receives a
-short-lived ephemeral client secret. Raw audio is never logged (existing
+**Security:** `OPENAI_API_KEY` stays server-side and is the only credential used to
+talk to OpenAI; **no credential of any kind is sent to the browser** (it receives
+only the SDP answer and its `qsf_session_id`). Raw audio is never logged (existing
 `AudioSafetyMarkers` invariant). Listening is explicit (start/stop).
 
 ## Phased Plan
@@ -290,12 +302,13 @@ experiment runner and the realtime server can depend on it without pulling in
 
 ### Phase 2 — Thin media plane: live browser voice *(first time you can talk)*
 
-- **Server (`qsf_realtime_server`, axum):** `POST /api/realtime/session` mints a
-  short-lived ephemeral client secret. `POST /api/realtime/sdp` proxies the SDP
-  exchange and stores the `{ session ↔ call_id }` binding (see *Rendezvous*).
-  `WS /api/realtime/events` receives browser-relayed events.
-- **Browser (new TS in `ui/src/`):** fetch token → `RTCPeerConnection`, send SDP
-  offer via the server, attach mic, play remote audio, provider VAD + barge-in.
+- **Server (`qsf_realtime_server`, axum):** `POST /api/realtime/session` allocates a
+  `qsf_session_id` + session config (no credential returned; it does not call
+  OpenAI). `POST /api/realtime/sdp` proxies the SDP exchange **authenticated with the
+  server-held `OPENAI_API_KEY`** and stores the `{ session ↔ call_id }` binding (see
+  *Rendezvous*). `WS /api/realtime/events` receives browser-relayed events.
+- **Browser (new TS in `ui/src/`):** fetch session config → `RTCPeerConnection`, send
+  SDP offer via the server, attach mic, play remote audio, provider VAD + barge-in.
   Minimal UI: start/stop, live transcript, listening/thinking/speaking status.
   The initial session config uses `gpt-realtime-2`, voice `marin`, medium
   reasoning effort, audio output, and provider `server_vad` with automatic response
@@ -304,15 +317,15 @@ experiment runner and the realtime server can depend on it without pulling in
   contract) → reducer (`qsf_session`) → persist exchanges + event/trace logs,
   **marked untrusted / diagnostic-only and excluded from sleep + continuity**.
 - **Verify:**
-  - *Automated:* token route (mocked OpenAI); SDP-proxy stores call_id; event-
-    translation → persisted-`Exchange` tests including the reducer overlap/out-of-
-    order matrix; relayed-event validation rejects malformed/oversized payloads;
-    TS event-mapping unit tests.
+  - *Automated:* session route returns no credential; SDP-proxy (server API key,
+    mocked OpenAI) stores call_id; event-translation → persisted-`Exchange` tests
+    including the reducer overlap/out-of-order matrix; relayed-event validation
+    rejects malformed/oversized payloads; TS event-mapping unit tests.
   - *Human testing (required):* open the browser, speak, hear a reply, interrupt
-    mid-reply; confirm diagnostic exchanges appear; inspect network to confirm the
-    API key is never sent to the browser.
-- **Safety:** explicit start/stop; no raw audio logged; short-lived token;
-  untrusted relay cannot reach durable memory.
+    mid-reply; confirm diagnostic exchanges appear; inspect network to confirm **no
+    credential (API key or token) is ever sent to the browser**.
+- **Safety:** explicit start/stop; no raw audio logged; no credential sent to the
+  browser; untrusted relay cannot reach durable memory.
 
 ### Phase 3 — Control/context plane: authoritative sideband + memory injection *(the "mixture" becomes real)*
 
@@ -370,10 +383,11 @@ Accepted on 2026-06-09:
 2. **Realtime model + voice + turn detection.** Phase 2 starts with
    `gpt-realtime-2`, voice `marin`, medium reasoning effort, audio output, and
    provider `server_vad` with automatic response creation and interruption enabled.
-3. **Ephemeral token + `call_id` lifetimes.** Use provider-returned
-   `client_secret.expires_at` as authoritative. Keep the `{ session ↔ call_id }`
-   binding active-call scoped, invalidated on stop/error/expiry, with only a short
-   cleanup grace for diagnostics.
+3. **WebRTC initialization + `call_id` lifetimes.** *(Revised 2026-06-09 — supersedes
+   the original ephemeral-token decision; see the `DecisionLog.md` reversal.)* The
+   server performs the SDP exchange with the `OPENAI_API_KEY` and mints no browser
+   credential. Keep the `{ session ↔ call_id }` binding active-call scoped,
+   invalidated on stop/error/expiry, with only a short cleanup grace for diagnostics.
 4. **Trust boundary.** Browser-relayed events are untrusted diagnostic facts until
    the Phase-3 server sideband becomes authoritative.
 
@@ -389,6 +403,8 @@ Accepted on 2026-06-09:
 ## Decision-Log Status
 
 - Accepted Phase-0 entries live in `docs/DecisionLog.md` under 2026-06-09.
+- The 2026-06-09 reversal "Realtime WebRTC uses a server-side SDP exchange, not
+  ephemeral tokens" supersedes the ephemeral-token portion of the Phase-0 entries.
 - Future entries are still expected when Phase 3 makes the sideband trusted in code,
   when Phase 4 adds live realtime tool execution, and when later experiments promote
   results into architecture.

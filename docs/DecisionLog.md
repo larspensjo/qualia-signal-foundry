@@ -21,6 +21,7 @@ project has agreed to do going forward.
 - Safety and scope boundaries
 - Experiment outcomes promoted into accepted design
 - Reusable rules derived from incidents
+- The decisions are typically updated during planning, not during implementation (unless something unexpected happened).
 
 ### How to use the decision log during development
 - Do not modify older entries if they were commited.
@@ -881,3 +882,38 @@ for existing call sites until later phases replace them.
 Refs: crates/qsf_session/src/*, crates/qsf_app/src/session/*,
 docs/Plans/Design.RealtimeVoiceConversation.md,
 docs/Architecture/Architecture.StateAndObservability.md
+
+## 2026-06-09 - Realtime WebRTC uses a server-side SDP exchange, not ephemeral tokens
+Decision: `qsf_realtime_server` initializes the browser realtime call via a
+server-side SDP exchange. The browser sends its SDP offer to the server; the server
+POSTs it to the OpenAI realtime calls endpoint authenticated with the server-held
+`OPENAI_API_KEY`, captures the provider `call_id` first-hand, stores the
+`{qsf_session_id <-> call_id}` binding, and returns the SDP answer. No ephemeral
+client secret is minted or returned to the browser, and no credential of any kind
+leaves the server. Media (audio RTP) still flows directly browser<->OpenAI, so only
+signaling is proxied and no media latency is added.
+Context: Reverses the ephemeral-token portion of the two 2026-06-09 realtime entries
+referenced below. Phase-2 planning review found the prior design fused two distinct
+OpenAI flows (minting an ephemeral secret AND server-proxying the SDP), which is
+internally inconsistent: an ephemeral secret exists to let the untrusted browser talk
+directly to OpenAI, but the server was also proxying the exchange. The server-side
+flow is the only one consistent with the declared trust boundary (the browser is
+untrusted) and with the Phase-3 sideband, which attaches to the server-captured
+`call_id`; a browser-reported `call_id` could not be authoritative.
+Consequences: `POST /api/realtime/session` allocates a `qsf_session_id` and returns
+only non-secret session config (it does not call OpenAI); `POST /api/realtime/sdp`
+authenticates to OpenAI with the API key, not an ephemeral secret. `AppState` needs no
+per-session client-secret store, and the provider-returned `client_secret.expires_at`
+lifetime no longer applies. The exact `/v1/realtime/calls` endpoint, headers, `call_id`
+location, and session-config schema must still be verified against the live API at
+implementation time, recording drift before changing defaults. Fallback if the
+server-side path cannot supply session config or return the `call_id` to the server:
+the ephemeral-token flow with an explicitly browser-reported (untrusted) `call_id`
+until the Phase-3 sideband validates it.
+Reverses: "Browser realtime voice uses a dedicated live server" (ephemeral-token
+minting) and "Realtime browser voice MVP defaults" (browser client-secret lifetime),
+both 2026-06-09.
+Refs: docs/Plans/Plan.RealtimeVoiceConversation.md,
+docs/Plans/Design.RealtimeVoiceConversation.md,
+docs/Architecture/Architecture.RealtimeSessionServer.md,
+https://developers.openai.com/api/docs/guides/realtime-webrtc
