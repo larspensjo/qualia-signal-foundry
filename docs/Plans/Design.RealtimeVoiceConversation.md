@@ -2,7 +2,7 @@
 
 ## Status
 
-Candidate
+Candidate; Phase 0 decisions accepted on 2026-06-09.
 
 > This design narrows the broader vision in `docs/Concepts/Concept.RealtimeAudio.md`
 > (the "three planes" idea) into a committed, phased implementation direction:
@@ -35,6 +35,10 @@ on the **three-plane** separation:
 gpt-realtime = realtime voice / persona surface (media plane)
 QSF backend  = memory, associations, tools, world model, continuity, logging
 ```
+
+This is the long-term primary operating mode the project is aiming at. The phased
+experiments are the way QSF validates and grows that mode, not the final category
+for the user-facing runtime.
 
 The realtime model is treated as the **live conversational surface** of a larger
 system, never as the whole simulated mind. Continuity comes from QSF's memory
@@ -144,6 +148,43 @@ Plane → component homes:
 | Tool | model tool-call → QSF registry → result back | existing tool registry + new result records | Phase 4 |
 | Memory (live extract) | extract candidates from live turns | reuse `qsf_app::sleep`/memory proposers | Phase 5 |
 
+### Mode vs. Experiment Harness
+
+The current repository is experiment-runner centric: `scripts/qsf.ps1 app
+-Experiment ...` starts named validation paths in `qsf_app`. That remains useful
+for tests, reports, and controlled comparisons.
+
+Realtime voice conversation should eventually be launched as a first-class QSF
+mode, not hidden as one more experiment id. The launcher should grow a dedicated
+operator path once `qsf_realtime_server` and the browser UI entry point exist. The
+experiment docs in this plan are evidence and verification artifacts for building
+that mode.
+
+### Phase 0 Accepted Defaults
+
+These decisions are accepted for the first implementation pass and should be
+changed only through a new decision-log entry if live provider behavior forces a
+revision.
+
+- **Realtime model:** `gpt-realtime-2`.
+- **Voice:** `marin`.
+- **Reasoning effort:** `medium`.
+- **Output modality:** `["audio"]`; the spoken transcript is recorded as
+  observability, not as proof that the model heard exactly that text.
+- **Turn detection:** provider `server_vad` with automatic response creation and
+  automatic response interruption enabled. `semantic_vad` remains an experiment
+  candidate after baseline latency and interruption behavior are measured.
+- **Browser client secret:** treat provider-returned `client_secret.expires_at` as
+  authoritative; never send `OPENAI_API_KEY` to the browser.
+- **`call_id` binding:** active-call scoped, invalidated on stop/error/expiry, and
+  retained only for a short cleanup grace for diagnostics.
+- **Lean `qsf_session`:** extract reducer/state/event contracts, `Exchange`,
+  persistence DTOs, continuity manifest, and the event-record/`EventType` contract;
+  keep `RunContext`, provider clients, memory retrieval, tools, and OpenAI/CPAL
+  dependencies outside.
+- **Operator surface:** phase experiments remain validation harnesses; the final
+  realtime voice conversation path should become a first-class launcher mode.
+
 ### Provider Session Identity & Sideband Rendezvous
 
 The browser and the QSF server must attach to the **same** realtime call so the
@@ -157,7 +198,7 @@ server can become the authoritative event source and inject context.
   (audio RTP) still flows **directly** browser↔OpenAI — only signaling is proxied,
   so no media latency is added.
 - The server persists a validated `{ qsf_session_id ↔ provider call_id }` binding
-  with a bounded lifetime. Phase 3's sideband connects with
+  with the accepted active-call lifetime. Phase 3's sideband connects with
   `wss://api.openai.com/v1/realtime?call_id=<stored>` — no second browser protocol
   is needed to discover the call.
 
@@ -220,7 +261,11 @@ Lock the decisions the review surfaced, so later phases do not churn:
 - The provider-event → QSF-event mapping contract above.
 - The trust boundary: Phase-2 relay is diagnostic-only.
 
-Recorded as decision-log candidates; no implementation.
+Recorded in the decision log; no implementation.
+
+Phase 0 is accepted as of 2026-06-09. Later phases may still discover provider API
+drift during live verification, but should treat that as a scoped revision rather
+than silently reopening the architecture.
 
 ### Phase 1 — Extract `qsf_session` crate (pure refactor, no behavior change)
 
@@ -230,10 +275,10 @@ experiment runner and the realtime server can depend on it without pulling in
 `cpal`/OpenAI deps.
 
 - The session module currently reaches into `observability::event_log::EventType`,
-  `runtime::run_context`, and `memory`. Part of this phase is deciding the **lean
-  shared surface**: likely move the event-record/`EventType` contract to a small
-  shared crate (or re-export), and keep `RunContext` coupling out of the extracted
-  crate (parameterize what the reducer needs).
+  `runtime::run_context`, and `memory`. The accepted lean surface moves only the
+  reducer/state/event contracts, `Exchange`, persistence DTOs, continuity manifest,
+  and event-record/`EventType` contract. `RunContext`, provider clients, memory
+  retrieval, tools, and OpenAI/CPAL dependencies stay outside.
 - Apply the `ExchangeCompleted` identity change from the mapping contract here
   (reducer-local, no provider integration yet) with its unit tests.
 - `qsf_app` re-exports from `qsf_session` so existing call sites barely change.
@@ -252,6 +297,9 @@ experiment runner and the realtime server can depend on it without pulling in
 - **Browser (new TS in `ui/src/`):** fetch token → `RTCPeerConnection`, send SDP
   offer via the server, attach mic, play remote audio, provider VAD + barge-in.
   Minimal UI: start/stop, live transcript, listening/thinking/speaking status.
+  The initial session config uses `gpt-realtime-2`, voice `marin`, medium
+  reasoning effort, audio output, and provider `server_vad` with automatic response
+  creation and interruption enabled.
 - **Server:** translate relayed events → `LiveSessionEvent` (per the mapping
   contract) → reducer (`qsf_session`) → persist exchanges + event/trace logs,
   **marked untrusted / diagnostic-only and excluded from sleep + continuity**.
@@ -311,46 +359,64 @@ experiment runner and the realtime server can depend on it without pulling in
 - **Verify:** *Automated* extraction tests; *human* presence evaluation against the
   `Concept.RealtimePresence` open questions; latency measurements recorded.
 
-## Open Decisions
+## Resolved Decisions
 
-1. **`qsf_session` lean shared surface (Phase 1).** Exactly which shared
-   types/contracts move with it (event record + `EventType`, manifest, persistence)
-   and how to decouple from `RunContext`. Resolve at the start of Phase 1.
-2. **Realtime model + voice id + VAD/turn-detection settings.** Pin the exact
-   `gpt-realtime` model name and default voice during Phase 2.
-3. **Ephemeral token + call_id lifetimes.** Bounded lifetime and rotation policy for
-   the client secret and the `{ session ↔ call_id }` binding.
+Accepted on 2026-06-09:
 
-## Decision-Log Candidates
+1. **`qsf_session` lean shared surface.** Move reducer/state/event contracts,
+   `Exchange`, persistence DTOs, continuity manifest, and event-record/`EventType`
+   contract; keep `RunContext`, provider clients, memory retrieval, tools, and
+   OpenAI/CPAL dependencies outside.
+2. **Realtime model + voice + turn detection.** Phase 2 starts with
+   `gpt-realtime-2`, voice `marin`, medium reasoning effort, audio output, and
+   provider `server_vad` with automatic response creation and interruption enabled.
+3. **Ephemeral token + `call_id` lifetimes.** Use provider-returned
+   `client_secret.expires_at` as authoritative. Keep the `{ session ↔ call_id }`
+   binding active-call scoped, invalidated on stop/error/expiry, with only a short
+   cleanup grace for diagnostics.
+4. **Trust boundary.** Browser-relayed events are untrusted diagnostic facts until
+   the Phase-3 server sideband becomes authoritative.
 
-- Extract a lean `qsf_session` crate as the shared home for the session reducer.
-- A dedicated `qsf_realtime_server` crate owns live side effects;
-  `qsf_browser_server` stays read-only.
-- The browser owns the media plane; the QSF server owns SDP rendezvous and the
-  `call_id` binding.
-- Authoritative live event source = server-side sideband (Phase 3); Phase-2
-  browser-relayed events are diagnostic-only and excluded from memory.
-- Tools exposed to the live realtime session are **read-only only**, and tool
-  execution records permission + result, not just `auto_executed`.
-- `OPENAI_API_KEY` never leaves the server; the browser uses ephemeral tokens.
+## Remaining Validation Questions
+
+- Does the actual provider event stream preserve the mapping assumptions under
+  overlap, interruption, duplicate delivery, and out-of-order transcript completion?
+- Is `server_vad` acceptable for presence once human latency/interruption testing is
+  available, or should a later experiment compare `semantic_vad`?
+- How small can working-memory injection packets be while still improving
+  cross-turn and cross-session continuity?
+
+## Decision-Log Status
+
+- Accepted Phase-0 entries live in `docs/DecisionLog.md` under 2026-06-09.
+- Future entries are still expected when Phase 3 makes the sideband trusted in code,
+  when Phase 4 adds live realtime tool execution, and when later experiments promote
+  results into architecture.
+- Launcher command naming for the first-class realtime mode should be decided when
+  the server/UI entry point is implemented.
 
 ## Documentation Updates (per `ProjectWorkflow.md`)
 
-- **Concepts:** normalize `Concept.RealtimeAudio.md` (currently a raw paste) into
-  the concept format; cross-link `Concept.RealtimePresence`.
-- **Research:** **refresh** the existing `ResearchQuestions.Audio.md` — reconcile
-  its current "defer `gpt-realtime-2` speech-to-speech" direction with this design,
-  and add questions for injection relevance and ASR-vs-model transcript divergence.
+- **Concepts:** `Concept.RealtimeAudio.md` has been normalized into the concept
+  format; `Concept.RealtimePresence.md` cross-links the realtime browser voice
+  direction.
+- **Research:** `ResearchQuestions.Audio.md` has been refreshed to reconcile the
+  earlier transcript-first direction with this design and to add questions for
+  injection relevance and ASR-vs-model transcript divergence.
 - **Experiments:** one experiment doc per live phase (e.g.
   `Experiment.RealtimeBrowserVoiceMVP`, `Experiment.LiveContextInjection`,
-  `Experiment.LiveToolPerception`).
-- **Architecture:** refresh `Architecture.AudioLoop.md` Implementation Status; add
-  `Architecture.RealtimeSessionServer.md` (three-plane server, rendezvous, trust
-  boundary); touch `Architecture.ToolSystem`, `Architecture.MemorySystem`,
-  `Architecture.StateAndObservability`.
-- **DecisionLog.md:** the candidates above, as each is committed.
+  `Experiment.LiveToolPerception`) as validation artifacts, not as the final
+  runtime category.
+- **Architecture:** `Architecture.AudioLoop.md` Implementation Status has been
+  refreshed; `Architecture.RealtimeSessionServer.md` has been added; and
+  `Architecture.ToolSystem`, `Architecture.MemorySystem`, and
+  `Architecture.StateAndObservability` now note the accepted future realtime
+  surfaces.
+- **DecisionLog.md:** accepted Phase-0 decisions plus later entries as code lands.
 - **EngineeringDiary.md:** one entry per logical change.
-- **README.md:** update "What works today" as phases land.
+- **README.md / launcher docs:** update "What works today" and the PowerShell
+  launcher section as phases land, making the eventual first-class realtime mode
+  clear.
 - **Lint gates:** Rust → `cargo clippy --all-targets -- -D warnings` then
   `cargo fmt`; `ui/` → `npm run check` then `npm run fmt`.
 

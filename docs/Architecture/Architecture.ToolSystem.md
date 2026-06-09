@@ -63,10 +63,15 @@ catalogue of categories described below is mostly aspirational.
 - Tool result confidence / trust signal
 - Tool-result-to-memory promotion
 - Asynchronous or interruptible tool execution
+- Live realtime voice sideband tool execution. The accepted future boundary is
+  allow-listed read-only tools only, executed by QSF server-side, with separate
+  permission/result/error/timing records before returning `function_call_output`
+  to the provider.
 - Project introspection beyond the framed-self documentation slice: source
   inspection, run inspection, active-self inspection, and write-capable tools
 
-Last reviewed: 2026-06-07 against the code in this workspace.
+Last reviewed: 2026-06-09 against the code in this workspace and the accepted
+realtime voice tool-boundary decision.
 
 ## Summary
 

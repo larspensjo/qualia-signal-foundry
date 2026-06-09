@@ -94,14 +94,19 @@ future retrieval backends.
 - Vector index, embedding store, or graph store
 - Promotion of session summaries or recall records into durable memory beyond
   sleep-generated candidates
+- Live realtime sideband trust integration. Phase-2 browser-relayed realtime voice
+  exchanges are planned as diagnostic-only and excluded from sleep/continuity;
+  Phase-3 sideband-sourced exchanges are the first trusted live realtime voice
+  source eligible for memory extraction and consolidation.
 - Sleep-side consolidation over voice exchanges is now shared with text turns,
   but richer semantic typing of the resulting memories is still shallow
 
-Last reviewed: 2026-06-07 against the shared live-memory-runtime phase —
-live-loop co-retrieval handles mechanical edges, sleep contributes safety-net and
-LLM-candidate associations through the proposer interface, and both text and voice
-sessions flow through the shared memory store, shared live-memory runtime, and
-sleep consolidation path by default.
+Last reviewed: 2026-06-09 against the shared live-memory-runtime phase and the
+accepted realtime voice trust-boundary decision. Live-loop co-retrieval handles
+mechanical edges, sleep contributes safety-net and LLM-candidate associations
+through the proposer interface, and both text and text-owned voice sessions flow
+through the shared memory store, shared live-memory runtime, and sleep
+consolidation path by default.
 
 ## Purpose
 

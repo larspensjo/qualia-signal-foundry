@@ -12,22 +12,36 @@ This document should remain exploratory. Questions listed here should not be tre
 
 Status: Exploratory
 
-The project has discussed audio as an important early capability, especially for real-time interaction. The exact implementation approach is still open.
+The project has implemented transcript-first audio paths and has now accepted a
+browser-based realtime speech-to-speech direction as the next live voice slice.
+That direction is still experimental: the implementation exists only as a plan and
+design, not as a working browser conversation.
+
+Long term, realtime voice conversation is the intended primary operating mode of
+QSF. The research questions here should therefore evaluate and shape that mode,
+not treat it as just another isolated experiment.
 
 Relevant related documents:
 
 - `docs/Concepts/Concept.RealtimePresence.md`
 - `docs/Concepts/Concept.ExternalInputs.md`
 - `docs/Architecture/Architecture.AudioLoop.md`
+- `docs/Architecture/Architecture.RealtimeSessionServer.md`
 - `docs/Experiments/Experiment.StreamingTranscriptionMVP.md`
 - `docs/Experiments/Experiment.AudioLoopMVP.md`
+- `docs/Plans/Design.RealtimeVoiceConversation.md`
+- `docs/Plans/Plan.RealtimeVoiceConversation.md`
 
 Current implementation direction:
 
-- Start with streaming transcription as partial and final transcript events.
-- Use `gpt-realtime-whisper` as the first OpenAI-backed realtime speech target.
-- Defer `gpt-realtime-2` full speech-to-speech sessions until transcript events,
-  latency traces, and runtime bridging are working.
+- Keep the existing streaming transcription and text-owned voice paths as the
+  deterministic, inspectable foundation.
+- Use `gpt-realtime-whisper` for transcript-only realtime speech-to-text work.
+- Build the first browser speech-to-speech slice with `gpt-realtime-2`, voice
+  `marin`, medium reasoning effort, audio output, and provider `server_vad` with
+  automatic response creation and interruption enabled.
+- Treat Phase-2 browser-relayed events as diagnostic-only until the server-side
+  sideband becomes authoritative.
 - Keep `gpt-realtime-translate` as a separate translation experiment.
 
 ## Research Theme: Audio and Presence
@@ -95,6 +109,8 @@ A real-time system may fail because many small delays accumulate. Understanding 
 - text-to-speech delay
 - audio playback delay
 - orchestration overhead
+- WebRTC setup and SDP rendezvous overhead
+- server-side sideband attach and context-injection overhead
 
 #### Status
 
@@ -112,12 +128,16 @@ Turn detection affects flow. If the system responds too early, it interrupts the
 
 #### Current Thinking
 
-A useful early approach may combine voice activity detection, silence thresholds, and optional explicit controls such as push-to-talk.
+The accepted browser realtime MVP starts with provider `server_vad` because it is
+simple, directly exercises automatic response creation, and supports barge-in.
+`semantic_vad` remains a later comparison point if the first human tests show
+awkward turn endings or if lower eagerness is worth the extra latency.
 
 #### Possible Experiments
 
-- Compare push-to-talk, silence-based turn detection, and continuous streaming.
-- Test different silence thresholds.
+- Compare provider `server_vad` with `semantic_vad` after the baseline browser MVP
+  is measurable.
+- Test different silence/eagerness settings.
 - Track false starts, premature responses, and awkward pauses.
 
 #### Status
@@ -134,7 +154,9 @@ Interruption handling is central to real-time presence. A system that continues 
 
 #### Current Thinking
 
-The system should eventually support barge-in, where user speech can stop or modify the current output. Early prototypes may log interruptions before fully handling them.
+The first browser realtime slice should exercise provider barge-in through
+automatic interruption. QSF should still record interruption facts explicitly and
+avoid over-interpreting them until the behavior has been observed in human tests.
 
 #### Possible Design Directions
 
@@ -180,7 +202,7 @@ Streaming audio may support better real-time behavior, but it can also increase 
 - Push-to-talk batch transcription
 - Voice activity based chunks
 - Continuous streaming transcription through transcript events
-- Realtime model session with audio input, after transcript-first experiments
+- Realtime model session with audio input/output through the browser media plane
 - Hybrid mode with cheap detection and selective deeper processing
 
 #### Status
@@ -205,7 +227,67 @@ Incremental understanding may allow earlier reactions, interruption handling, an
 
 Open
 
+### RQ-Audio-TranscriptDivergence
+
+How should QSF handle divergence between the user ASR transcript and what the
+realtime model appears to have understood from native audio?
+
+#### Why It Matters
+
+In a speech-to-speech session, the model hears audio directly. The transcript is
+an observability artifact and memory candidate source, but it may not perfectly
+match the model's internal audio interpretation. Treating the transcript as exact
+truth could create bad memories or confusing continuity.
+
+#### Current Thinking
+
+Store the raw provider event stream and a normalized transcript, but treat the
+transcript as approximate. Memory extraction should prefer completed trusted turns
+and should preserve enough source metadata to audit recognition errors.
+
+#### Possible Experiments
+
+- Compare user-perceived intent with stored input transcripts after live sessions.
+- Track cases where the spoken response implies the model understood something
+  different from the transcript.
+- Evaluate whether memory extraction should exclude low-confidence or disputed
+  transcript segments.
+
+#### Status
+
+Open
+
 ## Research Theme: Audio Memory
+
+### RQ-Audio-ContextInjectionRelevance
+
+What is the smallest working-memory packet that improves spoken continuity without
+overloading the realtime session?
+
+#### Why It Matters
+
+The realtime model should not receive a full memory dump. QSF needs to inject just
+enough identity, recent context, and retrieved memory to make the conversation feel
+continuous while preserving latency and avoiding irrelevant influence.
+
+#### Current Thinking
+
+Use existing association-weighted retrieval, but send a small packet per session
+start and per user turn through the server-side sideband. Relevance matters more
+than volume.
+
+#### Possible Experiments
+
+- Compare no injection, one selected memory, and a small ranked packet across the
+  same spoken continuity prompt.
+- Measure whether injected memory appears in the spoken reply without derailing the
+  current turn.
+- Inspect traces for selected and omitted memories to see whether the packet was
+  explainable.
+
+#### Status
+
+Open
 
 ### RQ-Audio-TranscriptMemory
 
@@ -256,6 +338,8 @@ A consistent voice may strengthen continuity. However, voice identity may also c
 #### Possible Questions
 
 - Should the voice remain stable across sessions?
+- Is the accepted initial `marin` default perceived as a stable identity or merely
+  as a provider quality default?
 - Should the voice change with system state?
 - Should different internal model roles have different voices?
 - Should voice customization be part of the experiment or avoided initially?
@@ -359,35 +443,42 @@ If audio behavior cannot be inspected, it will be difficult to improve. The syst
 - TTS timing
 - playback timing
 - interruption events
+- ephemeral-token and `call_id` binding lifecycle events
+- context-injection payload size and selected-memory IDs
+- trusted vs diagnostic event source markers
 - memory events created from audio
 
 #### Status
 
 Open
 
-## Early Candidate Questions for the First Audio MVP
+## Early Candidate Questions for the Realtime Browser Voice MVP
 
-The first audio-adjacent experiment should focus on streaming transcription before
-the full microphone-to-speaker loop:
+The first transcript-only MVP has already established the speech-to-text boundary.
+The next live audio validation slice should focus on the browser speech-to-speech
+loop:
 
-1. Can the system represent live speech as partial and final transcript events?
-2. What is the measured latency to first partial transcript and final transcript?
-3. Should partial transcripts affect live state or only traces?
-4. How often do partial transcripts revise meaningfully before finalization?
-5. What provider errors and fallback paths need explicit events?
-6. What information should be logged before adding TTS and playback?
+1. Can a user speak in the browser and hear a realtime spoken reply?
+2. Does provider `server_vad` create acceptable turn boundaries for normal speech?
+3. Does barge-in stop or revise the active response quickly enough to feel present?
+4. Do diagnostic browser-relayed events map cleanly into QSF exchanges without
+   entering sleep or continuity?
+5. Does the SDP `Location` header provide a reliable `call_id` for Phase-3
+   sideband attachment?
+6. How often do stored transcripts diverge from what the model appeared to
+   understand?
+7. What is the smallest memory-injection packet that improves spoken continuity?
 
 ## Not Yet Decided
 
 The following should remain undecided for now:
 
-- provider choice for full speech-to-speech voice sessions
 - local versus cloud transcription after the first OpenAI-backed streaming test
 - local versus cloud text-to-speech
 - always-listening versus push-to-talk
-- voice identity
+- voice identity beyond the initial `marin` quality default
 - whether to store raw audio
-- whether to use realtime multimodal models directly
+- whether `semantic_vad` is worth added latency after baseline human tests
 - whether audio should be part of the core loop or an optional interface module
 
 ## Possible Follow-Up Documents
@@ -396,8 +487,10 @@ This research question document may lead to:
 
 - `docs/Experiments/Experiment.StreamingTranscriptionMVP.md`
 - `docs/Experiments/Experiment.AudioLoopMVP.md`
+- `docs/Experiments/Experiment.RealtimeBrowserVoiceMVP.md`
+- `docs/Experiments/Experiment.LiveContextInjection.md`
 - `docs/Architecture/Architecture.AudioDeviceAbstraction.md`
-- `docs/Architecture/Architecture.RealtimeSession.md`
+- `docs/Architecture/Architecture.RealtimeSessionServer.md`
 - `docs/DecisionLog.md` entries for accepted audio input and provider-boundary decisions
 
 ## Summary

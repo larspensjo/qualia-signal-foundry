@@ -9,8 +9,9 @@ This document captures an early candidate architecture for real-time audio inter
 ## Implementation Status
 
 The transcript-first pipeline, text-owned voice loop, and realtime provider bridge
-described later in this document are implemented. Full-duplex turn-taking policy is
-still experimental.
+described later in this document are implemented. A browser-based full-duplex
+realtime voice conversation has an accepted Phase-0 design baseline, but is not
+implemented yet.
 
 **Implemented today (all under the optional `openai` Cargo feature):**
 
@@ -62,17 +63,22 @@ still experimental.
 **Partial:**
 
 - Voice Activity Detection is at the provider boundary; no separate VAD module
-- Operating modes: turn-based is implemented; push-to-talk and full-duplex are not
+- Operating modes: turn-based is implemented; full-duplex browser realtime voice is
+  planned but not implemented
 
 **Not yet implemented:**
 
 - Render-only TTS for live spoken answers (current speech output is metadata-only)
+- Browser WebRTC media plane with audible realtime model output
+- Dedicated `qsf_realtime_server` for token minting, SDP rendezvous, diagnostic
+  event relay, and later sideband control
 - Full interruption / barge-in policy beyond persisted provider interruption facts
-- Always-listening or full-duplex realtime mode
+- Always-listening mode outside explicit browser session start/stop
 - Translation provider (`gpt-realtime-translate`) integration
 - A live debug UI for audio state
 
-Last reviewed: 2026-06-06 against the completed voice-to-sleep consolidation path.
+Last reviewed: 2026-06-09 against the accepted realtime voice conversation
+Phase-0 decisions.
 
 ## Summary
 
@@ -151,9 +157,11 @@ Microphone
 
 This should be treated as a pipeline of events, not as one monolithic function.
 
-The first provider-backed implementation should use streaming transcription as the
-boundary into the runtime loop. A full realtime voice session can be tested later,
-but it should still map provider events back into the same QSF event stream.
+The first provider-backed implementation used streaming transcription as the
+boundary into the runtime loop. The next planned live voice slice is a browser
+WebRTC speech-to-speech session that still maps provider facts back into the same
+QSF event stream and keeps provider-owned media separate from QSF-owned memory,
+tools, and observability.
 
 The current text-owned voice-loop experiment adds a second, deterministic boundary:
 speech output is a renderer for QSF-owned `OutputProduced` text, not the owner of the
@@ -274,7 +282,8 @@ SpeechOutputProvider
   -> future render-only TTS provider after the simulated boundary is proven
 
 RealtimeSessionProvider
-  -> gpt-realtime-2 adapter for later speech-to-speech experiments
+  -> existing gpt-realtime-2 one-shot adapter
+  -> planned browser realtime voice conversation via qsf_realtime_server
 
 TranslationProvider
   -> gpt-realtime-translate adapter for separate translation experiments
@@ -432,7 +441,10 @@ Disadvantages:
 - harder to debug
 - higher risk of confusing state transitions
 
-This should probably come after simpler modes are working.
+This is the current planned browser realtime voice direction. The simpler
+transcript-first and text-owned voice boundaries remain the deterministic test
+foundation; the full-duplex browser path must still prove its event mapping,
+trust boundary, latency, and interruption behavior.
 
 ## Interruption Handling
 
@@ -696,16 +708,16 @@ docs/Architecture/Architecture.StateAndObservability.md
 
 ## Current Recommendation
 
-Start with streaming transcription and deterministic text-owned voice-loop boundaries,
-not a full duplex voice product.
+Keep the streaming transcription and deterministic text-owned voice-loop boundaries
+as the regression-safe foundation. They prove QSF-owned interpretation, context,
+memory retrieval, response text, shared continuity, and latency tracing.
 
-Do not begin with full duplex realtime audio. Instead, build the smallest observable
-pipeline that turns audio into partial and final transcript events, logs timing, routes
-finalized text through QSF-owned context/model behavior, and only then hands
-`OutputProduced` text to speech output. A simulated transcript provider and simulated
-speech output provider should come first for deterministic tests; `gpt-realtime-whisper`
-is the first provider-backed target when real streaming speech-to-text is needed.
+The next live audio step is the browser realtime voice MVP described in
+`docs/Plans/Plan.RealtimeVoiceConversation.md` and
+`docs/Architecture/Architecture.RealtimeSessionServer.md`: WebRTC media in the
+browser, `qsf_realtime_server` for token and SDP rendezvous, diagnostic-only event
+relay in Phase 2, and authoritative sideband control in Phase 3.
 
-Once transcript events and the text-owned output boundary are working, use experiments
-to decide whether to add push-to-talk voice output, automatic turn detection,
-render-only TTS, `gpt-realtime-2` speech-to-speech sessions, and interruption handling.
+Do not let the realtime model become the whole simulated mind. The media plane may
+be provider-owned, but memory, context injection, tool permission, event logs, sleep
+eligibility, and continuity remain QSF-owned.

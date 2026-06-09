@@ -738,3 +738,129 @@ QSF runtime configuration. New non-secret app environment knobs should be added 
 launcher-managed list or exposed as launcher flags/profiles; raw Cargo runs remain free
 to use ambient environment variables directly.
 Refs: scripts/qsf.ps1, scripts/qsf.Tests.ps1, README.md
+
+## 2026-06-09 - Lean session crate owns pure session contracts
+Decision: A lean `qsf_session` crate will own the shared pure session surface:
+session events, live-session reducer/state, `Exchange`, persistence DTOs,
+continuity manifest, and the event-record/`EventType` contract. `RunContext`,
+provider clients, memory retrieval, tools, OpenAI dependencies, and CPAL
+dependencies stay outside that crate.
+Context: The realtime voice server needs reducer and persistence contracts without
+pulling the full `qsf_app` runtime or audio/model provider graph into a live
+server crate.
+Consequences: Session extraction is a behavior-preserving refactor. `qsf_app`
+may re-export the session surface, but provider, memory, tool, and runtime context
+dependencies must cross explicit adapter boundaries.
+Refs: docs/Plans/Design.RealtimeVoiceConversation.md,
+docs/Architecture/Architecture.RealtimeSessionServer.md
+
+## 2026-06-09 - Browser realtime voice uses a dedicated live server
+Decision: Browser-based realtime voice uses a dedicated `qsf_realtime_server`
+crate for live side effects. The browser owns the WebRTC media plane. The QSF
+server owns ephemeral-token minting, SDP rendezvous, and the
+`{qsf_session_id <-> provider call_id}` binding. `qsf_browser_server` remains a
+read-only post-hoc inspection server.
+Context: The existing browser server intentionally avoids live runtime side
+effects, while the realtime voice plan requires credential handling, SDP proxying,
+provider call binding, reducer access, and later sideband/tool control.
+Consequences: Live realtime routes must not be added to `qsf_browser_server`.
+Browser media can flow directly to the provider, but all credentials and session
+bindings remain server-side and observable through QSF events/traces.
+Refs: docs/Architecture/Architecture.RealtimeSessionServer.md,
+docs/Plans/Design.RealtimeVoiceConversation.md,
+https://developers.openai.com/api/docs/guides/realtime-webrtc
+
+## 2026-06-09 - Browser-relayed realtime events are diagnostic until sideband authority
+Decision: Phase-2 browser-relayed realtime provider events are untrusted,
+diagnostic-only facts. They may be persisted for inspection, but they are excluded
+from sleep consolidation, continuity promotion, and durable memory. Trusted live
+voice exchanges begin when the Phase-3 server-side sideband becomes the
+authoritative event source.
+Context: The browser can observe useful media/session events, but it is not an
+authoritative source for provider facts. The server-side sideband can attach to
+the same realtime call via `call_id` and observe/control the session from the
+server boundary.
+Consequences: Event records and exchanges need an explicit trust/source marker.
+Sleep and continuity code must filter diagnostic browser-relay records. The
+browser relay can prove UI, media, and reducer wiring without changing durable
+memory.
+Refs: docs/Architecture/Architecture.RealtimeSessionServer.md,
+docs/Plans/Design.RealtimeVoiceConversation.md,
+https://developers.openai.com/api/docs/guides/realtime-server-controls
+
+## 2026-06-09 - Realtime browser voice MVP defaults
+Decision: The first browser realtime voice MVP uses `gpt-realtime-2`, voice
+`marin`, `reasoning_effort = medium`, `output_modalities = ["audio"]`, and
+provider `server_vad` with automatic response creation and interruption enabled.
+The browser client secret lifetime is governed by provider-returned
+`client_secret.expires_at`. The provider `call_id` binding is active-call scoped,
+invalidated on stop/error/expiry, and retained only for a short diagnostic cleanup
+grace.
+Context: The project needs concrete defaults so Phase 2 can exercise the new code
+path by default. Current OpenAI docs identify `gpt-realtime-2` as the most capable
+realtime voice model, recommend `marin`/`cedar` for voice quality, expose
+`server_vad` for turn detection, and provide `expires_at` for client secrets.
+Consequences: Phase-2 tests and manual verification should expect these defaults.
+Changing model, voice, VAD mode, or binding lifetime later requires an explicit
+decision or provider-drift note rather than an incidental implementation change.
+Refs: docs/Plans/Design.RealtimeVoiceConversation.md,
+https://developers.openai.com/api/docs/models/gpt-realtime-2,
+https://developers.openai.com/api/reference/resources/realtime/subresources/client_secrets
+
+## 2026-06-09 - Realtime provider event mapping is identity-explicit
+Decision: In speech-to-speech mode, a QSF exchange is a paired user
+audio/transcript item and assistant response keyed by provider item/response ids.
+`call_id` identifies the provider call, `event_id` supports deduplication and
+trace correlation, `item_id`/`previous_item_id` reconstruct conversation order,
+and `response_id` tracks assistant response lifecycle. Exchange completion must
+carry an explicit QSF exchange identity, such as `exchange_index`, so overlapping
+events cannot complete the wrong exchange.
+Context: The existing reducer was adequate for a single-turn bridge, but
+full-duplex provider events can overlap, arrive out of order, duplicate, or finish
+after interruption.
+Consequences: Phase 1 applies the completion identity change before provider
+integration. Phase 2 must include reducer tests for out-of-order transcript
+completion, duplicate provider events, interruption before `response.created`,
+response completion after interruption, and two user turns before the prior
+response finishes.
+Refs: docs/Architecture/Architecture.RealtimeSessionServer.md,
+docs/Plans/Design.RealtimeVoiceConversation.md,
+crates/qsf_app/src/session/live_state.rs
+
+## 2026-06-09 - Realtime tools are read-only and execution-recorded
+Decision: Tools exposed to live realtime voice sessions are allow-listed and
+read-only. Realtime model tool-call requests are recorded as `ToolRequested`, but
+that request is not execution evidence. QSF decides permission, executes the tool
+server-side, records permission/result/error/timing, returns a
+`function_call_output` item to the provider, and resumes the response.
+Context: Earlier realtime voice work deliberately prevented providers from
+executing tools directly. The live sideband design now needs a positive execution
+path without weakening the QSF permission and observability boundary.
+Consequences: Do not overload `auto_executed` as proof of execution. Phase 4 must
+prove both allowed read-only execution and denied non-allow-listed calls, with
+records linked by provider `call_id` or tool-call id.
+Refs: docs/Architecture/Architecture.ToolSystem.md,
+docs/Plans/Design.RealtimeVoiceConversation.md,
+crates/qsf_app/src/audio/voice_session_provider.rs
+
+## 2026-06-09 - Realtime voice conversation is the target operating mode
+Decision: Realtime voice conversation is the intended primary operating mode of
+Qualia Signal Foundry. Named experiments, experiment reports, and
+`qsf_app` experiment-runner paths are validation scaffolds for building and
+measuring that mode, not the final category for the live runtime. When
+`qsf_realtime_server` and the browser UI exist, `scripts/qsf.ps1` should expose a
+first-class realtime conversation launcher path rather than only
+`app -Experiment <name>`.
+Context: The project has used `qsf.ps1` mostly to start tests, browser tools, and
+named experiments. The realtime voice conversation plan represents the long-term
+interaction goal of the project, so documentation and launcher design should not
+frame it as merely another experiment.
+Consequences: Plans may still create `Experiment.*` documents for verification,
+but those docs are evidence and test harnesses. README, launcher documentation,
+and future operator workflows should distinguish current experiment-centric
+development from the target realtime conversation mode. The exact launcher command
+name can be decided when the realtime server/UI entry point is implemented.
+Refs: README.md, docs/ProjectFrame/ProjectVision.md,
+docs/Plans/Plan.RealtimeVoiceConversation.md,
+docs/Plans/Design.RealtimeVoiceConversation.md,
+docs/Architecture/Architecture.RealtimeSessionServer.md, scripts/qsf.ps1

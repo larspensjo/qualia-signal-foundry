@@ -42,6 +42,12 @@ Qualia Signal Foundry is:
 
 The project should support both engineering work and conceptual research.
 
+The eventual primary interaction mode is realtime voice conversation: a live,
+interruptible spoken exchange where the voice interface is connected to QSF-owned
+memory, context, perception tools, observability, and continuity. The current
+experiment runner and launcher paths are scaffolding for building and validating
+that mode, not the final user-facing shape of the project.
+
 ## What This Project Is Not
 
 This project is not primarily:
@@ -171,6 +177,11 @@ Initial areas of investigation include:
 - documentation of decisions and open questions
 
 The first versions should favor clarity, observability, and experimentation over completeness.
+
+As the realtime voice conversation path matures, it should move from experiment
+harnesses into a first-class operating mode. Experiments remain important for
+validation and comparison, but the live conversation mode is the project target
+they are building toward.
 
 ## Long-Term Possibilities
 

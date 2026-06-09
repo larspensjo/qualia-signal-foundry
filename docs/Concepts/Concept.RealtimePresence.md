@@ -85,12 +85,20 @@ The loop may include:
 - text-to-speech
 - interruption handling
 
-This does not need to be perfect at first. The first goal is to create a minimal loop that can be measured, observed, and improved.
+This does not need to be perfect at first. The first goal is to create a minimal
+loop that can be measured, observed, and improved.
 
-The current implementation direction is transcript-first: establish streaming speech-to-text
-as partial and final transcript events before adding full speech output or full duplex
-voice sessions. This keeps realtime presence connected to the same event, reducer,
-state, and trace model as the rest of the framework.
+The project has already used a transcript-first path to establish partial/final
+speech events, state updates, shared continuity, and latency traces. The current
+next direction is a browser-based realtime speech-to-speech slice where the
+browser owns the WebRTC media plane and QSF owns memory, context, tools, and
+observability through the server. That keeps realtime presence connected to the
+same event, reducer, state, and trace model as the rest of the framework.
+
+This realtime conversation path is the intended primary operating mode for QSF as
+the project matures. Smaller experiments remain useful because they isolate and
+measure pieces of presence, but they are scaffolding around the live conversation
+goal.
 
 ### State-Oriented Interaction
 
@@ -353,6 +361,10 @@ Mitigation:
 
 ## Possible Experiments
 
+These experiments are presence probes and build slices. They should inform the
+eventual realtime conversation mode rather than define the project as a collection
+of unrelated demos.
+
 ### Experiment: Minimal Audio Loop
 
 Build a minimal loop with:
@@ -374,9 +386,19 @@ output is implemented.
 
 ### Experiment: Interruptible Speech
 
-Test whether the system can stop speaking when the user starts talking.
+Test whether the system can stop or revise a realtime spoken response when the
+user starts talking.
 
 Observe whether it can resume or revise its response coherently.
+
+### Experiment: Realtime Browser Voice MVP
+
+Build the first browser-based full-duplex voice slice: user speaks, the realtime
+model responds audibly, interruption is exercised, and relayed events are recorded
+as diagnostic-only QSF exchanges.
+
+Measure latency, turn-taking quality, interruption behavior, transcript
+divergence, and whether the trust boundary stays observable.
 
 ### Experiment: Partial Transcript State
 
@@ -417,11 +439,17 @@ Evaluate whether this improves perceived presence.
 - Concept.SleepPhase.md
 - Concept.ContextBudget.md
 - Concept.MultiModelMind.md
+- docs/Plans/Design.RealtimeVoiceConversation.md
+- docs/Architecture/Architecture.RealtimeSessionServer.md
 
 ## Current Status
 
 Exploratory.
 
-Realtime presence is a central concept, but the exact architecture should not be locked down yet.
+Realtime presence is a central concept. The full behavior is still exploratory,
+but the first browser speech-to-speech architecture has an accepted Phase-0
+decision baseline as of 2026-06-09.
 
-The next useful step is probably a small audio-loop experiment with detailed logging, followed by a focused review of latency, interruption behavior, and state handling.
+The next useful step is the realtime browser voice MVP with detailed logging,
+followed by a focused review of latency, interruption behavior, transcript
+divergence, and state handling.

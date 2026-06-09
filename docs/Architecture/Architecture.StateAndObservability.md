@@ -64,11 +64,16 @@ candidate categories listed below still have no shared module.
 - **Identity / Self-Model State** — no module exists
 - **Research State** as a structured surface — experiment metadata lives in the
   report but not as an inspectable runtime category
+- **Realtime Session State** for browser speech-to-speech: provider `call_id`
+  bindings, ephemeral-token lifecycle traces, provider-event trust/source markers,
+  sideband attachment state, and context-injection/tool-result correlation are
+  accepted future observability surfaces but not implemented.
 - Observability views beyond the per-run markdown report (no timeline UI, no
   memory-graph view, no cost dashboard)
 - `experiment_id` and `memory_update_id` correlation across runs
 
-Last reviewed: 2026-05-26 against explicit remember-this capture observability and retrieval skip reasons.
+Last reviewed: 2026-06-09 against explicit remember-this capture observability,
+retrieval skip reasons, and the accepted realtime voice observability boundary.
 
 ## Summary
 

@@ -1,293 +1,237 @@
-Your design is a good fit for the Realtime API, but I would separate responsibilities clearly:
+# Concept: Realtime Audio
+
+## Summary
+
+Realtime audio is the use of live speech input, live spoken output, turn-taking,
+interruption, and timing as part of Qualia Signal Foundry's simulated presence.
+
+The project should not treat a realtime voice model as the whole simulated mind.
+The useful shape is a three-plane split:
 
 ```text
-gpt-realtime = realtime voice/persona interface
-your app     = memory, associations, tools, world model, volition, logging
+Media plane          = realtime voice transport and audible speech
+Control/context plane = QSF memory, instructions, and working context injection
+Tool plane           = QSF-permitted perception tools and returned results
 ```
 
-Do **not** treat `gpt-realtime` as the whole consciousness simulator. Treat it as the **live conversational surface** of a larger system.
+In that split, the realtime model is the live conversational surface. QSF owns
+continuity, memory, associations, tools, state, and observability.
 
-## Suggested architecture
+## Status
+
+Exploratory concept with one accepted implementation direction:
+
+- `docs/Plans/Design.RealtimeVoiceConversation.md`
+- `docs/Plans/Plan.RealtimeVoiceConversation.md`
+- `docs/Architecture/Architecture.RealtimeSessionServer.md`
+
+The Phase-0 baseline for the first browser speech-to-speech slice was accepted on
+2026-06-09. This concept remains broader than that plan and should not be read as
+an implementation commitment unless the decision log says so.
+
+Realtime audio is also the path toward QSF's eventual primary operating mode. The
+named experiments below are validation steps for that mode, not an indication that
+live voice should remain only an experiment-runner feature.
+
+## Why It Matters
+
+Audio changes the interaction from isolated prompt/response turns into something
+closer to a live encounter. Voice, interruption, pauses, response timing, and
+recovery from overlap can all affect whether the system feels present.
+
+Realtime audio also produces research signals that text alone does not:
+
+- turn boundaries
+- hesitation and silence
+- interruption timing
+- transcript instability
+- speech-response latency
+- perceived continuity across sessions
+
+The important project question is not just how to play audio. It is how live
+speech should connect to memory, attention, state, and observable continuity.
+
+## Three Planes
+
+### Media Plane
+
+The media plane handles microphone capture, speaker playback, WebRTC/WebSocket
+transport, provider VAD, and barge-in behavior.
+
+For the accepted browser MVP, the browser owns WebRTC media. Audio flows between
+the browser and the realtime provider. The QSF server owns session setup and
+observability, but it does not proxy raw media.
+
+Early media-plane questions:
+
+- Is provider `server_vad` good enough for natural turn-taking?
+- How quickly does barge-in stop or revise an active spoken response?
+- What audio state should the UI expose without becoming a product surface?
+
+### Control and Context Plane
+
+The control/context plane is where QSF makes the voice session part of the larger
+system. It can inject:
+
+- compact working-memory packets
+- identity or tone guidance
+- relevant retrieved memories
+- tool results
+- current session state
+- unresolved questions or active focus
+
+The guiding rule is relevance over volume. A realtime session should receive a
+small packet that helps the current turn, not a broad memory dump.
+
+### Tool Plane
+
+Realtime voice tool use should remain a QSF-controlled perception channel.
+
+The model may request allow-listed read-only tools. QSF decides permission, runs
+the tool server-side, records the permission and result, and returns the result
+to the realtime session. A provider tool-call request is not execution evidence
+by itself.
+
+Write-capable and outbound-action tools remain outside the realtime voice scope
+until explicitly revisited.
+
+## Memory Formation
+
+Realtime audio can feed memory, but it should not automatically become durable
+truth.
+
+A useful loop is:
 
 ```text
-User microphone
-   ↓
-Realtime session: gpt-realtime
-   ↓              ↑
-Audio reply       Injected context / tool results / memory hints
-   ↓              ↑
-User hears AI     Your simulator backend
-                  ├─ transcript logger
-                  ├─ memory extractor
-                  ├─ association graph
-                  ├─ tool executor
-                  ├─ internal state / drives / goals
-                  └─ context injector
+spoken interaction
+  -> provider event stream
+  -> normalized transcript and lifecycle records
+  -> trusted QSF exchange
+  -> live retrieval / context injection
+  -> sleep or review consolidation
+  -> durable memory and associations
 ```
 
-OpenAI’s Realtime API supports low-latency multimodal interaction with audio, text, and images as input, and audio/text as output. It supports WebRTC for browser/client-side realtime voice, WebSocket for server-side use, and SIP for telephony-style integrations. ([OpenAI][1])
+The trust boundary matters. Browser-relayed events can help diagnose the media
+loop, but durable memory should begin only from an authoritative server-side
+source.
 
-## Use three separate “planes”
+## Transcript Caveat
 
-### 1. Media plane: live voice
+In speech-to-speech mode, the model hears audio natively. The user transcript is
+an observability artifact and memory candidate source, not guaranteed proof of
+what the model internally understood.
 
-This is the realtime connection handling:
+The system should preserve enough event and source metadata to inspect cases
+where:
 
-```text
-microphone audio → gpt-realtime → generated speech audio
-```
+- the transcript is wrong,
+- the model replies as though it heard something different,
+- memory extraction would preserve a questionable phrase,
+- interruption truncates what the user actually heard.
 
-For a browser app, WebRTC is probably the natural choice. For a server-driven simulator, you may also keep a server-side WebSocket or sideband connection.
+## Candidate Experiments
 
-The realtime session can use voice activity detection, so the user does not need to press “send” after every utterance. The API can detect when the user has stopped speaking and commit the audio turn. ([OpenAI][2])
+These experiments are how the project builds evidence for the primary realtime
+conversation mode.
 
-### 2. Control/context plane: inject information
+### Streaming Transcription Foundation
 
-Your simulator should inject relevant state into the realtime session. Use this for things like:
+Represent live speech as partial and final transcript events. Measure latency and
+partial-transcript instability.
 
-```text
-current internal goal
-active memory
-emotional/drive state
-relevant association
-tool result
-scene state
-recent contradiction
-newly formed memory
-```
+Status: implemented as the transcript-first foundation.
 
-For simple context, add a text item with `conversation.item.create`. The API reference says this can add messages, function calls, and function-call responses to the conversation context, including mid-stream. ([OpenAI][3])
+### Text-Owned Voice Loop
 
-Conceptually:
+Let QSF own interpretation, context, memory retrieval, and response text, then
+send the completed response to a speech-output adapter.
 
-```json
-{
-  "type": "conversation.item.create",
-  "item": {
-    "type": "message",
-    "role": "user",
-    "content": [
-      {
-        "type": "input_text",
-        "text": "[Internal context: The user mentioned Logonaut earlier. This is likely related to WPF, AvalonEdit, and log filtering.]"
-      }
-    ]
-  }
-}
-```
+Status: implemented as the deterministic QSF-owned voice path.
 
-For behavioral changes, use `session.update`, for example:
+### Realtime Browser Voice MVP
 
-```json
-{
-  "type": "session.update",
-  "session": {
-    "instructions": "The simulated mind currently feels curious but cautious. It should ask one focused follow-up question rather than changing topic."
-  }
-}
-```
+Use browser WebRTC for speech-to-speech conversation, with provider VAD and
+barge-in. Record Phase-2 browser-relayed events as diagnostic-only QSF exchanges.
 
-For a serious application, I would prefer a **server-side sideband control channel**. OpenAI describes sideband as two active connections to the same realtime session: one from the user client and one from your application server. The server connection can monitor the session, update instructions, and respond to tool calls. ([OpenAI][4])
+Questions it should answer:
 
-### 3. Memory plane: record, extract, consolidate
+- Can the user speak and hear a reply in one browser session?
+- Does interruption feel usable?
+- Does the event mapping survive overlap and out-of-order events?
+- Does the API key stay server-side?
+- Does the `call_id` binding support later sideband attachment?
 
-You should not rely on the realtime session itself as your long-term memory. Instead, record a durable event log:
+### Live Context Injection
 
-```text
-audio input committed
-user transcript delta/completed
-assistant audio transcript delta/done
-tool call requested
-tool result returned
-context injected
-memory created
-memory revised
-association strengthened/weakened
-```
+Attach a server-side sideband to the active realtime call. Inject a small
+working-memory packet per session start and user turn.
 
-Then run your own memory process over that event stream.
+Questions it should answer:
 
-## Conversation recording
+- What amount of memory improves continuity?
+- How much injection increases latency?
+- Can the spoken model use memory without derailing the current turn?
 
-You can collect transcripts for both sides.
+### Live Tool Perception
 
-For **user speech**, enable input audio transcription and listen for:
+Allow the realtime model to request read-only QSF tools, execute them server-side,
+record permission/result, and return the result to the session.
 
-```text
-conversation.item.input_audio_transcription.delta
-conversation.item.input_audio_transcription.completed
-```
+Questions it should answer:
 
-The transcription docs say the completed event includes the final transcript for a user audio item, and that ordering between completion events from different turns is not guaranteed; you should use `item_id` and `previous_item_id` to reconstruct ordering. ([OpenAI][2])
+- Does the model call the right tool?
+- Does it use the result in speech?
+- Are denial and failure paths observable?
 
-For **assistant speech**, listen for:
+## Open Questions
 
-```text
-response.output_audio_transcript.delta
-response.output_audio_transcript.done
-```
+- How should QSF represent overlapping user and assistant speech in reducer state?
+- How should interrupted assistant speech affect future context?
+- When should partial transcript state influence attention but not memory?
+- What latency thresholds matter for spoken presence?
+- How much working memory should be injected into the realtime session?
+- How should ASR-vs-model-understanding divergence affect memory extraction?
+- Should voice choice become part of identity, or remain a provider quality
+  default?
+- Should audio eventually be a core loop capability or an optional interface?
 
-The realtime conversation docs list these as server audio output events, alongside the actual audio delta/done events. ([OpenAI][5])
+## Risks
 
-Important caveat: user transcription is a separate ASR process. OpenAI notes that realtime models accept audio natively, so the input transcript may diverge somewhat from what the model understood internally and should be treated as a rough guide. ([OpenAI][6])
+### Audio Becomes the Product
 
-So your app should store both:
+Realtime audio can pull the project toward a polished voice assistant. The
+mitigation is to keep the memory, state, tools, and observability planes central.
 
-```text
-raw event stream
-normalized transcript
-```
+### Provider Lock-In
 
-Example normalized record:
+Realtime audio APIs shape architecture strongly. Provider-specific code should
+stay at the media/sideband boundary, while QSF session state and memory stay
+provider-agnostic.
 
-```json
-{
-  "conversationId": "conv_2026_06_08_001",
-  "itemId": "item_003",
-  "role": "user",
-  "modality": "audio",
-  "startTime": "2026-06-08T15:42:13.200Z",
-  "endTime": "2026-06-08T15:42:17.800Z",
-  "transcript": "I want the simulated mind to remember associations.",
-  "confidence": null,
-  "source": "input_audio_transcription.completed"
-}
-```
+### Untrusted Facts Enter Memory
 
-## Memory formation loop
+Browser-relayed provider facts are useful diagnostics but should not become
+sleep-eligible memory. Trusted live exchanges require the authoritative server
+sideband.
 
-A good design is:
+### Over-Injection
 
-```text
-1. User and AI speak naturally.
-2. Transcript events are appended to an event log.
-3. Memory extractor watches completed turns.
-4. Extractor proposes memories and associations.
-5. Memory manager validates, merges, or rejects them.
-6. Relevant memories are injected back into the realtime session when needed.
-```
+Injecting too much remembered context can slow the loop and distort the current
+conversation. Small, explainable packets are safer and easier to evaluate.
 
-Example memory objects:
+### Transcript Divergence
 
-```json
-{
-  "type": "episodic_memory",
-  "summary": "The user wants a realtime voice-based consciousness simulator.",
-  "evidence": ["conv_2026_06_08_001:item_003"],
-  "salience": 0.82,
-  "createdAt": "2026-06-08T15:43:00Z"
-}
-```
+Speech transcripts can be wrong or incomplete. Memory extraction and continuity
+must preserve enough evidence to audit what was actually observed.
 
-```json
-{
-  "type": "association",
-  "from": "consciousness simulator",
-  "to": "realtime voice interaction",
-  "strength": 0.76,
-  "evidence": ["conv_2026_06_08_001:item_003"]
-}
-```
+## Related Documents
 
-## Tool integration
-
-Let `gpt-realtime` call tools, but let **your application execute them**.
-
-```text
-model requests tool
-   ↓
-your server executes tool
-   ↓
-your server sends result back
-   ↓
-model continues speaking
-```
-
-This is important for your simulator because the tool layer can include:
-
-```text
-search memory
-retrieve associations
-inspect current internal state
-query world model
-schedule internal intention
-update relationship model
-record significant event
-```
-
-The sideband-control documentation explicitly frames the server connection as the place for private business logic and tool-call handling. ([OpenAI][4])
-
-## Recommended pattern for your case
-
-I would build it like this:
-
-```text
-Realtime Session
-  - Handles live voice
-  - Receives injected context
-  - Produces speech
-  - Emits transcript/tool events
-
-Simulator Core
-  - Owns identity/personality state
-  - Owns memory and associations
-  - Owns drives/goals/volition
-  - Decides what context to inject
-  - Decides when to initiate speech
-
-Memory Engine
-  - Stores transcript
-  - Extracts candidate memories
-  - Builds association graph
-  - Tracks salience, confidence, decay
-  - Retrieves relevant memories on demand
-
-Tool Layer
-  - Exposes controlled functions to the model
-  - Executes outside the model
-  - Feeds results back into session
-```
-
-The key design rule:
-
-```text
-Do not inject everything.
-Inject only what is currently relevant.
-```
-
-For example, instead of injecting a full memory dump:
-
-```text
-Bad:
-Here are 20 pages of everything you remember about the user...
-```
-
-inject a small working-memory packet:
-
-```text
-Good:
-Relevant memory: The user is designing a realtime consciousness simulator.
-Relevant preference: The user prefers technical explanations with clear architecture.
-Current internal goal: Help the user design memory/conversation flow.
-```
-
-## Main risk
-
-The realtime model is not a continuously running mind. It is still fundamentally a model responding inside a session. If you want simulated consciousness-like behavior, the persistent continuity must come from your app:
-
-```text
-continuity  = your memory system
-volition    = your goal/drives system
-voice       = gpt-realtime
-reasoning   = gpt-realtime + your orchestration
-identity    = persistent state outside the model
-```
-
-That gives you a much stronger architecture than trying to make the realtime session itself “be” the whole simulated mind.
-
-[1]: https://platform.openai.com/docs/guides/realtime?utm_source=chatgpt.com "Realtime API | OpenAI API"
-[2]: https://platform.openai.com/docs/guides/realtime-transcription?utm_source=chatgpt.com "Realtime transcription | OpenAI API"
-[3]: https://platform.openai.com/docs/api-reference/realtime-client-events/input_audio_buffer/clear?lang=node.js&utm_source=chatgpt.com "Client events | OpenAI API Reference"
-[4]: https://platform.openai.com/docs/guides/realtime-server-controls?utm_source=chatgpt.com "Webhooks and server-side controls | OpenAI API"
-[5]: https://platform.openai.com/docs/guides/realtime-conversations?utm_source=chatgpt.com "Realtime conversations | OpenAI API"
-[6]: https://platform.openai.com/docs/api-reference/realtime-server-events/response/audio_transcript/done?utm_source=chatgpt.com "Server events | OpenAI API Reference"
+- `docs/Concepts/Concept.RealtimePresence.md`
+- `docs/Research/ResearchQuestions.Audio.md`
+- `docs/Architecture/Architecture.AudioLoop.md`
+- `docs/Architecture/Architecture.RealtimeSessionServer.md`
+- `docs/Architecture/Architecture.ToolSystem.md`
+- `docs/Architecture/Architecture.MemorySystem.md`
+- `docs/Plans/Design.RealtimeVoiceConversation.md`
+- `docs/Plans/Plan.RealtimeVoiceConversation.md`

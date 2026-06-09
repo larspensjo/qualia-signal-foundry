@@ -13,6 +13,11 @@ hidden shortcuts.
 
 This project is currently in an early research and prototyping phase.
 
+The long-term target interaction is realtime voice conversation: a live,
+interruptible spoken mode where QSF-owned memory, context, perception tools,
+observability, and continuity sit behind the voice surface. Today's named
+experiments and launcher commands are scaffolding for reaching that mode.
+
 ## Goals
 
 The project explores ideas such as:
@@ -42,7 +47,8 @@ Expect:
 - evolving documentation
 - research notes mixed with implementation plans
 
-The early focus is on building enough infrastructure to run small experiments and learn from them.
+The early focus is on building enough infrastructure to run small experiments and
+learn from them while moving toward the realtime conversation mode.
 
 ### What works today
 
@@ -79,6 +85,8 @@ path.
 
 Not yet implemented (documented as concepts, plans, or ideas):
 
+- the primary browser-based realtime voice conversation mode
+- a first-class launcher command for that realtime mode
 - a volition or goal system
 - self-reflection through project-document introspection
 - attention/salience as a first-class signal
@@ -132,6 +140,11 @@ cargo test
 On Windows, the documented happy path for common local launches is the repository
 launcher. It is a thin wrapper over Cargo and npm: it prints the underlying command
 and any child-process environment changes before execution.
+
+Today the app side of the launcher is experiment-centric (`app -Experiment ...`).
+The planned realtime voice conversation path should eventually become a first-class
+launcher mode that starts the realtime server and browser UI together; until that
+server exists, the experiment runner remains the correct development harness.
 
 ```powershell
 pwsh -NoProfile -File .\scripts\qsf.ps1 help
