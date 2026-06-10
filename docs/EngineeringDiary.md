@@ -2797,3 +2797,36 @@ crates/qsf_memory/src/co_retrieval.rs, crates/qsf_realtime_protocol,
 crates/qsf_realtime_server/src/realtime, crates/qsf_realtime_server/src/state.rs,
 crates/qsf_realtime_server/ui/src/realtime.ts; implements: Sideband gaps degrade
 transport trust until verified recovery
+
+## 2026-06-10 - Sideband websocket handshake was missing its generated headers
+
+A browser realtime session reached "listening" but never produced a response: the
+server-side sideband is the sole issuer of `response.create` (the browser session runs
+with `turn_detection.create_response = false`), and its websocket never attached.
+
+What changed:
+- The sideband request is now built via `into_client_request()`, which generates the
+  websocket handshake headers (`Sec-WebSocket-Key`, `Upgrade`, `Connection`,
+  `Sec-WebSocket-Version`, `Host`); the Authorization header is layered on afterwards. The
+  previous hand-built `Request` carried none of the handshake headers, so the client-side
+  handshake failed instantly with `Missing, duplicated or incorrect header
+  sec-websocket-key` before the request ever reached OpenAI.
+- A failed handshake now returns `SidebandExit::Disconnected` (retryable with backoff)
+  instead of propagating as a fatal error; the `run_sideband` error arm also retries with
+  backoff and honours the stop channel rather than breaking permanently.
+- Handshake failures are rendered with HTTP status and a bounded response body; runtime
+  errors log the full anyhow chain (`{error:#}`). This detail is what surfaced the real
+  cause after an initial (wrong) guess that it was a not-yet-joinable `call_id` race.
+
+Observed:
+- The sideband had never connected since it was introduced: the browser auto-response path
+  (`create_response = true`) had previously masked it. The retry loop confirmed the failure
+  was a fixed client-side handshake error, identical on every attempt, not a timing race.
+- `cargo test -p qsf_realtime_server` passed (23 tests);
+  `cargo clippy --all-targets -- -D warnings` and `cargo fmt` clean.
+
+Open question:
+- End-to-end confirmation (sideband attaches, `response.create` lands, audio response
+  plays) still needs a live run.
+
+Refs: crates/qsf_realtime_server/src/realtime/sideband.rs

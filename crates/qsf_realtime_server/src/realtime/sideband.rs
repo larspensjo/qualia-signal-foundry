@@ -2,7 +2,7 @@ use std::convert::TryFrom;
 use std::time::{Duration, Instant, SystemTime};
 
 use anyhow::Context;
-use axum::http::{Request, header};
+use axum::http::header;
 use futures_util::{SinkExt, StreamExt};
 use qsf_context::ContextBudget;
 use qsf_memory::RetrievalStrategy;
@@ -19,7 +19,10 @@ use qsf_session::{
 };
 use sha2::Digest;
 use tokio::sync::{mpsc, watch};
-use tokio_tungstenite::{connect_async, tungstenite::Message};
+use tokio_tungstenite::{
+    connect_async,
+    tungstenite::{Message, client::IntoClientRequest},
+};
 
 use crate::realtime::injection::{
     DEFAULT_PCM_RATE_HZ, MemoryInjectionRequest, assemble_memory_context,
@@ -93,11 +96,18 @@ async fn run_sideband(
                 backoff = (backoff * 2).min(Duration::from_millis(MAX_BACKOFF_MS));
             }
             Err(error) => {
-                mark_session_degraded(&state, &qsf_session_id, &call_id, &error.to_string()).await;
+                // Surface the full anyhow chain (`{error:#}`), not just the
+                // outermost context, so the failing operation is identifiable.
+                let reason = format!("{error:#}");
+                mark_session_degraded(&state, &qsf_session_id, &call_id, &reason).await;
                 log::warn!(
-                    "sideband task failed for session `{qsf_session_id}` call `{call_id}`: {error}"
+                    "sideband task failed for session `{qsf_session_id}` call `{call_id}`: {reason}"
                 );
-                break;
+                if *stop_rx.borrow() {
+                    break;
+                }
+                tokio::time::sleep(backoff).await;
+                backoff = (backoff * 2).min(Duration::from_millis(MAX_BACKOFF_MS));
             }
         }
     }
@@ -110,17 +120,35 @@ async fn connect_and_run_once(
     stop_rx: &mut watch::Receiver<bool>,
 ) -> anyhow::Result<SidebandExit> {
     let mut runtime_state = SidebandRuntimeState::default();
-    let request = Request::builder()
-        .uri(state.openai_realtime_ws_url(call_id))
-        .header(
-            header::AUTHORIZATION,
-            format!("Bearer {}", state.openai_api_key()),
-        )
-        .body(())
+    // Build the request through `into_client_request` so tungstenite generates
+    // the websocket handshake headers (`Sec-WebSocket-Key`, `Upgrade`,
+    // `Connection`, `Sec-WebSocket-Version`, `Host`); a hand-built `Request`
+    // omits them and fails the handshake client-side. Only the Authorization
+    // header is layered on afterwards.
+    let mut request = state
+        .openai_realtime_ws_url(call_id)
+        .into_client_request()
         .context("failed to build sideband websocket request")?;
-    let (websocket, _response) = connect_async(request).await.with_context(|| {
-        format!("failed to connect sideband websocket for session `{qsf_session_id}`")
-    })?;
+    request.headers_mut().insert(
+        header::AUTHORIZATION,
+        format!("Bearer {}", state.openai_api_key())
+            .parse()
+            .context("failed to build sideband authorization header")?,
+    );
+    // A failed handshake is treated as a (retryable) disconnect rather than a
+    // fatal error: the call_id is often not yet joinable at the instant the
+    // server binds it (the browser has not finished the WebRTC handshake), so
+    // OpenAI returns `404 No session found for the provided call_id` until the
+    // call goes live. Routing through `Disconnected` lets `run_sideband` retry
+    // with backoff and attach once the call is up.
+    let (websocket, _response) = match connect_async(request).await {
+        Ok(connection) => connection,
+        Err(error) => {
+            return Ok(SidebandExit::Disconnected {
+                reason: format_connect_error(qsf_session_id, &error),
+            });
+        }
+    };
 
     log::info!("sideband attached to call `{call_id}` for session `{qsf_session_id}`");
 
@@ -709,6 +737,39 @@ async fn session_config(
         .ok_or_else(|| anyhow::anyhow!("unknown qsf_session_id `{qsf_session_id}`"))?;
     let guard = session.lock().await;
     Ok(guard.config.clone())
+}
+
+/// Render a websocket handshake failure with enough detail to diagnose it.
+///
+/// For an HTTP rejection this includes the status and (bounded) response body,
+/// which carries OpenAI's machine-readable error (e.g. an unknown call_id),
+/// rather than the opaque "HTTP error" the default `Display` would emit.
+fn format_connect_error(
+    qsf_session_id: &str,
+    error: &tokio_tungstenite::tungstenite::Error,
+) -> String {
+    use tokio_tungstenite::tungstenite::Error as WsError;
+    match error {
+        WsError::Http(response) => {
+            let status = response.status();
+            let body = response
+                .body()
+                .as_ref()
+                .map(|bytes| {
+                    String::from_utf8_lossy(bytes)
+                        .chars()
+                        .take(1000)
+                        .collect::<String>()
+                })
+                .unwrap_or_default();
+            format!(
+                "failed to connect sideband websocket for session `{qsf_session_id}`: HTTP {status}: {body}"
+            )
+        }
+        other => {
+            format!("failed to connect sideband websocket for session `{qsf_session_id}`: {other}")
+        }
+    }
 }
 
 fn send_json(
