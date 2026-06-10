@@ -4,7 +4,7 @@ use anyhow::Context;
 use axum::{
     Json, Router,
     extract::{
-        State, WebSocketUpgrade,
+        Query, State, WebSocketUpgrade,
         ws::{Message, WebSocket},
     },
     http::{StatusCode, header},
@@ -17,11 +17,12 @@ use serde_json::Value;
 use time::OffsetDateTime;
 
 use crate::diagnostics::DiagnosticRecord;
-use crate::state::{AppState, CallBinding, SessionRuntime};
+use crate::state::{AppState, CallBinding, SessionRuntime, SidebandStatus};
 use qsf_session::{
     Exchange, ExchangeOutput, LiveSessionEvent, LiveSessionState, PartialTranscript,
     ProviderEventKind, ProviderEventRecord, SessionEndReason, UtteranceRecord, reduce_live_session,
 };
+use tokio::sync::watch;
 
 const MAX_RELAY_PAYLOAD_BYTES: usize = 64 * 1024;
 
@@ -113,9 +114,20 @@ async fn exchange_sdp(
     }
 }
 
-async fn events_socket(State(state): State<AppState>, ws: WebSocketUpgrade) -> Response {
+#[derive(Debug, Default, Deserialize)]
+struct EventsQuery {
+    /// Optional session id so the socket can subscribe to server-side status
+    /// before the browser relays its first event.
+    session: Option<String>,
+}
+
+async fn events_socket(
+    State(state): State<AppState>,
+    Query(query): Query<EventsQuery>,
+    ws: WebSocketUpgrade,
+) -> Response {
     ws.on_upgrade(move |socket| async move {
-        if let Err(error) = handle_events_socket(state, socket).await {
+        if let Err(error) = handle_events_socket(state, socket, query.session).await {
             log::warn!("realtime events socket ended with error: {error}");
         }
     })
@@ -306,47 +318,158 @@ async fn stop_session_impl(
     })
 }
 
-async fn handle_events_socket(state: AppState, mut socket: WebSocket) -> anyhow::Result<()> {
-    while let Some(message) = socket.next().await {
-        let message = message?;
-        match message {
-            Message::Text(text) => {
-                if relay_payload_is_oversized(&text) {
-                    socket.send(Message::Close(None)).await.ok();
-                    break;
-                }
-                let envelope: RelayEnvelope = match serde_json::from_str(&text) {
-                    Ok(envelope) => envelope,
-                    Err(error) => {
-                        log::warn!("rejected malformed realtime relay payload: {error}");
-                        continue;
+async fn handle_events_socket(
+    state: AppState,
+    mut socket: WebSocket,
+    session_hint: Option<String>,
+) -> anyhow::Result<()> {
+    // Subscribing to the session's sideband status lets the server push
+    // health updates (e.g. a sideband that failed to attach) to the browser,
+    // rather than the UI sitting silently in "Listening". The socket binds to a
+    // single session — from the connect query or, failing that, the first
+    // relayed envelope — so it cannot relay one session while reporting another
+    // session's health.
+    let mut status_rx: Option<watch::Receiver<SidebandStatus>> = None;
+    let mut bound_session: Option<String> = session_hint;
+    if let Some(id) = bound_session.clone() {
+        if let Some(rx) = subscribe_status(&state, &id).await {
+            let status = rx.borrow().clone();
+            push_status(&mut socket, &id, &status).await;
+            status_rx = Some(rx);
+        }
+    }
+
+    loop {
+        let status_changed = async {
+            match status_rx.as_mut() {
+                Some(rx) => rx.changed().await,
+                None => std::future::pending::<Result<(), watch::error::RecvError>>().await,
+            }
+        };
+
+        tokio::select! {
+            changed = status_changed => {
+                match changed {
+                    Ok(()) => {
+                        let status = status_rx
+                            .as_ref()
+                            .expect("status receiver present when change observed")
+                            .borrow()
+                            .clone();
+                        let id = bound_session.as_deref().unwrap_or_default();
+                        push_status(&mut socket, id, &status).await;
                     }
-                };
-                let qsf_session_id = envelope.qsf_session_id.clone();
-                let event_id = envelope.event_id.clone();
-                let outcome = match process_relay_envelope(&state, envelope).await {
-                    Ok(outcome) => outcome,
-                    Err(error) => {
-                        log::warn!(
-                            "rejected realtime relay event `{event_id}` for session `{qsf_session_id}`: {error}"
-                        );
-                        RelayAck {
-                            qsf_session_id,
-                            event_id,
-                            accepted: false,
+                    // Sender dropped (session removed): stop watching, keep relaying.
+                    Err(_) => status_rx = None,
+                }
+            }
+            incoming = socket.next() => {
+                let Some(message) = incoming else { break; };
+                let message = message?;
+                match message {
+                    Message::Text(text) => {
+                        if relay_payload_is_oversized(&text) {
+                            socket.send(Message::Close(None)).await.ok();
+                            break;
+                        }
+                        let envelope: RelayEnvelope = match serde_json::from_str(&text) {
+                            Ok(envelope) => envelope,
+                            Err(error) => {
+                                log::warn!("rejected malformed realtime relay payload: {error}");
+                                continue;
+                            }
+                        };
+                        let qsf_session_id = envelope.qsf_session_id.clone();
+                        let event_id = envelope.event_id.clone();
+
+                        // Reject envelopes for a different session than the one
+                        // this socket is bound to; otherwise relay acks and
+                        // sideband status could describe two different sessions.
+                        if let Some(bound) = &bound_session {
+                            if bound != &qsf_session_id {
+                                log::warn!(
+                                    "rejected relay event `{event_id}` for session `{qsf_session_id}` on socket bound to `{bound}`"
+                                );
+                                let ack = RelayAck {
+                                    qsf_session_id,
+                                    event_id,
+                                    accepted: false,
+                                };
+                                socket
+                                    .send(Message::Text(serde_json::to_string(&ack)?.into()))
+                                    .await
+                                    .ok();
+                                continue;
+                            }
+                        } else {
+                            bound_session = Some(qsf_session_id.clone());
+                        }
+
+                        let outcome = match process_relay_envelope(&state, envelope).await {
+                            Ok(outcome) => outcome,
+                            Err(error) => {
+                                log::warn!(
+                                    "rejected realtime relay event `{event_id}` for session `{qsf_session_id}`: {error}"
+                                );
+                                RelayAck {
+                                    qsf_session_id: qsf_session_id.clone(),
+                                    event_id,
+                                    accepted: false,
+                                }
+                            }
+                        };
+                        socket
+                            .send(Message::Text(serde_json::to_string(&outcome)?.into()))
+                            .await
+                            .ok();
+
+                        if status_rx.is_none() {
+                            if let Some(rx) = subscribe_status(&state, &qsf_session_id).await {
+                                let status = rx.borrow().clone();
+                                push_status(&mut socket, &qsf_session_id, &status).await;
+                                status_rx = Some(rx);
+                            }
                         }
                     }
-                };
-                socket
-                    .send(Message::Text(serde_json::to_string(&outcome)?.into()))
-                    .await
-                    .ok();
+                    Message::Close(_) => break,
+                    Message::Binary(_) | Message::Ping(_) | Message::Pong(_) => {}
+                }
             }
-            Message::Close(_) => break,
-            Message::Binary(_) | Message::Ping(_) | Message::Pong(_) => {}
         }
     }
     Ok(())
+}
+
+async fn subscribe_status(
+    state: &AppState,
+    qsf_session_id: &str,
+) -> Option<watch::Receiver<SidebandStatus>> {
+    let session = state.session_runtime(qsf_session_id).await?;
+    let guard = session.lock().await;
+    Some(guard.subscribe_status())
+}
+
+/// Push a sideband health update to the browser. The `kind` discriminator lets
+/// the UI distinguish these server-originated messages from relay acks on the
+/// same socket.
+async fn push_status(socket: &mut WebSocket, qsf_session_id: &str, status: &SidebandStatus) {
+    let message = SidebandStatusMessage {
+        kind: "sideband_status",
+        qsf_session_id: qsf_session_id.to_string(),
+        degraded: status.degraded,
+        detail: status.detail.clone(),
+    };
+    if let Ok(text) = serde_json::to_string(&message) {
+        socket.send(Message::Text(text.into())).await.ok();
+    }
+}
+
+#[derive(Debug, Serialize)]
+struct SidebandStatusMessage {
+    kind: &'static str,
+    qsf_session_id: String,
+    degraded: bool,
+    detail: Option<String>,
 }
 
 #[derive(Debug, Serialize)]

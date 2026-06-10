@@ -258,7 +258,7 @@ async fn handle_provider_event(
     match event_type {
         "session.created" | "session.updated" => {
             if event_type == "session.updated" && guard.degraded {
-                guard.degraded = false;
+                guard.set_sideband_status(false, None);
                 log::info!(
                     "sideband recovery verified for session `{qsf_session_id}` call `{call_id}` after session.updated"
                 );
@@ -572,7 +572,10 @@ async fn handle_provider_event(
                     reason: SessionEndReason::Eof,
                 },
             );
-            guard.degraded = true;
+            guard.set_sideband_status(
+                true,
+                Some("provider closed the realtime session".to_string()),
+            );
             runtime_state.active_exchange_index = None;
             runtime_state.response_id = None;
             runtime_state.response_started_at = None;
@@ -720,7 +723,7 @@ async fn mark_session_degraded(
                 "trusted exchange `{exchange_index}` for session `{qsf_session_id}` marked non-promotable because of sideband gap"
             );
         }
-        guard.degraded = true;
+        guard.set_sideband_status(true, Some(reason.to_string()));
         log::warn!(
             "sideband gap/degradation for session `{qsf_session_id}` call `{call_id}`: {reason}"
         );
@@ -930,6 +933,30 @@ mod tests {
                 DEFAULT_INJECTION_TOKEN_LIMIT
             )
         );
+    }
+
+    #[tokio::test]
+    async fn set_sideband_status_notifies_subscribers() {
+        let tempdir = TempDir::new().expect("tempdir");
+        let state = state(&tempdir);
+        let allocation = state.create_session().await.expect("session");
+        let runtime = state
+            .session_runtime(&allocation.qsf_session_id)
+            .await
+            .expect("runtime");
+        let mut status_rx = runtime.lock().await.subscribe_status();
+        assert!(!status_rx.borrow().degraded);
+
+        runtime
+            .lock()
+            .await
+            .set_sideband_status(true, Some("boom".to_string()));
+
+        status_rx.changed().await.expect("status changed");
+        let status = status_rx.borrow().clone();
+        assert!(status.degraded);
+        assert_eq!(status.detail.as_deref(), Some("boom"));
+        assert!(runtime.lock().await.degraded);
     }
 
     #[tokio::test]

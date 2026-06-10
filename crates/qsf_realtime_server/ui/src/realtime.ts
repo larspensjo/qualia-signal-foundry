@@ -94,6 +94,7 @@ export interface ConversationState {
   liveTranscript: string;
   lastEvent: string | null;
   error: string | null;
+  warning: string | null;
 }
 
 export type ConversationAction =
@@ -102,8 +103,21 @@ export type ConversationAction =
   | { type: "connection_ready" }
   | { type: "provider_envelope"; envelope: RelayEnvelope }
   | { type: "connection_error"; message: string }
+  | { type: "server_status"; sessionId: string; degraded: boolean; detail: string | null }
   | { type: "stop_requested" }
   | { type: "stopped" };
+
+/// Server-originated status message pushed over the events socket, distinct
+/// from relay acks by its `kind` discriminator.
+export interface SidebandStatusMessage {
+  kind: "sideband_status";
+  qsf_session_id: string;
+  degraded: boolean;
+  detail: string | null;
+}
+
+const DEFAULT_DEGRADED_WARNING =
+  "The server lost its control channel; replies may not arrive. Check the server logs.";
 
 export const DEFAULT_SESSION_CONFIG: SessionConfig = {
   type: "realtime",
@@ -135,6 +149,7 @@ export const INITIAL_STATE: ConversationState = {
   liveTranscript: "",
   lastEvent: null,
   error: null,
+  warning: null,
 };
 
 export function reduceConversationState(
@@ -147,6 +162,7 @@ export function reduceConversationState(
         ...state,
         connection: "requesting_session",
         error: null,
+        warning: null,
       };
     case "session_allocated":
       return {
@@ -170,6 +186,17 @@ export function reduceConversationState(
         error: action.message,
         lastEvent: action.message,
       };
+    case "server_status":
+      // Ignore status for a session other than the active one: a queued message
+      // from a closed socket must not re-raise a warning after stop or during a
+      // newly allocated session.
+      if (action.sessionId !== state.sessionId) {
+        return state;
+      }
+      return {
+        ...state,
+        warning: action.degraded ? (action.detail ?? DEFAULT_DEGRADED_WARNING) : null,
+      };
     case "stop_requested":
       return {
         ...state,
@@ -184,8 +211,32 @@ export function reduceConversationState(
         sessionId: null,
         liveTranscript: "",
         lastEvent: "stopped",
+        warning: null,
       };
   }
+}
+
+/// Parse a server→browser events-socket message, returning a sideband status
+/// message when present and `null` for anything else (e.g. relay acks).
+export function parseSidebandStatusMessage(raw: string): SidebandStatusMessage | null {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    return null;
+  }
+  if (!isRecord(parsed) || parsed.kind !== "sideband_status") {
+    return null;
+  }
+  if (typeof parsed.qsf_session_id !== "string" || typeof parsed.degraded !== "boolean") {
+    return null;
+  }
+  return {
+    kind: "sideband_status",
+    qsf_session_id: parsed.qsf_session_id,
+    degraded: parsed.degraded,
+    detail: typeof parsed.detail === "string" ? parsed.detail : null,
+  };
 }
 
 function applyRelayEnvelope(state: ConversationState, envelope: RelayEnvelope): ConversationState {

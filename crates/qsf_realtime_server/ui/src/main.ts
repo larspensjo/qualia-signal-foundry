@@ -7,6 +7,7 @@ import {
   INITIAL_STATE,
   mapProviderMessageToRelayEnvelope,
   parseProviderDataChannelMessage,
+  parseSidebandStatusMessage,
   reduceConversationState,
   type SdpExchangeResponse,
   type SessionAllocationResponse,
@@ -22,6 +23,7 @@ interface UiRefs {
   lastEvent: HTMLElement;
   transcriptList: HTMLOListElement;
   errorBanner: HTMLElement;
+  warningBanner: HTMLElement;
   remoteAudio: HTMLAudioElement;
 }
 
@@ -67,6 +69,7 @@ root.innerHTML = `
       <button data-role="start" type="button">Start conversation</button>
       <button data-role="stop" type="button" disabled>Stop</button>
       <p data-role="error" class="error" hidden></p>
+      <p data-role="warning" class="warning" role="status" hidden></p>
     </section>
 
     <section class="grid">
@@ -140,7 +143,18 @@ async function startConversation() {
       sessionId: allocation.qsf_session_id,
     });
 
-    relaySocket = await connectRelaySocket();
+    relaySocket = await connectRelaySocket(allocation.qsf_session_id);
+    relaySocket.addEventListener("message", (event) => {
+      const status = parseSidebandStatusMessage(String(event.data));
+      if (status !== null) {
+        dispatch({
+          type: "server_status",
+          sessionId: status.qsf_session_id,
+          degraded: status.degraded,
+          detail: status.detail,
+        });
+      }
+    });
     relaySocket.addEventListener("close", () => {
       if (activeConversation?.relaySocket === relaySocket) {
         dispatch({
@@ -313,6 +327,9 @@ function render() {
   refs.errorBanner.hidden = state.error === null;
   refs.errorBanner.textContent = state.error ?? "";
 
+  refs.warningBanner.hidden = state.warning === null;
+  refs.warningBanner.textContent = state.warning ?? "";
+
   refs.startButton.disabled =
     Boolean(activeConversation) ||
     state.connection === "requesting_session" ||
@@ -336,8 +353,8 @@ function render() {
   );
 }
 
-async function connectRelaySocket(): Promise<WebSocket> {
-  const socket = new WebSocket("/api/realtime/events");
+async function connectRelaySocket(sessionId: string): Promise<WebSocket> {
+  const socket = new WebSocket(`/api/realtime/events?session=${encodeURIComponent(sessionId)}`);
   await new Promise<void>((resolve, reject) => {
     socket.addEventListener("open", () => resolve(), { once: true });
     socket.addEventListener("error", () => reject(new Error("failed to open relay websocket")), {
@@ -390,6 +407,7 @@ function collectRefs(container: HTMLElement): UiRefs {
     lastEvent: query<HTMLElement>('[data-role="last-event"]'),
     transcriptList: query<HTMLOListElement>('[data-role="transcript"]'),
     errorBanner: query<HTMLElement>('[data-role="error"]'),
+    warningBanner: query<HTMLElement>('[data-role="warning"]'),
     remoteAudio: query<HTMLAudioElement>('[data-role="remote-audio"]'),
   };
 }

@@ -4,6 +4,7 @@ import {
   INITIAL_STATE,
   mapProviderMessageToRelayEnvelope,
   parseProviderDataChannelMessage,
+  parseSidebandStatusMessage,
   providerTypeToRelayKind,
   reduceConversationState,
 } from "./realtime";
@@ -101,5 +102,99 @@ describe("conversation reducer", () => {
     });
 
     expect(afterPlayback.phase).toBe("idle");
+  });
+
+  it("raises and clears a warning from sideband status for the active session", () => {
+    const active = reduceConversationState(INITIAL_STATE, {
+      type: "session_allocated",
+      sessionId: "session_1",
+    });
+
+    const degraded = reduceConversationState(active, {
+      type: "server_status",
+      sessionId: "session_1",
+      degraded: true,
+      detail: "failed to connect sideband websocket",
+    });
+    expect(degraded.warning).toBe("failed to connect sideband websocket");
+
+    const recovered = reduceConversationState(degraded, {
+      type: "server_status",
+      sessionId: "session_1",
+      degraded: false,
+      detail: null,
+    });
+    expect(recovered.warning).toBeNull();
+  });
+
+  it("falls back to a default warning when degraded without detail", () => {
+    const active = reduceConversationState(INITIAL_STATE, {
+      type: "session_allocated",
+      sessionId: "session_1",
+    });
+    const degraded = reduceConversationState(active, {
+      type: "server_status",
+      sessionId: "session_1",
+      degraded: true,
+      detail: null,
+    });
+    expect(degraded.warning).not.toBeNull();
+    expect(degraded.warning?.length ?? 0).toBeGreaterThan(0);
+  });
+
+  it("ignores sideband status for a stale or mismatched session", () => {
+    const active = reduceConversationState(INITIAL_STATE, {
+      type: "session_allocated",
+      sessionId: "session_2",
+    });
+
+    // A status pushed for a previous/other session must not raise a warning.
+    const ignored = reduceConversationState(active, {
+      type: "server_status",
+      sessionId: "session_1",
+      degraded: true,
+      detail: "stale degraded status",
+    });
+    expect(ignored.warning).toBeNull();
+    expect(ignored).toBe(active);
+
+    // After stop, sessionId is null, so a late message is still ignored.
+    const stopped = reduceConversationState(active, { type: "stopped" });
+    const afterStop = reduceConversationState(stopped, {
+      type: "server_status",
+      sessionId: "session_2",
+      degraded: true,
+      detail: "late degraded status",
+    });
+    expect(afterStop.warning).toBeNull();
+  });
+});
+
+describe("sideband status message parsing", () => {
+  it("parses a well-formed status message", () => {
+    expect(
+      parseSidebandStatusMessage(
+        JSON.stringify({
+          kind: "sideband_status",
+          qsf_session_id: "session_1",
+          degraded: true,
+          detail: "boom",
+        }),
+      ),
+    ).toEqual({
+      kind: "sideband_status",
+      qsf_session_id: "session_1",
+      degraded: true,
+      detail: "boom",
+    });
+  });
+
+  it("ignores relay acks and malformed payloads", () => {
+    expect(
+      parseSidebandStatusMessage(
+        JSON.stringify({ qsf_session_id: "session_1", event_id: "evt_1", accepted: true }),
+      ),
+    ).toBeNull();
+    expect(parseSidebandStatusMessage("not json")).toBeNull();
   });
 });

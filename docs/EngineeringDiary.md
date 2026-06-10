@@ -2830,3 +2830,43 @@ Open question:
   plays) still needs a live run.
 
 Refs: crates/qsf_realtime_server/src/realtime/sideband.rs
+
+## 2026-06-10 - Surface sideband health to the browser UI
+
+Server-side sideband failures were invisible in the browser, which sat in "Listening"
+with no feedback. The server now pushes its sideband health to the UI over the existing
+events websocket.
+
+What changed:
+- `SessionRuntime` owns a `watch` channel of `SidebandStatus { degraded, detail }`;
+  `set_sideband_status` keeps the `degraded` flag and the broadcast value in lockstep, and
+  the sideband sets it on connect/transport failure, provider close, and recovery.
+- The events socket subscribes to that status (by `?session=` on connect, or the first
+  relayed envelope) and `select!`s between inbound relay messages and status changes,
+  pushing a `{ "kind": "sideband_status", ... }` message; the `kind` discriminator keeps it
+  distinct from relay acks on the same socket. A late subscriber sees the latest status
+  immediately via the watch channel.
+- The socket binds to one session (from the query hint or first envelope) and rejects
+  envelopes for any other `qsf_session_id`, so relay acks and sideband status on a socket
+  always describe the same session.
+- The browser reducer gained a `warning` field and a `server_status` action carrying the
+  session id; the reducer ignores status whose session id is not the active one, so a
+  queued message from a closed socket cannot re-raise a warning after stop or during a
+  newly allocated session. The events socket message handler parses status messages and
+  the UI renders a warning banner, cleared on recovery, new session, and stop.
+
+Observed:
+- `cargo test -p qsf_realtime_server` (24 tests), UI `npm run check` and vitest (8 tests,
+  including stale/mismatched-session gating) all pass; `cargo clippy --all-targets -- -D
+  warnings`, `cargo fmt`, and `npm run fmt` clean.
+- A staged-changes review (docs/Reviews/2026-06-10-sideband-health-browser-ui-review.md)
+  flagged that stale/cross-session statuses could update the active UI and that one socket
+  could relay one session while reporting another's health; both are addressed by the
+  session-binding (server) and session-gated reducer (browser) above.
+
+Refs: crates/qsf_realtime_server/src/state.rs,
+crates/qsf_realtime_server/src/realtime/sideband.rs,
+crates/qsf_realtime_server/src/realtime/routes.rs,
+crates/qsf_realtime_server/ui/src/realtime.ts,
+crates/qsf_realtime_server/ui/src/main.ts,
+crates/qsf_realtime_server/ui/src/styles.css

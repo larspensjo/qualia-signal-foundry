@@ -8,7 +8,7 @@ use qsf_session::LiveSessionState;
 use qsf_session::{MemorySourceConfig, SessionConfig as QsfSessionConfig, SessionState};
 use serde::{Deserialize, Serialize};
 use time::OffsetDateTime;
-use tokio::sync::Mutex;
+use tokio::sync::{Mutex, watch};
 use uuid::Uuid;
 
 use crate::cli::Args;
@@ -334,6 +334,15 @@ pub struct OpenAiRealtimeTurnDetection {
     pub interrupt_response: bool,
 }
 
+/// Health of the server-side sideband, pushed to the browser over the events
+/// socket so the UI can surface server-only failures (e.g. a sideband that
+/// cannot attach) instead of sitting silently in "Listening".
+#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, Eq)]
+pub struct SidebandStatus {
+    pub degraded: bool,
+    pub detail: Option<String>,
+}
+
 pub struct SessionRuntime {
     pub qsf_session_id: String,
     pub config: BrowserSessionConfig,
@@ -350,6 +359,7 @@ pub struct SessionRuntime {
     pub non_promotable_exchange_indices: HashSet<usize>,
     pub degraded: bool,
     pub sideband: Option<crate::realtime::sideband::SidebandHandle>,
+    status_tx: watch::Sender<SidebandStatus>,
 }
 
 impl SessionRuntime {
@@ -378,7 +388,23 @@ impl SessionRuntime {
             non_promotable_exchange_indices: HashSet::new(),
             degraded: false,
             sideband: None,
+            status_tx: watch::channel(SidebandStatus::default()).0,
         }
+    }
+
+    /// Subscribe to sideband health updates. The receiver immediately observes
+    /// the latest status, so a socket that attaches after a failure still sees
+    /// the degraded state.
+    pub fn subscribe_status(&self) -> watch::Receiver<SidebandStatus> {
+        self.status_tx.subscribe()
+    }
+
+    /// Record the current sideband health and notify any status subscribers.
+    /// Keeps `degraded` and the broadcast status in lockstep.
+    pub fn set_sideband_status(&mut self, degraded: bool, detail: Option<String>) {
+        self.degraded = degraded;
+        self.status_tx
+            .send_replace(SidebandStatus { degraded, detail });
     }
 
     pub fn new_exchange_index(&mut self) -> usize {
