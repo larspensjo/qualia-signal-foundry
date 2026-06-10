@@ -1141,3 +1141,51 @@ across a tool call is covered by tests; per-call detail lives on the execution
 record rather than inflating exchange-level fields.
 Refs: crates/qsf_realtime_server/src/realtime/sideband.rs,
 docs/Plans/Plan.RealtimeVoiceConversation.md
+
+## 2026-06-10 - Generic tool registry core
+Decision: The reusable tool trait, request, permission, result, metadata, and dynamic
+registry core live in `qsf_tools`; app-specific tool context access stays behind
+`qsf_app` adapters, and realtime tools use the same lean registry without depending
+on `qsf_app`.
+Context: Phase 4 needs realtime sideband tool execution while preserving the
+`qsf_realtime_server` no-`qsf_app` boundary.
+Consequences: Concrete app tools can remain in `qsf_app`, while server-owned tools can
+be registered and permission-checked through the shared core.
+Refs: crates/qsf_tools, crates/qsf_app/src/tools,
+crates/qsf_realtime_server/src/realtime/tools.rs
+
+## 2026-06-10 - Realtime tool loop boundary
+Decision: Realtime function-call responses do not finalize a trusted exchange. The
+sideband records the request, executes or denies the tool outside the session lock,
+records the resolution, sends `function_call_output`, and creates the next response.
+A per-turn cap forces the follow-up response to disable tools.
+Context: A single spoken turn can contain multiple provider `response.done` events
+when the model calls tools before speaking.
+Consequences: Trusted promotion waits for the eventual spoken response, model usage is
+aggregated across the tool loop, and lock-free execution leaves stop/degraded races
+observable.
+Refs: crates/qsf_realtime_server/src/realtime/sideband.rs,
+crates/qsf_session/src/exchange.rs
+
+## 2026-06-10 - Realtime tool denial recovery
+Decision: Realtime tool calls that are not allow-listed, exceed read-only bounds, have
+malformed arguments, or hit the loop cap are recorded as denied or failed and still
+receive structured `function_call_output` so the model can recover verbally.
+Context: Leaving a provider function call unanswered stalls the live conversation.
+Consequences: Denials are durable tool execution records, not execution evidence, and
+the sideband remains responsible for returning a provider-visible result.
+Refs: crates/qsf_realtime_server/src/realtime/sideband.rs,
+crates/qsf_realtime_server/src/realtime/tools.rs
+
+## 2026-06-10 - Realtime function-call wire shape
+Decision: Phase 4 uses OpenAI Realtime function tools declared on `session.tools` with
+`tool_choice`, returns results as `conversation.item.create` items of type
+`function_call_output`, and then sends `response.create`.
+Context: Official OpenAI Realtime tool documentation describes function tools as
+application-executed calls that return `function_call_output`; it also documents
+session-level `tools`, `tool_choice: "auto"`, and sending `response.create` after the
+tool output.
+Consequences: QSF keeps private memory and permission logic server-side while using
+the provider's current tool-call continuation surface.
+Refs: https://developers.openai.com/api/docs/guides/realtime-mcp,
+crates/qsf_realtime_protocol/src/lib.rs

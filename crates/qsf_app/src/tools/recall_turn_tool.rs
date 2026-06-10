@@ -1,31 +1,35 @@
+use std::sync::Arc;
+
 use anyhow::{Context, Result};
 
-use crate::models::ModelToolDefinition;
 use crate::session::{SessionState, is_turn_summarized};
 
-use super::tool_registry::{Tool, ToolContext, ToolMetadata};
-use super::tool_request::{ToolCategory, ToolRequest, ToolSideEffectLevel};
-use super::tool_result::ToolResult;
+use super::{
+    Tool, ToolContext, ToolContextAccess, ToolDefinition, ToolMetadata, ToolRequest, ToolResult,
+};
+use qsf_tools::ToolCategory;
+use qsf_tools::ToolSideEffectLevel;
 
 pub const RECALL_TURN_TOOL_NAME: &str = "recall_turn";
 
 pub struct RecallTurnTool;
 
-pub struct SessionToolContext<'a> {
-    pub state: &'a SessionState,
+pub struct SessionToolContext {
+    pub state: Arc<SessionState>,
 }
 
-impl ToolContext for SessionToolContext<'_> {
-    fn session_state(&self) -> Option<&SessionState> {
-        Some(self.state)
+impl ToolContext for SessionToolContext {
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
     }
 }
 
 impl Tool for RecallTurnTool {
     fn metadata(&self) -> ToolMetadata {
         ToolMetadata {
-            name: RECALL_TURN_TOOL_NAME,
-            description: "Recall verbatim text for a summarized conversation turn by turn_id",
+            name: RECALL_TURN_TOOL_NAME.to_string(),
+            description: "Recall verbatim text for a summarized conversation turn by turn_id"
+                .to_string(),
             category: ToolCategory::ComputeOnly,
             side_effect_level: ToolSideEffectLevel::None,
         }
@@ -67,8 +71,8 @@ impl Tool for RecallTurnTool {
         })
     }
 
-    fn model_tool_definition(&self) -> Option<ModelToolDefinition> {
-        Some(ModelToolDefinition::new(
+    fn definition(&self) -> Option<ToolDefinition> {
+        Some(ToolDefinition::new(
             RECALL_TURN_TOOL_NAME,
             "Recall verbatim text for a summarized conversation turn by turn_id.",
             serde_json::json!({

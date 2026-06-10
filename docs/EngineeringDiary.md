@@ -2925,3 +2925,30 @@ manual-response default, the sideband handshake fix, the browser status feedback
 input-transcription enablement: all four are confirmed live.
 
 Refs: crates/qsf_realtime_server/src/realtime
+
+## 2026-06-10 - Phase 4 tool plane and read-only perception tools
+
+Implemented the Phase 4 realtime tool loop: a lean `qsf_tools` registry core,
+server-owned read-only perception tools, persisted tool execution records, and
+realtime protocol builders/parsers for function-call output.
+
+What changed:
+- Extracted the generic tool registry and metadata/permission/result types into
+  `qsf_tools`, with `qsf_app` kept on a facade for the existing concrete tools.
+- Added the realtime read-only tools (`search_memory`, `get_associations`,
+  `inspect_session_state`) and wired the default session config to advertise
+  them.
+- Extended `qsf_session` and the realtime sideband with tool request/resolution
+  records, tool-call completion events, and aggregated model-use accounting.
+- Follow-up staged review fixes moved tool execution outside the session mutex,
+  made malformed arguments recover as structured denials, handled mixed
+  function-call output, forced speech after the tool-loop cap, and added focused
+  regression tests.
+
+Observed:
+- `cargo build`, `cargo test`, `cargo clippy --all-targets -- -D warnings`, and
+  `cargo fmt` all passed after the phase implementation.
+
+Refs: crates/qsf_tools, crates/qsf_app/src/tools, crates/qsf_session/src,
+crates/qsf_realtime_protocol/src/lib.rs,
+crates/qsf_realtime_server/src/realtime/sideband.rs

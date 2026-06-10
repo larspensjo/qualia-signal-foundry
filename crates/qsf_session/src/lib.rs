@@ -19,7 +19,8 @@ pub use conversation::ContentHash;
 pub use exchange::{
     Exchange, ExchangeInput, ExchangeModelUse, ExchangeOutput, ExchangeRange, ExchangeStatus,
     ExchangeTurnConversionError, InterruptionAction, InterruptionRecord, InterruptionStopOutcome,
-    ProviderEventKind, ProviderEventRecord, ToolRequestRecord, UtteranceRecord,
+    ProviderEventKind, ProviderEventRecord, ToolExecutionRecord, ToolExecutionStatus,
+    ToolPermissionDecision, ToolRequestRecord, UtteranceRecord,
 };
 pub use live_state::{
     ActiveResponseState, AgedCoRetrievalRecord, LiveCaptureContext, LiveSessionEvent,

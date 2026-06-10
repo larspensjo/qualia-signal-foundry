@@ -47,6 +47,8 @@ pub fn build_memory_injection_packet(
         request.output_modalities,
         request.pcm_rate_hz,
         false,
+        &[],
+        None,
         request.input_transcription_model,
     );
     let conversation_item_create =

@@ -59,6 +59,8 @@ pub(crate) mod tests {
             retrieved_memory_block: String::new(),
             assistant_response: format!("turn-{index}-response"),
             recalled_turns: vec![],
+            tool_requests: vec![],
+            tool_executions: vec![],
             model_id: "mock".to_string(),
             model_latency_ms: 0,
             input_tokens: 0,

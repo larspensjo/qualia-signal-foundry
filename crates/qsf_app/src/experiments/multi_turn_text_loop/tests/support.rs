@@ -452,6 +452,8 @@ fn test_turn_with_hash(index: usize, full_request_hash: ContentHash, message_cou
         retrieved_memory_block: String::new(),
         assistant_response: format!("answer {index}"),
         recalled_turns: vec![],
+        tool_requests: vec![],
+        tool_executions: vec![],
         model_id: DEFAULT_SESSION_MODEL.to_string(),
         model_latency_ms: 0,
         input_tokens: 0,

@@ -146,6 +146,7 @@ fn compare_system_time(left: SystemTime, right: SystemTime) -> Ordering {
 fn summarize_provider_events(events: &[ProviderEventRecord]) -> String {
     let mut preambles = 0usize;
     let mut response_started = 0usize;
+    let mut function_call_completed = 0usize;
     let mut response_completed = 0usize;
     let mut speech_playback_started = 0usize;
     let mut speech_playback_completed = 0usize;
@@ -162,6 +163,7 @@ fn summarize_provider_events(events: &[ProviderEventRecord]) -> String {
         match event.event_kind {
             ProviderEventKind::Preamble => preambles += 1,
             ProviderEventKind::ResponseStarted => response_started += 1,
+            ProviderEventKind::FunctionCallCompleted => function_call_completed += 1,
             ProviderEventKind::ResponseCompleted => response_completed += 1,
             ProviderEventKind::SpeechPlaybackStarted => speech_playback_started += 1,
             ProviderEventKind::SpeechPlaybackCompleted => speech_playback_completed += 1,
@@ -169,10 +171,11 @@ fn summarize_provider_events(events: &[ProviderEventRecord]) -> String {
     }
 
     format!(
-        "Provider diagnostics: providers={} preambles={} response_started={} response_completed={} speech_playback_started={} speech_playback_completed={}",
+        "Provider diagnostics: providers={} preambles={} response_started={} function_call_completed={} response_completed={} speech_playback_started={} speech_playback_completed={}",
         provider_ids.join(","),
         preambles,
         response_started,
+        function_call_completed,
         response_completed,
         speech_playback_started,
         speech_playback_completed

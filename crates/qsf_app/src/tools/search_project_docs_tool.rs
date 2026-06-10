@@ -1,11 +1,11 @@
 use anyhow::{Context, Result};
 use serde_json::json;
 
-use crate::models::ModelToolDefinition;
-
-use super::tool_registry::{Tool, ToolContext, ToolMetadata};
-use super::tool_request::{ToolCategory, ToolRequest, ToolSideEffectLevel};
-use super::tool_result::ToolResult;
+use super::{
+    Tool, ToolContext, ToolContextAccess, ToolDefinition, ToolMetadata, ToolRequest, ToolResult,
+};
+use qsf_tools::ToolCategory;
+use qsf_tools::ToolSideEffectLevel;
 
 pub const SEARCH_PROJECT_DOCS_TOOL_NAME: &str = "search_project_docs";
 
@@ -16,8 +16,9 @@ pub struct SearchProjectDocsTool;
 impl Tool for SearchProjectDocsTool {
     fn metadata(&self) -> ToolMetadata {
         ToolMetadata {
-            name: SEARCH_PROJECT_DOCS_TOOL_NAME,
-            description: "Search project documentation for material related to a query.",
+            name: SEARCH_PROJECT_DOCS_TOOL_NAME.to_string(),
+            description: "Search project documentation for material related to a query."
+                .to_string(),
             category: ToolCategory::ReadOnly,
             side_effect_level: ToolSideEffectLevel::ReadOnly,
         }
@@ -59,8 +60,8 @@ impl Tool for SearchProjectDocsTool {
         })
     }
 
-    fn model_tool_definition(&self) -> Option<ModelToolDefinition> {
-        Some(ModelToolDefinition::new(
+    fn definition(&self) -> Option<ToolDefinition> {
+        Some(ToolDefinition::new(
             SEARCH_PROJECT_DOCS_TOOL_NAME,
             "Search project documentation. Returns ranked hits with kind and maturity metadata; follow up with read_project_doc to read a focused excerpt.",
             json!({
@@ -113,7 +114,9 @@ mod tests {
     #[test]
     fn search_returns_hits_with_metadata() {
         let service = service();
-        let ctx = ProjectDocToolContext { service: &service };
+        let ctx = ProjectDocToolContext {
+            service: std::sync::Arc::new(service),
+        };
         let result = SearchProjectDocsTool
             .execute(&make_request("Maturity"), &ctx)
             .unwrap();
@@ -128,7 +131,9 @@ mod tests {
     #[test]
     fn search_treats_zero_max_results_as_default() {
         let service = service();
-        let ctx = ProjectDocToolContext { service: &service };
+        let ctx = ProjectDocToolContext {
+            service: std::sync::Arc::new(service),
+        };
         let result = SearchProjectDocsTool
             .execute(&make_request_with_max("Maturity", 0), &ctx)
             .unwrap();

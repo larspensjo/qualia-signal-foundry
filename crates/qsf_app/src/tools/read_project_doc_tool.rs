@@ -1,11 +1,11 @@
 use anyhow::{Context, Result};
 use serde_json::json;
 
-use crate::models::ModelToolDefinition;
-
-use super::tool_registry::{Tool, ToolContext, ToolMetadata};
-use super::tool_request::{ToolCategory, ToolRequest, ToolSideEffectLevel};
-use super::tool_result::ToolResult;
+use super::{
+    Tool, ToolContext, ToolContextAccess, ToolDefinition, ToolMetadata, ToolRequest, ToolResult,
+};
+use qsf_tools::ToolCategory;
+use qsf_tools::ToolSideEffectLevel;
 
 pub const READ_PROJECT_DOC_TOOL_NAME: &str = "read_project_doc";
 
@@ -19,8 +19,9 @@ pub struct ReadProjectDocTool;
 impl Tool for ReadProjectDocTool {
     fn metadata(&self) -> ToolMetadata {
         ToolMetadata {
-            name: READ_PROJECT_DOC_TOOL_NAME,
-            description: "Read a focused excerpt or bounded slice of a project document.",
+            name: READ_PROJECT_DOC_TOOL_NAME.to_string(),
+            description: "Read a focused excerpt or bounded slice of a project document."
+                .to_string(),
             category: ToolCategory::ReadOnly,
             side_effect_level: ToolSideEffectLevel::ReadOnly,
         }
@@ -75,8 +76,8 @@ impl Tool for ReadProjectDocTool {
         })
     }
 
-    fn model_tool_definition(&self) -> Option<ModelToolDefinition> {
-        Some(ModelToolDefinition::new(
+    fn definition(&self) -> Option<ToolDefinition> {
+        Some(ToolDefinition::new(
             READ_PROJECT_DOC_TOOL_NAME,
             "Read a focused excerpt or bounded slice of a project document, with kind and maturity metadata. Use after search_project_docs.",
             json!({
@@ -156,7 +157,9 @@ exclude=[]"#,
 
     fn read_output(path: &str, focus: Option<&str>, max_tokens: u64) -> String {
         let service = service();
-        let ctx = ProjectDocToolContext { service: &service };
+        let ctx = ProjectDocToolContext {
+            service: std::sync::Arc::new(service),
+        };
         ReadProjectDocTool
             .execute(&make_request(path, focus, max_tokens), &ctx)
             .unwrap()
@@ -169,7 +172,9 @@ exclude=[]"#,
         focus: Option<&str>,
         max_tokens: u64,
     ) -> String {
-        let ctx = ProjectDocToolContext { service };
+        let ctx = ProjectDocToolContext {
+            service: std::sync::Arc::new(service.clone()),
+        };
         ReadProjectDocTool
             .execute(&make_request(path, focus, max_tokens), &ctx)
             .unwrap()
@@ -208,7 +213,9 @@ exclude=[]"#,
     #[test]
     fn read_refuses_out_of_allowlist() {
         let service = service();
-        let ctx = ProjectDocToolContext { service: &service };
+        let ctx = ProjectDocToolContext {
+            service: std::sync::Arc::new(service),
+        };
         let err = ReadProjectDocTool
             .execute(&make_request("outside.txt", None, 4000), &ctx)
             .unwrap_err();

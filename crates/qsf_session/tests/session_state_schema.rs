@@ -8,7 +8,8 @@ use qsf_session::{
     InterruptionStopOutcome, LiveCaptureContext, LiveSessionState, MemorySourceConfig,
     PartialTranscript, PromptPrefixInvalidation, ProviderEventKind, ProviderEventRecord,
     RecallRecord, ResponseStatus, SESSION_STATE_SCHEMA_VERSION, SessionConfig, SessionEndReason,
-    SessionLimit, SessionState, ToolCategory, ToolSideEffectLevel, TurnSummary,
+    SessionLimit, SessionState, ToolCategory, ToolExecutionRecord, ToolExecutionStatus,
+    ToolPermissionDecision, ToolSideEffectLevel, TurnSummary,
 };
 
 #[test]
@@ -199,6 +200,8 @@ fn sample_turn(index: usize) -> qsf_session::Turn {
         input_tokens: 4,
         cached_input_tokens: 1,
         output_tokens: 2,
+        tool_requests: vec![],
+        tool_executions: vec![],
         full_request_hash: ContentHash([index as u8; 32]),
         message_count: 2,
     }
@@ -278,6 +281,19 @@ fn sample_exchange(index: usize, completed: bool) -> Exchange {
         source: "provider".to_string(),
         routed_to: Some("boundary".to_string()),
         auto_executed: false,
+    }];
+    exchange.tool_executions = vec![ToolExecutionRecord {
+        exchange_index: index,
+        call_id: format!("call-{index}"),
+        tool_name: "lookup".to_string(),
+        permission_decision: ToolPermissionDecision::Allowed,
+        status: ToolExecutionStatus::Completed,
+        result_summary: "summary".to_string(),
+        error: None,
+        requested_at: SystemTime::UNIX_EPOCH,
+        completed_at: Some(SystemTime::UNIX_EPOCH),
+        response_model_use: None,
+        returning_event_id: Some(format!("event-{index}")),
     }];
     exchange.status = if completed {
         ExchangeStatus::Completed

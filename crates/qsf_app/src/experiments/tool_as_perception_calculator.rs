@@ -8,7 +8,10 @@ use crate::context::{ContextBudget, ContextSelection, assemble_context};
 use crate::observability::event_log::EventType;
 use crate::observability::trace::{TraceRecord, elapsed_ns};
 use crate::runtime::run_context::RunContext;
-use crate::tools::{EmptyToolContext, ToolMetadata, ToolRegistry, ToolRequest, ToolResult};
+use crate::tools::{
+    CALCULATOR_TOOL_NAME, EmptyToolContext, ToolMetadata, ToolPermission, ToolRegistry,
+    ToolRequest, ToolResult,
+};
 
 use super::registry::{Experiment, ExperimentName, ExperimentOutcome};
 
@@ -28,7 +31,13 @@ impl Experiment for ToolAsPerceptionCalculatorExperiment {
 
     fn run(&self, context: &mut RunContext) -> anyhow::Result<ExperimentOutcome> {
         let registry = ToolRegistry::default();
-        let request = ToolRequest::calculator(CALCULATOR_EXPRESSION, self.id());
+        let request = ToolRequest::new(
+            CALCULATOR_TOOL_NAME,
+            CALCULATOR_EXPRESSION,
+            None,
+            ToolPermission::compute_only(),
+            self.id(),
+        );
 
         context.record_event(
             EventType::InputReceived,
@@ -239,7 +248,7 @@ mod tests {
     use super::{ToolAsPerceptionCalculatorExperiment, execute_tool_request};
     use crate::experiments::Experiment;
     use crate::runtime::run_context::RunContext;
-    use crate::tools::{ToolRegistry, ToolRequest};
+    use crate::tools::{CALCULATOR_TOOL_NAME, ToolPermission, ToolRegistry, ToolRequest};
 
     #[test]
     fn tool_experiment_records_tool_and_context_artifacts() {
@@ -266,7 +275,13 @@ mod tests {
             std::env::temp_dir().join(format!("qsf-phase5-fail-{}", uuid::Uuid::new_v4()));
         let mut context = RunContext::create_in(&base_dir, "phase-five-failure-test").unwrap();
         let registry = ToolRegistry::default();
-        let request = ToolRequest::calculator("2 + (3 *", "test");
+        let request = ToolRequest::new(
+            CALCULATOR_TOOL_NAME,
+            "2 + (3 *",
+            None,
+            ToolPermission::compute_only(),
+            "test",
+        );
 
         let error = execute_tool_request(&mut context, &registry, &request).unwrap_err();
         let events = fs::read_to_string(context.run_dir().join("events.jsonl")).unwrap();

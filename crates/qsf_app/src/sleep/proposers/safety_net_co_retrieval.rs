@@ -208,6 +208,8 @@ mod tests {
                 retrieved_memory_block: String::new(),
                 assistant_response: format!("response-{index}"),
                 recalled_turns: vec![],
+                tool_requests: vec![],
+                tool_executions: vec![],
                 model_id: "mock".to_string(),
                 model_latency_ms: 0,
                 input_tokens: 0,
@@ -302,6 +304,7 @@ mod tests {
             interruptions: vec![],
             provider_events: vec![],
             tool_requests: vec![],
+            tool_executions: vec![],
             status: crate::session::ExchangeStatus::Completed,
         }
     }

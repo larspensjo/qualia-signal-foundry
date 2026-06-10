@@ -827,6 +827,8 @@ mod tests {
             context_assembly: None,
             retrieved_memory_block: String::new(),
             recalled_items: vec![],
+            tool_requests: vec![],
+            tool_executions: vec![],
             model: None,
             interruptions: vec![InterruptionRecord {
                 exchange_index: 0,
@@ -851,7 +853,6 @@ mod tests {
                 status: Some("pending".to_string()),
                 audio_marker: None,
             }],
-            tool_requests: vec![],
             status: crate::session::ExchangeStatus::Interrupted,
         });
 
@@ -1287,6 +1288,7 @@ mod tests {
             interruptions: vec![],
             provider_events: vec![],
             tool_requests: vec![],
+            tool_executions: vec![],
             status: if interrupted {
                 crate::session::ExchangeStatus::Interrupted
             } else {

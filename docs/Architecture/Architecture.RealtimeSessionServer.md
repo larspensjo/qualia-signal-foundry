@@ -4,10 +4,10 @@
 
 Maturity: Sketch
 
-This document captures the accepted Phase-0 architecture for the browser-based
-realtime voice conversation server. It describes intended structure, not current
-runtime behavior. This server is the planned home for QSF's eventual primary
-realtime conversation mode, not a one-off experiment server.
+This document captures the accepted architecture for the browser-based realtime
+voice conversation server and the implemented Phase-4 server sideband behavior.
+This server is the planned home for QSF's eventual primary realtime conversation
+mode, not a one-off experiment server.
 
 ## Implementation Status
 
@@ -26,6 +26,14 @@ realtime conversation mode, not a one-off experiment server.
   `call_id`, injects memory before `response.create`, promotes trusted
   completed exchanges into the shared continuity root, and treats the browser
   relay as diagnostic-only.
+- The Phase-4 sideband declares a read-only realtime tool allow-list
+  (`search_memory`, `get_associations`, `inspect_session_state`), records
+  `ToolRequested` and `ToolResolved` events, executes tools outside the session
+  mutex, returns `function_call_output`, and re-issues `response.create`.
+- Function-call-only and mixed `response.done` events do not finalize the
+  exchange; finalization waits for the eventual spoken response. Tool-loop model
+  usage is aggregated onto the trusted exchange, while each tool execution keeps
+  per-response usage.
 - `WS /api/realtime/events` accepts typed browser relay envelopes, validates
   them, deduplicates provider `event_id`, maps them into `qsf_session` relay
   diagnostics only, and persists diagnostic-only exchanges with explicit
@@ -47,11 +55,10 @@ realtime conversation mode, not a one-off experiment server.
 
 **Not yet implemented:**
 
-- Live realtime tool execution.
 - Phase 5 memory extraction / presence refinement for the browser live mode.
+- Full `qsf_app` tool exposure to the live realtime model.
 
-Last reviewed: 2026-06-10 against the implemented Phase-3 sideband and
-manual-response slice.
+Last reviewed: 2026-06-10 against the implemented Phase-4 realtime tool loop.
 
 ## Purpose
 
@@ -106,11 +113,27 @@ Browser
      -> diagnostic provider events only (untrusted)
 
 QSF server
-  -> Phase 3 sideband WebSocket with call_id
+  -> Authoritative sideband WebSocket with call_id
      -> authoritative provider events, context injection, tool results
 ```
 
 Raw audio is not logged. `OPENAI_API_KEY` never reaches the browser.
+
+## Tool Loop
+
+The realtime sideband owns the live tool loop. The default session advertises only
+the server-owned read-only perception tools. When the provider completes a
+function call response, the sideband records the provider event and tool request,
+drops the session lock before execution, applies the pure allow-list/read-only
+permission decision, executes or denies the tool, then reacquires the lock to
+record the execution result. The sideband returns one `function_call_output` per
+call and then sends `response.create`.
+
+The loop is capped at three sequential tool calls per turn. When the cap is hit,
+the sideband returns a structured denial and creates the next response with tools
+disabled so the model must speak. Denied, failed, malformed-argument, and aborted
+calls are durable execution records; `auto_executed` on the request record is not
+treated as execution evidence.
 
 ## Launcher Surface
 

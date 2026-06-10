@@ -6,7 +6,7 @@ use crate::context::ContextAssembly;
 use crate::exchange::{
     Exchange, ExchangeInput, ExchangeModelUse, ExchangeOutput, ExchangeRange, ExchangeStatus,
     InterruptionAction, InterruptionRecord, InterruptionStopOutcome, ProviderEventKind,
-    ProviderEventRecord, ToolRequestRecord, UtteranceRecord,
+    ProviderEventRecord, ToolExecutionRecord, ToolRequestRecord, UtteranceRecord,
 };
 use crate::state::{RecallRecord, SessionEndReason, TurnSummary};
 use qsf_memory::processed_range::ProcessedRange;
@@ -166,6 +166,7 @@ pub enum LiveSessionEvent {
     OutputProduced(ExchangeOutput),
     ProviderEventRecorded(ProviderEventRecord),
     ToolRequested(ToolRequestRecord),
+    ToolResolved(ToolExecutionRecord),
     UserInterrupted(InterruptionRecord),
     ExchangeCompleted {
         exchange_index: usize,
@@ -469,6 +470,7 @@ fn reduce_live_session_in_place(state: &mut LiveSessionState, event: LiveSession
                     ProviderEventKind::SpeechPlaybackCompleted => {
                         state.runtime_phase = RuntimePhase::Idle;
                     }
+                    ProviderEventKind::FunctionCallCompleted => {}
                     ProviderEventKind::Preamble => {}
                 }
             }
@@ -483,6 +485,13 @@ fn reduce_live_session_in_place(state: &mut LiveSessionState, event: LiveSession
             if let Some(exchange) = state.active_exchange.as_mut() {
                 if exchange.index == tool_request.exchange_index {
                     exchange.tool_requests.push(tool_request);
+                }
+            }
+        }
+        LiveSessionEvent::ToolResolved(tool_execution) => {
+            if let Some(exchange) = state.active_exchange.as_mut() {
+                if exchange.index == tool_execution.exchange_index {
+                    exchange.tool_executions.push(tool_execution);
                 }
             }
         }
@@ -745,6 +754,22 @@ mod tests {
         );
         reduce_live_session_in_place(
             &mut state,
+            LiveSessionEvent::ToolResolved(crate::exchange::ToolExecutionRecord {
+                exchange_index: 4,
+                call_id: "call-4".to_string(),
+                tool_name: "lookup".to_string(),
+                permission_decision: crate::exchange::ToolPermissionDecision::Allowed,
+                status: crate::exchange::ToolExecutionStatus::Completed,
+                result_summary: "ok".to_string(),
+                error: None,
+                requested_at: SystemTime::UNIX_EPOCH,
+                completed_at: Some(SystemTime::UNIX_EPOCH),
+                response_model_use: None,
+                returning_event_id: Some("event-4".to_string()),
+            }),
+        );
+        reduce_live_session_in_place(
+            &mut state,
             LiveSessionEvent::ToolRequested(ToolRequestRecord {
                 exchange_index: 99,
                 call_id: "ignored".to_string(),
@@ -760,7 +785,48 @@ mod tests {
         let exchange = state.active_exchange.as_ref().expect("active exchange");
         assert_eq!(exchange.provider_events.len(), 1);
         assert_eq!(exchange.tool_requests.len(), 1);
+        assert_eq!(exchange.tool_executions.len(), 1);
         assert_eq!(exchange.tool_requests[0].call_id, "call-4");
+        assert_eq!(exchange.tool_executions[0].call_id, "call-4");
+    }
+
+    #[test]
+    fn tool_resolved_is_ignored_for_finalized_exchanges() {
+        let mut state = LiveSessionState::default();
+        reduce_live_session_in_place(
+            &mut state,
+            LiveSessionEvent::ExchangeStarted(Box::new(Exchange::new_text(
+                6,
+                "hello",
+                SystemTime::UNIX_EPOCH,
+            ))),
+        );
+        reduce_live_session_in_place(
+            &mut state,
+            LiveSessionEvent::ExchangeCompleted {
+                exchange_index: 6,
+                completed_at: SystemTime::UNIX_EPOCH,
+            },
+        );
+        reduce_live_session_in_place(
+            &mut state,
+            LiveSessionEvent::ToolResolved(crate::exchange::ToolExecutionRecord {
+                exchange_index: 6,
+                call_id: "call-6".to_string(),
+                tool_name: "lookup".to_string(),
+                permission_decision: crate::exchange::ToolPermissionDecision::Allowed,
+                status: crate::exchange::ToolExecutionStatus::Completed,
+                result_summary: "ok".to_string(),
+                error: None,
+                requested_at: SystemTime::UNIX_EPOCH,
+                completed_at: Some(SystemTime::UNIX_EPOCH),
+                response_model_use: None,
+                returning_event_id: Some("event-6".to_string()),
+            }),
+        );
+
+        assert_eq!(state.completed_exchanges.len(), 1);
+        assert!(state.completed_exchanges[0].tool_executions.is_empty());
     }
 
     #[test]

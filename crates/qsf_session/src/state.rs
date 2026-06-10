@@ -4,6 +4,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::context::ContextAssembly;
 use crate::conversation::ContentHash;
+use crate::exchange::{Exchange, ToolExecutionRecord, ToolRequestRecord};
 use crate::tools::{ToolCategory, ToolSideEffectLevel};
 
 pub const SESSION_STATE_SCHEMA_VERSION: u32 = 2;
@@ -28,7 +29,7 @@ pub struct SessionState {
     pub turns: Vec<Turn>,
     pub summarized_turns: Vec<TurnSummary>,
     #[serde(default)]
-    pub exchanges: Vec<crate::exchange::Exchange>,
+    pub exchanges: Vec<Exchange>,
     #[serde(default)]
     pub live: crate::live_state::LiveSessionState,
     pub ended_reason: Option<SessionEndReason>,
@@ -99,6 +100,10 @@ pub struct Turn {
     pub retrieved_memory_block: String,
     pub assistant_response: String,
     pub recalled_turns: Vec<RecallRecord>,
+    #[serde(default)]
+    pub tool_requests: Vec<ToolRequestRecord>,
+    #[serde(default)]
+    pub tool_executions: Vec<ToolExecutionRecord>,
     pub model_id: String,
     pub model_latency_ms: u64,
     pub input_tokens: u32,
@@ -158,6 +163,7 @@ pub enum SessionEndReason {
 }
 
 #[derive(Clone, Debug, PartialEq)]
+#[allow(clippy::large_enum_variant)]
 pub enum SessionEvent {
     SessionStarted(SessionConfig),
     InputReceived {
@@ -187,7 +193,7 @@ pub enum SessionEvent {
     },
     ExchangeRecorded {
         session_id: String,
-        exchange: Box<crate::exchange::Exchange>,
+        exchange: Box<Exchange>,
     },
     TurnSummarized(TurnSummary),
     TurnsAgedAndCoRetrieved {
@@ -258,6 +264,8 @@ pub(crate) mod tests {
             retrieved_memory_block: String::new(),
             assistant_response: format!("turn-{index}-response"),
             recalled_turns: vec![],
+            tool_requests: vec![],
+            tool_executions: vec![],
             model_id: "mock".to_string(),
             model_latency_ms: 0,
             input_tokens: 0,

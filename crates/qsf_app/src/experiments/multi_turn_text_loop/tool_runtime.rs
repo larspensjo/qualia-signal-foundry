@@ -73,22 +73,18 @@ pub(crate) fn responder_request_for_messages(
 pub(crate) fn execute_model_tool_calls(
     context: &mut RunContext,
     state: &SessionState,
-    project_docs: &ProjectDocService,
+    tool_ctx: &ResponderToolContext,
     request: &ModelRequest,
     registry: &ToolRegistry,
     project_doc_budget: &mut crate::models::ProjectDocToolBudget,
     tool_calls: &[ModelToolCall],
 ) -> anyhow::Result<Vec<ToolExecution>> {
-    let tool_ctx = ResponderToolContext {
-        state,
-        project_docs,
-    };
     let dispatch_started_at = Instant::now();
     let tool_results = dispatch_model_tool_calls(
         context,
         request,
         registry,
-        &tool_ctx,
+        tool_ctx,
         project_doc_budget,
         tool_calls,
     )?;

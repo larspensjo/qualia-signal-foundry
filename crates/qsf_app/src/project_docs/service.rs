@@ -4,6 +4,7 @@ use anyhow::Result;
 
 use super::{Allowlist, DocHit, DocRead, read, search};
 
+#[derive(Clone)]
 pub struct ProjectDocService {
     repo_root: PathBuf,
     allowlist_path: PathBuf,

@@ -29,6 +29,8 @@ pub struct Exchange {
     #[serde(default)]
     pub tool_requests: Vec<ToolRequestRecord>,
     #[serde(default)]
+    pub tool_executions: Vec<ToolExecutionRecord>,
+    #[serde(default)]
     pub status: ExchangeStatus,
 }
 
@@ -49,6 +51,7 @@ impl Exchange {
             interruptions: vec![],
             provider_events: vec![],
             tool_requests: vec![],
+            tool_executions: vec![],
             status: ExchangeStatus::AwaitingModel,
         }
     }
@@ -70,6 +73,7 @@ impl Exchange {
             interruptions: vec![],
             provider_events: vec![],
             tool_requests: vec![],
+            tool_executions: vec![],
             status: ExchangeStatus::Listening,
         }
     }
@@ -189,6 +193,7 @@ pub struct ProviderEventRecord {
 pub enum ProviderEventKind {
     Preamble,
     ResponseStarted,
+    FunctionCallCompleted,
     ResponseCompleted,
     SpeechPlaybackStarted,
     SpeechPlaybackCompleted,
@@ -205,6 +210,40 @@ pub struct ToolRequestRecord {
     #[serde(default)]
     pub routed_to: Option<String>,
     pub auto_executed: bool,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ToolPermissionDecision {
+    Allowed,
+    Denied { reason: String },
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ToolExecutionStatus {
+    Completed,
+    Failed,
+    Aborted,
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+pub struct ToolExecutionRecord {
+    pub exchange_index: usize,
+    pub call_id: String,
+    pub tool_name: String,
+    pub permission_decision: ToolPermissionDecision,
+    pub status: ToolExecutionStatus,
+    pub result_summary: String,
+    #[serde(default)]
+    pub error: Option<String>,
+    pub requested_at: SystemTime,
+    #[serde(default)]
+    pub completed_at: Option<SystemTime>,
+    #[serde(default)]
+    pub response_model_use: Option<ExchangeModelUse>,
+    #[serde(default)]
+    pub returning_event_id: Option<String>,
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize, Default)]
@@ -311,6 +350,8 @@ impl std::convert::TryFrom<&Exchange> for Turn {
             retrieved_memory_block: exchange.retrieved_memory_block.clone(),
             assistant_response: output.text.clone(),
             recalled_turns: exchange.recalled_items.clone(),
+            tool_requests: exchange.tool_requests.clone(),
+            tool_executions: exchange.tool_executions.clone(),
             model_id: model.model_id.clone(),
             model_latency_ms: model.latency_ms,
             input_tokens: model.input_tokens,
@@ -368,6 +409,7 @@ mod tests {
             interruptions: vec![],
             provider_events: vec![],
             tool_requests: vec![],
+            tool_executions: vec![],
             status: ExchangeStatus::Completed,
         };
 

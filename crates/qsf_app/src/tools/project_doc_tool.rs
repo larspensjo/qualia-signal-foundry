@@ -1,14 +1,16 @@
+use std::sync::Arc;
+
 use crate::project_docs::ProjectDocService;
 
-use super::tool_registry::ToolContext;
+use qsf_tools::ToolContext;
 
-pub struct ProjectDocToolContext<'a> {
-    pub service: &'a ProjectDocService,
+pub struct ProjectDocToolContext {
+    pub service: Arc<ProjectDocService>,
 }
 
-impl ToolContext for ProjectDocToolContext<'_> {
-    fn project_doc_service(&self) -> Option<&ProjectDocService> {
-        Some(self.service)
+impl ToolContext for ProjectDocToolContext {
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
     }
 }
 
@@ -16,7 +18,7 @@ impl ToolContext for ProjectDocToolContext<'_> {
 mod tests {
     use super::*;
     use crate::tools::EmptyToolContext;
-    use crate::tools::tool_registry::ToolContext;
+    use crate::tools::ToolContextAccess;
     use std::path::PathBuf;
 
     fn fixtures_root() -> PathBuf {
@@ -29,7 +31,9 @@ mod tests {
             fixtures_root(),
             fixtures_root().join("allowlist_basic.toml"),
         );
-        let ctx = ProjectDocToolContext { service: &service };
+        let ctx = ProjectDocToolContext {
+            service: Arc::new(service),
+        };
 
         assert!(ctx.project_doc_service().is_some());
     }

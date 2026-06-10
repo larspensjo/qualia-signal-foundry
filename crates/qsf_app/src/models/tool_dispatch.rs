@@ -447,8 +447,19 @@ fn tool_request_from_model_tool_call(
                 .and_then(|value| value.as_u64())
                 .context("recall_turn requires integer argument `turn_id`")?
                 as usize;
-            let mut request =
-                ToolRequest::recall_turn(tool_call.call_id.clone(), turn_id, requested_by);
+            let mut request = ToolRequest::new(
+                RECALL_TURN_TOOL_NAME,
+                format!(
+                    "recall_turn call_id={} turn_id={}",
+                    tool_call.call_id, turn_id
+                ),
+                Some(serde_json::json!({
+                    "call_id": tool_call.call_id.clone(),
+                    "turn_id": turn_id,
+                })),
+                ToolPermission::compute_only(),
+                requested_by,
+            );
             request.permission = permission;
             Ok(request)
         }
@@ -458,7 +469,13 @@ fn tool_request_from_model_tool_call(
                 .get("expression")
                 .and_then(|value| value.as_str())
                 .context("calculator requires string argument `expression`")?;
-            let mut request = ToolRequest::calculator(expression, requested_by);
+            let mut request = ToolRequest::new(
+                CALCULATOR_TOOL_NAME,
+                expression.to_string(),
+                None,
+                ToolPermission::compute_only(),
+                requested_by,
+            );
             request.permission = permission;
             Ok(request)
         }
@@ -483,6 +500,7 @@ fn permission_from_metadata(metadata: &ToolMetadata) -> ToolPermission {
 mod tests {
     use std::fs;
     use std::path::PathBuf;
+    use std::sync::Arc;
 
     use serde_json::json;
 
@@ -512,13 +530,14 @@ mod tests {
         )
     }
 
-    fn responder_tool_context<'a>(
-        state: &'a SessionState,
-        service: &'a ProjectDocService,
-    ) -> ResponderToolContext<'a> {
+    fn responder_tool_context<S, D>(state: S, service: D) -> ResponderToolContext
+    where
+        S: std::borrow::Borrow<SessionState>,
+        D: std::borrow::Borrow<ProjectDocService>,
+    {
         ResponderToolContext {
-            state,
-            project_docs: service,
+            state: Arc::new(state.borrow().clone()),
+            project_docs: Arc::new(service.borrow().clone()),
         }
     }
 
@@ -529,7 +548,9 @@ mod tests {
         let mut context = RunContext::create_in(&base_dir, "tool-dispatch-test").unwrap();
         let registry = ToolRegistry::default();
         let state = SessionState::new(test_config());
-        let tool_ctx = SessionToolContext { state: &state };
+        let tool_ctx = SessionToolContext {
+            state: Arc::new(state.clone()),
+        };
         let mut project_doc_budget = ProjectDocToolBudget::new(0);
         let request = ModelRequest::new(
             ModelRole::predefined(ModelRoleId::ConversationalResponder),
@@ -580,7 +601,9 @@ mod tests {
             input_tokens: 0,
             output_tokens: 0,
         });
-        let tool_ctx = SessionToolContext { state: &state };
+        let tool_ctx = SessionToolContext {
+            state: Arc::new(state.clone()),
+        };
         let mut project_doc_budget = ProjectDocToolBudget::new(0);
         let mut role = ModelRole::predefined(ModelRoleId::ConversationalResponder);
         role.allowed_tools = vec![RECALL_TURN_TOOL_NAME.to_string()];
@@ -620,7 +643,9 @@ mod tests {
         let mut context = RunContext::create_in(&base_dir, "tool-dispatch-test").unwrap();
         let registry = ToolRegistry::default();
         let state = SessionState::new(test_config());
-        let tool_ctx = SessionToolContext { state: &state };
+        let tool_ctx = SessionToolContext {
+            state: Arc::new(state.clone()),
+        };
         let mut project_doc_budget = ProjectDocToolBudget::new(0);
         let mut role = ModelRole::predefined(ModelRoleId::ConversationalResponder);
         role.allowed_tools = vec!["missing_tool".to_string()];
@@ -663,7 +688,9 @@ mod tests {
         let mut context = RunContext::create_in(&base_dir, "tool-dispatch-test").unwrap();
         let registry = ToolRegistry::default();
         let state = SessionState::new(test_config());
-        let tool_ctx = SessionToolContext { state: &state };
+        let tool_ctx = SessionToolContext {
+            state: Arc::new(state.clone()),
+        };
         let mut project_doc_budget = ProjectDocToolBudget::new(0);
         let mut role = ModelRole::predefined(ModelRoleId::ConversationalResponder);
         role.allowed_tools = vec![RECALL_TURN_TOOL_NAME.to_string()];
@@ -693,8 +720,8 @@ mod tests {
         let mut context = RunContext::create_in(&base_dir, "tool-dispatch-test").unwrap();
         let registry = ToolRegistry::default();
         let state = SessionState::new(test_config());
-        let service = project_doc_service();
-        let tool_ctx = responder_tool_context(&state, &service);
+        let service = Arc::new(project_doc_service());
+        let tool_ctx = responder_tool_context(Arc::new(state.clone()), service);
         let mut budget = ProjectDocToolBudget::new(3);
         let mut role = ModelRole::predefined(ModelRoleId::ConversationalResponder);
         role.allowed_tools = vec![
@@ -785,8 +812,8 @@ mod tests {
         let mut context = RunContext::create_in(&base_dir, "tool-dispatch-test").unwrap();
         let registry = ToolRegistry::default();
         let state = SessionState::new(test_config());
-        let service = project_doc_service();
-        let tool_ctx = responder_tool_context(&state, &service);
+        let service = Arc::new(project_doc_service());
+        let tool_ctx = responder_tool_context(Arc::new(state.clone()), service);
         let mut budget = ProjectDocToolBudget::new(4);
         let mut role = ModelRole::predefined(ModelRoleId::ConversationalResponder);
         role.allowed_tools = vec![
@@ -1210,7 +1237,9 @@ mod tests {
             input_tokens: 0,
             output_tokens: 0,
         });
-        let tool_ctx = SessionToolContext { state: &state };
+        let tool_ctx = SessionToolContext {
+            state: Arc::new(state.clone()),
+        };
         let mut budget = ProjectDocToolBudget::new(6);
         let mut role = ModelRole::predefined(ModelRoleId::ConversationalResponder);
         role.allowed_tools = vec![RECALL_TURN_TOOL_NAME.to_string()];
@@ -1320,6 +1349,8 @@ mod tests {
             retrieved_memory_block: String::new(),
             assistant_response: "assistant replied".to_string(),
             recalled_turns: vec![],
+            tool_requests: vec![],
+            tool_executions: vec![],
             model_id: "mock".to_string(),
             model_latency_ms: 0,
             input_tokens: 0,

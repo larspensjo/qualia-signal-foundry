@@ -1,148 +1,90 @@
-use anyhow::{Result, bail};
-use serde::{Deserialize, Serialize};
+use qsf_tools::{
+    ToolContext, ToolDefinition, ToolMetadata, ToolRegistry as GenericToolRegistry, ToolRequest,
+    ToolResult,
+};
 
 use crate::models::ModelToolDefinition;
-use crate::project_docs::ProjectDocService;
-use crate::session::SessionState;
 
 use super::calculator_tool::CalculatorTool;
 use super::read_project_doc_tool::ReadProjectDocTool;
+use super::recall_turn_tool::RecallTurnTool;
 use super::search_project_docs_tool::SearchProjectDocsTool;
-use super::tool_request::{ToolCategory, ToolRequest, ToolSideEffectLevel};
-use super::tool_result::ToolResult;
-
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
-pub struct ToolMetadata {
-    pub name: &'static str,
-    pub description: &'static str,
-    pub category: ToolCategory,
-    pub side_effect_level: ToolSideEffectLevel,
-}
-
-pub trait Tool {
-    fn metadata(&self) -> ToolMetadata;
-
-    fn execute(&self, request: &ToolRequest, ctx: &dyn ToolContext) -> Result<ToolResult>;
-
-    fn model_tool_definition(&self) -> Option<ModelToolDefinition> {
-        None
-    }
-}
-
-pub trait ToolContext {
-    fn session_state(&self) -> Option<&SessionState> {
-        None
-    }
-
-    fn project_doc_service(&self) -> Option<&ProjectDocService> {
-        None
-    }
-}
-
-#[derive(Default)]
-pub struct EmptyToolContext;
-
-impl ToolContext for EmptyToolContext {}
-
 pub struct ToolRegistry {
-    calculator: CalculatorTool,
-    recall_turn: super::RecallTurnTool,
-    search_project_docs: SearchProjectDocsTool,
-    read_project_doc: ReadProjectDocTool,
+    inner: GenericToolRegistry,
 }
 
 impl Default for ToolRegistry {
     fn default() -> Self {
-        Self {
-            calculator: CalculatorTool,
-            recall_turn: super::RecallTurnTool,
-            search_project_docs: SearchProjectDocsTool,
-            read_project_doc: ReadProjectDocTool,
-        }
+        let mut inner = GenericToolRegistry::default();
+        inner.register(CalculatorTool);
+        inner.register(RecallTurnTool);
+        inner.register(SearchProjectDocsTool);
+        inner.register(ReadProjectDocTool);
+        Self { inner }
     }
 }
 
 impl ToolRegistry {
+    pub fn register<T>(&mut self, tool: T)
+    where
+        T: super::Tool + 'static,
+    {
+        self.inner.register(tool);
+    }
+
     pub fn metadata_for(&self, tool_name: &str) -> Option<ToolMetadata> {
-        match tool_name {
-            super::CALCULATOR_TOOL_NAME => Some(self.calculator.metadata()),
-            super::RECALL_TURN_TOOL_NAME => Some(self.recall_turn.metadata()),
-            super::SEARCH_PROJECT_DOCS_TOOL_NAME => Some(self.search_project_docs.metadata()),
-            super::READ_PROJECT_DOC_TOOL_NAME => Some(self.read_project_doc.metadata()),
-            _ => None,
-        }
+        self.inner.metadata_for(tool_name)
     }
 
-    fn dispatch(&self, request: &ToolRequest, ctx: &dyn ToolContext) -> Result<ToolResult> {
-        match request.tool_name.as_str() {
-            super::CALCULATOR_TOOL_NAME => self.calculator.execute(request, ctx),
-            super::RECALL_TURN_TOOL_NAME => self.recall_turn.execute(request, ctx),
-            super::SEARCH_PROJECT_DOCS_TOOL_NAME => self.search_project_docs.execute(request, ctx),
-            super::READ_PROJECT_DOC_TOOL_NAME => self.read_project_doc.execute(request, ctx),
-            _ => bail!("unknown tool `{}`", request.tool_name),
-        }
+    pub fn definition_for(&self, tool_name: &str) -> Option<ToolDefinition> {
+        self.inner.definition_for(tool_name)
     }
 
-    pub fn validate_request(&self, request: &ToolRequest) -> Result<ToolMetadata> {
-        let metadata = self
-            .metadata_for(&request.tool_name)
-            .ok_or_else(|| anyhow::anyhow!("unknown tool `{}`", request.tool_name))?;
+    pub fn definitions_for(&self, names: &[&str]) -> Vec<ToolDefinition> {
+        self.inner.definitions_for(names)
+    }
 
-        if !request
-            .permission
-            .allows(metadata.category, metadata.side_effect_level)
-        {
-            bail!(
-                "tool `{}` requires category={:?} side_effect_level={:?}, but permission only allows {:?} up to {:?}",
-                metadata.name,
-                metadata.category,
-                metadata.side_effect_level,
-                request.permission.allowed_categories,
-                request.permission.max_side_effect_level
-            );
-        }
+    pub fn model_tool_definitions_for(&self, names: &[&str]) -> Vec<ModelToolDefinition> {
+        self.definitions_for(names)
+            .into_iter()
+            .map(Into::into)
+            .collect()
+    }
 
-        Ok(metadata)
+    pub fn validate_request(&self, request: &ToolRequest) -> anyhow::Result<ToolMetadata> {
+        self.inner.validate_request(request)
     }
 
     pub fn validate_and_execute(
         &self,
         request: &ToolRequest,
         ctx: &dyn ToolContext,
-    ) -> Result<(ToolMetadata, ToolResult)> {
-        let metadata = self.validate_request(request)?;
-        let result = self.dispatch(request, ctx)?;
-        Ok((metadata, result))
+    ) -> anyhow::Result<(ToolMetadata, ToolResult)> {
+        self.inner.validate_and_execute(request, ctx)
     }
 
-    pub fn execute(&self, request: &ToolRequest, ctx: &dyn ToolContext) -> Result<ToolResult> {
-        let (_, result) = self.validate_and_execute(request, ctx)?;
-        Ok(result)
+    pub fn execute(
+        &self,
+        request: &ToolRequest,
+        ctx: &dyn ToolContext,
+    ) -> anyhow::Result<ToolResult> {
+        self.inner.execute(request, ctx)
     }
+}
 
-    pub fn model_tool_definitions_for(&self, names: &[&str]) -> Vec<ModelToolDefinition> {
-        names
-            .iter()
-            .filter_map(|name| match *name {
-                super::CALCULATOR_TOOL_NAME => self.calculator.model_tool_definition(),
-                super::RECALL_TURN_TOOL_NAME => self.recall_turn.model_tool_definition(),
-                super::SEARCH_PROJECT_DOCS_TOOL_NAME => {
-                    self.search_project_docs.model_tool_definition()
-                }
-                super::READ_PROJECT_DOC_TOOL_NAME => self.read_project_doc.model_tool_definition(),
-                _ => None,
-            })
-            .collect()
+impl From<ToolDefinition> for ModelToolDefinition {
+    fn from(value: ToolDefinition) -> Self {
+        Self::new(value.name, value.description, value.parameters)
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::ToolRegistry;
+    use super::*;
     use crate::project_docs::ProjectDocService;
-    use crate::tools::ProjectDocToolContext;
-    use crate::tools::{ToolCategory, ToolPermission, ToolRequest, ToolSideEffectLevel};
+    use crate::tools::{ProjectDocToolContext, ToolCategory, ToolPermission, ToolSideEffectLevel};
     use std::path::PathBuf;
+    use std::sync::Arc;
 
     fn fixture_service() -> ProjectDocService {
         let fixtures = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("src/project_docs/fixtures");
@@ -212,7 +154,9 @@ mod tests {
     #[test]
     fn registry_dispatches_search_project_docs() {
         let service = fixture_service();
-        let ctx = ProjectDocToolContext { service: &service };
+        let ctx = ProjectDocToolContext {
+            service: Arc::new(service),
+        };
         let registry = ToolRegistry::default();
         let request = ToolRequest {
             tool_name: crate::tools::SEARCH_PROJECT_DOCS_TOOL_NAME.to_string(),
@@ -234,7 +178,9 @@ mod tests {
     #[test]
     fn registry_dispatches_read_project_doc() {
         let service = fixture_service();
-        let ctx = ProjectDocToolContext { service: &service };
+        let ctx = ProjectDocToolContext {
+            service: Arc::new(service),
+        };
         let registry = ToolRegistry::default();
         const FIXTURE_DOC_PATH: &str = "sample_concept.md";
         let request = ToolRequest {

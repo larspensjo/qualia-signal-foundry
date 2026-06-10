@@ -6,14 +6,19 @@ Candidate
 
 ## Implementation Status
 
-A registry-based tool system is implemented end-to-end for one read-only
-computational tool (`calculator`) and three introspection-style tools
-(`recall_turn`, `search_project_docs`, and `read_project_doc`). The wider
-catalogue of categories described below is mostly aspirational.
+A registry-based tool system is implemented for app-owned tools and realtime
+voice perception tools. The generic core lives in `qsf_tools`; `qsf_app` keeps
+its concrete app tools behind a facade, and `qsf_realtime_server` registers its
+own read-only tools without depending on `qsf_app`. The wider catalogue of
+categories described below is still mostly aspirational.
 
 **Implemented today:**
 
-- `Tool` trait, `ToolRegistry`, `ToolRequest`, `ToolResult`, `ToolPermission`
+- `Tool` trait, dynamic `ToolRegistry`, `ToolDefinition`, `ToolRequest`,
+  `ToolResult`, and `ToolPermission` in the lean `qsf_tools` crate
+  ([qsf_tools/](../../crates/qsf_tools/src/))
+- `qsf_app::tools` as the compatibility facade for calculator, recall-turn, and
+  project-document tools
   ([tools/](../../crates/qsf_app/src/tools/))
 - `ModelToolDefinition` / `ModelToolCall` as the model-facing wire shape,
   marshalled into `ToolRequest` before any execution
@@ -43,18 +48,22 @@ catalogue of categories described below is mostly aspirational.
   `project_doc_influence` enrichment pass available for post-hoc run analysis
   ([models/tool_dispatch.rs](../../crates/qsf_app/src/models/tool_dispatch.rs),
   [project_docs/](../../crates/qsf_app/src/project_docs/))
-- Realtime voice provider records requested tool calls as QSF events without
-  executing them, preserving the QSF tool boundary
-  ([audio/voice_session_provider.rs](../../crates/qsf_app/src/audio/voice_session_provider.rs))
+- Realtime voice sideband declares and executes exactly three read-only
+  perception tools: `search_memory`, `get_associations`, and
+  `inspect_session_state`. The sideband records request and execution facts,
+  applies the read-only allow-list, sends `function_call_output`, and then
+  issues `response.create`.
+  ([realtime/tools.rs](../../crates/qsf_realtime_server/src/realtime/tools.rs),
+  [realtime/sideband.rs](../../crates/qsf_realtime_server/src/realtime/sideband.rs))
 - Fail-fast tool dispatch: any failure in a batch fails the whole batch
 
 **Partial:**
 
-- Permission model exists but distinguishes only a small set of cases; the full
-  `ObserveOnly` / `ComputeOnly` / `SandboxedLocal` / `HumanApprovedWrite` /
-  `Disallowed` taxonomy is not all wired
-- Side-effect levels are tracked in registry metadata but not enforced as a
-  separate gate
+- Permission model exists but distinguishes only a small set of cases; realtime
+  sideband enforcement currently caps live tools to `ReadOnly` /
+  `ReadOnly`, while the full `ObserveOnly` / `ComputeOnly` /
+  `SandboxedLocal` / `HumanApprovedWrite` / `Disallowed` taxonomy is not all
+  wired
 
 **Not yet implemented:**
 
@@ -62,16 +71,14 @@ catalogue of categories described below is mostly aspirational.
   run-artifact inspection tools
 - Tool result confidence / trust signal
 - Tool-result-to-memory promotion
-- Asynchronous or interruptible tool execution
-- Live realtime voice sideband tool execution. The accepted future boundary is
-  allow-listed read-only tools only, executed by QSF server-side, with separate
-  permission/result/error/timing records before returning `function_call_output`
-  to the provider.
+- Asynchronous tool execution beyond the realtime sideband's lock-free execution
+  window
+- Full `qsf_app` tool exposure to the live realtime model; that requires moving
+  app data services past the no-`qsf_app` server boundary
 - Project introspection beyond the framed-self documentation slice: source
   inspection, run inspection, active-self inspection, and write-capable tools
 
-Last reviewed: 2026-06-09 against the code in this workspace and the accepted
-realtime voice tool-boundary decision.
+Last reviewed: 2026-06-10 against the Phase-4 realtime tool-loop implementation.
 
 ## Summary
 

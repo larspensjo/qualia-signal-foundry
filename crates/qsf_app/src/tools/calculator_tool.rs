@@ -1,10 +1,8 @@
 use anyhow::{Result, bail};
 
-use crate::models::ModelToolDefinition;
-
-use super::tool_registry::{Tool, ToolContext, ToolMetadata};
-use super::tool_request::{ToolCategory, ToolRequest, ToolSideEffectLevel};
-use super::tool_result::ToolResult;
+use super::{Tool, ToolContext, ToolDefinition, ToolMetadata, ToolRequest, ToolResult};
+use qsf_tools::ToolCategory;
+use qsf_tools::ToolSideEffectLevel;
 
 pub const CALCULATOR_TOOL_NAME: &str = "calculator";
 
@@ -14,8 +12,9 @@ pub struct CalculatorTool;
 impl Tool for CalculatorTool {
     fn metadata(&self) -> ToolMetadata {
         ToolMetadata {
-            name: CALCULATOR_TOOL_NAME,
-            description: "Evaluate deterministic arithmetic expressions without side effects",
+            name: CALCULATOR_TOOL_NAME.to_string(),
+            description: "Evaluate deterministic arithmetic expressions without side effects"
+                .to_string(),
             category: ToolCategory::ComputeOnly,
             side_effect_level: ToolSideEffectLevel::None,
         }
@@ -39,8 +38,8 @@ impl Tool for CalculatorTool {
         })
     }
 
-    fn model_tool_definition(&self) -> Option<ModelToolDefinition> {
-        Some(ModelToolDefinition::new(
+    fn definition(&self) -> Option<ToolDefinition> {
+        Some(ToolDefinition::new(
             CALCULATOR_TOOL_NAME,
             "Evaluate a deterministic arithmetic expression and return the numeric result.",
             serde_json::json!({
@@ -230,7 +229,13 @@ mod tests {
     #[test]
     fn calculator_respects_operator_precedence() {
         let tool = CalculatorTool;
-        let request = ToolRequest::calculator("2 + 3 * 4", "test");
+        let request = ToolRequest::new(
+            super::CALCULATOR_TOOL_NAME,
+            "2 + 3 * 4",
+            None,
+            crate::tools::ToolPermission::compute_only(),
+            "test",
+        );
 
         let result = tool.execute(&request, &EmptyToolContext).unwrap();
 
@@ -241,7 +246,13 @@ mod tests {
     #[test]
     fn calculator_rejects_invalid_input() {
         let tool = CalculatorTool;
-        let request = ToolRequest::calculator("2 + (3 *", "test");
+        let request = ToolRequest::new(
+            super::CALCULATOR_TOOL_NAME,
+            "2 + (3 *",
+            None,
+            crate::tools::ToolPermission::compute_only(),
+            "test",
+        );
 
         let error = tool.execute(&request, &EmptyToolContext).unwrap_err();
 

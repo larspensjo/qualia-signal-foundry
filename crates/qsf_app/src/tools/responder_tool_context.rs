@@ -1,20 +1,18 @@
+use std::sync::Arc;
+
 use crate::project_docs::ProjectDocService;
 use crate::session::SessionState;
 
-use super::tool_registry::ToolContext;
+use qsf_tools::ToolContext;
 
-pub struct ResponderToolContext<'a> {
-    pub state: &'a SessionState,
-    pub project_docs: &'a ProjectDocService,
+pub struct ResponderToolContext {
+    pub state: Arc<SessionState>,
+    pub project_docs: Arc<ProjectDocService>,
 }
 
-impl ToolContext for ResponderToolContext<'_> {
-    fn session_state(&self) -> Option<&SessionState> {
-        Some(self.state)
-    }
-
-    fn project_doc_service(&self) -> Option<&ProjectDocService> {
-        Some(self.project_docs)
+impl ToolContext for ResponderToolContext {
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
     }
 }
 
@@ -22,7 +20,7 @@ impl ToolContext for ResponderToolContext<'_> {
 mod tests {
     use super::*;
     use crate::session::{SessionConfig, SessionState};
-    use crate::tools::tool_registry::ToolContext;
+    use crate::tools::ToolContextAccess;
     use std::path::PathBuf;
 
     fn fixtures_root() -> PathBuf {
@@ -50,8 +48,8 @@ mod tests {
         );
         let state = SessionState::new(test_config());
         let ctx = ResponderToolContext {
-            state: &state,
-            project_docs: &service,
+            state: Arc::new(state),
+            project_docs: Arc::new(service),
         };
 
         assert!(ctx.session_state().is_some());

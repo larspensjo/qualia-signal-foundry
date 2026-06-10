@@ -1,4 +1,5 @@
 use std::convert::TryFrom;
+use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime};
 
 use anyhow::Context;
@@ -7,16 +8,20 @@ use futures_util::{SinkExt, StreamExt};
 use qsf_context::ContextBudget;
 use qsf_memory::RetrievalStrategy;
 use qsf_realtime_protocol::{
-    build_openai_realtime_conversation_session_update, build_openai_realtime_response_create,
-    extract_response_text, parse_realtime_server_event, realtime_event_delta_text,
-    realtime_event_response_id, realtime_event_response_status, realtime_event_text,
-    realtime_event_transcript, realtime_event_type,
+    ResponseDoneOutputKind, build_openai_realtime_conversation_session_update,
+    build_openai_realtime_function_call_output, build_openai_realtime_response_create,
+    build_openai_realtime_response_create_with_tool_choice, extract_response_text,
+    parse_realtime_server_event, realtime_event_delta_text, realtime_event_response_id,
+    realtime_event_response_status, realtime_event_text, realtime_event_transcript,
+    realtime_event_type, realtime_response_done_output_kind,
 };
 use qsf_session::{
     ContentHash, ContinuityManifest, Exchange, ExchangeModelUse, ExchangeOutput, LiveSessionEvent,
-    ProviderEventKind, ProviderEventRecord, ResumeMode, SessionEndReason, SessionEvent, Turn,
-    apply_live_session_event, persist_session_state, reduce_session_in_place,
+    ProviderEventKind, ProviderEventRecord, ResumeMode, SessionEndReason, SessionEvent,
+    ToolExecutionStatus, ToolPermissionDecision, Turn, apply_live_session_event,
+    persist_session_state, reduce_session_in_place,
 };
+use qsf_tools::ToolRequest;
 use sha2::Digest;
 use tokio::sync::{mpsc, watch};
 use tokio_tungstenite::{
@@ -29,6 +34,9 @@ use crate::realtime::injection::{
     build_memory_injection_packet,
 };
 use crate::realtime::memory_store::retrieve_session_memories;
+use crate::realtime::tools::{
+    self, RealtimeToolContext, ToolSessionSnapshot, tool_allow_list, tool_permission_decision,
+};
 use crate::state::{AppState, SessionRuntime};
 
 const DEFAULT_INJECTION_FRAGMENT_LIMIT: usize = 4;
@@ -71,6 +79,11 @@ struct SidebandRuntimeState {
     response_id: Option<String>,
     current_request_hash: Option<ContentHash>,
     current_message_count: usize,
+    accumulated_latency_ms: u64,
+    accumulated_input_tokens: u32,
+    accumulated_cached_input_tokens: u32,
+    accumulated_output_tokens: u32,
+    tool_calls_in_turn: usize,
 }
 
 async fn run_sideband(
@@ -174,6 +187,8 @@ async fn connect_and_run_once(
             &session_config.output_modalities,
             DEFAULT_PCM_RATE_HZ,
             false,
+            &session_config.tools,
+            Some("auto"),
             session_config.input_transcription_model.as_deref(),
         ),
     )?;
@@ -472,100 +487,17 @@ async fn handle_provider_event(
             );
         }
         "response.done" => {
-            let exchange_index = ensure_authoritative_exchange(&mut guard);
-            let response_id = runtime_state
-                .response_id
-                .clone()
-                .or_else(|| realtime_event_response_id(event).map(str::to_string));
-            let response_text = extract_response_text(event)
-                .or_else(|| realtime_event_text(event).map(str::to_string))
-                .unwrap_or_default();
-            let response_status = realtime_event_response_status(event).unwrap_or("completed");
-            let completed_at = SystemTime::now();
-            let response_started_at = runtime_state
-                .response_started_at
-                .unwrap_or_else(Instant::now);
-            let model_use = ExchangeModelUse {
-                provider_name: Some("openai_realtime".to_string()),
-                model_id: config.model.clone(),
-                latency_ms: response_started_at.elapsed().as_millis() as u64,
-                input_tokens: response_usage_input_tokens(event),
-                cached_input_tokens: response_usage_cached_input_tokens(event),
-                output_tokens: response_usage_output_tokens(event),
-                full_request_hash: runtime_state
-                    .current_request_hash
-                    .unwrap_or_else(|| hash_request_sequence(&[])),
-                message_count: runtime_state.current_message_count.max(1),
-            };
-            apply_live_session_event(
-                &mut guard.session_state,
-                LiveSessionEvent::ProviderEventRecorded(ProviderEventRecord {
-                    exchange_index,
-                    event_kind: ProviderEventKind::ResponseCompleted,
-                    provider_id: "openai_realtime".to_string(),
-                    received_at: completed_at,
-                    call_id: Some(call_id.to_string()),
-                    event_id: Some(
-                        event
-                            .get("event_id")
-                            .and_then(serde_json::Value::as_str)
-                            .unwrap_or("response.done")
-                            .to_string(),
-                    ),
-                    item_id: event
-                        .get("item_id")
-                        .and_then(serde_json::Value::as_str)
-                        .map(str::to_string),
-                    previous_item_id: event
-                        .get("previous_item_id")
-                        .and_then(serde_json::Value::as_str)
-                        .map(str::to_string),
-                    response_id: response_id.clone(),
-                    text: Some(response_text.clone()),
-                    status: Some(response_status.to_string()),
-                    audio_marker: event
-                        .get("audio_marker")
-                        .and_then(serde_json::Value::as_str)
-                        .map(str::to_string),
-                }),
-            );
-            apply_live_session_event(
-                &mut guard.session_state,
-                LiveSessionEvent::OutputProduced(ExchangeOutput {
-                    response_id: response_id.clone(),
-                    text: response_text.clone(),
-                    produced_at: completed_at,
-                    provider_name: Some("openai_realtime".to_string()),
-                    target: Some("speech".to_string()),
-                    audio_marker: event
-                        .get("audio_marker")
-                        .and_then(serde_json::Value::as_str)
-                        .map(str::to_string),
-                }),
-            );
-            apply_live_session_event(
-                &mut guard.session_state,
-                LiveSessionEvent::ModelRoleCompleted(model_use),
-            );
-            apply_live_session_event(
-                &mut guard.session_state,
-                LiveSessionEvent::ExchangeCompleted {
-                    exchange_index,
-                    completed_at,
-                },
-            );
-            if response_status != "completed" {
-                guard.non_promotable_exchange_indices.insert(exchange_index);
-                log::warn!(
-                    "trusted exchange `{exchange_index}` for session `{qsf_session_id}` marked non-promotable because response status was `{response_status}`"
-                );
-            }
-            promote_completed_trusted_exchanges(state, &mut guard).await?;
-            runtime_state.active_exchange_index = None;
-            runtime_state.response_id = None;
-            runtime_state.response_started_at = None;
-            runtime_state.current_request_hash = None;
-            runtime_state.current_message_count = 0;
+            handle_response_done_event(
+                state,
+                qsf_session_id,
+                call_id,
+                event,
+                session.clone(),
+                guard,
+                runtime_state,
+                outbound_tx,
+            )
+            .await?;
         }
         "session.closed" => {
             apply_live_session_event(
@@ -816,8 +748,518 @@ fn response_usage_number(event: &serde_json::Value, path: &[&str]) -> Option<u64
     current.as_u64()
 }
 
+struct FunctionCallAttempt {
+    name: String,
+    call_id: String,
+    arguments: Option<serde_json::Value>,
+    arguments_summary: String,
+    parse_error: Option<String>,
+}
+
+struct PendingToolExecution {
+    name: String,
+    call_id: String,
+    arguments: serde_json::Value,
+    arguments_summary: String,
+    requested_at: SystemTime,
+}
+
+struct ToolResolutionOutput {
+    record: qsf_session::ToolExecutionRecord,
+    output_message: serde_json::Value,
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn handle_response_done_event(
+    state: &AppState,
+    qsf_session_id: &str,
+    call_id: &str,
+    event: &serde_json::Value,
+    session: Arc<tokio::sync::Mutex<SessionRuntime>>,
+    mut guard: tokio::sync::MutexGuard<'_, SessionRuntime>,
+    runtime_state: &mut SidebandRuntimeState,
+    outbound_tx: &mpsc::UnboundedSender<Message>,
+) -> anyhow::Result<()> {
+    let exchange_index = ensure_authoritative_exchange(&mut guard);
+    let model_id = guard.config.model.clone();
+    let response_id = runtime_state
+        .response_id
+        .clone()
+        .or_else(|| realtime_event_response_id(event).map(str::to_string));
+    let completed_at = SystemTime::now();
+    let response_started_at = runtime_state
+        .response_started_at
+        .unwrap_or_else(Instant::now);
+    let response_model_use = ExchangeModelUse {
+        provider_name: Some("openai_realtime".to_string()),
+        model_id: model_id.clone(),
+        latency_ms: response_started_at.elapsed().as_millis() as u64,
+        input_tokens: response_usage_input_tokens(event),
+        cached_input_tokens: response_usage_cached_input_tokens(event),
+        output_tokens: response_usage_output_tokens(event),
+        full_request_hash: runtime_state
+            .current_request_hash
+            .unwrap_or_else(|| hash_request_sequence(&[])),
+        message_count: runtime_state.current_message_count.max(1),
+    };
+
+    runtime_state.accumulated_latency_ms = runtime_state
+        .accumulated_latency_ms
+        .saturating_add(response_model_use.latency_ms);
+    runtime_state.accumulated_input_tokens = runtime_state
+        .accumulated_input_tokens
+        .saturating_add(response_model_use.input_tokens);
+    runtime_state.accumulated_cached_input_tokens = runtime_state
+        .accumulated_cached_input_tokens
+        .saturating_add(response_model_use.cached_input_tokens);
+    runtime_state.accumulated_output_tokens = runtime_state
+        .accumulated_output_tokens
+        .saturating_add(response_model_use.output_tokens);
+
+    let response_status = realtime_event_response_status(event).unwrap_or("completed");
+    match realtime_response_done_output_kind(event) {
+        ResponseDoneOutputKind::FunctionCallOnly | ResponseDoneOutputKind::Mixed => {
+            let function_calls = extract_response_function_call_attempts(event);
+            let allow_list = tool_allow_list(&guard.config.tools);
+            let registry = guard.tool_registry.clone();
+            let snapshot = ToolSessionSnapshot::from_runtime(&guard);
+            let voice = guard.config.voice.clone();
+            let instructions = guard.config.instructions.clone();
+            let event_id = event
+                .get("event_id")
+                .and_then(serde_json::Value::as_str)
+                .map(str::to_string);
+            let tool_context = RealtimeToolContext {
+                state: state.clone(),
+                qsf_session_id: qsf_session_id.to_string(),
+                snapshot,
+            };
+
+            apply_live_session_event(
+                &mut guard.session_state,
+                LiveSessionEvent::ProviderEventRecorded(ProviderEventRecord {
+                    exchange_index,
+                    event_kind: ProviderEventKind::FunctionCallCompleted,
+                    provider_id: "openai_realtime".to_string(),
+                    received_at: completed_at,
+                    call_id: Some(call_id.to_string()),
+                    event_id: Some(
+                        event
+                            .get("event_id")
+                            .and_then(serde_json::Value::as_str)
+                            .unwrap_or("response.done")
+                            .to_string(),
+                    ),
+                    item_id: event
+                        .get("item_id")
+                        .and_then(serde_json::Value::as_str)
+                        .map(str::to_string),
+                    previous_item_id: event
+                        .get("previous_item_id")
+                        .and_then(serde_json::Value::as_str)
+                        .map(str::to_string),
+                    response_id: response_id.clone(),
+                    text: None,
+                    status: Some(response_status.to_string()),
+                    audio_marker: event
+                        .get("audio_marker")
+                        .and_then(serde_json::Value::as_str)
+                        .map(str::to_string),
+                }),
+            );
+
+            let mut output_messages = Vec::new();
+            let mut immediate_resolutions = Vec::new();
+            let mut pending_executions = Vec::new();
+            let mut force_spoken_response = false;
+            for function_call in function_calls {
+                let requested_at = SystemTime::now();
+                let tool_request = tools::tool_request_record(
+                    exchange_index,
+                    function_call.call_id.clone(),
+                    function_call.name.clone(),
+                    function_call.arguments_summary.clone(),
+                    requested_at,
+                    "openai_realtime",
+                );
+                apply_live_session_event(
+                    &mut guard.session_state,
+                    LiveSessionEvent::ToolRequested(tool_request.clone()),
+                );
+
+                let decision = if let Some(parse_error) = function_call.parse_error.clone() {
+                    ToolPermissionDecision::Denied {
+                        reason: format!("function-call arguments were malformed: {parse_error}"),
+                    }
+                } else if runtime_state.tool_calls_in_turn >= 3 {
+                    force_spoken_response = true;
+                    ToolPermissionDecision::Denied {
+                        reason: "tool loop cap reached (max 3 sequential tool calls per turn)"
+                            .to_string(),
+                    }
+                } else {
+                    let metadata = registry.metadata_for(&function_call.name);
+                    tool_permission_decision(&function_call.name, &allow_list, metadata.as_ref())
+                };
+
+                if matches!(decision, ToolPermissionDecision::Allowed) {
+                    let arguments = function_call
+                        .arguments
+                        .expect("allowed function calls must have parsed arguments");
+                    pending_executions.push(PendingToolExecution {
+                        name: function_call.name.clone(),
+                        call_id: function_call.call_id.clone(),
+                        arguments,
+                        arguments_summary: function_call.arguments_summary.clone(),
+                        requested_at,
+                    });
+                } else {
+                    let reason = match &decision {
+                        ToolPermissionDecision::Denied { reason } => reason.clone(),
+                        ToolPermissionDecision::Allowed => "tool denied".to_string(),
+                    };
+                    let execution_record = tools::tool_execution_record(
+                        exchange_index,
+                        function_call.call_id.clone(),
+                        function_call.name.clone(),
+                        decision,
+                        ToolExecutionStatus::Failed,
+                        reason.clone(),
+                        Some(reason.clone()),
+                        requested_at,
+                        Some(SystemTime::now()),
+                        Some(response_model_use.clone()),
+                        event_id.clone(),
+                    );
+                    immediate_resolutions.push(execution_record);
+                    output_messages.push(build_openai_realtime_function_call_output(
+                        &function_call.call_id,
+                        &serde_json::json!({
+                            "status": "denied",
+                            "tool_name": function_call.name,
+                            "reason": reason,
+                        })
+                        .to_string(),
+                    ));
+                }
+                runtime_state.tool_calls_in_turn =
+                    runtime_state.tool_calls_in_turn.saturating_add(1);
+            }
+
+            drop(guard);
+
+            let mut executed_resolutions = Vec::new();
+            for pending in pending_executions {
+                executed_resolutions.push(execute_realtime_tool_call(
+                    &registry,
+                    &tool_context,
+                    exchange_index,
+                    pending,
+                    &response_model_use,
+                    event_id.clone(),
+                    qsf_session_id,
+                ));
+            }
+
+            let session_removed = state.session_runtime(qsf_session_id).await.is_none();
+            let mut guard = session.lock().await;
+            let aborted = guard.degraded || session_removed;
+            if aborted {
+                guard.non_promotable_exchange_indices.insert(exchange_index);
+            }
+            for resolution in immediate_resolutions {
+                apply_live_session_event(
+                    &mut guard.session_state,
+                    LiveSessionEvent::ToolResolved(resolution),
+                );
+            }
+            for resolution in executed_resolutions {
+                let resolution = if aborted {
+                    aborted_tool_resolution(resolution, &response_model_use, event_id.clone())
+                } else {
+                    output_messages.push(resolution.output_message.clone());
+                    resolution
+                };
+                apply_live_session_event(
+                    &mut guard.session_state,
+                    LiveSessionEvent::ToolResolved(resolution.record),
+                );
+            }
+            drop(guard);
+
+            if aborted {
+                return Ok(());
+            }
+
+            for payload in &output_messages {
+                send_json(outbound_tx, payload.clone())?;
+            }
+
+            let response_create = if force_spoken_response {
+                build_openai_realtime_response_create_with_tool_choice(
+                    &voice,
+                    &instructions,
+                    DEFAULT_PCM_RATE_HZ,
+                    Some("none"),
+                )
+            } else {
+                build_openai_realtime_response_create(&voice, &instructions, DEFAULT_PCM_RATE_HZ)
+            };
+            send_json(outbound_tx, response_create.clone())?;
+            let mut request_sequence = output_messages.clone();
+            request_sequence.push(response_create.clone());
+            runtime_state.current_request_hash = Some(hash_request_sequence(&request_sequence));
+            runtime_state.current_message_count = request_sequence.len();
+            runtime_state.response_id = None;
+            runtime_state.response_started_at = None;
+            return Ok(());
+        }
+        ResponseDoneOutputKind::Empty | ResponseDoneOutputKind::Spoken => {}
+    }
+
+    let response_text = extract_response_text(event)
+        .or_else(|| realtime_event_text(event).map(str::to_string))
+        .unwrap_or_default();
+    apply_live_session_event(
+        &mut guard.session_state,
+        LiveSessionEvent::ProviderEventRecorded(ProviderEventRecord {
+            exchange_index,
+            event_kind: ProviderEventKind::ResponseCompleted,
+            provider_id: "openai_realtime".to_string(),
+            received_at: completed_at,
+            call_id: Some(call_id.to_string()),
+            event_id: Some(
+                event
+                    .get("event_id")
+                    .and_then(serde_json::Value::as_str)
+                    .unwrap_or("response.done")
+                    .to_string(),
+            ),
+            item_id: event
+                .get("item_id")
+                .and_then(serde_json::Value::as_str)
+                .map(str::to_string),
+            previous_item_id: event
+                .get("previous_item_id")
+                .and_then(serde_json::Value::as_str)
+                .map(str::to_string),
+            response_id: response_id.clone(),
+            text: Some(response_text.clone()),
+            status: Some(response_status.to_string()),
+            audio_marker: event
+                .get("audio_marker")
+                .and_then(serde_json::Value::as_str)
+                .map(str::to_string),
+        }),
+    );
+    apply_live_session_event(
+        &mut guard.session_state,
+        LiveSessionEvent::OutputProduced(ExchangeOutput {
+            response_id: response_id.clone(),
+            text: response_text.clone(),
+            produced_at: completed_at,
+            provider_name: Some("openai_realtime".to_string()),
+            target: Some("speech".to_string()),
+            audio_marker: event
+                .get("audio_marker")
+                .and_then(serde_json::Value::as_str)
+                .map(str::to_string),
+        }),
+    );
+    apply_live_session_event(
+        &mut guard.session_state,
+        LiveSessionEvent::ModelRoleCompleted(ExchangeModelUse {
+            provider_name: Some("openai_realtime".to_string()),
+            model_id,
+            latency_ms: runtime_state.accumulated_latency_ms,
+            input_tokens: runtime_state.accumulated_input_tokens,
+            cached_input_tokens: runtime_state.accumulated_cached_input_tokens,
+            output_tokens: runtime_state.accumulated_output_tokens,
+            full_request_hash: runtime_state
+                .current_request_hash
+                .unwrap_or_else(|| hash_request_sequence(&[])),
+            message_count: runtime_state.current_message_count.max(1),
+        }),
+    );
+    apply_live_session_event(
+        &mut guard.session_state,
+        LiveSessionEvent::ExchangeCompleted {
+            exchange_index,
+            completed_at,
+        },
+    );
+    if response_status != "completed" {
+        guard.non_promotable_exchange_indices.insert(exchange_index);
+        log::warn!(
+            "trusted exchange `{exchange_index}` for session `{qsf_session_id}` marked non-promotable because response status was `{response_status}`"
+        );
+    }
+    promote_completed_trusted_exchanges(state, &mut guard).await?;
+    runtime_state.active_exchange_index = None;
+    runtime_state.response_id = None;
+    runtime_state.response_started_at = None;
+    runtime_state.current_request_hash = None;
+    runtime_state.current_message_count = 0;
+    runtime_state.accumulated_latency_ms = 0;
+    runtime_state.accumulated_input_tokens = 0;
+    runtime_state.accumulated_cached_input_tokens = 0;
+    runtime_state.accumulated_output_tokens = 0;
+    runtime_state.tool_calls_in_turn = 0;
+
+    Ok(())
+}
+
+fn summarize_function_call_arguments(arguments: &serde_json::Value) -> String {
+    let text = serde_json::to_string(arguments).unwrap_or_else(|_| "{}".to_string());
+    text.chars().take(240).collect()
+}
+
+fn summarize_raw_function_call_arguments(arguments: &str) -> String {
+    arguments.chars().take(240).collect()
+}
+
+fn extract_response_function_call_attempts(event: &serde_json::Value) -> Vec<FunctionCallAttempt> {
+    let Some(output) = event
+        .get("response")
+        .and_then(|response| response.get("output"))
+        .and_then(serde_json::Value::as_array)
+    else {
+        return Vec::new();
+    };
+
+    let mut calls = Vec::new();
+    for item in output {
+        let Some(item_type) = item.get("type").and_then(serde_json::Value::as_str) else {
+            continue;
+        };
+        if item_type != "function_call" && item_type != "tool_search_call" {
+            continue;
+        }
+
+        let call_id = item
+            .get("call_id")
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or_default()
+            .to_string();
+        let name = item
+            .get("name")
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or_default()
+            .to_string();
+        let arguments_text = item
+            .get("arguments")
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or_default();
+        match serde_json::from_str::<serde_json::Value>(arguments_text) {
+            Ok(arguments) => calls.push(FunctionCallAttempt {
+                name,
+                call_id,
+                arguments_summary: summarize_function_call_arguments(&arguments),
+                arguments: Some(arguments),
+                parse_error: None,
+            }),
+            Err(error) => calls.push(FunctionCallAttempt {
+                name,
+                call_id,
+                arguments: None,
+                arguments_summary: summarize_raw_function_call_arguments(arguments_text),
+                parse_error: Some(error.to_string()),
+            }),
+        }
+    }
+
+    calls
+}
+
+fn execute_realtime_tool_call(
+    registry: &qsf_tools::ToolRegistry,
+    tool_context: &RealtimeToolContext,
+    exchange_index: usize,
+    pending: PendingToolExecution,
+    response_model_use: &ExchangeModelUse,
+    event_id: Option<String>,
+    qsf_session_id: &str,
+) -> ToolResolutionOutput {
+    let tool_request = ToolRequest {
+        tool_name: pending.name.clone(),
+        input: pending.arguments_summary.clone(),
+        structured: Some(pending.arguments),
+        permission: qsf_tools::ToolPermission::read_only(),
+        requested_by: qsf_session_id.to_string(),
+    };
+
+    let (status, result_summary, error, output_text, numeric_value, output_status) =
+        match registry.validate_and_execute(&tool_request, tool_context) {
+            Ok((_metadata, result)) => (
+                ToolExecutionStatus::Completed,
+                result.observation_summary.clone(),
+                None,
+                result.output_text.clone(),
+                result.numeric_value,
+                "completed",
+            ),
+            Err(exec_error) => (
+                ToolExecutionStatus::Failed,
+                "tool execution failed before producing a result".to_string(),
+                Some(exec_error.to_string()),
+                String::new(),
+                None,
+                "failed",
+            ),
+        };
+
+    let record = tools::tool_execution_record(
+        exchange_index,
+        pending.call_id.clone(),
+        pending.name.clone(),
+        ToolPermissionDecision::Allowed,
+        status,
+        result_summary.clone(),
+        error.clone(),
+        pending.requested_at,
+        Some(SystemTime::now()),
+        Some(response_model_use.clone()),
+        event_id,
+    );
+    let output_message = build_openai_realtime_function_call_output(
+        &pending.call_id,
+        &serde_json::json!({
+            "status": output_status,
+            "tool_name": pending.name,
+            "result_summary": result_summary,
+            "output_text": output_text,
+            "numeric_value": numeric_value,
+            "error": error,
+        })
+        .to_string(),
+    );
+
+    ToolResolutionOutput {
+        record,
+        output_message,
+    }
+}
+
+fn aborted_tool_resolution(
+    mut resolution: ToolResolutionOutput,
+    response_model_use: &ExchangeModelUse,
+    event_id: Option<String>,
+) -> ToolResolutionOutput {
+    resolution.record.status = ToolExecutionStatus::Aborted;
+    resolution.record.result_summary =
+        "tool execution aborted because the sideband became degraded before the result was returned"
+            .to_string();
+    resolution.record.error = Some("sideband degraded during tool execution".to_string());
+    resolution.record.completed_at = Some(SystemTime::now());
+    resolution.record.response_model_use = Some(response_model_use.clone());
+    resolution.record.returning_event_id = event_id;
+    resolution
+}
+
 #[cfg(test)]
 mod tests {
+    use std::sync::{Arc as StdArc, Condvar, Mutex as StdMutex};
+
     use tempfile::TempDir;
     use tokio::sync::mpsc;
 
@@ -831,6 +1273,84 @@ mod tests {
             tempdir.path().to_path_buf(),
         )
         .expect("state")
+    }
+
+    async fn start_test_turn(
+        state: &AppState,
+        qsf_session_id: &str,
+        runtime_state: &mut SidebandRuntimeState,
+        outbound_tx: &mpsc::UnboundedSender<Message>,
+    ) {
+        handle_provider_event(
+            state,
+            qsf_session_id,
+            "call-test",
+            "conversation.item.input_audio_transcription.completed",
+            &serde_json::json!({
+                "type": "conversation.item.input_audio_transcription.completed",
+                "event_id": "evt-transcript",
+                "item_id": "item-user",
+                "transcript": "hello tool loop"
+            }),
+            runtime_state,
+            outbound_tx,
+        )
+        .await
+        .expect("transcript event");
+    }
+
+    #[derive(Clone)]
+    struct BlockingTool {
+        started: StdArc<(StdMutex<bool>, Condvar)>,
+        release: StdArc<(StdMutex<bool>, Condvar)>,
+    }
+
+    impl qsf_tools::Tool for BlockingTool {
+        fn metadata(&self) -> qsf_tools::ToolMetadata {
+            qsf_tools::ToolMetadata {
+                name: "blocking_tool".to_string(),
+                description: "Blocks until the test releases it.".to_string(),
+                category: qsf_session::ToolCategory::ReadOnly,
+                side_effect_level: qsf_session::ToolSideEffectLevel::ReadOnly,
+            }
+        }
+
+        fn execute(
+            &self,
+            request: &ToolRequest,
+            _ctx: &dyn qsf_tools::ToolContext,
+        ) -> anyhow::Result<qsf_tools::ToolResult> {
+            set_flag(&self.started);
+            let (lock, cvar) = &*self.release;
+            let mut released = lock.lock().expect("release lock");
+            while !*released {
+                released = cvar.wait(released).expect("release wait");
+            }
+            Ok(qsf_tools::ToolResult {
+                tool_name: request.tool_name.clone(),
+                category: qsf_session::ToolCategory::ReadOnly,
+                side_effect_level: qsf_session::ToolSideEffectLevel::ReadOnly,
+                input: request.input.clone(),
+                output_text: "{}".to_string(),
+                numeric_value: None,
+                observation_summary: "blocking tool completed".to_string(),
+            })
+        }
+    }
+
+    fn wait_for_flag(flag: &StdArc<(StdMutex<bool>, Condvar)>) {
+        let (lock, cvar) = &**flag;
+        let mut value = lock.lock().expect("flag lock");
+        while !*value {
+            value = cvar.wait(value).expect("flag wait");
+        }
+    }
+
+    fn set_flag(flag: &StdArc<(StdMutex<bool>, Condvar)>) {
+        let (lock, cvar) = &**flag;
+        let mut value = lock.lock().expect("flag lock");
+        *value = true;
+        cvar.notify_one();
     }
 
     #[test]
@@ -938,6 +1458,378 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn malformed_function_call_arguments_recover_with_denial_output() {
+        let tempdir = TempDir::new().expect("tempdir");
+        let state = state(&tempdir);
+        let allocation = state.create_session().await.expect("session");
+        let mut runtime_state = SidebandRuntimeState::default();
+        let (outbound_tx, mut outbound_rx) = mpsc::unbounded_channel();
+
+        start_test_turn(
+            &state,
+            &allocation.qsf_session_id,
+            &mut runtime_state,
+            &outbound_tx,
+        )
+        .await;
+        outbound_rx.recv().await.expect("initial response.create");
+
+        handle_provider_event(
+            &state,
+            &allocation.qsf_session_id,
+            "call-tools",
+            "response.done",
+            &serde_json::json!({
+                "type": "response.done",
+                "event_id": "evt-tool-malformed",
+                "response": {
+                    "id": "response-tool",
+                    "status": "completed",
+                    "output": [{
+                        "type": "function_call",
+                        "name": crate::realtime::tools::INSPECT_SESSION_STATE_TOOL_NAME,
+                        "call_id": "tool-call-1",
+                        "arguments": "{not-json"
+                    }],
+                    "usage": {
+                        "input_tokens": 1,
+                        "output_tokens": 1
+                    }
+                }
+            }),
+            &mut runtime_state,
+            &outbound_tx,
+        )
+        .await
+        .expect("tool response done");
+
+        let output = outbound_rx.recv().await.expect("function_call_output");
+        assert!(output.to_text().expect("text").contains("denied"));
+        let response_create = outbound_rx.recv().await.expect("response.create");
+        assert!(
+            response_create
+                .to_text()
+                .expect("text")
+                .contains("\"response.create\"")
+        );
+
+        let runtime = state
+            .session_runtime(&allocation.qsf_session_id)
+            .await
+            .expect("runtime");
+        let guard = runtime.lock().await;
+        let exchange = guard
+            .session_state
+            .live
+            .active_exchange
+            .as_ref()
+            .expect("active exchange");
+        assert_eq!(exchange.tool_requests.len(), 1);
+        assert_eq!(exchange.tool_executions.len(), 1);
+        assert_eq!(
+            exchange.tool_executions[0].status,
+            ToolExecutionStatus::Failed
+        );
+        assert!(matches!(
+            exchange.tool_executions[0].permission_decision,
+            ToolPermissionDecision::Denied { .. }
+        ));
+    }
+
+    #[tokio::test]
+    async fn loop_cap_forces_next_response_to_disable_tools() {
+        let tempdir = TempDir::new().expect("tempdir");
+        let state = state(&tempdir);
+        let allocation = state.create_session().await.expect("session");
+        let mut runtime_state = SidebandRuntimeState::default();
+        let (outbound_tx, mut outbound_rx) = mpsc::unbounded_channel();
+
+        start_test_turn(
+            &state,
+            &allocation.qsf_session_id,
+            &mut runtime_state,
+            &outbound_tx,
+        )
+        .await;
+        outbound_rx.recv().await.expect("initial response.create");
+        runtime_state.tool_calls_in_turn = 3;
+
+        handle_provider_event(
+            &state,
+            &allocation.qsf_session_id,
+            "call-tools",
+            "response.done",
+            &serde_json::json!({
+                "type": "response.done",
+                "event_id": "evt-tool-cap",
+                "response": {
+                    "id": "response-tool",
+                    "status": "completed",
+                    "output": [{
+                        "type": "function_call",
+                        "name": crate::realtime::tools::INSPECT_SESSION_STATE_TOOL_NAME,
+                        "call_id": "tool-call-cap",
+                        "arguments": "{}"
+                    }],
+                    "usage": {
+                        "input_tokens": 1,
+                        "output_tokens": 1
+                    }
+                }
+            }),
+            &mut runtime_state,
+            &outbound_tx,
+        )
+        .await
+        .expect("tool response done");
+
+        let output = outbound_rx.recv().await.expect("function_call_output");
+        assert!(
+            output
+                .to_text()
+                .expect("text")
+                .contains("tool loop cap reached")
+        );
+        let response_create = outbound_rx.recv().await.expect("response.create");
+        let payload: serde_json::Value =
+            serde_json::from_str(response_create.to_text().expect("text")).expect("json");
+        assert_eq!(payload["response"]["tool_choice"], "none");
+    }
+
+    #[tokio::test]
+    async fn non_allow_listed_tool_call_is_denied_and_recorded() {
+        let tempdir = TempDir::new().expect("tempdir");
+        let state = state(&tempdir);
+        let allocation = state.create_session().await.expect("session");
+        let mut runtime_state = SidebandRuntimeState::default();
+        let (outbound_tx, mut outbound_rx) = mpsc::unbounded_channel();
+
+        start_test_turn(
+            &state,
+            &allocation.qsf_session_id,
+            &mut runtime_state,
+            &outbound_tx,
+        )
+        .await;
+        outbound_rx.recv().await.expect("initial response.create");
+
+        handle_provider_event(
+            &state,
+            &allocation.qsf_session_id,
+            "call-tools",
+            "response.done",
+            &serde_json::json!({
+                "type": "response.done",
+                "event_id": "evt-tool-denied",
+                "response": {
+                    "id": "response-tool",
+                    "status": "completed",
+                    "output": [{
+                        "type": "function_call",
+                        "name": "not_allow_listed",
+                        "call_id": "tool-call-denied",
+                        "arguments": "{}"
+                    }],
+                    "usage": {
+                        "input_tokens": 1,
+                        "output_tokens": 1
+                    }
+                }
+            }),
+            &mut runtime_state,
+            &outbound_tx,
+        )
+        .await
+        .expect("tool response done");
+
+        let output = outbound_rx.recv().await.expect("function_call_output");
+        let output_text = output.to_text().expect("text");
+        assert!(output_text.contains("denied"));
+        assert!(output_text.contains("not allow-listed"));
+
+        let runtime = state
+            .session_runtime(&allocation.qsf_session_id)
+            .await
+            .expect("runtime");
+        let guard = runtime.lock().await;
+        let exchange = guard
+            .session_state
+            .live
+            .active_exchange
+            .as_ref()
+            .expect("active exchange");
+        assert_eq!(exchange.tool_requests.len(), 1);
+        assert_eq!(exchange.tool_executions.len(), 1);
+        assert_eq!(exchange.tool_executions[0].tool_name, "not_allow_listed");
+        assert!(matches!(
+            exchange.tool_executions[0].permission_decision,
+            ToolPermissionDecision::Denied { .. }
+        ));
+    }
+
+    #[tokio::test]
+    async fn mixed_response_done_answers_function_call_without_finalizing_exchange() {
+        let tempdir = TempDir::new().expect("tempdir");
+        let state = state(&tempdir);
+        let allocation = state.create_session().await.expect("session");
+        let mut runtime_state = SidebandRuntimeState::default();
+        let (outbound_tx, mut outbound_rx) = mpsc::unbounded_channel();
+
+        start_test_turn(
+            &state,
+            &allocation.qsf_session_id,
+            &mut runtime_state,
+            &outbound_tx,
+        )
+        .await;
+        outbound_rx.recv().await.expect("initial response.create");
+
+        handle_provider_event(
+            &state,
+            &allocation.qsf_session_id,
+            "call-tools",
+            "response.done",
+            &serde_json::json!({
+                "type": "response.done",
+                "event_id": "evt-tool-mixed",
+                "response": {
+                    "id": "response-tool",
+                    "status": "completed",
+                    "output": [
+                        {
+                            "type": "function_call",
+                            "name": crate::realtime::tools::INSPECT_SESSION_STATE_TOOL_NAME,
+                            "call_id": "tool-call-mixed",
+                            "arguments": "{}"
+                        },
+                        {
+                            "type": "message",
+                            "content": [{
+                                "type": "output_text",
+                                "text": "spoken too early"
+                            }]
+                        }
+                    ],
+                    "usage": {
+                        "input_tokens": 1,
+                        "output_tokens": 1
+                    }
+                }
+            }),
+            &mut runtime_state,
+            &outbound_tx,
+        )
+        .await
+        .expect("tool response done");
+
+        let output = outbound_rx.recv().await.expect("function_call_output");
+        assert!(
+            output
+                .to_text()
+                .expect("text")
+                .contains("function_call_output")
+        );
+        let runtime = state
+            .session_runtime(&allocation.qsf_session_id)
+            .await
+            .expect("runtime");
+        let guard = runtime.lock().await;
+        assert!(guard.session_state.live.active_exchange.is_some());
+        assert!(guard.session_state.turns.is_empty());
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn tool_execution_does_not_hold_session_lock() {
+        let tempdir = TempDir::new().expect("tempdir");
+        let state = state(&tempdir);
+        let allocation = state.create_session().await.expect("session");
+        let mut runtime_state = SidebandRuntimeState::default();
+        let (outbound_tx, mut outbound_rx) = mpsc::unbounded_channel();
+
+        start_test_turn(
+            &state,
+            &allocation.qsf_session_id,
+            &mut runtime_state,
+            &outbound_tx,
+        )
+        .await;
+        outbound_rx.recv().await.expect("initial response.create");
+
+        let started = StdArc::new((StdMutex::new(false), Condvar::new()));
+        let release = StdArc::new((StdMutex::new(false), Condvar::new()));
+        {
+            let runtime = state
+                .session_runtime(&allocation.qsf_session_id)
+                .await
+                .expect("runtime");
+            let mut guard = runtime.lock().await;
+            guard.config.tools = vec![qsf_realtime_protocol::RealtimeToolDefinition::function(
+                "blocking_tool",
+                "Blocks until the test releases it.",
+                serde_json::json!({
+                    "type": "object",
+                    "properties": {},
+                    "additionalProperties": false
+                }),
+            )];
+            let mut registry = qsf_tools::ToolRegistry::default();
+            registry.register(BlockingTool {
+                started: started.clone(),
+                release: release.clone(),
+            });
+            guard.tool_registry = registry;
+        }
+
+        let task_state = state.clone();
+        let task_session_id = allocation.qsf_session_id.clone();
+        let task_outbound_tx = outbound_tx.clone();
+        let task = tokio::spawn(async move {
+            handle_provider_event(
+                &task_state,
+                &task_session_id,
+                "call-tools",
+                "response.done",
+                &serde_json::json!({
+                    "type": "response.done",
+                    "event_id": "evt-tool-lock",
+                    "response": {
+                        "id": "response-tool",
+                        "status": "completed",
+                        "output": [{
+                            "type": "function_call",
+                            "name": "blocking_tool",
+                            "call_id": "tool-call-lock",
+                            "arguments": "{}"
+                        }],
+                        "usage": {
+                            "input_tokens": 1,
+                            "output_tokens": 1
+                        }
+                    }
+                }),
+                &mut runtime_state,
+                &task_outbound_tx,
+            )
+            .await
+        });
+
+        wait_for_flag(&started);
+        let runtime = state
+            .session_runtime(&allocation.qsf_session_id)
+            .await
+            .expect("runtime");
+        let lock_result = tokio::time::timeout(Duration::from_millis(250), runtime.lock()).await;
+        assert!(
+            lock_result.is_ok(),
+            "session lock stayed held during tool execution"
+        );
+        drop(lock_result);
+        set_flag(&release);
+
+        task.await.expect("task join").expect("tool response done");
+    }
+
+    #[tokio::test]
     async fn set_sideband_status_notifies_subscribers() {
         let tempdir = TempDir::new().expect("tempdir");
         let state = state(&tempdir);
@@ -1033,6 +1925,8 @@ mod tests {
                 }),
                 retrieved_memory_block: String::new(),
                 recalled_items: vec![],
+                tool_requests: vec![],
+                tool_executions: vec![],
                 model: Some(ExchangeModelUse {
                     provider_name: Some("openai_realtime".to_string()),
                     model_id: "gpt-realtime-2".to_string(),
@@ -1045,7 +1939,6 @@ mod tests {
                 }),
                 interruptions: vec![],
                 provider_events: vec![],
-                tool_requests: vec![],
                 status: qsf_session::ExchangeStatus::Completed,
             };
             guard.session_state.live.completed_exchanges.push(exchange);
@@ -1151,6 +2044,8 @@ mod tests {
             }),
             retrieved_memory_block: String::new(),
             recalled_items: vec![],
+            tool_requests: vec![],
+            tool_executions: vec![],
             model: Some(ExchangeModelUse {
                 provider_name: Some("openai_realtime".to_string()),
                 model_id: "gpt-realtime-2".to_string(),
@@ -1163,7 +2058,6 @@ mod tests {
             }),
             interruptions: vec![],
             provider_events: vec![],
-            tool_requests: vec![],
             status: qsf_session::ExchangeStatus::Completed,
         }
     }

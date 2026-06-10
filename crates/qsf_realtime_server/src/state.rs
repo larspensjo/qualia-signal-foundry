@@ -3,7 +3,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use anyhow::Context;
-use qsf_realtime_protocol::OPENAI_REALTIME_WS_BASE_URL;
+use qsf_realtime_protocol::{OPENAI_REALTIME_WS_BASE_URL, RealtimeToolDefinition};
 use qsf_session::LiveSessionState;
 use qsf_session::{MemorySourceConfig, SessionConfig as QsfSessionConfig, SessionState};
 use serde::{Deserialize, Serialize};
@@ -226,6 +226,8 @@ pub struct BrowserSessionConfig {
     pub instructions: String,
     #[serde(default)]
     pub input_transcription_model: Option<String>,
+    #[serde(default)]
+    pub tools: Vec<RealtimeToolDefinition>,
     pub audio: BrowserSessionAudio,
 }
 
@@ -267,6 +269,7 @@ impl Default for BrowserSessionConfig {
             output_modalities: vec!["audio".to_string()],
             instructions: DEFAULT_INSTRUCTIONS.to_string(),
             input_transcription_model: Some(DEFAULT_INPUT_TRANSCRIPTION_MODEL.to_string()),
+            tools: crate::realtime::tools::default_tool_definitions(),
             audio: BrowserSessionAudio {
                 output: BrowserSessionAudioOutput {
                     voice: "marin".to_string(),
@@ -355,6 +358,7 @@ pub struct SessionRuntime {
     pub config: BrowserSessionConfig,
     pub session_state: SessionState,
     pub relay_state: LiveSessionState,
+    pub tool_registry: qsf_tools::ToolRegistry,
     pub next_exchange_index: usize,
     pub next_trusted_exchange_index: usize,
     pub seen_event_ids: HashSet<String>,
@@ -379,11 +383,13 @@ impl SessionRuntime {
             qsf_session_id.clone(),
             QsfRealtimeSessionConfig::from_browser_config(&config),
         );
+        let tool_registry = crate::realtime::tools::build_tool_registry(&config.tools);
         Self {
             qsf_session_id,
             config,
             session_state,
             relay_state: LiveSessionState::default(),
+            tool_registry,
             next_exchange_index: 0,
             next_trusted_exchange_index: 0,
             seen_event_ids: HashSet::new(),

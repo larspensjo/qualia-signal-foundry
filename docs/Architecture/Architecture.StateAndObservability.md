@@ -55,6 +55,13 @@ candidate categories listed below still have no shared module.
 - `qsf_realtime_server` now also records trusted sideband exchange promotion into
   the shared continuity root, while keeping browser relay exchanges confined to
   relay diagnostics.
+- Realtime tool activity has two distinct records: `ToolRequestRecord` captures
+  the provider request, and `ToolExecutionRecord` captures the permission
+  decision, status, capped result summary, error, timing, per-response model
+  usage, and returning provider event id. Promoted trusted `Turn`s persist both
+  vectors behind serde defaults.
+  ([qsf_session/src/exchange.rs](../../crates/qsf_session/src/exchange.rs),
+  [qsf_session/src/state.rs](../../crates/qsf_session/src/state.rs))
 
 **Partial:**
 
@@ -67,8 +74,8 @@ candidate categories listed below still have no shared module.
 - **Memory State** is partial: records, associations, decay inputs, and live
   reinforcement are maintained for the text loop and shared voice surfaces, but
   graph inspection and contradiction handling are not implemented
-- **Tool State** is exposed through registry metadata on `ToolRequested` /
-  `ToolCompleted` / `ToolFailed`; there is no separate `ToolState` summary
+- **Tool State** is exposed through registry metadata, app event logs, and
+  realtime request/execution records; there is no separate `ToolState` summary
 
 **Not yet implemented:**
 
@@ -85,8 +92,8 @@ candidate categories listed below still have no shared module.
 - `experiment_id` and `memory_update_id` correlation across runs
 
 Last reviewed: 2026-06-10 against explicit remember-this capture observability,
-retrieval skip reasons, the implemented Phase-3 sideband promotion path, and
-the realtime diagnostic surface.
+retrieval skip reasons, the implemented Phase-3 sideband promotion path, the
+realtime diagnostic surface, and Phase-4 realtime tool execution records.
 
 ## Summary
 

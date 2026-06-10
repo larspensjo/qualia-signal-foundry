@@ -1,5 +1,6 @@
 use std::io::Write;
 use std::path::Path;
+use std::sync::Arc;
 use std::time::{Instant, SystemTime};
 
 use anyhow::Context;
@@ -20,7 +21,7 @@ use crate::session::ageing::{age_out_warm_turns, maybe_run_token_budget_drop};
 use crate::session::{
     Exchange, ExchangeModelUse, ExchangeOutput, LiveSessionEvent, SessionEvent, SessionState, Turn,
 };
-use crate::tools::ToolRegistry;
+use crate::tools::{ResponderToolContext, ToolRegistry};
 
 use super::{
     MAX_RESPONDER_TOOL_ROUNDS_PER_TURN, NON_REPLAYED_TOOL_PROMPT_PREFIX_INVALIDATION,
@@ -221,7 +222,7 @@ fn execute_responder_turn(
     max_output_tokens: u32,
 ) -> anyhow::Result<ResponderExecution> {
     let registry = ToolRegistry::default();
-    let project_docs = project_doc_service_for_multi_turn_text_loop(context)?;
+    let project_docs = Arc::new(project_doc_service_for_multi_turn_text_loop(context)?);
     let responder_role = super::conversational_responder_role_with_session_and_project_doc_tools();
     let mut final_messages = base_prompt.messages.clone();
     let mut project_doc_budget = crate::models::ProjectDocToolBudget::new(turn_index);
@@ -232,6 +233,11 @@ fn execute_responder_turn(
     let mut recalled_turns = vec![];
     let mut tool_rounds = 0usize;
     let mut has_non_replayed_tool_messages = false;
+    let tool_state = Arc::new(state.clone());
+    let tool_ctx = ResponderToolContext {
+        state: tool_state,
+        project_docs,
+    };
     let mut response;
     let mut current_request = responder_request_for_messages(
         &responder_role,
@@ -278,7 +284,7 @@ fn execute_responder_turn(
         let tool_executions = execute_model_tool_calls(
             context,
             state,
-            &project_docs,
+            &tool_ctx,
             &current_request,
             &registry,
             &mut project_doc_budget,
