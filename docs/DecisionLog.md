@@ -1085,3 +1085,59 @@ Refs: crates/qsf_realtime_server/src/realtime/sideband.rs,
 crates/qsf_realtime_server/src/realtime/routes.rs,
 docs/Architecture/Architecture.RealtimeSessionServer.md,
 docs/Architecture/Architecture.StateAndObservability.md
+
+## 2026-06-10 - Phase-4 live tool scope is the three read-only perception tools
+Decision: The Phase-4 realtime allow-list is exactly `search_memory`,
+`get_associations`, and `inspect_session_state` — new read-only tools implemented
+in `qsf_realtime_server`. No existing `qsf_app` tool is exposed to the live model
+this phase. Long-term intent: the live model eventually gets the full tool set,
+as its own later phase, once the required data services move past the
+no-`qsf_app` boundary.
+Context: External review of the Phase-4 plan flagged the allow-list scope as a
+blocking product decision; exposing existing `qsf_app` tools live would require
+either moving `ProjectDocService`/durable-session access into lean crates or
+breaking the `qsf_realtime_server`-must-not-depend-on-`qsf_app` boundary. Owner
+confirmed the three-tool scope 2026-06-10.
+Consequences: Phase 4 proves the tool-loop machinery (permission decisions,
+execution records, exchange boundary, credential hygiene) against server-owned
+data only. The generic `qsf_tools` registry core is designed so the later
+full-exposure phase is an additive change.
+Refs: docs/Plans/Plan.RealtimeVoiceConversation.md,
+docs/Plans/Review.RealtimeVoiceConversation.phase4.Plan.codex.json
+
+## 2026-06-10 - Tool execution records persist onto durable turns
+Decision: Live tool activity is recorded as a `ToolExecutionRecord` (permission
+decision, status, budget-capped result summary, error, timing, per-response model
+usage, linking provider `call_id`) and persists onto durable `Turn` records
+behind serde defaults. `auto_executed` on `ToolRequestRecord` is not execution
+evidence.
+Context: The only durable record of a realtime conversation is the promoted
+`Turn` list; live-only records would leave no artifact of what tools ran or were
+denied (logs only), keep tool activity out of the read-only inspection surface,
+and deprive Phase-5 extraction/ageing of provenance and usage signal. Owner
+confirmed persistence 2026-06-10 after external review flagged it as a blocking
+schema decision.
+Consequences: The persisted session-state schema gains tool records behind
+`#[serde(default)]`; the schema golden tests are updated and legacy artifacts
+must still load. Result summaries are budget-capped — tool payloads are never
+dumped into durable state.
+Refs: crates/qsf_session/src/exchange.rs, crates/qsf_session/src/state.rs,
+crates/qsf_session/tests/session_state_schema.rs,
+docs/Plans/Plan.RealtimeVoiceConversation.md
+
+## 2026-06-10 - Exchange model use aggregates across the realtime tool loop
+Decision: For a turn containing model-invoked tool calls, the exchange's
+`ExchangeModelUse` aggregates token counts and total latency across all
+`response.done` events of the turn; each `ToolExecutionRecord` carries its own
+per-response usage and timing; the request hash and message count reflect the
+final spoken response's request sequence.
+Context: With server-owned `response.create`, a tool loop produces multiple
+provider responses per turn, but the sideband tracked a single
+request-hash/message-count slot reset after each `response.done`. Recording only
+the final response would silently under-report cost and latency for trusted
+promotion and Phase-5 presence research.
+Consequences: Trusted promotion carries full-turn usage; token/latency accounting
+across a tool call is covered by tests; per-call detail lives on the execution
+record rather than inflating exchange-level fields.
+Refs: crates/qsf_realtime_server/src/realtime/sideband.rs,
+docs/Plans/Plan.RealtimeVoiceConversation.md
