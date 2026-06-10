@@ -3,6 +3,8 @@ use std::time::{Duration, Instant};
 
 use serde::{Deserialize, Serialize};
 
+use qsf_realtime_protocol as realtime_protocol;
+
 use super::{
     AudioLatencyMeasurement, AudioLatencyStage, TranscriptAudioChunk, TranscriptInputSource,
     total_latency_ms,
@@ -585,19 +587,10 @@ async fn run_openai_realtime_voice_session(
     let mut chunks = Vec::new();
     match &request.input_source {
         TranscriptInputSource::Simulated { .. } => {
-            let input_item = serde_json::json!({
-                "type": "conversation.item.create",
-                "item": {
-                    "type": "message",
-                    "role": "user",
-                    "content": [
-                        {
-                            "type": "input_text",
-                            "text": request.prompt,
-                        }
-                    ],
-                },
-            });
+            let input_item = realtime_protocol::build_openai_realtime_conversation_item_create(
+                "user",
+                &request.prompt,
+            );
             write
                 .send(Message::Text(input_item.to_string().into()))
                 .await
@@ -639,59 +632,24 @@ async fn run_openai_realtime_voice_session(
     .await
 }
 fn build_openai_realtime_response_create(request: &RealtimeSessionRequest) -> serde_json::Value {
-    serde_json::json!({
-        "type": "response.create",
-        "response": {
-            "audio": {
-                "output": {
-                    "format": {
-                        "type": "audio/pcm",
-                        "rate": super::transcript_provider::OPENAI_REALTIME_PCM_RATE_HZ,
-                    },
-                    "voice": request.config.voice,
-                },
-            },
-            "instructions": request.config.instructions,
-        },
-    })
+    realtime_protocol::build_openai_realtime_response_create(
+        &request.config.voice,
+        &request.config.instructions,
+        super::transcript_provider::OPENAI_REALTIME_PCM_RATE_HZ,
+    )
 }
 fn build_openai_realtime_session_update(
     model: &str,
     request: &RealtimeSessionRequest,
 ) -> serde_json::Value {
-    let mut update = serde_json::json!({
-        "type": "session.update",
-        "session": {
-            "type": "realtime",
-            "model": model,
-            "output_modalities": request.config.output_modalities,
-            "audio": {
-                "input": {
-                    "format": {
-                        "type": "audio/pcm",
-                        "rate": super::transcript_provider::OPENAI_REALTIME_PCM_RATE_HZ,
-                    },
-                    "turn_detection": null,
-                },
-                "output": {
-                    "format": {
-                        "type": "audio/pcm",
-                        "rate": super::transcript_provider::OPENAI_REALTIME_PCM_RATE_HZ,
-                    },
-                    "voice": request.config.voice,
-                },
-            },
-            "instructions": request.config.instructions,
-        },
-    });
-
-    if let Some(transcription_model) = &request.config.input_transcription_model {
-        update["session"]["audio"]["input"]["transcription"] = serde_json::json!({
-            "model": transcription_model,
-        });
-    }
-
-    update
+    realtime_protocol::build_openai_realtime_voice_session_update(
+        model,
+        &request.config.voice,
+        &request.config.instructions,
+        &request.config.output_modalities,
+        request.config.input_transcription_model.as_deref(),
+        super::transcript_provider::OPENAI_REALTIME_PCM_RATE_HZ,
+    )
 }
 async fn wait_for_session_created<S>(
     provider_name: &str,

@@ -52,6 +52,9 @@ candidate categories listed below still have no shared module.
   exchanges with explicit source/trust markers
   ([crates/qsf_realtime_server/src/diagnostics.rs](../../crates/qsf_realtime_server/src/diagnostics.rs),
   [crates/qsf_realtime_server/src/realtime/routes.rs](../../crates/qsf_realtime_server/src/realtime/routes.rs))
+- `qsf_realtime_server` now also records trusted sideband exchange promotion into
+  the shared continuity root, while keeping browser relay exchanges confined to
+  relay diagnostics.
 
 **Partial:**
 
@@ -74,15 +77,16 @@ candidate categories listed below still have no shared module.
   report but not as an inspectable runtime category
 - **Realtime Session State** for browser speech-to-speech: provider `call_id`
   bindings, browser relay trust/source markers, diagnostic-only exchange records,
-  and the future authoritative sideband attachment / context-injection /
-  tool-result correlation surfaces are split between `qsf_session` and
+  authoritative sideband attachment, and context-injection / tool-result
+  correlation surfaces are split between `qsf_session` and
   `qsf_realtime_server`.
 - Observability views beyond the per-run markdown report (no timeline UI, no
   memory-graph view, no cost dashboard)
 - `experiment_id` and `memory_update_id` correlation across runs
 
-Last reviewed: 2026-06-09 against explicit remember-this capture observability,
-retrieval skip reasons, and the implemented Phase-2 realtime diagnostic surface.
+Last reviewed: 2026-06-10 against explicit remember-this capture observability,
+retrieval skip reasons, the implemented Phase-3 sideband promotion path, and
+the realtime diagnostic surface.
 
 ## Summary
 

@@ -3,6 +3,8 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use anyhow::Context;
+use qsf_realtime_protocol::OPENAI_REALTIME_WS_BASE_URL;
+use qsf_session::LiveSessionState;
 use qsf_session::{MemorySourceConfig, SessionConfig as QsfSessionConfig, SessionState};
 use serde::{Deserialize, Serialize};
 use time::OffsetDateTime;
@@ -23,8 +25,10 @@ pub struct AppState {
 struct Inner {
     openai_api_key: String,
     openai_base_url: String,
+    openai_realtime_ws_base_url: String,
     http_client: reqwest::Client,
     state_dir: PathBuf,
+    continuity_root: PathBuf,
     diagnostics_dir: PathBuf,
     sessions: Mutex<HashMap<String, Arc<Mutex<SessionRuntime>>>>,
 }
@@ -45,9 +49,30 @@ impl AppState {
         openai_base_url: impl Into<String>,
         state_dir: impl Into<PathBuf>,
     ) -> anyhow::Result<Self> {
+        Self::new_with_realtime_ws_base_url(
+            openai_api_key,
+            openai_base_url,
+            OPENAI_REALTIME_WS_BASE_URL,
+            state_dir,
+        )
+    }
+
+    pub fn new_with_realtime_ws_base_url(
+        openai_api_key: impl Into<String>,
+        openai_base_url: impl Into<String>,
+        openai_realtime_ws_base_url: impl Into<String>,
+        state_dir: impl Into<PathBuf>,
+    ) -> anyhow::Result<Self> {
         let state_dir = state_dir.into();
         std::fs::create_dir_all(&state_dir)
             .with_context(|| format!("failed to create state dir `{}`", state_dir.display()))?;
+        let continuity_root = state_dir.join("continuity");
+        std::fs::create_dir_all(&continuity_root).with_context(|| {
+            format!(
+                "failed to create continuity root `{}`",
+                continuity_root.display()
+            )
+        })?;
         let diagnostics_dir = state_dir.join("diagnostics");
         std::fs::create_dir_all(&diagnostics_dir).with_context(|| {
             format!(
@@ -60,8 +85,10 @@ impl AppState {
             inner: Arc::new(Inner {
                 openai_api_key: openai_api_key.into(),
                 openai_base_url: openai_base_url.into(),
+                openai_realtime_ws_base_url: openai_realtime_ws_base_url.into(),
                 http_client: reqwest::Client::new(),
                 state_dir,
+                continuity_root,
                 diagnostics_dir,
                 sessions: Mutex::new(HashMap::new()),
             }),
@@ -84,8 +111,43 @@ impl AppState {
         &self.inner.openai_api_key
     }
 
+    pub fn openai_realtime_ws_base_url(&self) -> &str {
+        &self.inner.openai_realtime_ws_base_url
+    }
+
     pub fn http_client(&self) -> &reqwest::Client {
         &self.inner.http_client
+    }
+
+    pub fn continuity_root(&self) -> &Path {
+        &self.inner.continuity_root
+    }
+
+    pub fn continuity_session_dir(&self, qsf_session_id: &str) -> PathBuf {
+        self.continuity_root().join(qsf_session_id)
+    }
+
+    pub fn continuity_session_state_path(&self, qsf_session_id: &str) -> PathBuf {
+        self.continuity_session_dir(qsf_session_id)
+            .join("session-state.json")
+    }
+
+    pub fn continuity_manifest_path(&self, qsf_session_id: &str) -> PathBuf {
+        self.continuity_session_dir(qsf_session_id)
+            .join("continuity-manifest.json")
+    }
+
+    pub fn continuity_memory_store_path(&self, qsf_session_id: &str) -> PathBuf {
+        self.continuity_session_dir(qsf_session_id)
+            .join("memory-store.json")
+    }
+
+    pub fn openai_realtime_ws_url(&self, call_id: &str) -> String {
+        format!(
+            "{}?call_id={}",
+            self.openai_realtime_ws_base_url().trim_end_matches('/'),
+            call_id
+        )
     }
 
     pub async fn create_session(&self) -> anyhow::Result<SessionAllocationResponse> {
@@ -180,7 +242,7 @@ impl BrowserSessionConfig {
                 input: OpenAiRealtimeSessionAudioInput {
                     turn_detection: OpenAiRealtimeTurnDetection {
                         kind: "server_vad".to_string(),
-                        create_response: true,
+                        create_response: false,
                         interrupt_response: true,
                     },
                 },
@@ -205,7 +267,7 @@ impl Default for BrowserSessionConfig {
                 input: BrowserSessionAudioInput {
                     turn_detection: BrowserSessionTurnDetection {
                         kind: "server_vad".to_string(),
-                        create_response: true,
+                        create_response: false,
                         interrupt_response: true,
                     },
                 },
@@ -276,12 +338,18 @@ pub struct SessionRuntime {
     pub qsf_session_id: String,
     pub config: BrowserSessionConfig,
     pub session_state: SessionState,
+    pub relay_state: LiveSessionState,
     pub next_exchange_index: usize,
+    pub next_trusted_exchange_index: usize,
     pub seen_event_ids: HashSet<String>,
     pub call_binding: Option<CallBinding>,
     pub diagnostics: DiagnosticWriter,
     pub trust: DiagnosticTrust,
     pub persisted_exchange_count: usize,
+    pub trusted_promoted_exchange_count: usize,
+    pub non_promotable_exchange_indices: HashSet<usize>,
+    pub degraded: bool,
+    pub sideband: Option<crate::realtime::sideband::SidebandHandle>,
 }
 
 impl SessionRuntime {
@@ -298,18 +366,30 @@ impl SessionRuntime {
             qsf_session_id,
             config,
             session_state,
+            relay_state: LiveSessionState::default(),
             next_exchange_index: 0,
+            next_trusted_exchange_index: 0,
             seen_event_ids: HashSet::new(),
             call_binding: None,
             diagnostics,
             trust: DiagnosticTrust::Untrusted,
             persisted_exchange_count: 0,
+            trusted_promoted_exchange_count: 0,
+            non_promotable_exchange_indices: HashSet::new(),
+            degraded: false,
+            sideband: None,
         }
     }
 
     pub fn new_exchange_index(&mut self) -> usize {
         let index = self.next_exchange_index;
         self.next_exchange_index += 1;
+        index
+    }
+
+    pub fn new_trusted_exchange_index(&mut self) -> usize {
+        let index = self.next_trusted_exchange_index;
+        self.next_trusted_exchange_index += 1;
         index
     }
 }

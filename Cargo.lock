@@ -1542,7 +1542,9 @@ dependencies = [
  "hound",
  "log",
  "openai_provider_kit",
+ "qsf_context",
  "qsf_memory",
+ "qsf_realtime_protocol",
  "qsf_session",
  "reqwest 0.12.28",
  "serde",
@@ -1582,6 +1584,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "qsf_context"
+version = "0.1.0"
+dependencies = [
+ "qsf_memory",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "qsf_memory"
 version = "0.1.0"
 dependencies = [
@@ -1594,6 +1605,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "qsf_realtime_protocol"
+version = "0.1.0"
+dependencies = [
+ "engine_logging",
+ "log",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "qsf_realtime_server"
 version = "0.1.0"
 dependencies = [
@@ -1603,6 +1624,9 @@ dependencies = [
  "engine_logging",
  "futures-util",
  "log",
+ "qsf_context",
+ "qsf_memory",
+ "qsf_realtime_protocol",
  "qsf_session",
  "reqwest 0.12.28",
  "serde",
@@ -1611,6 +1635,7 @@ dependencies = [
  "tempfile",
  "time",
  "tokio",
+ "tokio-tungstenite",
  "tower",
  "uuid",
 ]
@@ -1620,6 +1645,7 @@ name = "qsf_session"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "qsf_context",
  "qsf_memory",
  "serde",
  "serde_json",

@@ -19,8 +19,8 @@ use time::OffsetDateTime;
 use crate::diagnostics::DiagnosticRecord;
 use crate::state::{AppState, CallBinding, SessionRuntime};
 use qsf_session::{
-    Exchange, ExchangeOutput, LiveSessionEvent, PartialTranscript, ProviderEventKind,
-    ProviderEventRecord, SessionEndReason, UtteranceRecord, apply_live_session_event,
+    Exchange, ExchangeOutput, LiveSessionEvent, LiveSessionState, PartialTranscript,
+    ProviderEventKind, ProviderEventRecord, SessionEndReason, UtteranceRecord, reduce_live_session,
 };
 
 const MAX_RELAY_PAYLOAD_BYTES: usize = 64 * 1024;
@@ -241,6 +241,11 @@ async fn exchange_sdp_impl(
                 at: finished_at,
                 note: "API key used server-side only; the browser never receives it".to_string(),
             })?;
+        guard.sideband = Some(crate::realtime::sideband::SidebandHandle::spawn(
+            state.clone(),
+            request.qsf_session_id.clone(),
+            call_id.clone(),
+        ));
     }
 
     Ok(SdpExchangeResponse {
@@ -257,37 +262,42 @@ async fn stop_session_impl(
         .remove_session(&qsf_session_id)
         .await
         .ok_or_else(|| anyhow::anyhow!("unknown qsf_session_id `{}`", qsf_session_id))?;
-    let mut guard = session.lock().await;
-    let completed = {
-        let before = guard.session_state.live.completed_exchanges.len();
+    let (sideband, stop_session_id, completed) = {
+        let mut guard = session.lock().await;
+        let before = guard.relay_state.completed_exchanges.len();
         finalize_open_exchange(&mut guard);
         persist_completed_diagnostic_exchanges(&mut guard)?;
-        guard
-            .session_state
-            .live
+        let completed = guard
+            .relay_state
             .completed_exchanges
             .len()
-            .saturating_sub(before)
+            .saturating_sub(before);
+        let stop_session_id = guard.qsf_session_id.clone();
+        let call_invalidated = guard.call_binding.as_mut().map(|binding| {
+            let invalidated_at = OffsetDateTime::now_utc();
+            let call_id = binding.call_id.clone();
+            binding.invalidated_at = Some(invalidated_at);
+            binding.reason = Some("stop".to_string());
+            (call_id, invalidated_at)
+        });
+        if let Some((call_id, invalidated_at)) = call_invalidated {
+            guard
+                .diagnostics
+                .write(&DiagnosticRecord::CallInvalidated {
+                    qsf_session_id: stop_session_id.clone(),
+                    call_id,
+                    invalidated_at,
+                    reason: "stop".to_string(),
+                })?;
+        }
+        guard.call_binding = None;
+        let sideband = guard.sideband.take();
+        (sideband, stop_session_id, completed)
     };
-    let stop_session_id = guard.qsf_session_id.clone();
-    let call_invalidated = guard.call_binding.as_mut().map(|binding| {
-        let invalidated_at = OffsetDateTime::now_utc();
-        let call_id = binding.call_id.clone();
-        binding.invalidated_at = Some(invalidated_at);
-        binding.reason = Some("stop".to_string());
-        (call_id, invalidated_at)
-    });
-    if let Some((call_id, invalidated_at)) = call_invalidated {
-        guard
-            .diagnostics
-            .write(&DiagnosticRecord::CallInvalidated {
-                qsf_session_id: stop_session_id.clone(),
-                call_id,
-                invalidated_at,
-                reason: "stop".to_string(),
-            })?;
+
+    if let Some(sideband) = sideband {
+        sideband.stop().await;
     }
-    guard.call_binding = None;
 
     Ok(StopResponse {
         qsf_session_id: stop_session_id,
@@ -346,6 +356,10 @@ struct RelayAck {
     accepted: bool,
 }
 
+fn apply_relay_live_session_event(state: &mut LiveSessionState, event: LiveSessionEvent) {
+    *state = reduce_live_session(std::mem::take(state), event);
+}
+
 async fn process_relay_envelope(
     state: &AppState,
     envelope: RelayEnvelope,
@@ -386,16 +400,16 @@ async fn process_relay_envelope(
             let exchange =
                 Exchange::new_voice_pending(guard.new_exchange_index(), SystemTime::now());
             let index = exchange.index;
-            apply_live_session_event(
-                &mut guard.session_state,
+            apply_relay_live_session_event(
+                &mut guard.relay_state,
                 LiveSessionEvent::ExchangeStarted(Box::new(exchange)),
             );
             index
         }
         RelayEventKind::PartialTranscript => {
             let exchange_index = ensure_active_exchange(&mut guard);
-            apply_live_session_event(
-                &mut guard.session_state,
+            apply_relay_live_session_event(
+                &mut guard.relay_state,
                 LiveSessionEvent::AudioPartialTranscriptRecorded(PartialTranscript {
                     exchange_index,
                     utterance_id: envelope
@@ -413,8 +427,8 @@ async fn process_relay_envelope(
         }
         RelayEventKind::FinalTranscript => {
             let exchange_index = ensure_active_exchange(&mut guard);
-            apply_live_session_event(
-                &mut guard.session_state,
+            apply_relay_live_session_event(
+                &mut guard.relay_state,
                 LiveSessionEvent::AudioFinalTranscriptCommitted {
                     exchange_index,
                     utterance: UtteranceRecord {
@@ -435,8 +449,8 @@ async fn process_relay_envelope(
         }
         RelayEventKind::ResponseStarted => {
             let exchange_index = ensure_active_exchange(&mut guard);
-            apply_live_session_event(
-                &mut guard.session_state,
+            apply_relay_live_session_event(
+                &mut guard.relay_state,
                 LiveSessionEvent::ProviderEventRecorded(ProviderEventRecord {
                     exchange_index,
                     event_kind: ProviderEventKind::ResponseStarted,
@@ -456,8 +470,8 @@ async fn process_relay_envelope(
         }
         RelayEventKind::ResponseCompleted => {
             let exchange_index = ensure_active_exchange(&mut guard);
-            apply_live_session_event(
-                &mut guard.session_state,
+            apply_relay_live_session_event(
+                &mut guard.relay_state,
                 LiveSessionEvent::ProviderEventRecorded(ProviderEventRecord {
                     exchange_index,
                     event_kind: ProviderEventKind::ResponseCompleted,
@@ -474,8 +488,8 @@ async fn process_relay_envelope(
                 }),
             );
             if let Some(text) = envelope.text.clone() {
-                apply_live_session_event(
-                    &mut guard.session_state,
+                apply_relay_live_session_event(
+                    &mut guard.relay_state,
                     LiveSessionEvent::OutputProduced(ExchangeOutput {
                         response_id: envelope.response_id.clone(),
                         text,
@@ -490,8 +504,8 @@ async fn process_relay_envelope(
         }
         RelayEventKind::SpeechPlaybackStarted => {
             let exchange_index = ensure_active_exchange(&mut guard);
-            apply_live_session_event(
-                &mut guard.session_state,
+            apply_relay_live_session_event(
+                &mut guard.relay_state,
                 LiveSessionEvent::ProviderEventRecorded(ProviderEventRecord {
                     exchange_index,
                     event_kind: ProviderEventKind::SpeechPlaybackStarted,
@@ -511,8 +525,8 @@ async fn process_relay_envelope(
         }
         RelayEventKind::SpeechPlaybackCompleted => {
             let exchange_index = ensure_active_exchange(&mut guard);
-            apply_live_session_event(
-                &mut guard.session_state,
+            apply_relay_live_session_event(
+                &mut guard.relay_state,
                 LiveSessionEvent::ProviderEventRecorded(ProviderEventRecord {
                     exchange_index,
                     event_kind: ProviderEventKind::SpeechPlaybackCompleted,
@@ -533,8 +547,8 @@ async fn process_relay_envelope(
         }
         RelayEventKind::SessionStopped => {
             finalize_open_exchange(&mut guard);
-            apply_live_session_event(
-                &mut guard.session_state,
+            apply_relay_live_session_event(
+                &mut guard.relay_state,
                 LiveSessionEvent::SessionEnded {
                     reason: SessionEndReason::Eof,
                 },
@@ -571,10 +585,10 @@ async fn process_relay_envelope(
 }
 
 fn finalize_open_exchange(runtime: &mut SessionRuntime) {
-    if let Some(active_exchange) = runtime.session_state.live.active_exchange.as_ref() {
+    if let Some(active_exchange) = runtime.relay_state.active_exchange.as_ref() {
         let exchange_index = active_exchange.index;
-        apply_live_session_event(
-            &mut runtime.session_state,
+        apply_relay_live_session_event(
+            &mut runtime.relay_state,
             LiveSessionEvent::ExchangeCompleted {
                 exchange_index,
                 completed_at: SystemTime::now(),
@@ -584,23 +598,22 @@ fn finalize_open_exchange(runtime: &mut SessionRuntime) {
 }
 
 fn ensure_active_exchange(runtime: &mut SessionRuntime) -> usize {
-    if let Some(exchange) = runtime.session_state.live.active_exchange.as_ref() {
+    if let Some(exchange) = runtime.relay_state.active_exchange.as_ref() {
         return exchange.index;
     }
     let exchange = Exchange::new_voice_pending(runtime.new_exchange_index(), SystemTime::now());
     let exchange_index = exchange.index;
-    apply_live_session_event(
-        &mut runtime.session_state,
+    apply_relay_live_session_event(
+        &mut runtime.relay_state,
         LiveSessionEvent::ExchangeStarted(Box::new(exchange)),
     );
     exchange_index
 }
 
 fn persist_completed_diagnostic_exchanges(runtime: &mut SessionRuntime) -> anyhow::Result<()> {
-    while runtime.persisted_exchange_count < runtime.session_state.live.completed_exchanges.len() {
-        let exchange = runtime.session_state.live.completed_exchanges
-            [runtime.persisted_exchange_count]
-            .clone();
+    while runtime.persisted_exchange_count < runtime.relay_state.completed_exchanges.len() {
+        let exchange =
+            runtime.relay_state.completed_exchanges[runtime.persisted_exchange_count].clone();
         runtime
             .diagnostics
             .write(&DiagnosticRecord::DiagnosticExchangeRecorded {
@@ -704,6 +717,10 @@ mod tests {
         assert_eq!(
             json["session"]["audio"]["input"]["turn_detection"]["type"],
             "server_vad"
+        );
+        assert_eq!(
+            json["session"]["audio"]["input"]["turn_detection"]["create_response"],
+            false
         );
         assert_eq!(
             json["session"]["audio"]["input"]["turn_detection"]["interrupt_response"],
@@ -929,8 +946,7 @@ mod tests {
             .expect("runtime");
         let guard = runtime.lock().await;
         let exchange = guard
-            .session_state
-            .live
+            .relay_state
             .active_exchange
             .as_ref()
             .expect("active exchange");

@@ -2760,3 +2760,40 @@ Refs: crates/qsf_realtime_server/ui/vite.config.ts,
 crates/qsf_realtime_server/src/realtime/routes.rs,
 crates/qsf_realtime_server/src/state.rs; implements: Provider drift:
 `reasoning_effort` is not forwarded to OpenAI realtime calls
+
+## 2026-06-10 - Realtime sideband and memory injection
+
+Realtime voice sessions now use a server-side sideband as the trusted provider-event
+source, retrieve relevant continuity memory before each manual response, and promote
+complete trusted exchanges into the shared continuity root.
+
+What changed:
+- Moved retrieval scoring into `qsf_memory`, context assembly into `qsf_context`, and
+  realtime JSON builders/parsers into `qsf_realtime_protocol`.
+- Added realtime memory-store resolution, memory injection, sideband event handling,
+  trusted exchange promotion, and continuity-root persistence.
+- Switched realtime defaults to manual `response.create`; the browser relay now remains
+  diagnostic-only instead of mutating trusted state.
+- Empty retrieval records an empty `ContextAssembly` before `response.create` while
+  emitting no memory-injection payload.
+- Sideband gaps mark the active exchange non-promotable and latch transport degradation
+  only until `session.updated`; skipped gap-window exchanges are logged and consumed
+  deliberately.
+- Promotion conversion failures and non-completed responses skip the affected exchange
+  without latching transport degradation.
+- The sideband degradation path keeps the `SidebandHandle` stop channel intact.
+- Updated the UI default config to match the manual-response path.
+
+Observed:
+- `cargo test -p qsf_realtime_server realtime::` passed.
+- `cargo clippy --all-targets -- -D warnings` passed; `cargo fmt` applied.
+
+Open question:
+- Live-provider verification of the fast manual-response path versus the old
+  automatic-response baseline still needs human timing confirmation.
+
+Refs: crates/qsf_context, crates/qsf_memory/src/retrieval.rs,
+crates/qsf_memory/src/co_retrieval.rs, crates/qsf_realtime_protocol,
+crates/qsf_realtime_server/src/realtime, crates/qsf_realtime_server/src/state.rs,
+crates/qsf_realtime_server/ui/src/realtime.ts; implements: Sideband gaps degrade
+transport trust until verified recovery

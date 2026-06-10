@@ -120,7 +120,7 @@ export const DEFAULT_SESSION_CONFIG: SessionConfig = {
     input: {
       turn_detection: {
         type: "server_vad",
-        create_response: true,
+        create_response: false,
         interrupt_response: true,
       },
     },

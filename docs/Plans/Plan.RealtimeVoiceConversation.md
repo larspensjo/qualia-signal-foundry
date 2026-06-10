@@ -2,10 +2,11 @@
 
 ## Status
 
-Active implementation plan. Phase 0 (decisions & contracts) and Phase 1 (extract
-`qsf_session`) are **complete and accepted**; **Phase 2 is the active phase**,
-expanded below into an actionable build. Phases 3–5 remain intentionally
-high-level until reached.
+Active implementation plan. Phase 0 (decisions & contracts), Phase 1 (extract
+`qsf_session`), and Phase 2 (thin media plane — live browser voice) are **complete
+and accepted/human-tested**; **Phase 3 (authoritative sideband + memory injection)
+is the active phase**, expanded below into an actionable build. Phases 4–5 remain
+intentionally high-level until reached.
 
 > Companion to the design note
 > [`Design.RealtimeVoiceConversation.md`](Design.RealtimeVoiceConversation.md), which
@@ -48,353 +49,408 @@ QSF.
 | Phase | Slice | Code? | Human test? |
 |-------|-------|-------|-------------|
 | 0 | Decisions & contracts (complete, accepted 2026-06-09) | No | No |
-| 1 | Extract `qsf_session` crate (pure refactor) — complete | Yes | No |
-| 2 | Thin media plane — live browser voice — implemented, human-tested 2026-06-09 | Yes | ✅ |
-| 3 | Authoritative sideband + memory injection | Yes | **Yes** |
+| 1 | Extract `qsf_session` crate (pure refactor) — complete (`45ed9cd`) | Yes | No |
+| 2 | Thin media plane — live browser voice — complete, human-tested 2026-06-09 | Yes | ✅ |
+| 3 | Authoritative sideband + memory injection — **active** | Yes | **Yes** |
 | 4 | Model-invoked read-only perception tools | Yes | **Yes** |
 | 5 | Live memory extraction + presence refinement | Yes | **Yes** |
 
 ---
 
-## Phase 0 — Decisions & contracts (no code) — completed, accepted 2026-06-09
+## Phase 0 — Decisions & contracts — complete (accepted 2026-06-09)
 
 Lock-in pass, no implementation. The provider-event → QSF-event mapping contract is
 recorded in [`Design.RealtimeVoiceConversation.md`](Design.RealtimeVoiceConversation.md)
-and `docs/DecisionLog.md`. Accepted decisions that **constrain Phase 2 and later**:
+and `docs/DecisionLog.md`. **Accepted decisions that still constrain Phase 3 and
+later:**
 
 - `qsf_realtime_server` owns live realtime side effects; `qsf_browser_server` stays a
   read-only inspection server depending only on `qsf_memory`.
-- The browser owns the WebRTC media plane. The QSF server owns the **server-side SDP
-  rendezvous** (it holds the `OPENAI_API_KEY` and performs the SDP exchange — **this
-  supersedes the original ephemeral-token decision; see Phase 2 decision 4 and
-  `DecisionLog.md`**) and the `{ qsf_session_id ↔ provider call_id }` binding.
-  Media (audio RTP) flows directly browser↔OpenAI; only signaling is proxied.
-- Phase-2 browser-relayed provider events are **untrusted, diagnostic-only**, and
-  excluded from sleep and continuity. The Phase-3 server sideband is the
-  authoritative source for trusted live exchanges.
-- Phase-2 session defaults: `gpt-realtime-2`, voice `marin`, `reasoning_effort =
-  medium`, `output_modalities = ["audio"]`, and provider `server_vad` with automatic
-  response creation and interruption enabled.
-- *(Superseded — under the server-side SDP flow no browser client secret exists; see
-  Phase 2 decision 4.)* The `call_id` binding is active-call scoped, invalidated on
-  stop/error/expiry, and retained only for a short cleanup grace for diagnostics.
-- **Mapping contract (Phase-2 gate):** exchange boundary in speech-to-speech mode is
-  a paired user-utterance → assistant-response turn keyed by provider `item_id` /
-  `response_id`; `ExchangeCompleted` carries an explicit `exchange_index` so a
-  late/duplicate completion cannot close the wrong exchange; the reducer must handle
-  out-of-order transcript completion, duplicate events, interruption before
-  `response.created`, response completion after interruption, and a second user turn
-  before the prior response finishes. The **reducer test matrix is required**.
-- Realtime voice conversation is the long-term primary QSF operating mode. Phase
-  experiment docs validate the path; they do not define the final operator surface.
+- The browser owns the WebRTC media plane; the QSF server owns the **server-side SDP
+  rendezvous** (it holds `OPENAI_API_KEY`, performs the SDP exchange, and captures the
+  `{ qsf_session_id ↔ provider call_id }` binding first-hand). Media (audio RTP) flows
+  directly browser↔OpenAI; only signaling is proxied. **This supersedes the original
+  ephemeral-token decision** (recorded as a reversal in `DecisionLog.md`).
+- Browser-relayed provider events are **untrusted, diagnostic-only**, excluded from
+  sleep and continuity. **The Phase-3 server sideband is the authoritative source for
+  trusted live exchanges** — this phase realizes that decision.
+- Session defaults: `gpt-realtime-2`, voice `marin`, `reasoning_effort = medium`
+  (QSF metadata only — *not* forwarded to the provider; see Phase 2), `output_modalities
+  = ["audio"]`, provider `server_vad` with automatic response creation and interruption.
+  (**Phase 3 reverses the "automatic response creation" half of this default to
+  `create_response = false` so per-turn memory injection can precede the response — see D5.**)
+- **Mapping contract:** the exchange boundary in speech-to-speech mode is a paired
+  user-utterance → assistant-response turn keyed by provider `item_id` / `response_id`;
+  `ExchangeCompleted` carries an explicit `exchange_index` so a late/duplicate
+  completion cannot close the wrong exchange. The required reducer matrix (transcript
+  completion after response start; duplicate events; interruption before
+  `response.created`; completion after interruption; a second user turn before the prior
+  response finishes; out-of-order lifecycle) is implemented and green.
+- The `call_id` binding is active-call scoped, invalidated on stop/error/expiry, with a
+  short cleanup grace; the Phase-3 sideband attaches to this server-captured `call_id`.
+- Realtime voice conversation is the long-term primary QSF operating mode.
 
 ---
 
-## Phase 1 — Extract `qsf_session` crate (pure refactor) — completed (commit `45ed9cd`)
+## Phase 1 — Extract `qsf_session` crate (pure refactor) — complete (`45ed9cd`)
 
-A lean `crates/qsf_session` crate now holds the pure session reducer, state, event,
-persistence, and continuity contracts. What shipped and the constraints it leaves
-for later phases:
+A lean `crates/qsf_session` crate holds the pure session reducer, state, event,
+persistence, and continuity contracts. **Carry-forward facts and constraints that
+matter to Phase 3:**
 
-- **Lean dependency graph.** `qsf_session` depends only on `anyhow`, `qsf_memory`,
-  `serde`, `serde_json`, `tempfile`, `time`, and `uuid` — none of `cpal`,
-  `openai_provider_kit`, `reqwest`, `tokio`, `tokio-tungstenite`, `hound`, `base64`,
-  or `engine_logging`. The future `qsf_realtime_server` can depend on it without the
-  heavy graph.
+- **Lean dependency graph (the model to mirror for any new extraction).**
+  `qsf_session` depends only on `anyhow`, `qsf_memory`, `serde`, `serde_json`,
+  `tempfile`, `time`, and `uuid` — none of `cpal`, `openai_provider_kit`, `reqwest`,
+  `tokio`, `tokio-tungstenite`, `hound`, `base64`, or `engine_logging`. New shared
+  crates should keep a comparably lean graph so `qsf_realtime_server` can depend on them
+  without the heavy `qsf_app` runtime.
 - **What moved:** the reducer/state/event contracts (`LiveSessionEvent`,
-  `LiveSessionState` and friends, `reduce_live_session`, the pure `reduce_session`
-  family), `Exchange` plus `ProviderEventRecord` / `ProviderEventKind`, persistence
+  `LiveSessionState`, `reduce_live_session`, the pure `reduce_session` family),
+  `Exchange` plus `ProviderEventRecord` / `ProviderEventKind`, persistence
   (`persist_session_state` / `load_session_state`), the continuity manifest,
-  continuation, sleep records, the `context` value types **with their pure methods**,
-  `ContentHash`, and the `ToolCategory` / `ToolSideEffectLevel` enums. `resume.rs`
-  was **split**: the pure loader/`classify_resume_mode`/`ResumeInputs` moved, while
-  schema-upgrade logging and env access stayed in `qsf_app`.
+  continuation, sleep records, the `context` value types with their pure methods,
+  `ContentHash`, and the `ToolCategory` / `ToolSideEffectLevel` enums. (**Phase 3 D1
+  relocates the `context` value types again — out of `qsf_session` into a new lean
+  `qsf_context` crate that `qsf_session` then depends on — so the assembler and the
+  `RetrievedMemory → ContextFragment` adapter have a shared home below `qsf_app`.**)
 - **What stayed in `qsf_app` (effectful edge):** the run-log `EventType` taxonomy and
-  the `EventRecord` writer (only the per-`Exchange` provider records moved — this
-  refined the original "owns the `EventType` contract" wording); the effectful
-  `runtime` functions, `live_memory`, `ageing`; `assemble_context`, the prompt
-  algorithms, and the `From<&RetrievedMemory> for ContextFragment` conversion; the
-  two `from_env` constructors, converted to free functions.
-- **Compatibility preserved.** `qsf_app` re-exports the moved items through a hybrid
-  (non-glob) `crate::session` facade, so the ~21 dependent call sites changed
-  imports only. The persisted `session-state.json` / `continuity-manifest.json`
-  schemas are byte-compatible, guarded by a golden/fixture test, so the read-only
-  `qsf_browser_server` `session_context.rs` parser still reads state untouched.
-- **Sanctioned reducer change landed.** `LiveSessionEvent::ExchangeCompleted` gained
-  `exchange_index`; the reducer finalizes only the matching active exchange and a
-  mismatched index is a no-op (unit-tested in `live_state.rs`).
-- **Carry-forward constraint into Phase 2 (important).** `LiveSessionState` still
-  holds a **single** `active_exchange` / `active_response`. This is adequate for the
-  one-shot bridge but **insufficient for overlapping full-duplex events**; Phase 2
-  must resolve the overlap policy and satisfy the required mapping-contract test
-  matrix (resolved — see Phase 2 decision 1).
-- **Docs landed:** `docs/DecisionLog.md` records the shipped crate boundary and the
-  `EventType`/provider-event-record split; an `EngineeringDiary.md` entry covers the
-  refactor.
+  `EventRecord` writer; the effectful `runtime` functions, `live_memory`, `ageing`;
+  `assemble_context`, the prompt algorithms, and `From<&RetrievedMemory> for
+  ContextFragment`; the two `from_env` constructors (now free functions). **Memory
+  retrieval scoring (`retrieve_memories`) also stayed in `qsf_app` — Phase 3 must
+  resolve where it lives so the realtime server can use it (see D1 below).**
+- **Persistence constraint (important for Phase 3 trusted exchanges).**
+  `persist_session_state` serializes `SessionState` but **skips**
+  `LiveSessionState.completed_exchanges` (in-memory only, guarded by
+  `persist_keeps_completed_exchanges_in_memory_only`). To make an exchange durable it
+  must be promoted to a `Turn` (`Turn::try_from(&Exchange)`) recorded into the durable
+  `SessionState`, then continuity-persisted. The persisted `session-state.json` /
+  `continuity-manifest.json` schemas are byte-compatible and guarded by a golden test.
+- **Reducer carry-forward:** `LiveSessionState` keeps a **single** `active_exchange` /
+  `active_response`; overlap policy is resolved as Phase-2 policy **B** (finalize-prior).
+  `ExchangeCompleted` finalizes only the matching active exchange (index guard).
 
 ---
 
-## Phase 2 — Thin media plane: live browser voice — implemented, human-tested 2026-06-09  *(first time you can talk)*
+## Phase 2 — Thin media plane: live browser voice — complete, human-tested 2026-06-09
 
-**Status.** Implemented and human-tested 2026-06-09: a live, full-duplex spoken
-browser conversation works end-to-end via `gpt-realtime-2`, with barge-in, and
-diagnostic exchanges persisted outside the shared continuity root. It introduces the
-`crates/qsf_realtime_server` axum crate and a browser WebRTC client. Persisted
-exchanges this phase are **untrusted, diagnostic-only**.
+A live, full-duplex spoken browser conversation works end-to-end via `gpt-realtime-2`
+with barge-in. The phase introduced `crates/qsf_realtime_server` (axum/tokio) and a
+browser WebRTC client in `crates/qsf_realtime_server/ui/`. **What shipped, plus the
+lessons and constraints Phase 3 builds on:**
 
-**First live verification (2026-06-09) — drift recorded.** Three defects surfaced on
-the first human test and were fixed: the Vite dev proxy needed `ws: true` to relay the
-events WebSocket; the SDP handler now surfaces the provider error body instead of
-swallowing it; and OpenAI `/v1/realtime/calls` rejected `session.reasoning_effort`
-(`unknown_parameter`), so `reasoning_effort` is kept as QSF session metadata but no
-longer forwarded (see `DecisionLog.md`). `gpt-realtime-2` / `marin` / `["audio"]` /
-`server_vad` were accepted by the provider. Remaining open: end-to-end / per-stage
-latency measurement for presence research (carried to Phase 5).
+- **Server shape (the surface Phase 3 extends).** Thin `main.rs`/`lib.rs`/`cli.rs`;
+  `state.rs` holds `AppState` (env-sourced `OPENAI_API_KEY`, async `reqwest::Client`,
+  per-session `SessionRuntime` map behind `Arc<Mutex>`, diagnostics dir). Routes in
+  `realtime/routes.rs`: `POST /api/realtime/session` (allocates `qsf_session_id` +
+  non-secret default config, **no credential returned**), `POST /api/realtime/sdp`
+  (server-side SDP rendezvous via multipart to `/v1/realtime/calls`, captures `call_id`
+  from the `Location` header, stores the `CallBinding`), `WS /api/realtime/events`
+  (untrusted browser relay), `POST /api/realtime/stop`. The server depends on
+  `qsf_session` (+ `qsf_memory` transitively), **not** the full `qsf_app` runtime —
+  preserve this boundary in Phase 3.
+- **Trust marker exists and is reserved for Phase 3.** `DiagnosticTrust` has both
+  `Trusted` and `Untrusted`; `SessionRuntime.trust` is hardcoded `Untrusted` today.
+  Diagnostic exchanges are written to a **run-scoped diagnostics JSONL store that is
+  structurally outside the shared continuity root**, so sleep/continuity cannot consume
+  them. Phase 3 introduces the first `Trusted` exchanges and the continuity-root write
+  path.
+- **Reducer overlap policy B (finalize-prior), dedupe split.** A new user turn
+  finalizes the prior exchange first (`Interrupted` if its response was still streaming,
+  else `Completed`); stale late events for a finalized exchange are no-ops. Provider
+  `event_id` dedupe/order is the **server translator's** job at the WS boundary, not the
+  reducer's (the reducer carries no event id). True concurrency was deferred to Phase 3
+  *only if* the authoritative sideband reveals real overlap.
+- **Provider identity fields landed.** `ProviderEventRecord` now carries `call_id`,
+  `event_id`, `item_id`, `previous_item_id`, `response_id` (plus text/status/audio_marker)
+  — reused by the sideband translation in Phase 3.
+- **Provider drift recorded (2026-06-09 first live test).** Vite dev proxy needs
+  `ws: true`; the SDP handler surfaces the provider error body; OpenAI `/v1/realtime/calls`
+  **rejects `session.reasoning_effort`** (`unknown_parameter`), so it is kept as QSF
+  session metadata but **not forwarded**. `gpt-realtime-2` / `marin` / `["audio"]` /
+  `server_vad` were accepted. Per-stage latency measurement for presence research remains
+  open (carried to Phase 5).
+- **Required mapping-contract reducer matrix is green** (the Phase-2 gate); the SDP proxy
+  is tested against a mocked OpenAI endpoint (base URL injected via `AppState`) with
+  key-absence assertions; the relay rejects malformed/oversized payloads and persists
+  diagnostic exchanges stamped with `source`/`trust`.
 
-**Outcome.** A human can open a browser, speak, and hear a streamed spoken reply via
-`gpt-realtime-2`. A new `qsf_realtime_server` performs the **server-side SDP exchange**
-using the server-held `OPENAI_API_KEY` (no credential ever leaves the server), capturing
-and storing the provider `call_id` first-hand, and receives browser-relayed provider events that
-it translates into `LiveSessionEvent`s, reduces via `qsf_session`, and persists as
-diagnostic-only exchanges excluded from sleep and continuity. Media (audio RTP) flows
-directly browser↔OpenAI; only signaling is proxied, so no media latency is added. The
-server depends on `qsf_session` (not the full `qsf_app` runtime), reusing the
-established async `reqwest` client pattern (already used by
-`crates/qsf_app/src/models/openai_tool_client.rs`).
+**Phase-3 entry constraint:** the browser relay path remains wired but **becomes
+UI-only diagnostics** in Phase 3 — it must no longer be reduced into authoritative state
+once the sideband is the trusted source.
 
-**Resolved design decisions (confirmed 2026-06-09).** The four questions below were
-surfaced (per `Agents.md`) and decided before coding; each records the chosen path and
-the rationale. The reducer test matrix remains the Phase-2 gate regardless. In brief:
-(1) reducer policy **B**; (2) UI in a new per-crate `ui/`; (3) separate diagnostic store
-**plus** an explicit source/trust marker; (4) **server-side SDP exchange, no ephemeral
-token** (supersedes the Phase-0 token decision, recorded as a reversal in `DecisionLog.md`).
+---
 
-1. **Reducer overlap policy → (B) single `active_exchange`, finalize-prior.** A new user
-   turn arriving before the prior response completes **finalizes the prior exchange first**
-   (status `Interrupted` if its response was still streaming, else `Completed`), then opens
-   the new one; late `response.done` / transcript events for an already-finalized exchange
-   are no-ops (the same index guard `ExchangeCompleted` already uses). Chosen over true
-   concurrency (A) because Phase-2 exchanges are diagnostic-only, the cost of an occasional
-   early-finalize is negligible, and `server_vad` + interruption means a fresh user turn
-   cancels the prior response in practice. True concurrency is deferred to Phase 3, where
-   the authoritative sideband can revisit it if real overlap is observed.
-   - **Dedupe split:** dedupe/order **by provider `event_id` is the server translator's
-     job** at the `WS` boundary, not the reducer's — `LiveSessionEvent` carries no event
-     id. Pure reducer tests stay focused on identity guards and no-op-on-stale behavior.
+## Phase 3 — Control/context plane: authoritative sideband + memory injection  *(active — the "mixture" becomes real)*
 
-2. **Browser UI home → new `crates/qsf_realtime_server/ui/`.** A dedicated Vite + TS +
-   Biome + Vitest project mirroring the browser-server setup, dev proxy pointing `/api` at
-   the realtime server's port. Respects the dedicated-crate boundary (the read-only
-   browser server's UI stays decoupled from live concerns), at the cost of duplicated
-   tooling config. Build wiring: check in its own `package-lock.json`; use a dev port
-   **distinct from the memory browser UI's `5173`** to avoid collision; the launcher
-   selects this `ui/` directory and runs the `npm run check` / `npm run fmt` gate there.
+**Outcome.** A server-side **sideband** attaches to the server-captured `call_id` and
+becomes the **authoritative** event source; its completed exchanges are stamped
+`Trusted` and promoted into the shared continuity root so they are sleep/continuity
+eligible. The browser relay reverts to **UI-only diagnostics**. Per session start and
+per user turn, the server retrieves **relevant** memory (existing association-weighted
+retrieval) and injects a **small** working-memory packet via `conversation.item.create`,
+plus a `session.update` for identity/tone — relevance over volume, never a full dump.
+No credential leaves the server; media still flows directly browser↔OpenAI.
 
-3. **Diagnostic persistence → separate run-scoped store *and* an explicit source/trust
-   marker.** Persist Phase-2 diagnostic exchanges to a **run/diagnostic-scoped store owned
-   by the realtime server** (structural exclusion: they never enter the shared continuity
-   root, so no sleep-side filter has to be honored), **and** stamp a `source`/`trust` field
-   on the diagnostic records so they are self-describing and forward-compatible with Phase
-   3 (where trusted + untrusted exchanges share one store). This **keeps** the accepted
-   trust/source-marker decision in `DecisionLog.md` rather than deferring it. Two
-   implementation prerequisites surfaced by review:
-   - **Promotion-to-durable write:** `persist_session_state` serializes `SessionState` and
-     **skips** `LiveSessionState.completed_exchanges` (guarded by
-     `persist_keeps_completed_exchanges_in_memory_only`). Finalized diagnostic exchanges
-     must be **written into the persisted artifact** (the diagnostic store's durable
-     `SessionState.exchanges` via the `ExchangeRecorded` path, or an explicit diagnostic
-     artifact) **before** `persist_session_state` — with a regression test asserting the
-     persisted file actually contains the exchange.
-   - **Identity model:** the mapping contract needs `event_id`, `item_id`,
-     `previous_item_id`, `response_id`, and `call_id`, but `ProviderEventRecord` currently
-     carries only `exchange_index` / `provider_id` (a name) / `response_id` / text / status
-     / audio. Extend the diagnostic/provider records (or a separate relay-event artifact
-     linked by `exchange_index`) to persist the missing provider identity fields.
+### Open decisions — surface and confirm before coding (per `Agents.md`)
 
-4. **OpenAI WebRTC initialization → server-side SDP exchange with the API key (no
-   ephemeral token).** This **supersedes** the Phase-0 ephemeral-token decision (recorded
-   as a reversal in `DecisionLog.md`). The browser sends its SDP **offer** to the server;
-   the **server** POSTs it to OpenAI's realtime calls endpoint authenticated with the
-   server-held `OPENAI_API_KEY`, reads the provider `call_id` **first-hand** (authoritative
-   — not laundered through the untrusted browser), stores the binding, and returns the SDP
-   **answer**. Media (audio RTP) still flows directly browser↔OpenAI, so no media latency
-   is added; only signaling is proxied. No credential of any kind leaves the server. This
-   is the only flow consistent with the trust boundary (browser untrusted) and the Phase-3
-   sideband (which attaches to the server-captured `call_id`); it also removes the
-   ephemeral-secret lifecycle/store entirely.
-   - **Implementation-time verification (was open question 4):** confirm the exact
-     endpoint, headers, `call_id` location (working assumption: `POST /v1/realtime/calls`
-     with `Content-Type: application/sdp`, `call_id` via the `Location` header;
-     `wss://api.openai.com/v1/realtime?call_id=…` reserved for the Phase-3 sideband), and
-     the session-config payload schema against the **current** OpenAI realtime API; record
-     any drift explicitly before changing accepted defaults. If live verification shows the
-     server-side path cannot supply session config or return `call_id` to the server, fall
-     back to the ephemeral-token flow **and** explicitly accept a browser-reported
-     (untrusted) `call_id` until the Phase-3 sideband validates it.
+These are recommended resolutions with rationale; confirm (or override) each before the
+step that depends on it. **D1, D2, and D5 were confirmed 2026-06-10** (after the
+`Review.RealtimeVoiceConversation.phase3.Plan.codex` review); D6 was added by that
+review. **D3 still requires a live-provider verification at implementation time.**
 
-**Scope — Server (`qsf_realtime_server`, axum):**
-- New crate mirroring the `qsf_browser_server` shape: thin `main.rs` (`#[tokio::main]`
-  → `run()`), thin `lib.rs` (`run()` → `server::serve`), `cli.rs` (host/port/state-dir
-  args), and `state.rs` (`AppState` holding the env-sourced API key, an async
-  `reqwest::Client`, the `{ qsf_session_id ↔ call_id }` binding store behind `Arc`, and
-  the diagnostic store path). Deps: `axum`, `tokio`, `reqwest` (async — `json`,
-  `rustls-tls`; *not* the `blocking` feature qsf_app uses), `serde`/`serde_json`,
-  `thiserror`, `time`, `uuid`, `engine_logging`, and `qsf_session`. Keep `main`/`lib`
-  thin (per `Agents.md`); the server is the effectful edge, the reducer stays pure.
-- Routes (a `realtime/` module):
-  - `POST /api/realtime/session` — allocate a `qsf_session_id` and return the accepted
-    default session config (`gpt-realtime-2`, `marin`, `medium`, `["audio"]`, `server_vad`
-    auto-create + interrupt) plus the `qsf_session_id`. **No credential is minted or
-    returned** (server-side SDP flow — decision 4); this route does not call OpenAI.
-  - `POST /api/realtime/sdp` — accept the browser SDP **offer** + `qsf_session_id`; forward
-    it to OpenAI's realtime calls endpoint authenticated with the **server-held
-    `OPENAI_API_KEY`** (decision 4 — no ephemeral secret); read the provider `call_id`
-    **first-hand** (`Location` header); store the validated `{ qsf_session_id ↔ call_id }`
-    binding (active-call scoped, invalidated on stop/error/expiry, short cleanup grace);
-    return the SDP **answer**. No credential leaves the server.
-  - `WS /api/realtime/events` — receive browser-relayed provider events as a typed,
-    **untrusted** relay envelope; schema-validate, enforce a max payload size, and
-    dedupe/order by provider `event_id`; translate to `LiveSessionEvent`s per the
-    mapping contract; reduce via `qsf_session`; persist diagnostic exchanges (decision 3:
-    run-scoped diagnostic store, with the source/trust marker and provider identity
-    fields). Reject malformed/oversized payloads.
-  - `POST /api/realtime/stop` (or a WS close) — invalidate the binding and finalize any
-    open diagnostic exchange.
-- **Local exposure boundary:** default-bind `127.0.0.1`; the SDP route spends the
-  server-held `OPENAI_API_KEY`, so refuse (or loudly warn) on a non-loopback bind, assume a
-  same-origin/local UI, and keep CORS closed by default. Launcher/doctor checks verify
-  `OPENAI_API_KEY` is present **without printing it**.
-- **Server-owned diagnostic writer:** since the crate deliberately does not depend on
-  `qsf_app` (where the event/trace writers live), add a small server-owned diagnostic
-  artifact writer — call-binding events, redaction (no-secret) evidence, persisted
-  diagnostic exchanges, and latency observations — with tests, before the relay step.
+- **D1 — Where do memory retrieval and realtime protocol helpers live so
+  `qsf_realtime_server` can use them without depending on the full `qsf_app` runtime?**
+  `retrieve_memories` / `RetrievalStrategy` / `RetrievedMemory` / `RetrievalScore` and the
+  co-retrieval delta logic currently live in `qsf_app::memory` (they operate on
+  `qsf_memory::{MemoryRecord, Association}` and a couple of timing helpers, so they are
+  nearly pure). The realtime JSON protocol builders/parsers (`session.update`,
+  `conversation.item.create`, `response.create`, `parse_realtime_server_event` and its
+  field extractors) live in `qsf_app::audio::{voice_session_provider, transcript_provider}`.
+  **Confirmed (2026-06-10): three lean homes — `qsf_memory` + new `qsf_context` + new
+  `qsf_realtime_protocol`** (not a single `qsf_realtime_core`; never a `qsf_app`
+  dependency):
+  - **`qsf_memory`** gains the pure retrieval scoring (`retrieve_memories` /
+    `RetrievalStrategy` / `RetrievedMemory` / `RetrievalScore` / co-retrieval delta) — it
+    already owns the record/association/store types these operate on.
+  - **`qsf_context` (new, sits *between* `qsf_memory` and `qsf_session`)** owns the whole
+    context-assembly domain: the context value types (`ContextFragment`, `ContextBudget`,
+    `ContextAssembly`, `ContextSourceKind`, `ContextSelection`, `ContextOmission`) **moved
+    out of `qsf_session::context`**, the pure `assemble_context` algorithm, and the
+    `From<&RetrievedMemory> for ContextFragment` adapter. `qsf_session` then depends on
+    `qsf_context` (its `Exchange`/`Turn` embed `ContextAssembly`).
+  - **`qsf_realtime_protocol` (new, lean, independent)** owns the realtime JSON
+    builders/parser/translator (see step 2).
+  **Why the context assembler cannot live in `qsf_memory` (the review's
+  P3-HIGH-MISSING-CONTEXT-EXTRACTION, resolved):** `qsf_session → qsf_memory` (fixed
+  direction), the context value types live in `qsf_session::context`, and `assemble_context`
+  consumes them — so hosting the assembler in `qsf_memory` would force a dependency cycle or
+  drag context types into the lowest crate. Rust's **orphan rule** also pins
+  `From<&RetrievedMemory> for ContextFragment` to the crate defining `ContextFragment` or
+  `RetrievedMemory`; it physically cannot be duplicated into both `qsf_app` and
+  `qsf_realtime_server`. A dedicated `qsf_context` crate is therefore the elegant resolution.
+  Resulting acyclic layering:
+  `qsf_memory ← qsf_context ← qsf_session ← {qsf_app, qsf_realtime_server}` (with
+  `qsf_realtime_protocol` an independent lean leaf). `qsf_app` re-exports the moved retrieval
+  and context items through its existing `memory`/`context` facades so current call sites
+  (`retrieve_memories`, `assemble_context`, …) are unchanged. **Note this partially reverses
+  the Phase-1 placement of the context value types into `qsf_session`** (record the boundary
+  in `DecisionLog.md`).
+- **D2 — How are trusted sideband exchanges made sleep/continuity-eligible?** Diagnostic
+  exchanges are structurally outside the continuity root (Phase 2), and
+  `persist_session_state` skips `completed_exchanges` (Phase 1). **Recommended:** on
+  finalizing a trusted exchange, promote it to a durable `Turn` (`Turn::try_from(&Exchange)`
+  → `SessionState` turns) and write the shared continuity root via
+  `qsf_session::persist_session_state` + the continuity manifest. **Confirmed
+  (2026-06-10): minimal continuity-persist in the server reusing only `qsf_session`; defer
+  ageing/consolidation to Phase 5** (do not extract the `qsf_app` `ageing` /
+  `persist_continuity_state_from_dirs` helpers this phase).
+  **Ordering requirement from review (P3-HIGH-TURN-PROMOTION-SEQUENCE):**
+  `Turn::try_from(&Exchange)` hard-requires `completed_at`, `output`, **`context_assembly`,
+  and `model` (`ExchangeModelUse`)** (`crates/qsf_session/src/exchange.rs`). The sideband
+  translation only supplies transcript/provider/output lifecycle data, so context and model
+  metadata must be recorded on the trusted exchange **before** promotion: `context_assembly`
+  from the injection builder (the selected fragments under budget — D5/step 6) and
+  `ExchangeModelUse` from the provider `response.done` usage/latency. Promotion runs only for
+  **complete** trusted exchanges that carry both; incomplete, failed, or degraded exchanges
+  (see D6) are never silently promoted.
+- **D3 — Sideband attach endpoint/auth shape.** Working assumption (from Phase-0/2):
+  `wss://api.openai.com/v1/realtime?call_id=…` authenticated with the server-held
+  `OPENAI_API_KEY`. **This must be verified against the current OpenAI realtime API at
+  implementation time** (same caution as Phase-2 decision 4); record any drift in
+  `DecisionLog.md` before changing accepted defaults.
+- **D4 — Overlap policy.** Keep policy **B** (single active exchange, finalize-prior).
+  Revisit true concurrency only if the authoritative sideband reveals real overlapping
+  turns; treat it as a watch item, not a required change this phase.
+- **D5 — Response timing for per-turn injection (confirmed 2026-06-10; blocker
+  P3-BLOCKER-RESPONSE-CONTROL).** Today the realtime defaults set provider `server_vad`
+  `create_response = true` (`crates/qsf_realtime_server/src/state.rs`), so the provider can
+  start generating the moment VAD commits the user turn — *before* the sideband can retrieve
+  memory from the final transcript and inject it. OpenAI's realtime docs call out disabling
+  `turn_detection.create_response` for exactly this RAG/control pattern. **Decision: default
+  `create_response = false` and make the sideband own response timing per turn** — on each
+  committed user turn the sideband retrieves + injects memory, then sends `response.create`.
+  This **supersedes the Phase-0 "automatic response creation" default** for Phase 3 (record
+  the reversal in `DecisionLog.md`, mirroring the ephemeral-token reversal). Rationale and
+  latency expectation: the sideband is a persistent server↔OpenAI WebSocket already attached
+  to the call, so for the **fast** injection path (memory + associations assembled locally)
+  `response.create` fires immediately and should be ~as snappy as auto-response; only when an
+  injection requires an **LLM round-trip** does the turn deliberately take longer. **Verify
+  this parity empirically** (manual-`response.create` vs. an auto-response baseline) rather
+  than assuming it — if parity holds there is no reason to keep a `create_response = true`
+  mode at all. The slower "thinking" path will later surface a visual cue in the Live
+  Activation Dashboard (forward pointer; **out of scope this phase**). Update the Phase-3
+  acceptance tests, defaults, and docs to match.
+- **D6 — Authoritative-sideband gap semantics (added by review;
+  P3-MED-SIDEBAND-GAP-SEMANTICS).** Once the sideband is the authoritative source, a
+  disconnect can mean **missed provider events**, so reconnect/backoff alone is not enough.
+  **Decision: on any unrecoverable or potentially lossy gap, mark transport trust
+  *degraded* until the sideband reconnects and receives a `session.updated`
+  acknowledgement; any exchange active during the gap is permanently
+  *non-promotable* (no trusted continuity write), while later fresh exchanges can promote
+  after recovery.** This is valid because D5 sets `create_response = false`: while the
+  sideband is disconnected, no unseen assistant response can be generated by QSF, though
+  user audio/provider events may be missed. The browser relay (diagnostic-only) is
+  unaffected. Cover disconnect-during-active-exchange and disconnect-during-injection in
+  tests.
 
-**Scope — Reducer hardening (in `qsf_session`, pure):**
-- Implement overlap policy **(B)** (decision 1: finalize-prior on a new user turn),
-  keeping `reduce_live_session` pure and unit-tested in `qsf_session`; add the provider
-  identity fields (decision 3) to the persisted records. Event-`id` dedupe lives in the
-  server translator, not the reducer.
-- Add/extend unit tests covering the **required mapping-contract matrix**: transcript
-  completion after response start; duplicate provider events; interruption before
-  `response.created`; response completion after interruption; a second user turn before
-  the prior response finishes; out-of-order lifecycle events. **This matrix is the
-  Phase-2 gate.**
+### Architecture constraints (must hold)
 
-**Scope — Browser (TS in the chosen `ui/`):**
-- New WebRTC client: fetch the `qsf_session_id` + session config from
-  `POST /api/realtime/session` (no credential is returned); create `RTCPeerConnection`; add
-  the mic track (`getUserMedia`); create the provider `oai-events` data channel; on
-  `ontrack`, play the remote audio; create the SDP **offer**, send it via
-  `POST /api/realtime/sdp`, and apply the returned **answer**. Media flows directly
-  browser↔OpenAI; only signaling goes through the server.
-- Relay observed data-channel provider events to `WS /api/realtime/events` as the typed
-  relay envelope (diagnostic only).
-- Minimal UI: start/stop, live transcript, and a listening/thinking/speaking status
-  driven by provider events (mirrors `RuntimePhase`). Provider VAD + barge-in are
-  server-config defaults; the UI only reflects state.
-- TS unit tests (Vitest) for the provider-event → relay-envelope mapping.
+- Keep `main.rs` / `lib.rs` / `mod.rs` thin (per `Agents.md`); the sideband and injection
+  are the **effectful edge**. Event translation continues to flow through the **pure**
+  `qsf_session` reducer (`apply_live_session_event`) — do not add provider I/O or async to
+  the reducer.
+- The injection-packet construction must be a **pure, unit-testable builder** (retrieved
+  memory + transcript/identity → payload), separate from the async sideband I/O. The
+  fragments it selects under `ContextBudget` are also the exchange's `context_assembly`
+  record (so trusted promotion has the metadata it needs — D2).
+- Raw-provider-event → `LiveSessionEvent`/diagnostic **translation must be a pure module**
+  (extracted from `process_relay_envelope`, `crates/qsf_realtime_server/src/realtime/routes.rs`),
+  shared by the authoritative sideband and reused for relay UI diagnostics — not re-embedded
+  alongside async WS acking/locking/persistence (P3-MED-TRANSLATOR-EXTRACTION).
+- **Per-turn response timing is server-owned (D5):** the default is `create_response = false`
+  and the sideband issues `response.create` after injection. The reducer stays pure; response
+  timing is an effectful-edge concern.
+- `OPENAI_API_KEY` stays server-side and must be proven absent from every response and log
+  (extend the Phase-2 no-secret assertions to the sideband).
 
-**Incremental, independently reviewable steps** (each ends green; commit per step):
-1. **Reducer hardening + mapping-contract matrix** in `qsf_session` (pure, no server
-   yet) — reviewable in isolation, de-risks the central decision. Green: `cargo test`.
-2. **Scaffold `crates/qsf_realtime_server`** (thin `main`/`lib`/`cli`/`state`, a
-   `/health` route, an empty `realtime` module), wired into the workspace `crates/*`
-   glob; add async `reqwest`. Green: `cargo build` / `clippy` / `fmt`, plus a `/health`
-   test.
-3. **`POST /api/realtime/session`** session allocation + default session config (no
-   provider call); assert **no credential of any kind** is in the response and the default
-   session config is correct. Green.
-4. **`POST /api/realtime/sdp`** SDP proxy against a **mocked** OpenAI endpoint (inject the
-   base URL via `AppState` so tests never hit the network), authenticated with the
-   server-held API key; capture and store the `call_id` binding; assert the API key is
-   absent from the response/log; unit-test the binding lifecycle (invalidate on
-   stop/expiry). Green.
-5. **`WS /api/realtime/events`** relay: typed envelope, schema/size validation +
-   dedupe; event-translation → reduced → persisted diagnostic `Exchange`; reject
-   malformed/oversized payloads (tested). Green.
-6. **Browser WebRTC client + minimal UI** in the chosen `ui/` home; Vitest mapping
-   tests; `npm run check` then `npm run fmt`. (No automated browser e2e — covered by
-   human testing.)
-7. **Launcher preview path + lint/format gates + docs** (below).
+### Incremental, independently reviewable steps (each ends green; commit per step)
 
-**Acceptance criteria:**
+1. **Extract retrieval into `qsf_memory` and the context-assembly domain into new
+   `qsf_context` (D1).** Two related moves, each landing green; commit separately if cleaner:
+   - *(1a) Retrieval → `qsf_memory`.* Move `retrieve_memories` + scoring/result types
+     (`RetrievalStrategy`/`RetrievedMemory`/`RetrievalScore`/`AssociationPath`) + co-retrieval
+     delta out of `qsf_app::memory` into `qsf_memory`, replacing the
+     `crate::observability::trace` timing helpers with inline timing or a tiny local helper.
+   - *(1b) Context domain → new `qsf_context`.* Create the crate **between `qsf_memory` and
+     `qsf_session`**; move the context value types out of `qsf_session::context`, move the
+     pure `assemble_context` algorithm and the `From<&RetrievedMemory> for ContextFragment`
+     adapter out of `qsf_app::context`, and add `qsf_context = { path = ... }` to
+     `qsf_session` (its `Exchange`/`Turn` now import `ContextAssembly` from `qsf_context`).
+   Keep `qsf_app::{memory, context}` re-exporting the moved items so existing call sites (e.g.
+   `text_owned_voice_loop`, `live_memory`, `assemble_context`) are unchanged. Move the
+   retrieval/assembly unit tests with the code. *Green:* full `cargo test`.
+2. **Extract realtime protocol helpers + the pure event translator into
+   `qsf_realtime_protocol` (D1 + P3-MED-TRANSLATOR-EXTRACTION).** Move the request builders
+   (`session.update`, `conversation.item.create`, `response.create`) and
+   `parse_realtime_server_event` + field extractors into the lean crate. **Also extract the
+   raw-provider-event → `LiveSessionEvent`/diagnostic translation** out of
+   `process_relay_envelope` into a pure module (covering current event names
+   `response.output_audio.delta`, `response.output_audio_transcript.*`, and nested
+   `response.done` text extraction). Refactor the `qsf_app` one-shot `voice_session_provider`
+   **and** the realtime-server relay to consume the moved helpers with **no behavior change**
+   (their tests stay green); the relay keeps only the UI-diagnostic mapping. Do **not** move
+   the one-shot runner. *Green.*
+3. **Realtime continuity root + memory-store resolver (D2 prep;
+   P3-MED-MEMORY-STORE-RESOLUTION).** Give `AppState` a continuity-root path and a
+   `qsf_memory`-backed resolver that loads `memory-store.json` + associations for a session.
+   *Verify (unit):* existing store loads; absent store → empty (no crash); malformed store →
+   surfaced error, not a panic; empty store → no-injection path is taken downstream. *Green.*
+4. **Sideband adapter scaffold + gap semantics** (`crates/qsf_realtime_server/src/realtime/sideband.rs`).
+   A long-lived async task that, given a stored `call_id`, opens the provider WebSocket
+   (`tokio-tungstenite`), supports concurrent read/write, and shuts down gracefully on
+   stop / binding invalidation (reconnect/backoff policy included). Implement **D6 gap
+   semantics**: on an unrecoverable/lossy disconnect, mark the session *degraded* and make
+   subsequent exchanges non-promotable until a verified recovery point. Inject the WS base URL
+   via `AppState` so tests run against a **mocked** WS server (mirrors the Phase-2 mocked
+   OpenAI HTTP). *Verify:* attaches to the stored `call_id`; survives a server-initiated stop;
+   never logs the API key; a disconnect during an active exchange / during injection marks the
+   session degraded and blocks promotion. *Green.*
+5. **Memory injection — pure builder (D5).** A pure function that, given association-weighted
+   `retrieve_memories` output + the current transcript/identity, builds a **small**
+   working-memory `conversation.item.create` packet plus a `session.update` for identity/tone
+   — cap fragments/tokens (reuse the `ContextBudget` discipline); never a full dump. The
+   selected fragments are returned as the exchange's `context_assembly` (consumed by step 6).
+   *Verify (unit):* memory store + transcript → expected small payloads; empty store → no
+   injection; oversized → capped; the returned `context_assembly` matches what was injected.
+   *Green.*
+6. **Authoritative live loop: translation + recording + trust promotion + manual response
+   (D5, D2).** Route sideband provider events through the existing `apply_live_session_event`
+   mapping (reuse the step-2 translator, now trusted), stamp `DiagnosticTrust::Trusted`, and
+   **demote the browser relay to UI-only diagnostics** (no longer reduced into authoritative
+   state). Set the realtime default to **`create_response = false`** and have the sideband, on
+   each committed user turn, inject the step-5 packet and then send `response.create`. Record
+   `context_assembly` (from the step-5 builder) and `ExchangeModelUse` (from `response.done`
+   usage/latency) onto the trusted exchange **before** promotion. On finalize, promote
+   **complete** trusted exchanges into the **shared continuity root** as durable turns
+   (`Turn::try_from` → `persist_session_state` + manifest, D2); incomplete/failed/degraded
+   exchanges (D6) are not promoted. *Verify:* a trusted exchange carries `context_assembly`
+   + model before persist and lands in the continuity root sleep-eligible; a relay
+   (diagnostic) exchange does not; a degraded session does not promote; the key is absent from
+   sideband responses/logs. *Green.*
+7. **Launcher preview path + lint/format/UI gates + docs.** Update the preview path to start
+   the sideband with `create_response = false` per-turn injection **by default**; run
+   `cargo clippy --all-targets -- -D warnings` then `cargo fmt`; run the UI gate
+   (`npm run check`, **`npm test`/Vitest**, then `npm run fmt`) only if the relay UI demotion
+   touches `ui/`. Docs below.
+
+### Acceptance criteria
+
 - `cargo build`, full `cargo test`, `cargo clippy --all-targets -- -D warnings` clean,
-  `cargo fmt` applied; UI `npm run check` then `npm run fmt` green.
-- `qsf_realtime_server` depends on `qsf_session`, not the full `qsf_app` runtime;
-  `OPENAI_API_KEY` is read only server-side and proven absent from every response and
-  log in tests; **no credential of any kind reaches the browser**.
-- The session route returns a `qsf_session_id` + non-secret session config (no
-  credential); the SDP proxy (server API key, mocked provider) captures and stores the
-  `{ qsf_session_id ↔ call_id }` binding; the relay endpoint rejects malformed/oversized
-  payloads and persists diagnostic exchanges carrying the source/trust marker.
-- The reducer mapping-contract matrix is green (Phase-2 gate).
-- Diagnostic exchanges are observable in artifacts but written **outside** the shared
-  continuity root, so sleep/continuity cannot consume them — verified by a test
-  asserting the shared root is untouched.
-- **Defaults exercise the new path:** the server's default config is the accepted
-  `gpt-realtime-2` / `marin` / `medium` / `["audio"]` / `server_vad` set, and the
-  default run mode persists diagnostic exchanges.
+  `cargo fmt` applied; UI gate green if `ui/` changed.
+- `qsf_realtime_server` **must not depend on `qsf_app`**; it uses lean QSF domain crates
+  (`qsf_session`, `qsf_memory`, `qsf_context`, `qsf_realtime_protocol`) for shared
+  memory/session/context/protocol logic, alongside its runtime dependencies
+  (`axum`/`tokio`/`reqwest`/`engine_logging` and the newly added `tokio-tungstenite`).
+  `OPENAI_API_KEY` is proven absent from every sideband response and log.
+- The sideband attaches to a stored `call_id` (mocked WS), reads/writes concurrently, and
+  shuts down gracefully on stop/invalidation; an unrecoverable/lossy gap marks the session
+  **degraded** until reconnect + `session.updated`, and any gap-window exchange remains
+  skipped for trusted promotion (D6).
+- Given a memory store + transcript, the server emits the expected **small** injection
+  payloads (`conversation.item.create` + `session.update`); an empty store yields no
+  injection but still records an empty `ContextAssembly`; the budget cap is enforced; the
+  resolver handles existing/absent/malformed stores without panicking.
+- Trusted sideband exchanges carry `context_assembly` + `ExchangeModelUse` before promotion,
+  are written to the shared continuity root, and are sleep/continuity-eligible; incomplete/
+  failed/degraded exchanges are not promoted; Phase-2 diagnostic relay exchanges remain
+  excluded — all verified by tests.
+- The browser relay is demoted to UI-only diagnostics (no longer authoritative).
+- **Defaults exercise the new path (D5):** the default realtime run sets
+  `create_response = false`, attaches the sideband, and performs per-turn injection followed
+  by a server-issued `response.create`, with a sensible small budget.
+- Manual `response.create` latency for the fast (no-LLM) injection path is measured against an
+  auto-response baseline and recorded; a parity result confirms `create_response = true` is
+  unnecessary (D5).
 
-**Verification guidance** (fits a new live-service + UI slice):
-- *Automated (Rust):* session route (no credential leaks); SDP-proxy `call_id` capture +
-  binding lifecycle (server API key, mocked OpenAI); relay validation + event-translation
-  → persisted diagnostic `Exchange` (with source/trust marker); the reducer overlap /
-  out-of-order matrix.
-- *Automated (TS):* Vitest provider-event → relay-envelope mapping; `npm run check`.
-- **Human testing (required):** open the browser, start a session, speak and hear a
-  streamed reply, interrupt mid-reply (barge-in); confirm the listening/thinking/
-  speaking status tracks the conversation; confirm diagnostic exchanges appear in
-  artifacts; inspect browser devtools/network to confirm **no credential reaches the
-  browser** — neither the `OPENAI_API_KEY` nor any ephemeral token (only SDP and the
-  `qsf_session_id` cross the wire). Record end-to-end and per-stage latency
-  observations for presence research (carried to Phase 5).
-- *Provider reality check:* confirm the mapping contract holds against the actual live
-  event stream (first real check); record any API drift per decision 4's
-  implementation-time verification before changing accepted defaults.
+### Verification guidance (fits a live-service + memory-integration slice)
 
-**Docs (per `ProjectWorkflow.md`):**
-- **Refresh** the already-existing `Architecture.RealtimeSessionServer.md`: move its
-  Implementation Status bands from "not yet implemented" to what shipped (crate, token
-  route, SDP proxy + binding store, diagnostic relay WS, reducer hardening), and update
-  the `Last reviewed:` date.
-- `Experiment.RealtimeBrowserVoiceMVP` as the validation record.
-- Refresh `Architecture.AudioLoop.md` Implementation Status; note the realtime
-  diagnostic/untrusted-exchange surface in `Architecture.StateAndObservability`.
-- DecisionLog entries: realtime-server crate exists; browser-owns-media +
-  server-owns-rendezvous; **the server-side SDP exchange flow** (its reversal of the
-  ephemeral-token decision is already recorded; confirm on landing); diagnostic-only relay
-  persisted outside the continuity root **with the source/trust marker**; and the chosen
-  reducer overlap policy (B).
+- *Automated (Rust):* sideband attach + graceful-shutdown against a mocked WS; **gap
+  semantics** (disconnect during active exchange / during injection → degraded until
+  `session.updated` + active exchange non-promotable, D6); key-absence assertions extended to the sideband; the **store resolver**
+  matrix (existing/absent/malformed/empty); the injection-payload builder matrix
+  (store+transcript → small payload, empty store → no payload plus empty assembly, cap enforced); **trust-promotion
+  preconditions** (trusted exchange carries `context_assembly` + `ExchangeModelUse` before
+  persist; trusted → continuity root + sleep-eligible; diagnostic/incomplete/degraded →
+  excluded); retrieval/context-assembly/protocol/translator extraction parity tests.
+- *Automated (TS):* if the relay demotion touches `ui/`, `npm run check` + **`npm test`
+  (Vitest)** stay green (P3-LOW-UI-TEST-GATE).
+- **Human testing (required):** in a live browser session, reference something earlier in the
+  same conversation and across a new session; confirm continuity surfaces in the spoken reply;
+  confirm injected context is relevant and small (inspect artifacts); confirm no credential
+  reaches the browser; **confirm the fast (no-LLM) injection path with `create_response =
+  false` feels as snappy as the Phase-2 auto-response baseline (D5 parity)**, and note where a
+  slow LLM-backed injection would warrant the future Live Activation Dashboard "thinking" cue;
+  record end-to-end / per-stage latency for presence research (carried to Phase 5).
+- *Provider reality check:* confirm the sideband attach endpoint/auth (D3) and the live event
+  stream against the current API; record drift in `DecisionLog.md` before changing defaults.
+
+### Docs (per `ProjectWorkflow.md`)
+
+- `Experiment.LiveContextInjection` as the validation record.
+- Refresh `Architecture.RealtimeSessionServer.md`: move the Phase-3 sideband from "Not yet
+  implemented" to implemented; document the trusted-vs-diagnostic stores and the
+  continuity-promotion path; update `Last reviewed:`.
+- Update `Architecture.MemorySystem` (live injection + the retrieval extraction home) and
+  note trusted live exchanges in `Architecture.StateAndObservability`.
+- `DecisionLog.md` entries: authoritative sideband supersedes the browser relay as the
+  trusted source; the retrieval/**context-assembly**/protocol/translator extraction crate
+  boundary (D1); the trusted-exchange continuity-promotion path + promotion preconditions
+  (D2); **the `create_response = false` manual-response default, reversing the Phase-0
+  automatic-response default (D5)**; the authoritative-sideband gap/degraded semantics (D6);
+  the confirmed sideband endpoint/auth (D3).
 - One `EngineeringDiary.md` entry (follow the diary's "How to use" header).
-- README "What works today" + launcher notes for the preview path and the intended
-  future first-class realtime mode.
-
----
-
-## Phase 3 — Control/context plane: authoritative sideband + memory injection  *(the "mixture" becomes real)*
-
-**Scope.**
-- Extract reusable **protocol helpers** (request builders, event parsing) from
-  `voice_session_provider` (small extraction step), then build a **new async sideband
-  adapter** (long-lived, concurrent read/write, cancellation/shutdown) that connects
-  to the stored `call_id`. Reuse the helpers, **not** the one-shot runner.
-- The sideband becomes the **authoritative** event source; its exchanges are trusted
-  and sleep/continuity-eligible. Browser relay reverts to UI-only diagnostics.
-- Per session start and per user turn, retrieve relevant memory (existing
-  association-weighted retrieval) and inject a **small** working-memory packet via
-  `conversation.item.create`, plus `session.update` for identity/tone. Relevance over
-  volume — never a full memory dump.
-
-**Verify (automated).** Sideband attaches to a stored `call_id` (mocked); given a
-memory store + transcript, the server emits the expected (small) injection payloads;
-trusted exchanges are sleep-eligible while Phase-2 diagnostic ones are not.
-
-**Human testing (required).** Reference something across turns and across sessions;
-confirm continuity surfaces in the spoken conversation.
-
-**Docs.** `Experiment.LiveContextInjection`; update
-`Architecture.RealtimeSessionServer.md` and `Architecture.MemorySystem`; decision-log
-entry (authoritative sideband); diary entry.
+- README / launcher notes as the realtime mode grows.
 
 ---
 
@@ -427,7 +483,7 @@ permission/result recording); diary entry.
 **Scope.** Lightweight extraction over completed **trusted** turns (reuse the
 sleep/memory proposers) feeding the existing review/consolidation path. Refine
 interruption representation and end-to-end / per-stage latency reporting for presence
-research.
+research (including the latency-measurement gap carried forward from Phase 2).
 
 **Verify (automated).** Extraction tests over trusted turns; latency measurements
 recorded.
@@ -444,18 +500,19 @@ cross-link `Concept.RealtimePresence`; diary entry.
 ## Launcher / Operator Surface
 
 Today `scripts/qsf.ps1` mainly launches `qsf_app` experiments, the memory browser,
-the UI, and the workbench. That is appropriate for the current state of the repo.
-
-As realtime voice conversation becomes runnable, the launcher should grow a
-first-class operator mode for it rather than treating it as only
-`app -Experiment <name>`. Phase 2 should add at least a **preview path** (start
+the UI, and the workbench, plus the Phase-2 realtime preview path (start
 `qsf_realtime_server`, start/open the browser UI, apply non-secret QSF defaults, and
-verify required secrets without printing them). The exact first-class command name is
-decided when the server and UI entry point exist; the intended shape is:
+verify required secrets without printing them).
+
+As realtime voice conversation becomes the primary mode, the launcher should grow a
+first-class operator command rather than treating it as only `app -Experiment <name>`.
+Phase 3 extends the preview path to also start the authoritative sideband. The exact
+first-class command name is decided when the server and UI entry point stabilize; the
+intended shape is:
 
 ```text
 qsf.ps1 <realtime-conversation-mode>
-  -> start qsf_realtime_server
+  -> start qsf_realtime_server (with sideband)
   -> start/open the browser UI
   -> apply non-secret QSF defaults through the launcher
   -> verify required secrets without printing them
@@ -471,39 +528,41 @@ validation, and phase reports.
 - **Lint gates every phase:** Rust → `cargo clippy --all-targets -- -D warnings` then
   `cargo fmt`; UI → `npm run check` then `npm run fmt`.
 - **Phase 1 gate (met):** schema golden/fixture parity (legacy + current
-  `SessionState`) plus normalized-artifact parity (volatile fields scrubbed), not
-  byte-for-byte.
-- **Phase 2 gate:** the reducer overlap / out-of-order test matrix.
+  `SessionState`) plus normalized-artifact parity (volatile fields scrubbed).
+- **Phase 2 gate (met):** the reducer overlap / out-of-order test matrix is green.
+- **Phase 3 gate:** trusted sideband exchanges land in the shared continuity root and
+  are sleep-eligible while Phase-2 diagnostic exchanges are not; the injection-payload
+  builder matrix (small/none/capped) is green; no credential leaks through the sideband.
 - **Human testing required at Phases 2–5** for, respectively: the live spoken
-  experience, cross-session continuity, model-invoked tool use, and presence.
+  experience (done), cross-session continuity, model-invoked tool use, and presence.
 
 ## Remaining Checks Before Each Phase
 
 - **Phase 1 (complete):** the file-level move/stay split, the `resume.rs` split, the
-  hybrid `qsf_app::session` facade, the dependency-leanness check, and the
-  `EventType` / `ContextAssembly` / `ContentHash` boundary questions were all resolved
-  and shipped (commit `45ed9cd`). The key residue for Phase 2 is the single
-  `active_exchange` reducer (Phase 2 decision 1).
-- **Phase 2:** open questions 1–4 are **resolved** (see Phase 2 "Resolved design
-  decisions": overlap policy B, per-crate UI, separate diagnostic store + source/trust
-  marker, server-side SDP exchange superseding the ephemeral token). The remaining
-  implementation-time check is verifying the server-side `/v1/realtime/calls` endpoint
-  shape, `call_id` location, session-config schema, and the accepted model/voice/VAD
-  defaults against the live provider — recording any drift explicitly before changing
-  them.
+  hybrid `qsf_app::session` facade, and the dependency-leanness check shipped (`45ed9cd`).
+- **Phase 2 (complete):** the four open questions were resolved (overlap policy B,
+  per-crate UI, separate diagnostic store + source/trust marker, server-side SDP exchange
+  superseding the ephemeral token) and human-tested 2026-06-09; provider drift recorded.
+- **Phase 3 (active):** D1 (retrieval/context-assembly/protocol/translator extraction crate
+  boundary), D2 (trusted-exchange continuity-promotion path + promotion preconditions), and D5
+  (`create_response = false` manual-response default) were **confirmed 2026-06-10**; D6
+  (sideband gap/degraded semantics) was added by the same review. Still to do before/at the
+  dependent steps: verify D3 (the sideband attach endpoint/auth) against the live provider and
+  record drift; measure the D5 manual-vs-auto latency parity; keep policy B (D4) unless real
+  overlap is observed.
 - **All phases:** confirm the provider-event mapping contract still holds against the
-  actual event stream observed once live (Phase 2 is the first reality check).
+  actual event stream — Phase 3 is the first reality check through the **authoritative**
+  sideband (vs. the Phase-2 browser relay).
 
 ## Documentation Updates (per `ProjectWorkflow.md`)
 
-Summarized per phase above. Aggregate touch-list: `DecisionLog.md` (accepted
-decisions as each lands — the Phase-1 lean-session-crate and `EventType`/
-provider-event-record split entries have landed; Phase 2 adds the realtime-server,
-rendezvous, server-side-SDP-flow, diagnostic-relay, and reducer-overlap entries),
-`EngineeringDiary.md` (one entry per logical application change), `README.md` and
-launcher documentation (as phases land), a **refresh** of the existing (Phase-0
-sketch) `Architecture.RealtimeSessionServer.md`, refreshes to
-`Architecture.AudioLoop.md` / `Architecture.ToolSystem` / `Architecture.MemorySystem`
-/ `Architecture.StateAndObservability`, `ResearchQuestions.Audio.md`,
-`Concept.RealtimeAudio.md` (+ `Concept.RealtimePresence` cross-link), and one
-`Experiment.*` doc per live phase.
+Summarized per phase above. Aggregate touch-list: `DecisionLog.md` (the Phase-1
+lean-session-crate / `EventType`-split and the Phase-2 realtime-server, rendezvous,
+server-side-SDP, diagnostic-relay, and reducer-overlap entries have landed; Phase 3 adds
+the authoritative-sideband, retrieval/protocol-extraction, trusted-continuity-promotion,
+and confirmed-sideband-endpoint entries), `EngineeringDiary.md` (one entry per logical
+application change), `README.md` and launcher documentation (as phases land), refreshes to
+`Architecture.RealtimeSessionServer.md`, `Architecture.AudioLoop.md`,
+`Architecture.ToolSystem`, `Architecture.MemorySystem`, `Architecture.StateAndObservability`,
+`ResearchQuestions.Audio.md`, `Concept.RealtimeAudio.md` (+ `Concept.RealtimePresence`
+cross-link), and one `Experiment.*` doc per live phase.

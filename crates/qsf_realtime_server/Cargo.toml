@@ -13,13 +13,17 @@ clap.workspace = true
 engine_logging = { path = "../engine_logging" }
 futures-util.workspace = true
 log.workspace = true
+qsf_context = { path = "../qsf_context" }
+qsf_memory = { path = "../qsf_memory" }
 qsf_session = { path = "../qsf_session" }
+qsf_realtime_protocol = { path = "../qsf_realtime_protocol" }
 reqwest = { version = "0.12", default-features = false, features = ["json", "multipart", "rustls-tls"] }
 serde.workspace = true
 serde_json.workspace = true
 sha2.workspace = true
 time.workspace = true
 tokio = { workspace = true, features = ["macros", "sync"] }
+tokio-tungstenite.workspace = true
 uuid.workspace = true
 
 [dev-dependencies]

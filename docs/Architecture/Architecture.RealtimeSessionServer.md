@@ -22,10 +22,14 @@ realtime conversation mode, not a one-off experiment server.
   OpenAI realtime calls endpoint with the server-held API key, captures
   `call_id`, stores the `{ qsf_session_id <-> call_id }` binding, and returns
   the SDP answer.
+- The Phase-3 server-side sideband now attaches to the server-captured
+  `call_id`, injects memory before `response.create`, promotes trusted
+  completed exchanges into the shared continuity root, and treats the browser
+  relay as diagnostic-only.
 - `WS /api/realtime/events` accepts typed browser relay envelopes, validates
-  them, deduplicates provider `event_id`, maps them into `qsf_session` live
-  events, and persists diagnostic-only exchanges with explicit trust/source
-  markers.
+  them, deduplicates provider `event_id`, maps them into `qsf_session` relay
+  diagnostics only, and persists diagnostic-only exchanges with explicit
+  trust/source markers.
 - `POST /api/realtime/stop` invalidates the binding and finalizes any open
   diagnostic exchange.
 - `crates/qsf_realtime_server/ui/` is a dedicated Vite + TypeScript + Biome +
@@ -43,11 +47,11 @@ realtime conversation mode, not a one-off experiment server.
 
 **Not yet implemented:**
 
-- Phase 3 authoritative sideband attachment.
-- Live context injection and live realtime tool execution.
+- Live realtime tool execution.
 - Phase 5 memory extraction / presence refinement for the browser live mode.
 
-Last reviewed: 2026-06-09 against the implemented Phase-2 transport slice.
+Last reviewed: 2026-06-10 against the implemented Phase-3 sideband and
+manual-response slice.
 
 ## Purpose
 
@@ -73,8 +77,9 @@ experiments, not the final shape for this server.
 - Voice: `marin`.
 - Reasoning effort: `medium`.
 - Output modality: `["audio"]`.
-- Turn detection: provider `server_vad`, with automatic response creation and
-  interruption enabled.
+- Turn detection: provider `server_vad`, with `create_response = false` so the
+  sideband can inject context before issuing `response.create`; interruption
+  stays enabled.
 - Browser session config: `POST /api/realtime/session` returns non-secret
   accepted defaults; the browser receives no client secret.
 - `call_id` binding: active-call scoped, invalidated on stop/error/expiry, with

@@ -529,22 +529,7 @@ fn pcm16_to_bytes(samples: &[i16]) -> Vec<u8> {
 pub(super) fn elapsed_ms(started_at: Instant) -> u64 {
     started_at.elapsed().as_millis() as u64
 }
-pub(super) fn parse_realtime_server_event(
-    provider_name: &str,
-    text: &str,
-) -> Option<serde_json::Value> {
-    match serde_json::from_str(text) {
-        Ok(event) => Some(event),
-        Err(error) => {
-            engine_logging::engine_warn!(
-                "failed to parse realtime server event: provider={} error={}",
-                provider_name,
-                error
-            );
-            None
-        }
-    }
-}
+pub(super) use qsf_realtime_protocol::parse_realtime_server_event;
 pub(super) fn realtime_audio_from_source(
     input_source: &TranscriptInputSource,
     provider_name: &str,

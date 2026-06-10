@@ -1005,3 +1005,83 @@ The read-only memory association browser remains a separate surface, foldable in
 Refs: docs/Plans/Idea.LiveActivationDashboard.md,
 docs/Plans/Design.LiveActivationDashboard.md,
 docs/Architecture/Architecture.RealtimeSessionServer.md, crates/qsf_realtime_server/ui/
+
+## 2026-06-10 - Realtime memory and protocol helpers live in lean shared crates
+Decision: Retrieval scoring lives in `qsf_memory`, context assembly lives in
+`qsf_context`, and realtime JSON builders/parsers live in
+`qsf_realtime_protocol`. `qsf_session` depends on `qsf_context`, and
+`qsf_realtime_server` depends on the lean domain crates instead of `qsf_app`.
+Context: The realtime server needs shared memory/context/protocol logic without
+dragging in the full app runtime. Keeping these helpers in lean crates preserves
+the server boundary and allows the live sideband to reuse them directly.
+Consequences: `qsf_app` keeps compatibility facades, but the source of truth for
+retrieval, context assembly, and realtime protocol payloads now lives in the lean
+crates. Future shared logic should follow the same dependency direction.
+Refs: crates/qsf_memory/src/retrieval.rs, crates/qsf_memory/src/co_retrieval.rs,
+crates/qsf_context/src/lib.rs, crates/qsf_realtime_protocol/src/lib.rs,
+crates/qsf_session/src/context.rs, crates/qsf_app/src/context/mod.rs
+
+## 2026-06-10 - Sideband uses the server-captured call_id websocket with bearer auth
+Decision: The realtime sideband connects to
+`wss://api.openai.com/v1/realtime?call_id=...` and authenticates with the
+server-held `OPENAI_API_KEY` in the Authorization header.
+Context: OpenAI's realtime server-controls guide documents the server-side
+websocket attach path for an in-progress WebRTC call. This was verified against
+the live docs during implementation to confirm the Phase-3 attach shape.
+Consequences: The browser never receives a credential. The realtime server must
+keep the key server-side, build the websocket URL from the captured `call_id`,
+and treat any drift from this attach shape as a docs-updating event.
+Refs: crates/qsf_realtime_server/src/realtime/sideband.rs,
+docs/Architecture/Architecture.RealtimeSessionServer.md,
+https://developers.openai.com/api/docs/guides/realtime-server-controls
+
+## 2026-06-10 - Authoritative realtime sideband supersedes the browser relay
+Decision: The server-side sideband attached to the server-captured `call_id` is
+the authoritative trusted source for live realtime exchanges. The browser relay
+remains diagnostic-only and must not feed continuity.
+Context: Phase 3 introduces a server-owned websocket control plane that can
+inject context before `response.create`, observe provider events first-hand, and
+promote only trusted completed exchanges into the shared continuity root.
+Consequences: Trusted sideband exchanges may be sleep/continuity eligible after
+promotion; browser relay exchanges stay untrusted diagnostics outside the
+continuity root. `qsf_realtime_server` stays on the lean
+`qsf_session`/`qsf_memory`/`qsf_context`/`qsf_realtime_protocol` boundary and
+does not depend on `qsf_app`.
+Refs: crates/qsf_realtime_server/src/realtime/sideband.rs,
+crates/qsf_realtime_server/src/realtime/routes.rs,
+docs/Architecture/Architecture.RealtimeSessionServer.md,
+docs/Architecture/Architecture.StateAndObservability.md,
+docs/Architecture/Architecture.MemorySystem.md
+
+## 2026-06-10 - Realtime per-turn injection disables automatic response creation
+Decision: The Phase-3 realtime default is `server_vad` with
+`turn_detection.create_response = false`, and the sideband owns `response.create`
+timing after memory injection.
+Context: Automatic provider response creation can start before the server has
+retrieved relevant memory and injected the working context. Manual response
+control is the required default for the control/context plane.
+Consequences: Browser allocation responses, UI defaults, and server-side session
+updates all use the manual-response path. Fast no-LLM injection should remain
+latency-parity with the former automatic path, while slower injection paths stay
+explicit.
+Refs: crates/qsf_realtime_server/src/state.rs,
+crates/qsf_realtime_server/ui/src/realtime.ts,
+docs/Architecture/Architecture.RealtimeSessionServer.md,
+docs/Architecture/Architecture.AudioLoop.md
+
+## 2026-06-10 - Sideband gaps degrade transport trust until verified recovery
+Decision: Any unrecoverable or potentially lossy sideband disconnect marks
+transport trust degraded until the sideband reconnects and receives a
+`session.updated` acknowledgement. Any exchange active during the gap is
+permanently non-promotable, but later exchanges may promote after recovery.
+Context: Once the sideband becomes authoritative, a disconnect can mean missed
+provider events. With `create_response = false`, however, the sideband is the
+only actor that can trigger an assistant response, so a reconnected and
+configured sideband restores trust for fresh exchanges.
+Consequences: Gap-window exchanges, incomplete exchanges, failed exchanges, and
+per-exchange conversion defects are not promoted into the shared continuity
+root. The browser relay is unaffected because it remains diagnostic-only.
+Refs: crates/qsf_realtime_server/src/realtime/sideband.rs,
+crates/qsf_realtime_server/src/realtime/routes.rs,
+docs/Architecture/Architecture.RealtimeSessionServer.md,
+docs/Architecture/Architecture.StateAndObservability.md

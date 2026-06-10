@@ -20,6 +20,9 @@ future retrieval backends.
 - Association-weighted retrieval with a small fixture
   ([memory/retrieval.rs](../../crates/qsf_app/src/memory/retrieval.rs),
   [memory/fixtures.rs](../../crates/qsf_app/src/memory/fixtures.rs))
+- Retrieval scoring now lives in `qsf_memory`, and the context-assembly domain
+  now lives in `qsf_context`; the realtime server can use both without depending
+  on the full app runtime.
 - Relevance-gated keyword/tag retrieval with explicit skip reasons for omitted
   candidates, plus a narrow identity/profile allowance for name-shaped queries
   ([memory/retrieval.rs](../../crates/qsf_app/src/memory/retrieval.rs))
@@ -95,18 +98,19 @@ future retrieval backends.
 - Promotion of session summaries or recall records into durable memory beyond
   sleep-generated candidates
 - Live realtime sideband trust integration. Phase-2 browser-relayed realtime voice
-  exchanges are planned as diagnostic-only and excluded from sleep/continuity;
-  Phase-3 sideband-sourced exchanges are the first trusted live realtime voice
-  source eligible for memory extraction and consolidation.
+  exchanges remain diagnostic-only and excluded from sleep/continuity; Phase-3
+  sideband-sourced exchanges are the first trusted live realtime voice source
+  eligible for memory extraction and consolidation.
 - Sleep-side consolidation over voice exchanges is now shared with text turns,
   but richer semantic typing of the resulting memories is still shallow
 
-Last reviewed: 2026-06-09 against the shared live-memory-runtime phase and the
-accepted realtime voice trust-boundary decision. Live-loop co-retrieval handles
-mechanical edges, sleep contributes safety-net and LLM-candidate associations
-through the proposer interface, and both text and text-owned voice sessions flow
-through the shared memory store, shared live-memory runtime, and sleep
-consolidation path by default.
+Last reviewed: 2026-06-10 against the shared live-memory-runtime phase, the
+lean `qsf_memory` / `qsf_context` extraction, and the implemented Phase-3
+trusted sideband path. Live-loop co-retrieval handles mechanical edges, sleep
+contributes safety-net and LLM-candidate associations through the proposer
+interface, and both text and text-owned voice sessions flow through the shared
+memory store, shared live-memory runtime, and sleep consolidation path by
+default.
 
 ## Purpose
 

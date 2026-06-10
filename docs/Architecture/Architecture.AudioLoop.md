@@ -35,6 +35,8 @@ implemented yet.
   browser relay
   ([crates/qsf_realtime_server/src](../../crates/qsf_realtime_server/src),
   [crates/qsf_realtime_server/ui](../../crates/qsf_realtime_server/ui))
+- The browser realtime preview now runs with `create_response = false` so the
+  server-side sideband can inject context before issuing `response.create`
 - Text-owned voice loop where QSF owns interpretation, shared session continuity,
   memory retrieval, context assembly, model-role invocation, and `OutputProduced`
   text
@@ -81,8 +83,8 @@ implemented yet.
 - Translation provider (`gpt-realtime-translate`) integration
 - A live debug UI for audio state
 
-Last reviewed: 2026-06-09 against the implemented Phase-2 browser transport
-slice and the still-pending human audio verification.
+Last reviewed: 2026-06-10 against the implemented Phase-3 manual-response
+preview path and the still-pending human audio verification.
 
 ## Summary
 

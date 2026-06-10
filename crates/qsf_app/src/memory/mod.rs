@@ -19,7 +19,7 @@ pub use live_capture::{
     remember_this_skip_reason,
 };
 pub use memory_record::{MEMORY_RECORD_SCHEMA_VERSION, MemoryRecord, MemoryRecordKind};
-pub use retrieval::{
+pub use qsf_memory::retrieval::{
     AssociationPath, RetrievalResult, RetrievalScore, RetrievalStrategy, RetrievedMemory,
     retrieve_memories, retrieved_memory_ids,
 };
