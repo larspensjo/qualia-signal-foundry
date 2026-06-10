@@ -16,6 +16,10 @@ use crate::diagnostics::{DiagnosticRecord, DiagnosticTrust, DiagnosticWriter};
 
 const DEFAULT_OPENAI_BASE_URL: &str = "https://api.openai.com";
 const DEFAULT_INSTRUCTIONS: &str = "Speak briefly. Keep the browser UI informed, keep secrets server-side, and preserve the QSF trust boundary.";
+/// Input transcription model for realtime voice. Enabling it makes the provider
+/// emit `conversation.item.input_audio_transcription.completed`, which the
+/// sideband requires to retrieve memory and issue `response.create`.
+const DEFAULT_INPUT_TRANSCRIPTION_MODEL: &str = "gpt-4o-mini-transcribe";
 
 #[derive(Clone)]
 pub struct AppState {
@@ -220,6 +224,8 @@ pub struct BrowserSessionConfig {
     pub reasoning_effort: String,
     pub output_modalities: Vec<String>,
     pub instructions: String,
+    #[serde(default)]
+    pub input_transcription_model: Option<String>,
     pub audio: BrowserSessionAudio,
 }
 
@@ -260,6 +266,7 @@ impl Default for BrowserSessionConfig {
             reasoning_effort: "medium".to_string(),
             output_modalities: vec!["audio".to_string()],
             instructions: DEFAULT_INSTRUCTIONS.to_string(),
+            input_transcription_model: Some(DEFAULT_INPUT_TRANSCRIPTION_MODEL.to_string()),
             audio: BrowserSessionAudio {
                 output: BrowserSessionAudioOutput {
                     voice: "marin".to_string(),

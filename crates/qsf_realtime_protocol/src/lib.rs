@@ -52,8 +52,9 @@ pub fn build_openai_realtime_conversation_session_update(
     output_modalities: &[String],
     pcm_rate_hz: u32,
     create_response: bool,
+    input_transcription_model: Option<&str>,
 ) -> Value {
-    serde_json::json!({
+    let mut update = serde_json::json!({
         "type": "session.update",
         "session": {
             "type": "realtime",
@@ -81,7 +82,20 @@ pub fn build_openai_realtime_conversation_session_update(
             },
             "instructions": instructions,
         },
-    })
+    });
+
+    // Enabling input transcription makes the provider emit
+    // `conversation.item.input_audio_transcription.completed`, which the
+    // sideband relies on to retrieve memory and issue `response.create`.
+    // Every session.update must re-assert it, otherwise a later update would
+    // drop transcription for subsequent turns.
+    if let Some(transcription_model) = input_transcription_model {
+        update["session"]["audio"]["input"]["transcription"] = serde_json::json!({
+            "model": transcription_model,
+        });
+    }
+
+    update
 }
 
 pub fn build_openai_realtime_conversation_item_create(role: &str, text: &str) -> Value {
@@ -225,11 +239,31 @@ mod tests {
             &["audio".to_string()],
             24_000,
             false,
+            None,
         );
 
         assert_eq!(
             update["session"]["audio"]["input"]["turn_detection"]["create_response"],
             false
+        );
+        assert!(update["session"]["audio"]["input"]["transcription"].is_null());
+    }
+
+    #[test]
+    fn conversation_session_update_enables_requested_transcription_model() {
+        let update = build_openai_realtime_conversation_session_update(
+            "gpt-realtime-2",
+            "marin",
+            "Speak briefly.",
+            &["audio".to_string()],
+            24_000,
+            false,
+            Some("gpt-4o-mini-transcribe"),
+        );
+
+        assert_eq!(
+            update["session"]["audio"]["input"]["transcription"]["model"],
+            "gpt-4o-mini-transcribe"
         );
     }
 

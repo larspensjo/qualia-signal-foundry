@@ -27,6 +27,7 @@ pub struct MemoryInjectionRequest<'a> {
     pub retrieved_memories: &'a [RetrievedMemory],
     pub budget: ContextBudget,
     pub pcm_rate_hz: u32,
+    pub input_transcription_model: Option<&'a str>,
 }
 
 pub fn build_memory_injection_packet(
@@ -46,6 +47,7 @@ pub fn build_memory_injection_packet(
         request.output_modalities,
         request.pcm_rate_hz,
         false,
+        request.input_transcription_model,
     );
     let conversation_item_create =
         build_openai_realtime_conversation_item_create("system", &memory_block);
@@ -155,6 +157,7 @@ mod tests {
             retrieved_memories: &[],
             budget: ContextBudget::new(2, 40),
             pcm_rate_hz: DEFAULT_PCM_RATE_HZ,
+            input_transcription_model: Some("gpt-4o-mini-transcribe"),
         };
 
         assert!(build_memory_injection_packet(&request).is_none());
@@ -182,6 +185,7 @@ mod tests {
             retrieved_memories: &memories,
             budget: ContextBudget::new(1, 35),
             pcm_rate_hz: DEFAULT_PCM_RATE_HZ,
+            input_transcription_model: Some("gpt-4o-mini-transcribe"),
         };
 
         let packet = build_memory_injection_packet(&request).expect("packet");
@@ -218,6 +222,7 @@ mod tests {
             retrieved_memories: &memories,
             budget: ContextBudget::new(2, 40),
             pcm_rate_hz: DEFAULT_PCM_RATE_HZ,
+            input_transcription_model: Some("gpt-4o-mini-transcribe"),
         };
 
         let packet = build_memory_injection_packet(&request).expect("packet");

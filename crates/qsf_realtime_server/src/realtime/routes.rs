@@ -849,6 +849,13 @@ mod tests {
             json["session"]["audio"]["input"]["turn_detection"]["interrupt_response"],
             true
         );
+        // Input transcription must be enabled by default: the sideband gates
+        // `response.create` on the transcription-completed event, so without a
+        // model the conversation never produces a response.
+        assert_eq!(
+            json["session"]["input_transcription_model"],
+            "gpt-4o-mini-transcribe"
+        );
         assert!(json.get("api_key").is_none());
         assert!(!body_text.contains("test-api-key"));
     }

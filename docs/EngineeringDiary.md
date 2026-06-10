@@ -2870,3 +2870,58 @@ crates/qsf_realtime_server/src/realtime/routes.rs,
 crates/qsf_realtime_server/ui/src/realtime.ts,
 crates/qsf_realtime_server/ui/src/main.ts,
 crates/qsf_realtime_server/ui/src/styles.css
+
+## 2026-06-10 - Enable input transcription so the sideband can respond
+
+With the handshake fixed the sideband attached, but conversations still hung in "Listening":
+the sideband issues `response.create` only on
+`conversation.item.input_audio_transcription.completed`, yet input transcription was never
+enabled, so that event never fired.
+
+What changed:
+- `build_openai_realtime_conversation_session_update` takes an optional input transcription
+  model and sets `audio.input.transcription.model`. Both the sideband's initial
+  `session.update` and the per-turn memory-injection `session.update` now pass it, so
+  transcription is enabled on attach and re-asserted on every update (a later update
+  omitting it would otherwise drop transcription for subsequent turns).
+- `BrowserSessionConfig` carries `input_transcription_model`, defaulting to
+  `gpt-4o-mini-transcribe`, so the default configuration exercises the response path.
+- Transcription is enabled via the WebSocket `session.update` (the known-good channel),
+  not the `/v1/realtime/calls` request, which rejects unknown session fields.
+
+Observed:
+- Diagnostics for the hung sessions showed `session.updated` then only `UserTurnStarted`
+  with an empty `final_transcript` and no `response.created` — consistent with transcription
+  being off and the browser never reaching "thinking".
+- `cargo test -p qsf_realtime_server` (24) and `-p qsf_realtime_protocol` (5) pass;
+  `cargo clippy --all-targets -- -D warnings` and `cargo fmt` clean.
+
+Open question:
+- End-to-end confirmation (transcription completes, memory injects, audio response plays)
+  still needs a live run.
+
+Refs: crates/qsf_realtime_protocol/src/lib.rs,
+crates/qsf_realtime_server/src/state.rs,
+crates/qsf_realtime_server/src/realtime/sideband.rs,
+crates/qsf_realtime_server/src/realtime/injection.rs,
+crates/qsf_realtime_server/src/realtime/routes.rs
+
+## 2026-06-10 - Realtime browser voice confirmed working end to end
+
+A live browser session completed a full memory-grounded voice turn: the sideband attached,
+input transcription completed, memory was injected, and the model produced a spoken response.
+
+Observed:
+- The end-to-end path works: WebRTC media (browser↔OpenAI), the server-side sideband
+  attaching to the captured `call_id`, transcription firing
+  `conversation.item.input_audio_transcription.completed`, per-turn memory injection, and a
+  server-issued `response.create` yielding audible output.
+- Time-to-first-audio was good in practice despite the response waiting for
+  transcript → retrieval → `response.create`; the added latency is acceptable and is not
+  considered an open issue.
+
+This closes the prior "needs a live run / human timing confirmation" open questions from the
+manual-response default, the sideband handshake fix, the browser status feedback, and the
+input-transcription enablement: all four are confirmed live.
+
+Refs: crates/qsf_realtime_server/src/realtime

@@ -174,6 +174,7 @@ async fn connect_and_run_once(
             &session_config.output_modalities,
             DEFAULT_PCM_RATE_HZ,
             false,
+            session_config.input_transcription_model.as_deref(),
         ),
     )?;
 
@@ -339,6 +340,7 @@ async fn handle_provider_event(
                     DEFAULT_INJECTION_TOKEN_LIMIT,
                 ),
                 pcm_rate_hz: DEFAULT_PCM_RATE_HZ,
+                input_transcription_model: config.input_transcription_model.as_deref(),
             };
             let packet = build_memory_injection_packet(&request);
             let context_assembly = packet
