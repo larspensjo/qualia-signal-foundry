@@ -1189,3 +1189,18 @@ Consequences: QSF keeps private memory and permission logic server-side while us
 the provider's current tool-call continuation surface.
 Refs: https://developers.openai.com/api/docs/guides/realtime-mcp,
 crates/qsf_realtime_protocol/src/lib.rs
+
+## 2026-06-11 - Realtime voice uses a stable default session id
+Decision: Browser realtime voice sessions use the stable QSF session id `default`
+unless the operator explicitly starts `qsf_realtime_server` with
+`--random-session-id`.
+Context: The Phase-4 live tool test showed that UUID-per-run session ids made local
+memory reuse brittle: the memory store was seeded under one session directory while
+the live call used another. The operator preference is for a reusable default
+identity unless random isolation is explicitly requested.
+Consequences: Local realtime memory and continuity artifacts live at
+`state/realtime/continuity/default` in the normal path. Random UUID sessions remain
+available for isolated experiments. The server rejects a second active default
+session instead of silently replacing the runtime.
+Refs: crates/qsf_realtime_server/src/state.rs,
+crates/qsf_realtime_server/src/cli.rs

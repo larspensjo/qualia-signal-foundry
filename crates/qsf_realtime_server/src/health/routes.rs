@@ -30,6 +30,7 @@ mod tests {
             "test-api-key",
             "http://127.0.0.1:9999",
             tempdir.path().to_path_buf(),
+            crate::state::SessionIdMode::Default,
         )
         .expect("state");
         let app = router().with_state(state);

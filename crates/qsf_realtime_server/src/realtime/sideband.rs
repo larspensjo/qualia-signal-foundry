@@ -1271,6 +1271,7 @@ mod tests {
             "http://127.0.0.1:9999",
             "wss://example.invalid/realtime",
             tempdir.path().to_path_buf(),
+            crate::state::SessionIdMode::Default,
         )
         .expect("state")
     }

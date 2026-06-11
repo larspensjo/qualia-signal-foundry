@@ -2952,3 +2952,21 @@ Observed:
 Refs: crates/qsf_tools, crates/qsf_app/src/tools, crates/qsf_session/src,
 crates/qsf_realtime_protocol/src/lib.rs,
 crates/qsf_realtime_server/src/realtime/sideband.rs
+
+## 2026-06-11 - Stable default realtime session id
+
+Realtime browser sessions now use a stable `default` QSF session id unless the
+operator explicitly starts the server with random session ids.
+
+What changed:
+- Added `--random-session-id` to `qsf_realtime_server`; the normal startup path now
+  keeps using `state/realtime/continuity/default`.
+- Realtime session allocation rejects a second active default session instead of
+  replacing the in-memory runtime.
+- Added tests for stable default allocation and random UUID allocation.
+
+Observed:
+- `cargo test -p qsf_realtime_server` passed.
+
+Refs: crates/qsf_realtime_server/src/cli.rs,
+crates/qsf_realtime_server/src/state.rs

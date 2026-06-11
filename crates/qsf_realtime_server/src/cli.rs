@@ -21,6 +21,12 @@ pub struct Args {
 
     #[arg(long, default_value_t = DEFAULT_PORT)]
     pub port: u16,
+
+    /// Allocate a fresh UUID-backed QSF session id for each browser session.
+    /// By default the realtime server uses a stable `default` session id so
+    /// local memory and continuity artifacts are reusable across runs.
+    #[arg(long)]
+    pub random_session_id: bool,
 }
 
 impl Args {

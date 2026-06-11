@@ -14,6 +14,7 @@ use uuid::Uuid;
 use crate::cli::Args;
 use crate::diagnostics::{DiagnosticRecord, DiagnosticTrust, DiagnosticWriter};
 
+pub const DEFAULT_QSF_SESSION_ID: &str = "default";
 const DEFAULT_OPENAI_BASE_URL: &str = "https://api.openai.com";
 const DEFAULT_INSTRUCTIONS: &str = "Speak briefly. Keep the browser UI informed, keep secrets server-side, and preserve the QSF trust boundary.";
 /// Input transcription model for realtime voice. Enabling it makes the provider
@@ -31,10 +32,17 @@ struct Inner {
     openai_base_url: String,
     openai_realtime_ws_base_url: String,
     http_client: reqwest::Client,
+    session_id_mode: SessionIdMode,
     state_dir: PathBuf,
     continuity_root: PathBuf,
     diagnostics_dir: PathBuf,
     sessions: Mutex<HashMap<String, Arc<Mutex<SessionRuntime>>>>,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum SessionIdMode {
+    Default,
+    RandomUuid,
 }
 
 impl AppState {
@@ -45,6 +53,11 @@ impl AppState {
             openai_api_key,
             DEFAULT_OPENAI_BASE_URL,
             args.state_dir.clone(),
+            if args.random_session_id {
+                SessionIdMode::RandomUuid
+            } else {
+                SessionIdMode::Default
+            },
         )
     }
 
@@ -52,12 +65,14 @@ impl AppState {
         openai_api_key: impl Into<String>,
         openai_base_url: impl Into<String>,
         state_dir: impl Into<PathBuf>,
+        session_id_mode: SessionIdMode,
     ) -> anyhow::Result<Self> {
         Self::new_with_realtime_ws_base_url(
             openai_api_key,
             openai_base_url,
             OPENAI_REALTIME_WS_BASE_URL,
             state_dir,
+            session_id_mode,
         )
     }
 
@@ -66,6 +81,7 @@ impl AppState {
         openai_base_url: impl Into<String>,
         openai_realtime_ws_base_url: impl Into<String>,
         state_dir: impl Into<PathBuf>,
+        session_id_mode: SessionIdMode,
     ) -> anyhow::Result<Self> {
         let state_dir = state_dir.into();
         std::fs::create_dir_all(&state_dir)
@@ -91,6 +107,7 @@ impl AppState {
                 openai_base_url: openai_base_url.into(),
                 openai_realtime_ws_base_url: openai_realtime_ws_base_url.into(),
                 http_client: reqwest::Client::new(),
+                session_id_mode,
                 state_dir,
                 continuity_root,
                 diagnostics_dir,
@@ -155,8 +172,15 @@ impl AppState {
     }
 
     pub async fn create_session(&self) -> anyhow::Result<SessionAllocationResponse> {
-        let qsf_session_id = Uuid::new_v4().to_string();
+        let qsf_session_id = self.allocate_session_id();
         let config = BrowserSessionConfig::default();
+        {
+            let sessions = self.inner.sessions.lock().await;
+            if sessions.contains_key(&qsf_session_id) {
+                anyhow::bail!("session `{qsf_session_id}` is already active");
+            }
+        }
+
         let diagnostics = DiagnosticWriter::create(
             self.diagnostics_dir()
                 .join(format!("{qsf_session_id}.jsonl")),
@@ -173,16 +197,23 @@ impl AppState {
         })?;
 
         let runtime = SessionRuntime::new(qsf_session_id.clone(), config.clone(), diagnostics);
-        self.inner
-            .sessions
-            .lock()
-            .await
-            .insert(qsf_session_id.clone(), Arc::new(Mutex::new(runtime)));
+        let mut sessions = self.inner.sessions.lock().await;
+        if sessions.contains_key(&qsf_session_id) {
+            anyhow::bail!("session `{qsf_session_id}` is already active");
+        }
+        sessions.insert(qsf_session_id.clone(), Arc::new(Mutex::new(runtime)));
 
         Ok(SessionAllocationResponse {
             qsf_session_id,
             session: config,
         })
+    }
+
+    fn allocate_session_id(&self) -> String {
+        match self.inner.session_id_mode {
+            SessionIdMode::Default => DEFAULT_QSF_SESSION_ID.to_string(),
+            SessionIdMode::RandomUuid => Uuid::new_v4().to_string(),
+        }
     }
 
     pub async fn session_runtime(
@@ -456,4 +487,53 @@ pub struct CallBinding {
     pub bound_at: OffsetDateTime,
     pub invalidated_at: Option<OffsetDateTime>,
     pub reason: Option<String>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn default_session_id_is_stable_and_rejects_second_active_session() {
+        let tempdir = tempfile::tempdir().expect("tempdir");
+        let state = AppState::new(
+            "test-api-key",
+            "http://127.0.0.1:9999",
+            tempdir.path().to_path_buf(),
+            SessionIdMode::Default,
+        )
+        .expect("state");
+
+        let allocation = state.create_session().await.expect("session");
+
+        assert_eq!(allocation.qsf_session_id, DEFAULT_QSF_SESSION_ID);
+        assert!(
+            state
+                .session_runtime(DEFAULT_QSF_SESSION_ID)
+                .await
+                .is_some()
+        );
+
+        let error = state.create_session().await.unwrap_err();
+        assert!(error.to_string().contains("already active"));
+    }
+
+    #[tokio::test]
+    async fn random_session_id_mode_allocates_distinct_uuids() {
+        let tempdir = tempfile::tempdir().expect("tempdir");
+        let state = AppState::new(
+            "test-api-key",
+            "http://127.0.0.1:9999",
+            tempdir.path().to_path_buf(),
+            SessionIdMode::RandomUuid,
+        )
+        .expect("state");
+
+        let first = state.create_session().await.expect("first session");
+        let second = state.create_session().await.expect("second session");
+
+        assert_ne!(first.qsf_session_id, second.qsf_session_id);
+        Uuid::parse_str(&first.qsf_session_id).expect("first uuid");
+        Uuid::parse_str(&second.qsf_session_id).expect("second uuid");
+    }
 }
