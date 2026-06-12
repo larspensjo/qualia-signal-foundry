@@ -3012,3 +3012,26 @@ Refs: crates/qsf_realtime_server/src/realtime/turn_integrity.rs,
 crates/qsf_realtime_server/src/realtime/sideband.rs,
 crates/qsf_realtime_server/src/diagnostics.rs;
 implements: Continuation noise and stale provider events are diagnostic-only
+
+## 2026-06-12 - Realtime session inspection count fix
+
+Phase 3 of the realtime inspection plan replaced the blended exchange count with a
+durable completed-turn count and an explicit active-exchange presence flag.
+
+What changed:
+- Updated `inspect_session_state` snapshot output to report `completed_exchange_count`
+  and `active_exchange_present`.
+- Added regression tests for promoted-and-retained, active, empty, and
+  non-promotable retained exchanges, plus an end-to-end tool-output contract test.
+- Recorded the new inspection contract in `DecisionLog.md`.
+
+Observed:
+- `cargo test -p qsf_realtime_server realtime::tools::tests`
+- `cargo build`
+- `cargo test`
+- `cargo clippy --all-targets -- -D warnings`
+- `cargo fmt`
+
+Refs: crates/qsf_realtime_server/src/realtime/tools.rs,
+docs/DecisionLog.md; implements: Session inspection reports completed turns and active
+exchange presence

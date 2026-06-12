@@ -28,7 +28,8 @@ const ASSOCIATIONS_LIMIT: usize = 8;
 #[derive(Clone, Debug, Serialize)]
 pub struct ToolSessionSnapshot {
     pub runtime_phase: RuntimePhase,
-    pub exchange_count: usize,
+    pub completed_exchange_count: usize,
+    pub active_exchange_present: bool,
     pub active_exchange_index: Option<usize>,
     pub active_exchange_status: Option<ExchangeStatus>,
     pub trust: DiagnosticTrust,
@@ -39,8 +40,8 @@ impl ToolSessionSnapshot {
     pub fn from_runtime(runtime: &SessionRuntime) -> Self {
         Self {
             runtime_phase: runtime.session_state.live.runtime_phase,
-            exchange_count: runtime.session_state.live.completed_exchanges.len()
-                + runtime.session_state.turns.len(),
+            completed_exchange_count: runtime.session_state.turns.len(),
+            active_exchange_present: runtime.session_state.live.active_exchange.is_some(),
             active_exchange_index: runtime
                 .session_state
                 .live
@@ -426,7 +427,8 @@ impl Tool for InspectSessionStateTool {
         let ctx = realtime_context(ctx)?;
         let summary = serde_json::json!({
             "runtime_phase": ctx.snapshot.runtime_phase,
-            "exchange_count": ctx.snapshot.exchange_count,
+            "completed_exchange_count": ctx.snapshot.completed_exchange_count,
+            "active_exchange_present": ctx.snapshot.active_exchange_present,
             "active_exchange_index": ctx.snapshot.active_exchange_index,
             "active_exchange_status": ctx.snapshot.active_exchange_status,
             "trust": ctx.snapshot.trust,
@@ -441,9 +443,10 @@ impl Tool for InspectSessionStateTool {
             output_text: summary.to_string(),
             numeric_value: None,
             observation_summary: format!(
-                "inspect_session_state reported phase={:?} exchanges={} active={:?} degraded={}",
+                "inspect_session_state reported phase={:?} completed_exchange_count={} active_present={} active_status={:?} degraded={}",
                 ctx.snapshot.runtime_phase,
-                ctx.snapshot.exchange_count,
+                ctx.snapshot.completed_exchange_count,
+                ctx.snapshot.active_exchange_present,
                 ctx.snapshot.active_exchange_status,
                 ctx.snapshot.degraded
             ),
@@ -553,7 +556,18 @@ pub fn tool_request_record(
 
 #[cfg(test)]
 mod tests {
+    use std::time::SystemTime;
+
+    use qsf_session::{
+        ContentHash, ContextAssembly, ContextBudget, Exchange, ExchangeInput, ExchangeModelUse,
+        ExchangeOutput, ExchangeStatus, Turn,
+    };
+    use qsf_tools::{ToolPermission, ToolRequest};
+    use serde_json::Value;
+    use tempfile::TempDir;
+
     use super::*;
+    use crate::state::BrowserSessionConfig;
 
     fn metadata(
         name: &str,
@@ -565,6 +579,98 @@ mod tests {
             description: "test tool".to_string(),
             category,
             side_effect_level,
+        }
+    }
+
+    fn state(tempdir: &TempDir) -> AppState {
+        AppState::new_with_realtime_ws_base_url(
+            "test-api-key",
+            "http://127.0.0.1:9999",
+            "wss://example.invalid/realtime",
+            tempdir.path().to_path_buf(),
+            crate::state::SessionIdMode::Default,
+        )
+        .expect("state")
+    }
+
+    fn runtime(tempdir: &TempDir) -> SessionRuntime {
+        let diagnostics =
+            crate::diagnostics::DiagnosticWriter::create(tempdir.path().join("diagnostics.jsonl"))
+                .expect("diagnostics");
+        SessionRuntime::new(
+            "test-session".to_string(),
+            BrowserSessionConfig::default(),
+            diagnostics,
+        )
+    }
+
+    fn completed_exchange(index: usize) -> Exchange {
+        Exchange {
+            index,
+            started_at: SystemTime::UNIX_EPOCH,
+            completed_at: Some(SystemTime::UNIX_EPOCH),
+            input: ExchangeInput::Text {
+                text: "hello".to_string(),
+            },
+            output: Some(ExchangeOutput {
+                response_id: Some("response-1".to_string()),
+                text: "hi".to_string(),
+                produced_at: SystemTime::UNIX_EPOCH,
+                provider_name: Some("mock-provider".to_string()),
+                target: Some("text".to_string()),
+                audio_marker: None,
+            }),
+            context_assembly: Some(ContextAssembly {
+                budget: ContextBudget::new(4, 600),
+                selected: vec![],
+                omitted: vec![],
+                used_estimated_tokens: 0,
+            }),
+            retrieved_memory_block: "memory".to_string(),
+            recalled_items: vec![],
+            model: Some(ExchangeModelUse {
+                provider_name: Some("mock-provider".to_string()),
+                model_id: "mock".to_string(),
+                latency_ms: 12,
+                input_tokens: 4,
+                cached_input_tokens: 1,
+                output_tokens: 2,
+                full_request_hash: ContentHash([index as u8; 32]),
+                message_count: 3,
+            }),
+            interruptions: vec![],
+            provider_events: vec![],
+            tool_requests: vec![],
+            tool_executions: vec![],
+            status: ExchangeStatus::Completed,
+        }
+    }
+
+    fn runtime_with_promoted_exchange(tempdir: &TempDir) -> SessionRuntime {
+        let mut runtime = runtime(tempdir);
+        let exchange = completed_exchange(1);
+        let turn = Turn::try_from(&exchange).expect("turn");
+        runtime
+            .session_state
+            .live
+            .completed_exchanges
+            .push(exchange);
+        runtime.session_state.turns.push(turn);
+        runtime
+    }
+
+    fn runtime_with_promoted_and_active_exchange(tempdir: &TempDir) -> SessionRuntime {
+        let mut runtime = runtime_with_promoted_exchange(tempdir);
+        runtime.session_state.live.active_exchange =
+            Some(Exchange::new_voice_pending(1, SystemTime::UNIX_EPOCH));
+        runtime
+    }
+
+    fn tool_context(tempdir: &TempDir, runtime: &SessionRuntime) -> RealtimeToolContext {
+        RealtimeToolContext {
+            state: state(tempdir),
+            qsf_session_id: runtime.qsf_session_id.clone(),
+            snapshot: ToolSessionSnapshot::from_runtime(runtime),
         }
     }
 
@@ -594,6 +700,106 @@ mod tests {
             tool_permission_decision(SEARCH_MEMORY_TOOL_NAME, &allow_list, Some(&write_capable)),
             ToolPermissionDecision::Denied { .. }
         ));
+    }
+
+    #[test]
+    fn snapshot_counts_promoted_and_retained_exchange_once() {
+        let tempdir = TempDir::new().expect("tempdir");
+        let runtime = runtime_with_promoted_exchange(&tempdir);
+
+        let snapshot = ToolSessionSnapshot::from_runtime(&runtime);
+
+        assert_eq!(snapshot.completed_exchange_count, 1);
+        assert!(!snapshot.active_exchange_present);
+        assert_eq!(snapshot.active_exchange_index, None);
+        assert_eq!(snapshot.active_exchange_status, None);
+    }
+
+    #[test]
+    fn snapshot_reports_active_exchange_presence_without_affecting_completed_count() {
+        let tempdir = TempDir::new().expect("tempdir");
+        let runtime = runtime_with_promoted_and_active_exchange(&tempdir);
+
+        let snapshot = ToolSessionSnapshot::from_runtime(&runtime);
+
+        assert_eq!(snapshot.completed_exchange_count, 1);
+        assert!(snapshot.active_exchange_present);
+        assert_eq!(snapshot.active_exchange_index, Some(1));
+        assert_eq!(
+            snapshot.active_exchange_status,
+            Some(ExchangeStatus::Listening)
+        );
+    }
+
+    #[test]
+    fn snapshot_counts_empty_session_as_zero() {
+        let tempdir = TempDir::new().expect("tempdir");
+        let runtime = runtime(&tempdir);
+
+        let snapshot = ToolSessionSnapshot::from_runtime(&runtime);
+
+        assert_eq!(snapshot.completed_exchange_count, 0);
+        assert!(!snapshot.active_exchange_present);
+        assert_eq!(snapshot.active_exchange_index, None);
+        assert_eq!(snapshot.active_exchange_status, None);
+    }
+
+    #[test]
+    fn snapshot_ignores_non_promotable_retained_exchange() {
+        let tempdir = TempDir::new().expect("tempdir");
+        let mut runtime = runtime(&tempdir);
+        runtime
+            .session_state
+            .live
+            .completed_exchanges
+            .push(completed_exchange(2));
+
+        let snapshot = ToolSessionSnapshot::from_runtime(&runtime);
+
+        assert_eq!(snapshot.completed_exchange_count, 0);
+        assert!(!snapshot.active_exchange_present);
+        assert_eq!(snapshot.active_exchange_index, None);
+        assert_eq!(snapshot.active_exchange_status, None);
+    }
+
+    #[test]
+    fn inspect_session_state_execute_emits_new_contract_fields() {
+        let tempdir = TempDir::new().expect("tempdir");
+        let runtime = runtime_with_promoted_and_active_exchange(&tempdir);
+        let snapshot = ToolSessionSnapshot::from_runtime(&runtime);
+        let ctx = tool_context(&tempdir, &runtime);
+        let tool = InspectSessionStateTool;
+        let request = ToolRequest::new(
+            INSPECT_SESSION_STATE_TOOL_NAME,
+            "{}",
+            None,
+            ToolPermission::read_only(),
+            "tester",
+        );
+
+        let result = tool.execute(&request, &ctx).expect("execute");
+        let json: Value = serde_json::from_str(&result.output_text).expect("json");
+
+        assert_eq!(json.get("exchange_count"), None);
+        assert_eq!(json["completed_exchange_count"], serde_json::json!(1));
+        assert_eq!(json["active_exchange_present"], serde_json::json!(true));
+        assert_eq!(
+            json["active_exchange_index"],
+            serde_json::json!(snapshot.active_exchange_index)
+        );
+        assert_eq!(
+            json["active_exchange_status"],
+            serde_json::json!(snapshot.active_exchange_status)
+        );
+        assert!(json.get("runtime_phase").is_some());
+        assert!(json.get("trust").is_some());
+        assert!(json.get("degraded").is_some());
+        assert!(
+            result
+                .observation_summary
+                .contains("completed_exchange_count=1")
+        );
+        assert!(result.observation_summary.contains("active_present=true"));
     }
 
     #[test]

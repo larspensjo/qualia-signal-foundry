@@ -1217,3 +1217,15 @@ must be explicitly finalized before the next user turn starts.
 Refs: crates/qsf_realtime_server/src/realtime/turn_integrity.rs,
 crates/qsf_realtime_server/src/realtime/sideband.rs,
 crates/qsf_realtime_server/src/diagnostics.rs
+
+## 2026-06-12 - Session inspection reports completed turns and active exchange presence
+Decision: `inspect_session_state` reports trusted durable completion count as
+`completed_exchange_count` and exposes active exchange presence explicitly through
+`active_exchange_present` plus the existing active-exchange details.
+Context: The previous blended exchange count double-counted promoted turns and also
+folded in retained but untrusted live exchanges, which made the inspection output
+ambiguous.
+Consequences: Tool output and downstream consumers must treat completed promoted turns
+as the auditable count, and active exchanges are reported separately rather than being
+mixed into the completion total.
+Refs: crates/qsf_realtime_server/src/realtime/tools.rs

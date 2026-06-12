@@ -2,9 +2,9 @@
 
 ## Status
 
-In progress. Phase 1 is complete (commit `0badf97`). Phase 2 is expanded below and
-ready for implementation. Phases 3–4 remain outlined and will be expanded when their
-turn comes.
+In progress. Phase 1 is complete (commit `0badf97`). Phase 2 is complete (commit
+`0cab263`). Phase 3 is expanded below and ready for implementation. Phase 4 remains
+outlined and will be expanded when its turn comes.
 
 ## Context
 
@@ -27,7 +27,8 @@ The same run exposed three issues:
 3. `inspect_session_state()` overcounted exchanges because it combined promoted durable
    turns with retained live completed exchanges.
 
-This plan fixes those issues without changing the Phase 4 tool scope.
+This plan fixes those issues without changing the Phase 4 tool scope. Issues 1 and 2
+are fixed (Phases 1–2). Issue 3 is Phase 3, below.
 
 ## Goals
 
@@ -47,23 +48,35 @@ This plan fixes those issues without changing the Phase 4 tool scope.
 
 ## Open Questions
 
-Resolved into Phase 2 defaults (see "Decisions adopted" in Phase 2; a `DecisionLog`
-entry, if warranted, is a Phase 4 item):
+Resolved into Phase 2 (shipped in `0cab263`; recorded in the `docs/DecisionLog.md`
+entry "Continuation noise and stale provider events are diagnostic-only", 2026-06-12):
 
 - Continuation-scoped filtering only: short phrases are filtered solely while an
-  assistant response/tool continuation is in flight, so genuine brief user turns still
-  work while idle.
-- Filtered noise transcripts are persisted as diagnostic-only records: observable
+  assistant response/tool continuation is in flight; idle short turns are unaffected.
+- Filtered noise transcripts are persisted as diagnostic-only records, observable
   without becoming trusted turns.
-- Stale and superseded provider events are audited through diagnostic-only records, not
-  through `ProviderEventRecord` (the live reducer would drop or misattribute them — see
-  Phase 2 "Why the failure happens today").
+- Stale and superseded provider events are audited through diagnostic-only records,
+  never through `ProviderEventRecord` (the live reducer would drop or misattribute
+  them).
 
-Still open (decided in Phase 3):
+Resolved into Phase 3 (see "Decision adopted" in Phase 3):
 
-- Should `inspect_session_state.exchange_count` include the active exchange? Prefer yes,
-  explicitly as `completed_exchange_count` plus optional `active_exchange_index`, instead
-  of a single ambiguous count only.
+- `inspect_session_state` reports `completed_exchange_count` plus explicit
+  active-exchange fields instead of a single ambiguous `exchange_count`.
+
+Still open (decided in Phase 4, with live-test evidence):
+
+- Whether to widen the in-flight noise allow-list to one-word fillers (for example
+  "uh", "hmm", "okay"). They currently interrupt — deliberately, so "stop" / "wait"
+  keep working. Record any widening in `docs/DecisionLog.md`.
+- Whether non-promotable retained sideband exchanges need durable auditability — a
+  durable sideband skipped-exchange diagnostic record and/or a model-facing
+  skipped-exchange count in `inspect_session_state`. Phase 3 deliberately leaves them
+  durably unauditable: they exist only in the `#[serde(skip)]` `live.completed_exchanges`,
+  and the promotion skip path only logs a warning (see the Phase 3 "Decision adopted"
+  auditability caveat). Decide in Phase 4 from live-test evidence whether the model
+  needs to observe skipped exchanges; record any addition in `docs/DecisionLog.md`.
+  (Raised by the Phase 3 structured review, finding M1.)
 
 ## Phase Completion and Gates
 
@@ -74,11 +87,9 @@ phase is committed independently of the others:
 - Add a concise `docs/EngineeringDiary.md` entry for that phase's implementation, after
   reading the "How to use" instructions at the top of that file.
 
-If multiple phases land together in a single submission, the gates and diary entries can
-be consolidated and run once with the Phase 4 final gates. The substantive Rust gate run
-is in Phase 4 because that is where the Rust code changes (Phases 2–3) land; phases that
-touch no Rust code still run the cargo gates as a workspace-sanity check when submitted
-on their own.
+Phases 1 and 2 ran their gates and added their diary entries when they landed. Phase 3
+is the remaining Rust change and runs the cargo gates itself. Phase 4 runs the final
+consolidated gates, including the npm gates for the Phase 1 UI changes.
 
 ## Phase 1: Browser Audio Capture Constraints (Completed)
 
@@ -97,418 +108,257 @@ gates run and a `docs/EngineeringDiary.md` entry dated 2026-06-12:
 Carried-forward notes for later phases:
 
 - Capture constraints reduce speaker bleed at the source but do not eliminate it. The
-  authoritative protection is the Phase 2 sideband guard; residual ghost turns observed
-  in manual speaker testing (short courtesy phrases such as `Cheers.`, `Thank you.`)
-  are the Phase 2 test fixtures.
+  authoritative protection is the Phase 2 sideband guard.
 - Surfacing the applied capture settings in the Diagnostics panel remains an optional
   follow-up if manual testing shows the need.
 - Manual-test observations about provider/VAD or hardware constraint behavior belong in
   the Phase 4 diary observation entry and `docs/Research/ResearchQuestions.Audio.md`,
   not in the Phase 1 diary entry.
 
-## Phase 2: Sideband Turn Integrity Guard
+## Phase 2: Sideband Turn Integrity Guard (Completed)
 
-Add an authoritative sideband guard in
-`crates/qsf_realtime_server/src/realtime/sideband.rs` so a new final transcript that
-arrives while an assistant response or tool continuation is in flight cannot steal or
-inherit that response's state. This phase is Rust-only; no UI changes.
+Shipped in commit `0cab263` ("Guard realtime sideband turn integrity"), with all cargo
+gates run, a `docs/EngineeringDiary.md` entry dated 2026-06-12 ("Realtime
+turn-integrity guard"), and a `docs/DecisionLog.md` entry ("Continuation noise and
+stale provider events are diagnostic-only").
 
-### Why the failure happens today (code-level)
+What landed:
 
-- The `conversation.item.input_audio_transcription.completed` arm
-  (`sideband.rs:295`) is in-flight-blind. `ensure_authoritative_exchange`
-  (`sideband.rs:557`) reuses the live active exchange, so a transcript arriving during
-  a tool continuation lands `AudioFinalTranscriptCommitted` on the same exchange, and
-  the live reducer (`live_state.rs:273-317`, the `AudioFinalTranscriptCommitted` arm)
-  overwrites `final_transcript` and appends the utterance. The handler also
-  unconditionally clears `runtime_state.response_id` / `response_started_at`
-  (`sideband.rs:320-322`) and sends a second `response.create`, clobbering
-  `current_request_hash` / `current_message_count`. Whichever `response.done`
-  eventually completes the exchange pairs the new short transcript with the earlier
-  request's answer — the exact `user_input = "Thank you."` mispairing observed live.
-- The `FunctionCallOnly` / `Mixed` branch of `handle_response_done_event`
-  (`sideband.rs:821-1016`) never checks `response.status`; a cancelled function-call
-  response still executes tools and sends a continuation, and returns at
-  `sideband.rs:1015` **without ever finalizing the active exchange** (no
-  `ExchangeCompleted`/`ModelRoleFailed`). `live.active_exchange` therefore stays
-  present, so the next idle transcript reuses that same (now cancelled) exchange via
-  `ensure_authoritative_exchange` and corrupts a fresh turn. Only the `Spoken` /
-  `Empty` path (`sideband.rs:1084-1096`) currently applies `ExchangeCompleted` and then
-  marks non-`completed` exchanges non-promotable.
-- The `response.created` arm (`sideband.rs:402-413`) unconditionally installs the
-  event's response id into `runtime_state.response_id` and records `ResponseStarted`
-  against whatever `ensure_authoritative_exchange` returns. After an interruption swaps
-  in a new active exchange, a late `response.created` belonging to the superseded
-  response would stamp the old response id onto the fresh exchange.
-- There is no explicit in-flight phase. "Response in flight" cannot be derived from
-  `response_id` alone because it is `None` between sending `response.create` and
-  receiving `response.created`.
+- `crates/qsf_realtime_server/src/realtime/turn_integrity.rs`: a pure, unit-tested
+  classifier with `TurnPhase` (`Idle` / `AwaitingResponse` / `ToolLoop`) and
+  `classify_final_transcript`. While a response or tool continuation is in flight,
+  normalized transcripts matching the courtesy allow-list (`cheers`, `thanks`,
+  `thank you`) or empty input are ignored as noise; anything else — including "stop"
+  and "wait" — interrupts. Idle transcripts always start a turn. Default-on, no config
+  flag.
+- `SidebandRuntimeState` tracks `turn_phase`, `pending_response_exchange`, and
+  `stale_response_ids`, with a shared `clear_in_flight_response_state()` helper used by
+  every terminal path.
+- The transcript handler gates on disposition: noise becomes a diagnostic-only
+  `DiagnosticRecord::IgnoredContinuationTranscript` (no `session_state` mutation, no
+  `response.create`); a genuine interruption finalizes the old exchange as
+  `Interrupted` and non-promotable, then starts a clean exchange with fresh in-flight
+  state.
+- `response.created` / `response.done` are gated against stale response ids. Stale
+  events become `DiagnosticRecord::StaleProviderEvent` and leave the current active
+  exchange untouched. A `response.done` with non-`completed` status in the
+  function-call path executes no tools, sends no continuation, finalizes its exchange
+  as non-promotable, and clears in-flight state so no reusable active exchange is left
+  behind.
+- Regression tests cover the live mispairing, the cancelled continuation, interruption
+  freshness, stale-event inertness, idle short turns, and the promoted-turn response
+  ownership invariant.
 
-Reusable machinery — do not duplicate:
+Carried-forward notes for later phases:
 
-- The live reducer's `ExchangeStarted` arm (`live_state.rs:203-267`) already finalizes
-  a previous active exchange as `Interrupted` when a response was in flight and
-  suppresses the previous response id (`suppressed_response_ids`, honored by the
-  `OutputProduced` arm). Starting a genuinely new exchange, instead of reusing the
-  active one, rides this machinery.
-- The `ExchangeCompleted` arm (`live_state.rs:548-583`) takes `active_exchange` and
-  pushes it into `completed_exchanges`, clearing `live.active_exchange`. This is the
-  finalize step the Spoken/Empty non-`completed` path already relies on, and the same
-  one the cancelled function-call path must adopt (Step 4).
-- `SessionRuntime::non_promotable_exchange_indices` plus
-  `promote_completed_trusted_exchanges` (`sideband.rs:571`) already skip non-promotable
-  exchanges (see test
-  `gap_window_exchange_is_consumed_but_next_exchange_promotes_after_recovery`).
-- `LiveSessionEvent::UserInterrupted(InterruptionRecord)` (`live_state.rs:498`,
-  `crates/qsf_session/src/exchange.rs:155`) exists for recording interruptions.
-- `DiagnosticRecord` in `crates/qsf_realtime_server/src/diagnostics.rs` is the
-  persistence surface for diagnostic-only observations. The existing
-  `DiagnosticExchangeRecorded` variant carries a full `Exchange` and would imply
-  exchange semantics; add lean new variants instead (see Steps 3–4).
-- The live reducer's `ProviderEventRecorded` arm (`live_state.rs:394-483`) only appends
-  an event when `provider_event.exchange_index` equals the *current* active exchange
-  index, and returns early otherwise. A stale `response.done` for a superseded exchange
-  therefore cannot be recorded as a `ProviderEventRecord` without either being dropped
-  (old index, no longer active) or polluting the new active exchange (current index).
-  Stale provider events must be audited through a diagnostic-only record instead — this
-  is why Step 4 does not reuse `ProviderEventRecord` for the audit trail.
-
-### Decisions adopted from the plan's open questions
-
-- Continuation-scoped filtering only: the guard is active solely while a response or
-  tool continuation is in flight. Idle short turns are unaffected.
-- Filtered transcripts are persisted as diagnostic-only records via a new
-  `DiagnosticRecord` variant and never touch `session_state`.
-- Stale / superseded provider events are audited through a separate diagnostic-only
-  `DiagnosticRecord` variant, never through `ProviderEventRecord`, because the reducer
-  would drop or misattribute them (see "Why the failure happens today"). This resolves
-  the review's open question about how to keep a stale `response.done` auditable.
-- Noise classification defaults to a narrow normalized allow-list (`cheers`, `thanks`,
-  `thank you`) — the bleed phrases observed live. Anything else arriving in flight,
-  including short commands such as "stop" or "wait", is treated as a genuine
-  interruption, because length-only filtering would swallow real barge-in commands.
-- All of this is default-on with no config flag, per the repo rule that defaults must
-  exercise new code paths.
-
-### Open question inside this phase
-
-- Should non-allow-listed one-word fillers (for example "uh", "hmm", "okay") also be
-  filtered while in flight, or remain interruptions? Default here: remain
-  interruptions (safe for "stop" / "wait"). Revisit with Phase 4 live-test evidence
-  before widening the allow-list; record any widening in `docs/DecisionLog.md`.
-
-### Step 1: Pure turn-phase and classification module
-
-Add `crates/qsf_realtime_server/src/realtime/turn_integrity.rs`, registered with a
-single `pub(crate) mod turn_integrity;` line in `realtime/mod.rs` (entry points stay
-thin; this classifier is an internal sideband detail, so it stays crate-scoped to match
-the sibling realtime modules). Pure data and functions only — no I/O, no locks — so it
-is unit-testable like a reducer:
-
-```rust
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Serialize)]
-#[serde(rename_all = "snake_case")]
-pub(crate) enum TurnPhase {
-    #[default]
-    Idle,
-    AwaitingResponse,
-    ToolLoop,
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(crate) enum TranscriptDisposition {
-    StartTurn,
-    IgnoreAsNoise,
-    Interrupt,
-}
-
-pub(crate) fn classify_final_transcript(
-    phase: TurnPhase,
-    transcript: &str,
-) -> TranscriptDisposition
-```
-
-`TurnPhase` derives `Serialize` with `#[serde(rename_all = "snake_case")]` because it is
-embedded directly in the diagnostic record written in Step 3 (`DiagnosticRecord` derives
-`Serialize` and is serialized to JSON in `diagnostics.rs:94`); without this the
-diagnostic record will not compile. If a later change makes the diagnostic store a plain
-string instead, drop the derive then — do not add it speculatively beyond this use.
-
-Behavior:
-
-- `Idle` → `StartTurn`, always (preserves current idle behavior, including short
-  transcripts like "thanks").
-- In flight (`AwaitingResponse` or `ToolLoop`): normalize the transcript (trim,
-  lowercase, strip trailing punctuation); if it matches the allow-list constant
-  (`cheers`, `thanks`, `thank you`) or is empty/whitespace-only → `IgnoreAsNoise`;
-  otherwise → `Interrupt`.
-- The allow-list is a module constant: one source of truth.
-
-A `Speaking` phase after the final `response.done` is intentionally out of scope: the
-sideband has no reliable playback-finished signal, and the post-done bleed window is
-covered by the Phase 1 capture constraints plus this classifier on the next turn.
-
-Unit tests in the same file: normalization (`"Thank you."` → `thank you`), allow-list
-hit and miss per phase, idle short transcript yields `StartTurn`, `"stop"` / `"wait"`
-in flight yield `Interrupt`, empty transcript in flight yields `IgnoreAsNoise`, and a
-`TurnPhase` serde round-trip asserting the snake_case wire form (`awaiting_response`,
-`tool_loop`).
-
-Verify: `cargo test -p qsf_realtime_server turn_integrity`.
-
-### Step 2: Track turn phase and response ownership in `SidebandRuntimeState`
-
-Extend `SidebandRuntimeState` (`sideband.rs:75`) with:
-
-- `turn_phase: TurnPhase` (defaults to `Idle`),
-- `pending_response_exchange: Option<usize>` — the exchange index the most recent
-  `response.create` was issued for,
-- `stale_response_ids: HashSet<String>` — provider response ids cancelled by an
-  interruption; their eventual `response.created` / `response.done` must be inert.
-
-Add a single shared reset helper so every terminal path clears the same fields (the
-current code clears overlapping-but-inconsistent subsets across the transcript handler,
-the spoken-completion block, and `session.closed`):
-
-```rust
-impl SidebandRuntimeState {
-    /// Clears all in-flight response / tool-loop accounting. Does NOT touch
-    /// `active_exchange_index`, `turn_phase`, `pending_response_exchange`, or
-    /// `stale_response_ids`; those are managed explicitly by each caller.
-    fn clear_in_flight_response_state(&mut self) {
-        self.response_id = None;
-        self.response_started_at = None;
-        self.current_request_hash = None;
-        self.current_message_count = 0;
-        self.accumulated_latency_ms = 0;
-        self.accumulated_input_tokens = 0;
-        self.accumulated_cached_input_tokens = 0;
-        self.accumulated_output_tokens = 0;
-        self.tool_calls_in_turn = 0;
-    }
-}
-```
-
-Every terminal path that owns the current in-flight response must call this helper
-instead of resetting fields ad hoc: interruption (Step 3), the non-`completed`
-function-call response (Step 4), spoken/empty completion (the existing reset block at
-`sideband.rs:1098-1107`), a stale terminal event that owns the *current* response, and
-`session.closed` cleanup. Stale events that do **not** own the current response must not
-call it — that is the whole point of leaving the fresh turn untouched.
-
-Transitions:
-
-- Transcript handler sends the initial `response.create` → `AwaitingResponse`,
-  `pending_response_exchange = Some(exchange_index)`.
-- Function-call branch sends a continuation `response.create` → `ToolLoop`
-  (`pending_response_exchange` unchanged).
-- Spoken/empty `response.done` that completes the exchange → `Idle`,
-  `pending_response_exchange = None`.
-- `session.closed` and reconnects reset naturally (`SidebandRuntimeState` is built
-  fresh per connection in `connect_and_run_once`).
-
-This is per-connection sideband state; no reducer or persistence-schema change.
-
-### Step 3: Gate the transcript handler on disposition
-
-In the `conversation.item.input_audio_transcription.completed` arm, call
-`classify_final_transcript(runtime_state.turn_phase, &transcript)` before touching any
-state:
-
-- `StartTurn`: existing path, unchanged.
-- `IgnoreAsNoise`: write a new
-  `DiagnosticRecord::IgnoredContinuationTranscript { qsf_session_id, transcript, turn_phase, response_id, at }`
-  via `guard.diagnostics.write(...)`, and log it with `engine_logging` including the
-  session id and transcript. Follow the existing variant shape in `diagnostics.rs`:
-  `at: OffsetDateTime` set with `OffsetDateTime::now_utc()`, and the enum's
-  `#[serde(tag = "kind", rename_all = "snake_case")]` applies automatically. `turn_phase`
-  serializes via the `Serialize` derive added in Step 1. Do not touch `session_state`,
-  do not clear in-flight runtime fields, do not send any provider message. Return.
-- `Interrupt`:
-  1. Mark the current active exchange non-promotable
-     (`guard.non_promotable_exchange_indices.insert(index)`).
-  2. Record `LiveSessionEvent::UserInterrupted(InterruptionRecord { exchange_index, response_id, detected_at, source: "sideband_final_transcript", .. })`,
-     choosing the `InterruptionAction` / `InterruptionStopOutcome` variants in
-     `crates/qsf_session/src/exchange.rs` that mean "superseded by a new user turn".
-     Do not invent new variants unless none fits.
-  3. If `runtime_state.response_id` is known, insert it into `stale_response_ids`. If
-     it is unknown (interrupt landed between `response.create` and
-     `response.created`), log a warning — see the accepted edge case in Step 4.
-  4. Start a clean new exchange:
-     `Exchange::new_voice_pending(guard.new_trusted_exchange_index(), SystemTime::now())`
-     applied via `ExchangeStarted` (the reducer finalizes the old exchange as
-     `Interrupted` and suppresses the old response id), then
-     `AudioFinalTranscriptCommitted` for the new index.
-  5. Reset all in-flight runtime fields with
-     `runtime_state.clear_in_flight_response_state()` (the Step 2 helper), then set
-     `runtime_state.active_exchange_index = Some(new_index)`.
-  6. Continue with the normal memory-injection + `response.create` path for the new
-     exchange; set `AwaitingResponse` and point `pending_response_exchange` at it.
-
-### Step 4: Gate `response.created` and `response.done` against stale and cancelled responses
-
-In the `response.created` arm (`sideband.rs:402-413`):
-
-- Ownership gating, before installing any state: if the event's response id is in
-  `stale_response_ids`, do not install it into `runtime_state.response_id`, do not call
-  `ensure_authoritative_exchange`, and do not record `ResponseStarted`. Log a warning
-  and return. This closes the symmetric corruption path where a late `response.created`
-  for an interrupted response would otherwise stamp the old response id onto the fresh
-  exchange.
-- Accepted, documented edge case (symmetric with `response.done` below): an interrupt
-  that landed before the old `response.created` was observed has no known id, so that
-  late `response.created` cannot be id-matched and `pending_response_exchange` already
-  points at the new exchange. Provider events are serialized per socket and the old
-  `response.created` precedes the interrupting transcript in practice, so this remains a
-  logged warning, not a guarded path. Step 5 asserts this ordering assumption explicitly.
-
-In `handle_response_done_event`:
-
-- Stale gating, before any exchange mutation: a `response.done` is stale when its
-  response id is in `stale_response_ids`, or when `pending_response_exchange` does not
-  match the current active exchange index. For a stale event, write a diagnostic-only
-  `DiagnosticRecord::StaleProviderEvent { qsf_session_id, response_id, status, exchange_index, at }`
-  (the event's real status is the audit trail) and return — no `ProviderEventRecord`
-  (the reducer would drop or misattribute it; see "Why the failure happens today"), no
-  `ExchangeCompleted`, no `OutputProduced`, no tool execution or continuation, and no
-  reset of the new turn's runtime fields. The current active exchange must be left
-  completely unchanged.
-- Status gating in the `FunctionCallOnly` / `Mixed` branch: if
-  `response.status != "completed"` (cancelled/incomplete/failed), do not execute tools
-  and do not send a continuation. Instead **finalize the active exchange** so
-  `live.active_exchange` becomes `None` — reuse the same finalize shape the Spoken/Empty
-  non-`completed` path already uses (`sideband.rs:1084-1096`): apply
-  `LiveSessionEvent::ExchangeCompleted { exchange_index, completed_at }`, then
-  `guard.non_promotable_exchange_indices.insert(exchange_index)`, then
-  `promote_completed_trusted_exchanges`. Record the cancellation in the audit trail (the
-  `ProviderEventRecord` for `FunctionCallCompleted` already applied at
-  `sideband.rs:838-869` carries the real status, since that exchange is still the active
-  one at this point). Then call `runtime_state.clear_in_flight_response_state()`, set
-  `runtime_state.active_exchange_index = None`, and set `turn_phase = Idle`. Accumulated
-  model-use and request hashes from the cancelled sequence must not survive into a later
-  exchange, and no reusable active exchange may be left behind.
-- The `Spoken` / `Empty` path keeps its existing non-promotable marking
-  (`sideband.rs:1091-1096`) and finalize; replace its inline field clears
-  (`sideband.rs:1098-1107`) with `runtime_state.clear_in_flight_response_state()` plus
-  the explicit `active_exchange_index = None`, and ensure this reset runs only for
-  non-stale events.
-- Accepted, documented edge case: a response cancelled before its `response.created`
-  was observed has no known id, so a late *successful* `response.done` from it cannot
-  be id-matched. Provider events are serialized per socket and `response.created`
-  precedes the interrupting transcript in practice, so this is a logged warning, not a
-  guarded path (symmetric with the `response.created` edge above).
-
-### Step 5: Regression tests (mocked sideband)
-
-Use the existing test style in `sideband.rs` (`handle_provider_event` with JSON
-events). Write the first two failing-first against current behavior — they are the
-regression tests for the live failure:
-
-1. Exact live failure: turn starts with a memory-search prompt → `response.done` with a
-   `function_call` output (tool executes, continuation sent, phase `ToolLoop`) →
-   transcript `"Thank you."` arrives → must be ignored as noise (diagnostic record
-   written; `session_state` untouched; no extra `response.create` on the outbound
-   channel) → continuation `response.done` completes → persisted `session-state.json`
-   turn has `user_input` equal to the original prompt; no turn has
-   `user_input = "Thank you."`. Also assert the written
-   `DiagnosticRecord::IgnoredContinuationTranscript` serializes with a snake_case
-   `turn_phase` (`tool_loop`).
-2. Cancelled continuation variant: after the noise transcript, deliver `response.done`
-   with status `cancelled` for the in-flight response → exchange is non-promotable; no
-   promoted turn pairs `"Thank you."` with the memory answer; **`live.active_exchange`
-   is `None` after the cancelled response (equivalently, the next transcript receives a
-   fresh exchange index, not the cancelled one)**; accumulated counters and
-   `current_request_hash` do not survive into the next turn; a subsequent fresh turn
-   still promotes normally.
-3. Real interruption while in flight: a non-allow-listed transcript arrives during
-   `AwaitingResponse` → old exchange `Interrupted` and non-promotable; new exchange
-   starts clean (fresh request hash, `tool_calls_in_turn` 0); a late `response.done`
-   carrying the old response id is inert — written as a
-   `DiagnosticRecord::StaleProviderEvent`, with the new active exchange's
-   `provider_events` unchanged and the new exchange neither completed nor paired with
-   the old output.
-4. Late stale `response.created`: after an interruption inserts the old response id into
-   `stale_response_ids`, a late `response.created` carrying that id does not overwrite
-   `runtime_state.response_id` and does not append a `ResponseStarted` provider event to
-   the new active exchange. Add a sibling assertion documenting the accepted
-   unknown-id ordering assumption (old `response.created` precedes the interrupting
-   transcript in the serialized stream).
-5. Idle short transcript: `"thanks"` while `Idle` → a normal turn that promotes when
-   its own response completes.
-6. Promoted-turn invariant across tests 1–4: every promoted turn's
-   `output.response_id` belongs to the response created for that turn's own exchange —
-   never to a different exchange index.
-
-Verify:
-
-- `cargo test -p qsf_realtime_server realtime::sideband::tests`
-- `cargo test -p qsf_realtime_server turn_integrity`
-- Full `cargo test`.
-
-### Step 6: Diary entry and gates
-
-Per "Phase Completion and Gates": run `cargo build`,
-`cargo clippy --all-targets -- -D warnings`, and `cargo fmt`; add a concise
-`docs/EngineeringDiary.md` entry (read the "How to use" header first). Phase 2 touches
-no code under `crates/qsf_browser_server/ui/` or `crates/qsf_realtime_server/ui/`, so
-the npm gates are not required unless this phase lands together with UI changes.
-
-### External human testing
-
-- Re-run the default-session browser test with the seeded memory store.
-- Speak the same four prompts from the Phase 4 live test.
-- Leave speakers enabled once, then repeat with headphones.
-- Confirm no promoted trusted turn pairs a short noise transcript with the previous
-  answer, even if the UI still shows diagnostic browser-relay transcripts.
-
-### Phase 2 acceptance criteria
-
-- While a response or tool continuation is in flight, an allow-listed short transcript
-  never mutates `session_state`, never emits a `response.create`, and is observable as
-  a diagnostic record.
-- A non-allow-listed transcript in flight interrupts cleanly: the old exchange becomes
-  `Interrupted` and non-promotable, the new exchange starts with fresh response/tool
-  state, and the old response cannot complete against or pair its answer with the new
-  exchange.
-- `response.done` with a non-`completed` status never executes tools or sends a
-  continuation, marks its exchange non-promotable, and **finalizes the active exchange
-  so no reusable active exchange is left behind** for the next transcript to inherit.
-- A stale `response.done` (or `response.created`) for a superseded response is inert and
-  is auditable as a diagnostic-only record without altering the current active exchange.
-- Short transcripts while idle still create normal turns.
-- The guard is default-on with no opt-out flag.
-- The Step 5 tests pass; `cargo build`, `cargo clippy --all-targets -- -D warnings`,
-  `cargo fmt`, and full `cargo test` pass; the EngineeringDiary entry is written.
+- `promote_completed_trusted_exchanges` (`sideband.rs:724`) clones promoted exchanges
+  into durable `turns` but **retains them in `live.completed_exchanges`**, advancing
+  only the `trusted_promoted_exchange_count` watermark. Non-promotable exchanges
+  (interrupted, cancelled, degraded-window) are also retained there and never become
+  turns. This retention is the direct cause of the Phase 3 overcount.
+- Accepted edge case (logged warning, not a guarded path): a response interrupted
+  before its `response.created` was observed cannot be id-matched; safety relies on
+  per-socket provider event serialization. Revisit only if Phase 4 live testing shows
+  misordering.
+- The Phase 2 manual speaker/headphones retest was not yet performed; it is
+  consolidated into the Phase 4 human verification (same four prompts, seeded store,
+  confirm no promoted turn pairs a noise transcript with an earlier answer).
+- The allow-list widening question stays open for Phase 4 evidence; see "Open
+  Questions".
 
 ## Phase 3: Fix Session Inspection Counts
 
-Fix `ToolSessionSnapshot::from_runtime` in
-`crates/qsf_realtime_server/src/realtime/tools.rs`.
+Make `inspect_session_state()` report an auditable, non-duplicated exchange count.
+Rust-only. Production changes live entirely in
+`crates/qsf_realtime_server/src/realtime/tools.rs` (snapshot, tool output), with no
+reducer, persistence-schema, or UI changes. Tests live in `tools.rs`; the **only**
+permitted change outside it is an optional, test-only (`#[cfg(test)]`) AppState
+constructor lifted into `state.rs` if the Step 3 helper duplication grows (see Step 3)
+— that is a test-support move, not a production behavior change.
+`ToolSessionSnapshot::from_runtime` stays a pure derivation over `&SessionRuntime` —
+no I/O, no locks — so it remains unit-testable like a reducer.
 
-Implementation direction:
+### Why the count is wrong today (code-level)
 
-- Replace the ambiguous `exchange_count` computation:
-  `live.completed_exchanges.len() + turns.len()`
-- Count durable promoted turns once, then optionally include the active exchange:
-  - `completed_exchange_count = runtime.session_state.turns.len()`
-  - `active_exchange_index = runtime.session_state.live.active_exchange.as_ref().map(...)`
-  - If keeping the existing `exchange_count` field, define it as
-    `completed_exchange_count + active_exchange_index.is_some() as usize`.
-- Consider adding explicit fields to the tool output:
-  `completed_exchange_count`, `active_exchange_present`, and `active_exchange_status`.
-  This keeps the compact summary auditable without dumping internals.
+- `ToolSessionSnapshot::from_runtime` (`tools.rs:39-59`) computes
+  `exchange_count = live.completed_exchanges.len() + turns.len()`.
+- Promotion (`promote_completed_trusted_exchanges`, `sideband.rs:724`) clones each
+  promotable completed exchange into a durable `Turn` via
+  `SessionEvent::ExchangeRecorded` + `SessionEvent::TurnCompleted`, but leaves the
+  exchange in `live.completed_exchanges`; `trusted_promoted_exchange_count` is only a
+  watermark. Every promoted exchange is therefore counted twice.
+- Non-promotable retained exchanges (Phase 2 interrupted/cancelled exchanges, degraded
+  windows) stay in `live.completed_exchanges` and never become turns, so they inflate
+  the count with exchanges that are explicitly not trusted.
+- The snapshot already exposes `active_exchange_index` and `active_exchange_status`
+  (`tools.rs:32-33`); only the count is ambiguous.
 
-Verification:
+### Decision adopted (resolves the plan-level open question)
 
-- Add unit tests for:
-  - promoted turns plus retained live completed exchanges do not double-count
-  - active exchange is counted once
-  - no active exchange reports only completed promoted turns
-- Add/update `inspect_session_state` tool tests for the JSON output.
-- Run `cargo test -p qsf_realtime_server realtime::tools::tests`.
-- Include this in the manual browser retest by asking the session inspection prompt
-  after two known successful turns and comparing the answer with persisted
-  `session-state.json`.
+- Report `completed_exchange_count = runtime.session_state.turns.len()` — durable
+  promoted turns, each counted exactly once — plus explicit active-exchange fields,
+  instead of a single blended number.
+- Add `active_exchange_present: bool` (derived from `active_exchange.is_some()`)
+  alongside the existing `active_exchange_index` / `active_exchange_status`, so the
+  model-facing JSON states presence explicitly rather than via a nullable index.
+- **Remove** the `exchange_count` field rather than redefining it. Its only consumers
+  are inside `tools.rs` itself (the tool JSON at `tools.rs:429` and the
+  `observation_summary` at `tools.rs:446` — verified by workspace grep; no UI, route,
+  or cross-crate consumer). Keeping a field whose meaning silently changed would be
+  worse for auditability than removing it, and realtime model sessions read the tool
+  output fresh each session, so there is no compatibility window.
+- Non-promotable retained exchanges are intentionally excluded from
+  `completed_exchange_count`: the tool summarizes trusted durable state.
+
+  **Auditability caveat (corrects the earlier rationale; review finding M1).** An
+  earlier draft claimed these exchanges "remain auditable via diagnostic records and
+  `session-state.json`." That is not true on either count, and the rationale must not
+  rely on it:
+  - `live.completed_exchanges` is `#[serde(skip)]`
+    (`crates/qsf_session/src/live_state.rs:84-85`), so retained exchanges are never
+    written to `session-state.json`. A skipped exchange never reaches durable
+    `turns`/`exchanges` either (the promotion skip path at `sideband.rs:741-758` only
+    logs a `log::warn!` and `continue`s).
+  - `DiagnosticRecord::DiagnosticExchangeRecorded` is written exclusively for the
+    **browser-relay** path (`persist_completed_diagnostic_exchanges`,
+    `routes.rs:736-748`, `source: "browser_relay"`), never for skipped sideband
+    exchanges. The sideband-path diagnostics that do exist —
+    `IgnoredContinuationTranscript` (`sideband.rs:328`) and `StaleProviderEvent`
+    (`sideband.rs:963`) — record individual transcripts/events, not an
+    interrupted-but-skipped exchange as a whole.
+
+  Net effect: a non-promotable skipped sideband exchange is currently **not durably
+  auditable after process exit**. Phase 3 does **not** close this gap. It keeps
+  `completed_exchange_count` defined as trusted durable turns and adds no
+  skipped-exchange counter or diagnostic record — the tool stays a summary of trusted
+  durable state, and the count is provably correct. Whether to add a durable sideband
+  skipped-exchange diagnostic record and/or a model-facing skipped count is deferred to
+  Phase 4, gated on live-test evidence (see "Open Questions").
+
+### Step 1: Failing-first unit tests for the snapshot
+
+Add tests to the existing `realtime::tools::tests` module. Build runtimes directly —
+no async, no sockets:
+
+```rust
+let tempdir = TempDir::new().expect("tempdir");
+let diagnostics = DiagnosticWriter::create(tempdir.path().join("diagnostics.jsonl"))
+    .expect("diagnostics");
+let mut runtime = SessionRuntime::new(
+    "test-session".to_string(),
+    BrowserSessionConfig::default(),
+    diagnostics,
+);
+```
+
+(`tempfile` is already a dev-dependency used by the sideband tests in this crate;
+`BrowserSessionConfig::default()` exists at `state.rs:293`.) Shape
+`runtime.session_state` per case; build the durable twin of a retained exchange with
+`Turn::try_from(&exchange)`, the same conversion promotion uses (`sideband.rs:749`).
+A small local `completed_exchange(index, ...)` fixture like the one in the sideband
+tests is fine; do not try to share the sideband test module's private helpers.
+
+Test cases:
+
+1. Promoted-and-retained (the regression test for the live overcount): one completed
+   exchange present in both `live.completed_exchanges` and, as its converted `Turn`,
+   in `turns`; no active exchange → `completed_exchange_count == 1`,
+   `active_exchange_present == false`. Under the old arithmetic this state reported 2.
+2. Active exchange present: additionally set
+   `live.active_exchange = Some(Exchange::new_voice_pending(1, SystemTime::now()))` →
+   `completed_exchange_count` unchanged, `active_exchange_present == true`,
+   `active_exchange_index == Some(1)`, and `active_exchange_status` equal to the
+   constructed exchange's `status`.
+3. Empty session: no turns, no completed exchanges, no active exchange → count 0,
+   present false, index and status `None`.
+4. Non-promotable retained exchange: a completed exchange in `live.completed_exchanges`
+   with no corresponding turn → `completed_exchange_count == 0` (retained but
+   untrusted exchanges do not inflate the count).
+
+Note on the red state: these tests reference the new fields, so before Step 2 they
+fail to compile — that is the failing-first checkpoint in Rust for a field rename.
+Land Steps 1–2 together in one change.
+
+### Step 2: Implement the snapshot fix
+
+In `tools.rs`:
+
+- Replace `exchange_count: usize` on `ToolSessionSnapshot` with
+  `completed_exchange_count: usize` and `active_exchange_present: bool`. Keep
+  `runtime_phase`, `active_exchange_index`, `active_exchange_status`, `trust`, and
+  `degraded` unchanged.
+- In `from_runtime`: `completed_exchange_count` from
+  `runtime.session_state.turns.len()`; `active_exchange_present` from
+  `runtime.session_state.live.active_exchange.is_some()`; existing index/status
+  mappings unchanged.
+- Update `InspectSessionStateTool::execute` (`tools.rs:425-451`): the JSON summary
+  emits `completed_exchange_count` and `active_exchange_present` instead of
+  `exchange_count`, and the `observation_summary` reports the completed count and
+  active status (for example
+  `"inspect_session_state reported phase={:?} completed_exchanges={} active={:?} degraded={}"`).
+
+The snapshot construction site in the sideband tool loop (`sideband.rs:1013`) needs no
+change — it already passes the whole `&guard`.
+
+### Step 3: Tool-output contract test
+
+Exercise `InspectSessionStateTool::execute` end-to-end through a
+`RealtimeToolContext` and parse `output_text` as JSON. Build the context from a
+**non-empty** snapshot — a runtime with one promoted-and-retained completed turn plus
+an active exchange, mirroring Step 1 case 2 — so the test catches a wrong value mapping
+from `ToolSessionSnapshot` to tool output. The original bug is a value bug, not a key
+bug; a presence-only assertion would still pass with a wrong number. Assert both:
+
+- **Keys (presence/absence):** the parsed object contains `completed_exchange_count`,
+  `active_exchange_present`, `active_exchange_index`, `active_exchange_status`,
+  `runtime_phase`, `trust`, and `degraded`, and does **not** contain `exchange_count`.
+- **Concrete values:** `completed_exchange_count == 1`, `active_exchange_present == true`,
+  `active_exchange_index == 1`, and `active_exchange_status` equal to the active
+  exchange's constructed status. Also assert the `observation_summary` string reports
+  the completed count (not the old blended total).
+
+`RealtimeToolContext` requires an `AppState`; mirror the `state(&tempdir)` helper the
+sideband tests use. If that duplication exceeds a few lines, lift a `#[cfg(test)]`
+constructor into `state.rs` instead of copying it — one source of truth for test
+AppState construction. This is the single sanctioned change outside `tools.rs` for this
+phase (test-only, no production behavior change); see the Phase 3 scope note.
+
+### Step 4: Gates and diary
+
+Per "Phase Completion and Gates":
+
+- `cargo test -p qsf_realtime_server realtime::tools::tests`
+- Full `cargo test`
+- `cargo build`, `cargo clippy --all-targets -- -D warnings`, `cargo fmt`
+- Add a concise `docs/EngineeringDiary.md` entry (read the "How to use" header first).
+
+Phase 3 touches no UI files, so the npm gates are not required when it lands alone.
+
+### External human testing (consolidated into the Phase 4 retest)
+
+- After two known successful turns in the default-session browser test, ask the
+  session inspection prompt and compare the reported `completed_exchange_count` with
+  the `turns` array length in the persisted `session-state.json`.
+- Confirm the report distinguishes the in-flight exchange (`active_exchange_present`)
+  from completed turns while a response is being produced.
+
+### Phase 3 acceptance criteria
+
+- An exchange present in both durable `turns` and retained `live.completed_exchanges`
+  is counted exactly once.
+- The active exchange is reported only via the explicit `active_exchange_*` fields and
+  is never folded into `completed_exchange_count`.
+- Non-promotable retained exchanges do not inflate the reported count.
+- The ambiguous `exchange_count` field no longer appears in the tool output or
+  snapshot.
+- The Step 3 contract test asserts concrete values (not just key presence), so a wrong
+  snapshot-to-output value mapping fails the test.
+- `ToolSessionSnapshot::from_runtime` remains a pure, synchronous derivation, and no
+  production code outside `tools.rs` changes (any `state.rs` touch is `#[cfg(test)]`
+  test support only).
+- The Step 1 and Step 3 tests pass; `cargo build`,
+  `cargo clippy --all-targets -- -D warnings`, `cargo fmt`, and full `cargo test`
+  pass; the EngineeringDiary entry is written.
 
 ## Phase 4: Documentation and Acceptance
 
@@ -524,13 +374,19 @@ Update documentation after implementation and human verification:
   exchange-integrity behavior and `Last reviewed`.
 - `docs/Architecture/Architecture.StateAndObservability.md`: document ignored
   diagnostic-only transcripts, stale-provider-event diagnostic records, and
-  non-promotable interrupted exchanges if added.
+  non-promotable interrupted exchanges. Record explicitly that non-promotable retained
+  sideband exchanges are **not** durably persisted today (they live only in the
+  `#[serde(skip)]` `live.completed_exchanges`, and the promotion skip path only logs),
+  and note any durable skipped-exchange record/count added as a result of the Phase 4
+  open question (review finding M1).
 - `docs/Research/ResearchQuestions.Audio.md`: record the provider VAD / acoustic
   bleed observation as evidence for future presence and turn-taking work.
 - `docs/DecisionLog.md`: only add an entry if the implementation creates a durable
-  policy, such as "short continuation transcripts are diagnostic-only while the
-  assistant is speaking" or "stale/superseded provider events are audited as
-  diagnostic-only records, never as exchange provider events."
+  policy beyond the Phase 2 entry already recorded — for example "session inspection
+  counts report completed promoted turns plus explicit active-exchange fields", a
+  widening of the continuation noise allow-list, or a decision on durable auditability
+  / model-facing counting for non-promotable skipped exchanges (the Phase 4 open
+  question raised by the Phase 3 review).
 
 Final gates:
 
