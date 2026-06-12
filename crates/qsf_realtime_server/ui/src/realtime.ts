@@ -119,6 +119,12 @@ export interface SidebandStatusMessage {
 const DEFAULT_DEGRADED_WARNING =
   "The server lost its control channel; replies may not arrive. Check the server logs.";
 
+export const MICROPHONE_AUDIO_CONSTRAINTS: MediaTrackConstraints = {
+  echoCancellation: true,
+  noiseSuppression: true,
+  autoGainControl: true,
+};
+
 export const DEFAULT_SESSION_CONFIG: SessionConfig = {
   type: "realtime",
   model: "gpt-realtime-2",

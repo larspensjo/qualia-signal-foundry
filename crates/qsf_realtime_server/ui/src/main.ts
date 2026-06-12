@@ -5,6 +5,7 @@ import {
   describeConnection,
   describeRuntimePhase,
   INITIAL_STATE,
+  MICROPHONE_AUDIO_CONSTRAINTS,
   mapProviderMessageToRelayEnvelope,
   parseProviderDataChannelMessage,
   parseSidebandStatusMessage,
@@ -166,8 +167,16 @@ async function startConversation() {
 
     peerConnection = new RTCPeerConnection();
     microphoneStream = await navigator.mediaDevices.getUserMedia({
-      audio: true,
+      audio: MICROPHONE_AUDIO_CONSTRAINTS,
     });
+    for (const track of microphoneStream.getAudioTracks()) {
+      const settings = track.getSettings();
+      console.info("microphone capture settings", {
+        echoCancellation: settings.echoCancellation,
+        noiseSuppression: settings.noiseSuppression,
+        autoGainControl: settings.autoGainControl,
+      });
+    }
     for (const track of microphoneStream.getTracks()) {
       peerConnection.addTrack(track, microphoneStream);
     }

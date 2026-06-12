@@ -2,7 +2,8 @@
 
 ## Status
 
-Draft plan.
+In progress. Phase 1 is expanded and ready for implementation. Phases 2–4 remain
+outlined and will be expanded when their turn comes.
 
 ## Context
 
@@ -55,30 +56,164 @@ This plan fixes those issues without changing the Phase 4 tool scope.
   explicitly as `completed_exchange_count` plus optional `active_exchange_index`, instead
   of a single ambiguous count only.
 
+## Phase Completion and Gates
+
+Each phase is implemented and verified on its own. To keep the repository compliant if a
+phase is committed independently of the others:
+
+- Run that phase's listed automated checks (UI and/or Rust) as completion gates.
+- Add a concise `docs/EngineeringDiary.md` entry for that phase's implementation, after
+  reading the "How to use" instructions at the top of that file.
+
+If multiple phases land together in a single submission, the gates and diary entries can
+be consolidated and run once with the Phase 4 final gates. The substantive Rust gate run
+is in Phase 4 because that is where the Rust code changes (Phases 2–3) land; phases that
+touch no Rust code still run the cargo gates as a workspace-sanity check when submitted
+on their own.
+
 ## Phase 1: Browser Audio Capture Constraints
 
-Add explicit browser microphone constraints in
-`crates/qsf_realtime_server/ui/src/main.ts`:
+This phase is browser/TypeScript only. No Rust code changes are expected; the change is
+confined to `crates/qsf_realtime_server/ui/`.
+
+Today `startConversation()` in `crates/qsf_realtime_server/ui/src/main.ts` (around
+line 168) requests the microphone with the bare constraint `audio: true`, which leaves
+echo cancellation, noise suppression, and auto gain control up to browser defaults.
+This phase makes the processing constraints explicit and observable so speaker bleed
+is reduced at the capture source.
+
+### Step 1: Add a single source of truth for the constraints
+
+Add an exported constant to `crates/qsf_realtime_server/ui/src/realtime.ts`, next to
+`DEFAULT_SESSION_CONFIG` (the module already serves as the pure, unit-tested home for
+session defaults; `main.ts` stays a thin imperative shell):
 
 ```ts
-navigator.mediaDevices.getUserMedia({
-  audio: {
-    echoCancellation: true,
-    noiseSuppression: true,
-    autoGainControl: true,
-  },
+export const MICROPHONE_AUDIO_CONSTRAINTS: MediaTrackConstraints = {
+  echoCancellation: true,
+  noiseSuppression: true,
+  autoGainControl: true,
+};
+```
+
+### Step 2: Add a regression test
+
+Add a test to `crates/qsf_realtime_server/ui/src/realtime.test.ts` asserting that
+`MICROPHONE_AUDIO_CONSTRAINTS` enables all three of `echoCancellation`,
+`noiseSuppression`, and `autoGainControl`. This is a contract test: it guards against
+a future refactor silently reverting to `audio: true` or dropping a flag.
+
+### Step 3: Use the constraints in the capture path
+
+In `startConversation()` in `crates/qsf_realtime_server/ui/src/main.ts`, replace:
+
+```ts
+microphoneStream = await navigator.mediaDevices.getUserMedia({
+  audio: true,
 });
 ```
 
-Keep this as the default path so local testing exercises it automatically.
+with:
 
-Verification:
+```ts
+microphoneStream = await navigator.mediaDevices.getUserMedia({
+  audio: MICROPHONE_AUDIO_CONSTRAINTS,
+});
+```
 
-- `npm run check` from `crates/qsf_realtime_server/ui`.
-- `npm test` from `crates/qsf_realtime_server/ui`.
-- `npm run fmt` from `crates/qsf_realtime_server/ui`.
-- Manual browser test with speakers and then headphones: confirm fewer stray
-  one-word transcript turns while the assistant is speaking.
+and add `MICROPHONE_AUDIO_CONSTRAINTS` to the existing import block from
+`./realtime`. This stays the default and only path, so local testing always exercises
+the constraints (no config flag, per the repo rule that defaults must exercise new
+code paths).
+
+### Step 4: Log the applied capture settings (diagnostic only)
+
+Immediately after acquiring `microphoneStream`, log what the browser actually applied,
+since `getUserMedia` treats these as ideal (not mandatory) constraints and hardware or
+browser support can silently differ:
+
+```ts
+for (const track of microphoneStream.getAudioTracks()) {
+  const s = track.getSettings();
+  console.info("microphone capture settings", {
+    echoCancellation: s.echoCancellation,
+    noiseSuppression: s.noiseSuppression,
+    autoGainControl: s.autoGainControl,
+  });
+}
+```
+
+This is browser-side diagnostics, so the browser console is the right surface
+(`engine_logging` covers the Rust runtime, not the UI). No reducer or UI-state changes
+in this phase; surfacing these settings in the Diagnostics panel can be a later
+follow-up if manual testing shows it is needed.
+
+### Step 5: Record the change in the EngineeringDiary
+
+Per the repo workflow, document this implementation in `docs/EngineeringDiary.md`. First
+read the "How to use" instructions at the top of that file, then append one concise entry
+for the UI microphone-constraint change (the explicit `MICROPHONE_AUDIO_CONSTRAINTS`
+capture path and the applied-settings logging). Keep the entry to the implementation
+itself; any human-test observations about provider/VAD or hardware constraint behavior
+are recorded later in the Phase 4 diary observation entry and `ResearchQuestions.Audio.md`.
+
+This keeps Phase 1 self-consistent with the repo rule even if it is submitted before the
+later phases, instead of relying on a single consolidated Phase 4 entry.
+
+### Verification
+
+Automated, from `crates/qsf_realtime_server/ui`:
+
+- `npm run check` (covers `tsc --noEmit` and Biome lint)
+- `npm test` (vitest, including the new constraint contract test)
+- `npm run fmt`
+
+Repository completion gates (run if Phase 1 is committed independently of later phases):
+
+Phase 1 changes no Rust code, so the cargo gates below are a workspace-sanity check
+rather than a test of this phase's changes. The repo rule still requires them on task
+completion, so run them before submitting Phase 1 on its own. If Phase 1 lands together
+with later phases in a single submission, these run once with the Phase 4 final gates
+instead.
+
+- `cargo build`
+- `cargo clippy --all-targets -- -D warnings`
+- `cargo fmt`
+
+External human testing (recommended):
+
+- Start the realtime server, open the UI, and start a conversation with speakers
+  enabled. Confirm the browser console logs `microphone capture settings` with all
+  three flags `true` (or note any flag the browser reports differently).
+- Speak the same prompts as the Phase 4 live tool-perception test and record whether
+  fewer stray one-word transcript turns (`Cheers.`, `Thank you.`) appear while the
+  assistant is speaking.
+- Repeat with headphones as the control case.
+- Expectation setting: this phase reduces bleed at the capture source but does not
+  guarantee elimination (see Non-Goals); Phase 2 adds the authoritative sideband guard.
+  Record any residual ghost turns observed — they are the Phase 2 test fixtures.
+
+### Phase 1 acceptance criteria
+
+- Microphone capture requests echo cancellation, noise suppression, and automatic gain
+  control by default, with no opt-out flag.
+- The constraint object has one source of truth exported from `realtime.ts`, used by
+  `main.ts`, and covered by a unit test.
+- The applied (not just requested) settings are observable in the browser console.
+- `npm run check`, `npm test`, and `npm run fmt` pass from
+  `crates/qsf_realtime_server/ui`.
+- If Phase 1 is committed independently, `cargo build`,
+  `cargo clippy --all-targets -- -D warnings`, and `cargo fmt` pass as a workspace
+  sanity check, and `docs/EngineeringDiary.md` has a concise entry for the change.
+- Manual speaker test records the applied capture settings and any residual ghost turns
+  for Phase 2. "Fewer stray short turns than the baseline live run" is recommended
+  supporting evidence, not a hard automation gate, because the baseline depends on
+  informal hardware/browser conditions that may not be reproducible by the implementer.
+
+Documentation: the EngineeringDiary entry for the Phase 1 implementation is added in
+Step 5 above. If the manual test reveals notable browser or hardware constraint behavior,
+save that observation for the Phase 4 diary observation entry and
+`ResearchQuestions.Audio.md` updates rather than expanding the Phase 1 entry.
 
 ## Phase 2: Sideband Turn Integrity Guard
 
@@ -168,8 +303,10 @@ Verification:
 
 Update documentation after implementation and human verification:
 
-- `docs/EngineeringDiary.md`: one entry for the implementation and one observation
-  entry if the human test reveals provider/VAD behavior worth preserving.
+- `docs/EngineeringDiary.md`: per-phase implementation entries are added as each phase is
+  completed (see "Phase Completion and Gates"). In this phase, add any consolidated
+  closing entry still needed plus one observation entry if the human test reveals
+  provider/VAD behavior worth preserving.
 - `docs/Experiments/Experiment.LiveToolPerception.md`: add the observed ghost-turn
   failure mode, the retest procedure, and final result once verified.
 - `docs/Architecture/Architecture.RealtimeSessionServer.md`: refresh sideband

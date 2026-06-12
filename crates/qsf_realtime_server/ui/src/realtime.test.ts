@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   INITIAL_STATE,
+  MICROPHONE_AUDIO_CONSTRAINTS,
   mapProviderMessageToRelayEnvelope,
   parseProviderDataChannelMessage,
   parseSidebandStatusMessage,
@@ -44,6 +45,16 @@ describe("provider relay mapping", () => {
         type: "rate_limits.updated",
       }),
     ).toBeNull();
+  });
+});
+
+describe("microphone capture constraints", () => {
+  it("enables browser echo cancellation, noise suppression, and auto gain control by default", () => {
+    expect(MICROPHONE_AUDIO_CONSTRAINTS).toEqual({
+      echoCancellation: true,
+      noiseSuppression: true,
+      autoGainControl: true,
+    });
   });
 });
 

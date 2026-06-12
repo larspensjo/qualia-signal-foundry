@@ -2970,3 +2970,17 @@ Observed:
 
 Refs: crates/qsf_realtime_server/src/cli.rs,
 crates/qsf_realtime_server/src/state.rs
+
+## 2026-06-12 - Realtime browser microphone capture constraints
+
+Made the browser mic capture path explicit in the realtime UI and logged the applied
+audio settings after acquisition.
+
+What changed:
+- Added `MICROPHONE_AUDIO_CONSTRAINTS` as the shared browser audio constraint object.
+- Updated `startConversation()` to request those constraints instead of bare `audio: true`.
+- Logged the applied echo cancellation, noise suppression, and auto gain control settings from each audio track.
+
+Refs: crates/qsf_realtime_server/ui/src/realtime.ts,
+crates/qsf_realtime_server/ui/src/main.ts,
+crates/qsf_realtime_server/ui/src/realtime.test.ts
