@@ -2984,3 +2984,31 @@ What changed:
 Refs: crates/qsf_realtime_server/ui/src/realtime.ts,
 crates/qsf_realtime_server/ui/src/main.ts,
 crates/qsf_realtime_server/ui/src/realtime.test.ts
+
+## 2026-06-12 - Realtime turn-integrity guard
+
+Implemented the sideband guard for in-flight continuation noise, stale provider
+events, and cancelled tool continuations.
+
+What changed:
+- Added `turn_integrity` with `TurnPhase` and a small courtesy-phrase classifier for
+  continuation noise.
+- Extended the realtime sideband runtime state to track turn phase, pending exchange
+  ownership, and stale response ids, then routed transcript and response handlers
+  through those guards.
+- Added diagnostic-only records for ignored continuation transcripts and stale
+  provider events, plus regression tests for the live failure, interruption, and
+  cancelled-continuation paths.
+
+Observed:
+- `cargo test -p qsf_realtime_server turn_integrity`
+- `cargo test -p qsf_realtime_server realtime::sideband::tests`
+- `cargo build`
+- `cargo clippy --all-targets -- -D warnings`
+- `cargo fmt`
+- `cargo test`
+
+Refs: crates/qsf_realtime_server/src/realtime/turn_integrity.rs,
+crates/qsf_realtime_server/src/realtime/sideband.rs,
+crates/qsf_realtime_server/src/diagnostics.rs;
+implements: Continuation noise and stale provider events are diagnostic-only

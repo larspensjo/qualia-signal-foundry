@@ -1204,3 +1204,16 @@ available for isolated experiments. The server rejects a second active default
 session instead of silently replacing the runtime.
 Refs: crates/qsf_realtime_server/src/state.rs,
 crates/qsf_realtime_server/src/cli.rs
+
+## 2026-06-12 - Continuation noise and stale provider events are diagnostic-only
+Decision: While a response or tool continuation is in flight, allow-listed courtesy
+transcripts are ignored as diagnostic-only records, and stale or superseded provider
+events are audited as diagnostic-only records instead of mutating the live exchange.
+Context: The realtime sideband can otherwise reuse or overwrite the active exchange
+across interruptions and cancelled continuations, which corrupts durable turns.
+Consequences: Short continuation noise does not emit `response.create` or touch
+`session_state`, stale response.created/done events stay inert, and the live exchange
+must be explicitly finalized before the next user turn starts.
+Refs: crates/qsf_realtime_server/src/realtime/turn_integrity.rs,
+crates/qsf_realtime_server/src/realtime/sideband.rs,
+crates/qsf_realtime_server/src/diagnostics.rs

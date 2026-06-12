@@ -7,6 +7,7 @@ use anyhow::Context;
 use serde::{Deserialize, Serialize};
 use time::OffsetDateTime;
 
+use crate::realtime::turn_integrity::TurnPhase;
 use qsf_session::Exchange;
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -16,7 +17,7 @@ pub enum DiagnosticTrust {
     Untrusted,
 }
 
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug, Deserialize, Serialize)]
 #[allow(clippy::large_enum_variant)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum DiagnosticRecord {
@@ -59,6 +60,20 @@ pub enum DiagnosticRecord {
         trust: DiagnosticTrust,
         recorded_at: OffsetDateTime,
         exchange: Exchange,
+    },
+    IgnoredContinuationTranscript {
+        qsf_session_id: String,
+        transcript: String,
+        turn_phase: TurnPhase,
+        response_id: Option<String>,
+        at: OffsetDateTime,
+    },
+    StaleProviderEvent {
+        qsf_session_id: String,
+        response_id: Option<String>,
+        status: Option<String>,
+        exchange_index: Option<usize>,
+        at: OffsetDateTime,
     },
 }
 

@@ -1,3 +1,4 @@
+use std::collections::HashSet;
 use std::convert::TryFrom;
 use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime};
@@ -29,6 +30,7 @@ use tokio_tungstenite::{
     tungstenite::{Message, client::IntoClientRequest},
 };
 
+use crate::diagnostics::DiagnosticRecord;
 use crate::realtime::injection::{
     DEFAULT_PCM_RATE_HZ, MemoryInjectionRequest, assemble_memory_context,
     build_memory_injection_packet,
@@ -36,6 +38,9 @@ use crate::realtime::injection::{
 use crate::realtime::memory_store::retrieve_session_memories;
 use crate::realtime::tools::{
     self, RealtimeToolContext, ToolSessionSnapshot, tool_allow_list, tool_permission_decision,
+};
+use crate::realtime::turn_integrity::{
+    TranscriptDisposition, TurnPhase, classify_final_transcript,
 };
 use crate::state::{AppState, SessionRuntime};
 
@@ -75,6 +80,8 @@ enum SidebandExit {
 #[derive(Debug, Default)]
 struct SidebandRuntimeState {
     active_exchange_index: Option<usize>,
+    pending_response_exchange: Option<usize>,
+    turn_phase: TurnPhase,
     response_started_at: Option<Instant>,
     response_id: Option<String>,
     current_request_hash: Option<ContentHash>,
@@ -84,6 +91,23 @@ struct SidebandRuntimeState {
     accumulated_cached_input_tokens: u32,
     accumulated_output_tokens: u32,
     tool_calls_in_turn: usize,
+    stale_response_ids: HashSet<String>,
+}
+
+impl SidebandRuntimeState {
+    /// Clears in-flight response accounting without touching exchange ownership
+    /// or stale-response tracking.
+    fn clear_in_flight_response_state(&mut self) {
+        self.response_id = None;
+        self.response_started_at = None;
+        self.current_request_hash = None;
+        self.current_message_count = 0;
+        self.accumulated_latency_ms = 0;
+        self.accumulated_input_tokens = 0;
+        self.accumulated_cached_input_tokens = 0;
+        self.accumulated_output_tokens = 0;
+        self.tool_calls_in_turn = 0;
+    }
 }
 
 async fn run_sideband(
@@ -293,33 +317,132 @@ async fn handle_provider_event(
                 })?;
         }
         "conversation.item.input_audio_transcription.completed" => {
-            let exchange_index = ensure_authoritative_exchange(&mut guard);
             let transcript = realtime_event_transcript(event)
                 .or_else(|| event.get("transcript").and_then(serde_json::Value::as_str))
                 .unwrap_or_default()
                 .to_string();
-            apply_live_session_event(
-                &mut guard.session_state,
-                LiveSessionEvent::AudioFinalTranscriptCommitted {
-                    exchange_index,
-                    utterance: qsf_session::UtteranceRecord {
-                        utterance_id: event
-                            .get("item_id")
-                            .and_then(serde_json::Value::as_str)
-                            .map(str::to_string)
-                            .unwrap_or_else(|| format!("utterance-{exchange_index}")),
-                        revision_index: 0,
-                        transcript: transcript.clone(),
-                        received_at: SystemTime::now(),
-                        provider_id: Some(call_id.to_string()),
-                        source_chunk_index: None,
-                    },
-                    final_transcript: transcript.clone(),
-                },
-            );
-            runtime_state.active_exchange_index = Some(exchange_index);
-            runtime_state.response_started_at = None;
-            runtime_state.response_id = None;
+            match classify_final_transcript(runtime_state.turn_phase, &transcript) {
+                TranscriptDisposition::IgnoreAsNoise => {
+                    guard
+                        .diagnostics
+                        .write(&DiagnosticRecord::IgnoredContinuationTranscript {
+                            qsf_session_id: qsf_session_id.to_string(),
+                            transcript: transcript.clone(),
+                            turn_phase: runtime_state.turn_phase,
+                            response_id: runtime_state.response_id.clone(),
+                            at: time::OffsetDateTime::now_utc(),
+                        })?;
+                    log::warn!(
+                        "ignored continuation transcript for session `{qsf_session_id}` during {:?}: `{transcript}`",
+                        runtime_state.turn_phase
+                    );
+                    return Ok(());
+                }
+                TranscriptDisposition::Interrupt => {
+                    let Some(current_exchange_index) =
+                        runtime_state.active_exchange_index.or_else(|| {
+                            guard
+                                .session_state
+                                .live
+                                .active_exchange
+                                .as_ref()
+                                .map(|exchange| exchange.index)
+                        })
+                    else {
+                        log::warn!(
+                            "could not interrupt continuation transcript for session `{qsf_session_id}` because no active exchange was available"
+                        );
+                        return Ok(());
+                    };
+
+                    guard
+                        .non_promotable_exchange_indices
+                        .insert(current_exchange_index);
+                    let interruption = qsf_session::InterruptionRecord {
+                        exchange_index: current_exchange_index,
+                        response_id: runtime_state.response_id.clone(),
+                        detected_at: SystemTime::now(),
+                        source: "sideband_final_transcript".to_string(),
+                        action: qsf_session::InterruptionAction::MarkInterrupted,
+                        stop_outcome: qsf_session::InterruptionStopOutcome::Stopped,
+                        partial_response_text: guard
+                            .session_state
+                            .live
+                            .active_response
+                            .as_ref()
+                            .map(|response| response.partial_text.clone())
+                            .filter(|text| !text.is_empty()),
+                    };
+                    apply_live_session_event(
+                        &mut guard.session_state,
+                        LiveSessionEvent::UserInterrupted(interruption),
+                    );
+                    if let Some(response_id) = runtime_state.response_id.clone() {
+                        runtime_state.stale_response_ids.insert(response_id);
+                    } else {
+                        log::warn!(
+                            "continuation interruption for session `{qsf_session_id}` landed before response.created; old response id is unknown"
+                        );
+                    }
+
+                    let new_exchange_index = guard.new_trusted_exchange_index();
+                    apply_live_session_event(
+                        &mut guard.session_state,
+                        LiveSessionEvent::ExchangeStarted(Box::new(Exchange::new_voice_pending(
+                            new_exchange_index,
+                            SystemTime::now(),
+                        ))),
+                    );
+                    apply_live_session_event(
+                        &mut guard.session_state,
+                        LiveSessionEvent::AudioFinalTranscriptCommitted {
+                            exchange_index: new_exchange_index,
+                            utterance: qsf_session::UtteranceRecord {
+                                utterance_id: event
+                                    .get("item_id")
+                                    .and_then(serde_json::Value::as_str)
+                                    .map(str::to_string)
+                                    .unwrap_or_else(|| format!("utterance-{new_exchange_index}")),
+                                revision_index: 0,
+                                transcript: transcript.clone(),
+                                received_at: SystemTime::now(),
+                                provider_id: Some(call_id.to_string()),
+                                source_chunk_index: None,
+                            },
+                            final_transcript: transcript.clone(),
+                        },
+                    );
+                    runtime_state.clear_in_flight_response_state();
+                    runtime_state.active_exchange_index = Some(new_exchange_index);
+                    runtime_state.pending_response_exchange = None;
+                    runtime_state.turn_phase = TurnPhase::Idle;
+                }
+                TranscriptDisposition::StartTurn => {
+                    let exchange_index = ensure_authoritative_exchange(&mut guard);
+                    apply_live_session_event(
+                        &mut guard.session_state,
+                        LiveSessionEvent::AudioFinalTranscriptCommitted {
+                            exchange_index,
+                            utterance: qsf_session::UtteranceRecord {
+                                utterance_id: event
+                                    .get("item_id")
+                                    .and_then(serde_json::Value::as_str)
+                                    .map(str::to_string)
+                                    .unwrap_or_else(|| format!("utterance-{exchange_index}")),
+                                revision_index: 0,
+                                transcript: transcript.clone(),
+                                received_at: SystemTime::now(),
+                                provider_id: Some(call_id.to_string()),
+                                source_chunk_index: None,
+                            },
+                            final_transcript: transcript.clone(),
+                        },
+                    );
+                    runtime_state.active_exchange_index = Some(exchange_index);
+                    runtime_state.pending_response_exchange = None;
+                    runtime_state.turn_phase = TurnPhase::Idle;
+                }
+            }
             drop(guard);
 
             let mut turn_request_values = Vec::new();
@@ -398,6 +521,8 @@ async fn handle_provider_event(
             send_json(outbound_tx, response_create)?;
             runtime_state.current_request_hash = Some(hash_request_sequence(&turn_request_values));
             runtime_state.current_message_count = turn_request_values.len();
+            runtime_state.pending_response_exchange = runtime_state.active_exchange_index;
+            runtime_state.turn_phase = TurnPhase::AwaitingResponse;
         }
         "response.created" => {
             let response_id = realtime_event_response_id(event)
@@ -409,6 +534,34 @@ async fn handle_provider_event(
                         .and_then(serde_json::Value::as_str)
                         .map(str::to_string)
                 });
+            let current_exchange_index = runtime_state.active_exchange_index.or_else(|| {
+                guard
+                    .session_state
+                    .live
+                    .active_exchange
+                    .as_ref()
+                    .map(|exchange| exchange.index)
+            });
+            let response_is_stale = response_id
+                .as_ref()
+                .map(|response_id| runtime_state.stale_response_ids.contains(response_id))
+                .unwrap_or(false);
+            let exchange_is_stale = match (
+                runtime_state.pending_response_exchange,
+                current_exchange_index,
+            ) {
+                (Some(pending_exchange), Some(active_exchange)) => {
+                    pending_exchange != active_exchange
+                }
+                _ => true,
+            };
+            if response_is_stale || exchange_is_stale {
+                log::warn!(
+                    "ignored stale response.created for session `{qsf_session_id}` with response id `{}`",
+                    response_id.as_deref().unwrap_or("<unknown>")
+                );
+                return Ok(());
+            }
             runtime_state.response_id = response_id.clone();
             runtime_state.response_started_at = Some(Instant::now());
 
@@ -510,11 +663,11 @@ async fn handle_provider_event(
                 true,
                 Some("provider closed the realtime session".to_string()),
             );
+            runtime_state.clear_in_flight_response_state();
             runtime_state.active_exchange_index = None;
-            runtime_state.response_id = None;
-            runtime_state.response_started_at = None;
-            runtime_state.current_request_hash = None;
-            runtime_state.current_message_count = 0;
+            runtime_state.pending_response_exchange = None;
+            runtime_state.turn_phase = TurnPhase::Idle;
+            runtime_state.stale_response_ids.clear();
         }
         _ => {
             if let Some(exchange_index) = runtime_state.active_exchange_index {
@@ -780,12 +933,48 @@ async fn handle_response_done_event(
     runtime_state: &mut SidebandRuntimeState,
     outbound_tx: &mpsc::UnboundedSender<Message>,
 ) -> anyhow::Result<()> {
-    let exchange_index = ensure_authoritative_exchange(&mut guard);
-    let model_id = guard.config.model.clone();
     let response_id = runtime_state
         .response_id
         .clone()
         .or_else(|| realtime_event_response_id(event).map(str::to_string));
+    let response_status = realtime_event_response_status(event).unwrap_or("completed");
+    let active_exchange_index = runtime_state.active_exchange_index.or_else(|| {
+        guard
+            .session_state
+            .live
+            .active_exchange
+            .as_ref()
+            .map(|exchange| exchange.index)
+    });
+    let response_is_stale = response_id
+        .as_ref()
+        .map(|response_id| runtime_state.stale_response_ids.contains(response_id))
+        .unwrap_or(false);
+    let exchange_is_stale = match (
+        runtime_state.pending_response_exchange,
+        active_exchange_index,
+    ) {
+        (Some(pending_exchange), Some(current_exchange)) => pending_exchange != current_exchange,
+        _ => true,
+    };
+    if response_is_stale || exchange_is_stale {
+        guard
+            .diagnostics
+            .write(&DiagnosticRecord::StaleProviderEvent {
+                qsf_session_id: qsf_session_id.to_string(),
+                response_id,
+                status: Some(response_status.to_string()),
+                exchange_index: active_exchange_index,
+                at: time::OffsetDateTime::now_utc(),
+            })?;
+        log::warn!(
+            "ignored stale response.done for session `{qsf_session_id}` with response status `{response_status}`"
+        );
+        return Ok(());
+    }
+
+    let exchange_index = ensure_authoritative_exchange(&mut guard);
+    let model_id = guard.config.model.clone();
     let completed_at = SystemTime::now();
     let response_started_at = runtime_state
         .response_started_at
@@ -816,7 +1005,6 @@ async fn handle_response_done_event(
         .accumulated_output_tokens
         .saturating_add(response_model_use.output_tokens);
 
-    let response_status = realtime_event_response_status(event).unwrap_or("completed");
     match realtime_response_done_output_kind(event) {
         ResponseDoneOutputKind::FunctionCallOnly | ResponseDoneOutputKind::Mixed => {
             let function_calls = extract_response_function_call_attempts(event);
@@ -867,6 +1055,23 @@ async fn handle_response_done_event(
                         .map(str::to_string),
                 }),
             );
+
+            if response_status != "completed" {
+                apply_live_session_event(
+                    &mut guard.session_state,
+                    LiveSessionEvent::ExchangeCompleted {
+                        exchange_index,
+                        completed_at,
+                    },
+                );
+                guard.non_promotable_exchange_indices.insert(exchange_index);
+                promote_completed_trusted_exchanges(state, &mut guard).await?;
+                runtime_state.clear_in_flight_response_state();
+                runtime_state.active_exchange_index = None;
+                runtime_state.pending_response_exchange = None;
+                runtime_state.turn_phase = TurnPhase::Idle;
+                return Ok(());
+            }
 
             let mut output_messages = Vec::new();
             let mut immediate_resolutions = Vec::new();
@@ -1010,6 +1215,8 @@ async fn handle_response_done_event(
             request_sequence.push(response_create.clone());
             runtime_state.current_request_hash = Some(hash_request_sequence(&request_sequence));
             runtime_state.current_message_count = request_sequence.len();
+            runtime_state.pending_response_exchange = Some(exchange_index);
+            runtime_state.turn_phase = TurnPhase::ToolLoop;
             runtime_state.response_id = None;
             runtime_state.response_started_at = None;
             return Ok(());
@@ -1095,16 +1302,10 @@ async fn handle_response_done_event(
         );
     }
     promote_completed_trusted_exchanges(state, &mut guard).await?;
+    runtime_state.clear_in_flight_response_state();
     runtime_state.active_exchange_index = None;
-    runtime_state.response_id = None;
-    runtime_state.response_started_at = None;
-    runtime_state.current_request_hash = None;
-    runtime_state.current_message_count = 0;
-    runtime_state.accumulated_latency_ms = 0;
-    runtime_state.accumulated_input_tokens = 0;
-    runtime_state.accumulated_cached_input_tokens = 0;
-    runtime_state.accumulated_output_tokens = 0;
-    runtime_state.tool_calls_in_turn = 0;
+    runtime_state.pending_response_exchange = None;
+    runtime_state.turn_phase = TurnPhase::Idle;
 
     Ok(())
 }
@@ -1258,12 +1459,14 @@ fn aborted_tool_resolution(
 
 #[cfg(test)]
 mod tests {
+    use std::fs;
     use std::sync::{Arc as StdArc, Condvar, Mutex as StdMutex};
 
     use tempfile::TempDir;
     use tokio::sync::mpsc;
 
     use super::*;
+    use crate::diagnostics::DiagnosticRecord;
 
     fn state(tempdir: &TempDir) -> AppState {
         AppState::new_with_realtime_ws_base_url(
@@ -1298,6 +1501,84 @@ mod tests {
         )
         .await
         .expect("transcript event");
+    }
+
+    async fn diagnostic_records(state: &AppState, qsf_session_id: &str) -> Vec<DiagnosticRecord> {
+        let runtime = state
+            .session_runtime(qsf_session_id)
+            .await
+            .expect("runtime");
+        let diagnostics_path = runtime.lock().await.diagnostics.path().to_path_buf();
+        let contents = fs::read_to_string(diagnostics_path).expect("diagnostics log");
+        contents
+            .lines()
+            .map(|line| serde_json::from_str(line).expect("diagnostic record"))
+            .collect()
+    }
+
+    fn function_call_response_done(
+        event_id: &str,
+        response_id: &str,
+        status: &str,
+        call_id: &str,
+        tool_name: &str,
+        arguments: &str,
+    ) -> serde_json::Value {
+        serde_json::json!({
+            "type": "response.done",
+            "event_id": event_id,
+            "response": {
+                "id": response_id,
+                "status": status,
+                "output": [{
+                    "type": "function_call",
+                    "name": tool_name,
+                    "call_id": call_id,
+                    "arguments": arguments
+                }],
+                "usage": {
+                    "input_tokens": 1,
+                    "output_tokens": 1
+                }
+            }
+        })
+    }
+
+    fn assert_promoted_turn_response_is_owned(
+        state: &qsf_session::SessionState,
+        user_input: &str,
+        response_id: &str,
+    ) {
+        let turn = state
+            .turns
+            .iter()
+            .find(|turn| turn.user_input == user_input)
+            .expect("promoted turn");
+        let exchange = state
+            .exchanges
+            .iter()
+            .find(|exchange| exchange.index == turn.index)
+            .expect("promoted exchange for turn");
+        assert_eq!(exchange.final_user_input(), turn.user_input);
+        assert_eq!(
+            exchange
+                .output
+                .as_ref()
+                .and_then(|output| output.response_id.as_deref()),
+            Some(response_id)
+        );
+        assert!(
+            exchange
+                .provider_events
+                .iter()
+                .all(|provider_event| provider_event.exchange_index == exchange.index)
+        );
+        assert!(
+            exchange
+                .provider_events
+                .iter()
+                .any(|provider_event| provider_event.response_id.as_deref() == Some(response_id))
+        );
     }
 
     #[derive(Clone)]
@@ -1455,6 +1736,508 @@ mod tests {
                 DEFAULT_INJECTION_FRAGMENT_LIMIT,
                 DEFAULT_INJECTION_TOKEN_LIMIT
             )
+        );
+    }
+
+    #[tokio::test]
+    async fn continuation_noise_transcript_is_ignored_until_the_response_completes() {
+        let tempdir = TempDir::new().expect("tempdir");
+        let state = state(&tempdir);
+        let allocation = state.create_session().await.expect("session");
+        let mut runtime_state = SidebandRuntimeState::default();
+        let (outbound_tx, mut outbound_rx) = mpsc::unbounded_channel();
+
+        start_test_turn(
+            &state,
+            &allocation.qsf_session_id,
+            &mut runtime_state,
+            &outbound_tx,
+        )
+        .await;
+        outbound_rx.recv().await.expect("initial response.create");
+
+        handle_provider_event(
+            &state,
+            &allocation.qsf_session_id,
+            "call-tools",
+            "response.done",
+            &function_call_response_done(
+                "evt-tool-call",
+                "response-tool-call",
+                "completed",
+                "tool-call-1",
+                crate::realtime::tools::SEARCH_MEMORY_TOOL_NAME,
+                r#"{"query":"Pineapple Radar"}"#,
+            ),
+            &mut runtime_state,
+            &outbound_tx,
+        )
+        .await
+        .expect("tool response done");
+
+        outbound_rx.recv().await.expect("function_call_output");
+        outbound_rx
+            .recv()
+            .await
+            .expect("continuation response.create");
+        assert_eq!(runtime_state.turn_phase, TurnPhase::ToolLoop);
+
+        handle_provider_event(
+            &state,
+            &allocation.qsf_session_id,
+            "call-tools",
+            "conversation.item.input_audio_transcription.completed",
+            &serde_json::json!({
+                "type": "conversation.item.input_audio_transcription.completed",
+                "event_id": "evt-noise",
+                "item_id": "item-noise",
+                "transcript": "Thank you."
+            }),
+            &mut runtime_state,
+            &outbound_tx,
+        )
+        .await
+        .expect("ignored continuation transcript");
+
+        assert!(outbound_rx.try_recv().is_err());
+
+        let records = diagnostic_records(&state, &allocation.qsf_session_id).await;
+        let ignored = records
+            .iter()
+            .find(|record| {
+                matches!(
+                    record,
+                    DiagnosticRecord::IgnoredContinuationTranscript { .. }
+                )
+            })
+            .expect("ignored transcript diagnostic");
+        match ignored {
+            DiagnosticRecord::IgnoredContinuationTranscript {
+                transcript,
+                turn_phase,
+                response_id,
+                ..
+            } => {
+                assert_eq!(transcript, "Thank you.");
+                assert_eq!(*turn_phase, TurnPhase::ToolLoop);
+                assert!(response_id.is_none());
+            }
+            _ => unreachable!(),
+        }
+
+        handle_provider_event(
+            &state,
+            &allocation.qsf_session_id,
+            "call-tools",
+            "response.done",
+            &serde_json::json!({
+                "type": "response.done",
+                "event_id": "evt-tool-final",
+                "response": {
+                    "id": "response-tool-final",
+                    "status": "completed",
+                    "output": [{
+                        "type": "message",
+                        "content": [{
+                            "type": "output_text",
+                            "text": "memory answer"
+                        }]
+                    }],
+                    "usage": {
+                        "input_tokens": 1,
+                        "output_tokens": 1
+                    }
+                }
+            }),
+            &mut runtime_state,
+            &outbound_tx,
+        )
+        .await
+        .expect("continuation completion");
+
+        let continuity_dir = state.continuity_session_dir(&allocation.qsf_session_id);
+        let persisted = qsf_session::load_session_state(continuity_dir.join("session-state.json"))
+            .expect("persisted state");
+        assert_eq!(persisted.turns.len(), 1);
+        assert_eq!(persisted.turns[0].user_input, "hello tool loop");
+        assert_promoted_turn_response_is_owned(
+            &persisted,
+            "hello tool loop",
+            "response-tool-final",
+        );
+        assert!(
+            persisted
+                .turns
+                .iter()
+                .all(|turn| turn.user_input != "Thank you.")
+        );
+    }
+
+    #[tokio::test]
+    async fn cancelled_continuation_finalizes_the_active_exchange_before_the_next_turn() {
+        let tempdir = TempDir::new().expect("tempdir");
+        let state = state(&tempdir);
+        let allocation = state.create_session().await.expect("session");
+        let mut runtime_state = SidebandRuntimeState::default();
+        let (outbound_tx, mut outbound_rx) = mpsc::unbounded_channel();
+
+        start_test_turn(
+            &state,
+            &allocation.qsf_session_id,
+            &mut runtime_state,
+            &outbound_tx,
+        )
+        .await;
+        outbound_rx.recv().await.expect("initial response.create");
+
+        handle_provider_event(
+            &state,
+            &allocation.qsf_session_id,
+            "call-tools",
+            "response.done",
+            &function_call_response_done(
+                "evt-tool-call",
+                "response-tool-call",
+                "completed",
+                "tool-call-1",
+                crate::realtime::tools::SEARCH_MEMORY_TOOL_NAME,
+                r#"{"query":"Pineapple Radar"}"#,
+            ),
+            &mut runtime_state,
+            &outbound_tx,
+        )
+        .await
+        .expect("tool response done");
+
+        outbound_rx.recv().await.expect("function_call_output");
+        outbound_rx
+            .recv()
+            .await
+            .expect("continuation response.create");
+
+        handle_provider_event(
+            &state,
+            &allocation.qsf_session_id,
+            "call-tools",
+            "conversation.item.input_audio_transcription.completed",
+            &serde_json::json!({
+                "type": "conversation.item.input_audio_transcription.completed",
+                "event_id": "evt-noise",
+                "item_id": "item-noise",
+                "transcript": "Thank you."
+            }),
+            &mut runtime_state,
+            &outbound_tx,
+        )
+        .await
+        .expect("ignored continuation transcript");
+
+        let canceled_exchange_index = runtime_state
+            .active_exchange_index
+            .expect("active exchange before cancel");
+        handle_provider_event(
+            &state,
+            &allocation.qsf_session_id,
+            "call-tools",
+            "response.done",
+            &function_call_response_done(
+                "evt-tool-cancelled",
+                "response-tool-cancelled",
+                "cancelled",
+                "tool-call-2",
+                crate::realtime::tools::SEARCH_MEMORY_TOOL_NAME,
+                r#"{"query":"Pineapple Radar"}"#,
+            ),
+            &mut runtime_state,
+            &outbound_tx,
+        )
+        .await
+        .expect("cancelled continuation");
+
+        assert!(runtime_state.active_exchange_index.is_none());
+        assert!(runtime_state.pending_response_exchange.is_none());
+        assert_eq!(runtime_state.turn_phase, TurnPhase::Idle);
+        assert!(runtime_state.current_request_hash.is_none());
+        assert_eq!(runtime_state.current_message_count, 0);
+        assert_eq!(runtime_state.tool_calls_in_turn, 0);
+        assert_eq!(runtime_state.accumulated_latency_ms, 0);
+        assert_eq!(runtime_state.accumulated_input_tokens, 0);
+        assert_eq!(runtime_state.accumulated_cached_input_tokens, 0);
+        assert_eq!(runtime_state.accumulated_output_tokens, 0);
+
+        handle_provider_event(
+            &state,
+            &allocation.qsf_session_id,
+            "call-tools",
+            "conversation.item.input_audio_transcription.completed",
+            &serde_json::json!({
+                "type": "conversation.item.input_audio_transcription.completed",
+                "event_id": "evt-fresh",
+                "item_id": "item-fresh",
+                "transcript": "thanks"
+            }),
+            &mut runtime_state,
+            &outbound_tx,
+        )
+        .await
+        .expect("fresh idle transcript");
+
+        let fresh_response_create = outbound_rx.recv().await.expect("fresh response.create");
+        assert!(
+            fresh_response_create
+                .to_text()
+                .expect("text")
+                .contains("\"response.create\"")
+        );
+        let fresh_exchange_index = runtime_state
+            .active_exchange_index
+            .expect("fresh active exchange");
+        assert_ne!(fresh_exchange_index, canceled_exchange_index);
+
+        handle_provider_event(
+            &state,
+            &allocation.qsf_session_id,
+            "call-tools",
+            "response.done",
+            &serde_json::json!({
+                "type": "response.done",
+                "event_id": "evt-fresh-done",
+                "response": {
+                    "id": "response-fresh",
+                    "status": "completed",
+                    "output": [{
+                        "type": "message",
+                        "content": [{
+                            "type": "output_text",
+                            "text": "fresh answer"
+                        }]
+                    }],
+                    "usage": {
+                        "input_tokens": 1,
+                        "output_tokens": 1
+                    }
+                }
+            }),
+            &mut runtime_state,
+            &outbound_tx,
+        )
+        .await
+        .expect("fresh completion");
+
+        let continuity_dir = state.continuity_session_dir(&allocation.qsf_session_id);
+        let persisted = qsf_session::load_session_state(continuity_dir.join("session-state.json"))
+            .expect("persisted state");
+        assert_eq!(persisted.turns.len(), 1);
+        assert_eq!(persisted.turns[0].user_input, "thanks");
+        assert_promoted_turn_response_is_owned(&persisted, "thanks", "response-fresh");
+        assert!(
+            persisted
+                .turns
+                .iter()
+                .all(|turn| turn.user_input != "Thank you.")
+        );
+    }
+
+    #[tokio::test]
+    async fn stale_response_events_are_audited_without_mutating_the_fresh_exchange() {
+        let tempdir = TempDir::new().expect("tempdir");
+        let state = state(&tempdir);
+        let allocation = state.create_session().await.expect("session");
+        let mut runtime_state = SidebandRuntimeState::default();
+        let (outbound_tx, mut outbound_rx) = mpsc::unbounded_channel();
+
+        start_test_turn(
+            &state,
+            &allocation.qsf_session_id,
+            &mut runtime_state,
+            &outbound_tx,
+        )
+        .await;
+        outbound_rx.recv().await.expect("initial response.create");
+
+        handle_provider_event(
+            &state,
+            &allocation.qsf_session_id,
+            "call-tools",
+            "response.created",
+            &serde_json::json!({
+                "type": "response.created",
+                "event_id": "evt-created-old",
+                "response": {
+                    "id": "response-old",
+                    "status": "in_progress"
+                }
+            }),
+            &mut runtime_state,
+            &outbound_tx,
+        )
+        .await
+        .expect("old response.created");
+        assert_eq!(runtime_state.response_id.as_deref(), Some("response-old"));
+        let stale_request_hash = ContentHash([42; 32]);
+        runtime_state.current_request_hash = Some(stale_request_hash);
+        runtime_state.tool_calls_in_turn = 7;
+
+        handle_provider_event(
+            &state,
+            &allocation.qsf_session_id,
+            "call-tools",
+            "conversation.item.input_audio_transcription.completed",
+            &serde_json::json!({
+                "type": "conversation.item.input_audio_transcription.completed",
+                "event_id": "evt-interrupt",
+                "item_id": "item-interrupt",
+                "transcript": "stop"
+            }),
+            &mut runtime_state,
+            &outbound_tx,
+        )
+        .await
+        .expect("interrupting transcript");
+
+        let stale_response_id = "response-old";
+        assert!(runtime_state.stale_response_ids.contains(stale_response_id));
+        let fresh_exchange_index = runtime_state
+            .active_exchange_index
+            .expect("fresh active exchange");
+        let fresh_request_hash = runtime_state
+            .current_request_hash
+            .expect("fresh request hash");
+        assert_ne!(fresh_request_hash, stale_request_hash);
+        assert_eq!(runtime_state.tool_calls_in_turn, 0);
+        assert!(runtime_state.current_message_count > 0);
+
+        handle_provider_event(
+            &state,
+            &allocation.qsf_session_id,
+            "call-tools",
+            "response.created",
+            &serde_json::json!({
+                "type": "response.created",
+                "event_id": "evt-created-stale",
+                "response": {
+                    "id": stale_response_id,
+                    "status": "in_progress"
+                }
+            }),
+            &mut runtime_state,
+            &outbound_tx,
+        )
+        .await
+        .expect("stale response.created");
+        assert!(runtime_state.response_id.is_none());
+
+        handle_provider_event(
+            &state,
+            &allocation.qsf_session_id,
+            "call-tools",
+            "response.done",
+            &serde_json::json!({
+                "type": "response.done",
+                "event_id": "evt-stale-done",
+                "response": {
+                    "id": stale_response_id,
+                    "status": "completed",
+                    "output": [{
+                        "type": "message",
+                        "content": [{
+                            "type": "output_text",
+                            "text": "stale answer"
+                        }]
+                    }],
+                    "usage": {
+                        "input_tokens": 1,
+                        "output_tokens": 1
+                    }
+                }
+            }),
+            &mut runtime_state,
+            &outbound_tx,
+        )
+        .await
+        .expect("stale response.done");
+
+        let records = diagnostic_records(&state, &allocation.qsf_session_id).await;
+        let stale_record = records
+            .iter()
+            .find(|record| matches!(record, DiagnosticRecord::StaleProviderEvent { .. }))
+            .expect("stale provider diagnostic");
+        match stale_record {
+            DiagnosticRecord::StaleProviderEvent {
+                response_id,
+                status,
+                exchange_index,
+                ..
+            } => {
+                assert_eq!(response_id.as_deref(), Some(stale_response_id));
+                assert_eq!(status.as_deref(), Some("completed"));
+                assert_eq!(*exchange_index, Some(fresh_exchange_index));
+            }
+            _ => unreachable!(),
+        }
+
+        let runtime = state
+            .session_runtime(&allocation.qsf_session_id)
+            .await
+            .expect("runtime");
+        let guard = runtime.lock().await;
+        let exchange = guard
+            .session_state
+            .live
+            .active_exchange
+            .as_ref()
+            .expect("fresh active exchange");
+        assert!(exchange.provider_events.is_empty());
+        assert!(guard.session_state.turns.is_empty());
+        assert_eq!(runtime_state.turn_phase, TurnPhase::AwaitingResponse);
+        assert_eq!(
+            runtime_state.pending_response_exchange,
+            Some(fresh_exchange_index)
+        );
+        drop(guard);
+
+        handle_provider_event(
+            &state,
+            &allocation.qsf_session_id,
+            "call-tools",
+            "response.done",
+            &serde_json::json!({
+                "type": "response.done",
+                "event_id": "evt-fresh-done",
+                "response": {
+                    "id": "response-fresh",
+                    "status": "completed",
+                    "output": [{
+                        "type": "message",
+                        "content": [{
+                            "type": "output_text",
+                            "text": "fresh answer"
+                        }]
+                    }],
+                    "usage": {
+                        "input_tokens": 1,
+                        "output_tokens": 1
+                    }
+                }
+            }),
+            &mut runtime_state,
+            &outbound_tx,
+        )
+        .await
+        .expect("fresh response.done");
+
+        let continuity_dir = state.continuity_session_dir(&allocation.qsf_session_id);
+        let persisted = qsf_session::load_session_state(continuity_dir.join("session-state.json"))
+            .expect("persisted state");
+        assert_eq!(persisted.turns.len(), 1);
+        assert_eq!(persisted.turns[0].user_input, "stop");
+        assert_eq!(persisted.turns[0].assistant_response, "fresh answer");
+        assert_promoted_turn_response_is_owned(&persisted, "stop", "response-fresh");
+        assert!(
+            persisted
+                .turns
+                .iter()
+                .all(|turn| turn.assistant_response != "stale answer")
         );
     }
 
