@@ -349,7 +349,7 @@ async fn handle_provider_event(
                             response_id: runtime_state.response_id.clone(),
                             at: time::OffsetDateTime::now_utc(),
                         })?;
-                    log::warn!(
+                    log::info!(
                         "ignored continuation transcript for session `{qsf_session_id}` during {:?}: `{transcript}`",
                         runtime_state.turn_phase
                     );
@@ -751,13 +751,21 @@ async fn promote_completed_trusted_exchanges(
             .clone();
         runtime.trusted_promoted_exchange_count += 1;
 
-        if runtime.degraded
-            || runtime
-                .non_promotable_exchange_indices
-                .contains(&exchange.index)
+        if runtime
+            .non_promotable_exchange_indices
+            .contains(&exchange.index)
         {
+            log::info!(
+                "trusted exchange `{}` for session `{}` skipped for continuity promotion because it was marked non-promotable",
+                exchange.index,
+                runtime.qsf_session_id
+            );
+            continue;
+        }
+
+        if runtime.degraded {
             log::warn!(
-                "trusted exchange `{}` for session `{}` skipped for continuity promotion because it completed during an untrusted sideband window",
+                "trusted exchange `{}` for session `{}` skipped for continuity promotion because sideband trust is degraded",
                 exchange.index,
                 runtime.qsf_session_id
             );
@@ -985,9 +993,15 @@ async fn handle_response_done_event(
                 exchange_index: active_exchange_index,
                 at: time::OffsetDateTime::now_utc(),
             })?;
-        log::warn!(
-            "ignored stale response.done for session `{qsf_session_id}` with response status `{response_status}`"
-        );
+        if response_status == "cancelled" {
+            log::info!(
+                "ignored stale response.done for session `{qsf_session_id}` with response status `{response_status}`"
+            );
+        } else {
+            log::warn!(
+                "ignored stale response.done for session `{qsf_session_id}` with response status `{response_status}`"
+            );
+        }
         return Ok(());
     }
 

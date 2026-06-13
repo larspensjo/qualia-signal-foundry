@@ -3058,3 +3058,18 @@ crates/qsf_realtime_server/src/realtime/sideband.rs,
 crates/qsf_realtime_server/ui/src/realtime.ts,
 docs/Architecture/Architecture.RealtimeSessionServer.md,
 docs/DecisionLog.md; implements: Realtime sideband owns interruption decisions
+
+## 2026-06-13 - Realtime expected noise logs demoted
+
+Expected sideband recovery paths now log as informational events instead of warnings
+when they are working as designed.
+
+What changed:
+- Demoted ignored continuation transcripts, such as spurious "Thank you." captures
+  during tool loops, from warning to info.
+- Demoted stale cancelled `response.done` events from warning to info because they are
+  expected after sideband-owned interruption cancellation.
+- Split continuity-promotion skip logging so non-promotable interrupted exchanges are
+  distinguishable from genuinely degraded sideband trust.
+
+Refs: crates/qsf_realtime_server/src/realtime/sideband.rs
