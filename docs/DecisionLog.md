@@ -7,10 +7,7 @@ project has agreed to do going forward.
 ### How to add new entries
 - One entry per decision. Decisions are commitments, not summaries of work.
 - Implementation summaries and bug-fix postmortems belong in `EngineeringDiary.md`.
-  A bug fix earns a decision-log entry only when it produces a durable rule, and the
-  rule itself is the entry, not the fix.
 - Reversals of prior decisions get their own entry referencing the original.
-- A plan in itself, or change thereof, is not a decision until it is committed to.
 - Keep entries concise and reference concrete artifacts.
 - New entries go to the end of the file.
 
@@ -21,7 +18,8 @@ project has agreed to do going forward.
 - Safety and scope boundaries
 - Experiment outcomes promoted into accepted design
 - Reusable rules derived from incidents
-- The decisions are typically updated during planning, not during implementation (unless something unexpected happened).
+- The decisions are sometimes updated during planning, not during implementation (unless something unexpected happened).
+- Creating a plan isn't decision point if it was already obviously part of the project.
 
 ### How to use the decision log during development
 - Do not modify older entries if they were commited.
@@ -1244,3 +1242,32 @@ transcripts are diagnostic-only.
 Refs: crates/qsf_realtime_server/src/state.rs,
 crates/qsf_realtime_server/src/realtime/sideband.rs,
 crates/qsf_realtime_protocol/src/lib.rs
+
+## 2026-06-13 - Interruptions are captured as diagnostics, not durable continuity
+Decision: Sideband-owned interruptions and their presence/timing signals are recorded to
+the per-session diagnostics log only. The durable continuity/memory schema
+(`session-state.json`, `continuity-manifest.json`, promoted `Turn`s) and its golden tests
+carry no interruption representation. Interrupted exchanges stay non-promotable and absent
+from the continuity root. Richer durable interruption signals (pause/silence durations,
+barge-in classification, topic-shift flags) are added later only if presence evaluation
+shows a concrete need.
+Context: Resolves the open question of how deeply to represent interruptions. Inspecting
+the code showed interruptions are not durable at all today: the reducer pushes the
+interrupted exchange into `completed_exchanges`, which is `#[serde(skip)]` (in-memory
+only, guarded by `persist_keeps_completed_exchanges_in_memory_only`), and promotion skips
+non-promotable indices, so the `InterruptionRecord` is written to neither the continuity
+root nor the diagnostics log. A durable record therefore has to be added regardless of
+direction. Diagnostics-only keeps the trust boundary clean (interrupted/incomplete
+material stays out of trusted long-term memory), avoids golden-test churn for an
+unvalidated research feature, is still durable-on-disk for after-the-fact presence
+analysis, and matches `Concept.RealtimePresence` ("log interruptions without
+over-interpreting them").
+Consequences: The interrupted trusted exchange (with its `InterruptionRecord` + timing) is
+emitted to the diagnostics log at the point it is currently dropped, reusing/extending
+`DiagnosticRecord` rather than the durable schema. Interruption and degraded-exchange
+observability is read from diagnostics, not the continuity root; extraction into long-term
+memory continues to draw only from trusted promoted turns.
+Refs: crates/qsf_realtime_server/src/diagnostics.rs,
+crates/qsf_realtime_server/src/realtime/sideband.rs,
+crates/qsf_session/src/live_state.rs, crates/qsf_session/src/persistence.rs,
+docs/Concepts/Concept.RealtimePresence.md
