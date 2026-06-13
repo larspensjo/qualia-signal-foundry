@@ -9,7 +9,7 @@
 Completed.
 
 Implemented as the registered `associative-memory-toy-model` experiment. The
-experiment now runs deterministically against the Phase 4 memory fixture, compares
+experiment now runs deterministically against the memory-and-context fixture, compares
 recency-only, keyword/tag, and association-weighted retrieval, writes memory and
 context traces, and emits `memory-fixture.json` plus `retrieval-comparison.md` run
 artifacts.

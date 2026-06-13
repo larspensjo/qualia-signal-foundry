@@ -78,7 +78,7 @@ categories described below is still mostly aspirational.
 - Project introspection beyond the framed-self documentation slice: source
   inspection, run inspection, active-self inspection, and write-capable tools
 
-Last reviewed: 2026-06-10 against the Phase-4 realtime tool-loop implementation.
+Last reviewed: 2026-06-10 against the realtime tool-loop implementation.
 
 ## Summary
 

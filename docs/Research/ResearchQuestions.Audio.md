@@ -12,18 +12,18 @@ This document should remain exploratory. Questions listed here should not be tre
 
 Status: Exploratory
 
-The project has implemented transcript-first audio paths and has now accepted a
-browser-based realtime speech-to-speech direction as the next live voice slice.
-That direction is still experimental: the implementation exists only as a plan and
-design, not as a working browser conversation.
+The project has implemented transcript-first audio paths and browser-based
+realtime speech-to-speech infrastructure. The browser realtime path is still
+experimental and needs continued human verification, but it is no longer only a
+plan/design artifact.
 
 Long term, realtime voice conversation is the intended primary operating mode of
 QSF. The research questions here should therefore evaluate and shape that mode,
 not treat it as just another isolated experiment.
 
-Phase 5 adds direct evidence for the presence questions by extracting memory
-from trusted continuity roots and logging live-loop latency and interruption
-diagnostics for later review.
+The live-memory extraction and presence diagnostics work adds direct evidence for
+the presence questions by extracting memory from trusted continuity roots and
+logging live-loop latency and interruption diagnostics for later review.
 
 Relevant related documents:
 
@@ -44,8 +44,8 @@ Current implementation direction:
 - Build the first browser speech-to-speech slice with `gpt-realtime-2`, voice
   `marin`, medium reasoning effort, audio output, and provider `server_vad` with
   automatic response creation and interruption enabled.
-- Treat Phase-2 browser-relayed events as diagnostic-only until the server-side
-  sideband becomes authoritative.
+- Treat browser-relayed provider events as diagnostic-only; use the server-side
+  sideband as the authoritative source for trusted continuity.
 - Keep `gpt-realtime-translate` as a separate translation experiment.
 
 ## Research Theme: Audio and Presence
@@ -467,7 +467,7 @@ loop:
 3. Does barge-in stop or revise the active response quickly enough to feel present?
 4. Do diagnostic browser-relayed events map cleanly into QSF exchanges without
    entering sleep or continuity?
-5. Does the SDP `Location` header provide a reliable `call_id` for Phase-3
+5. Does the SDP `Location` header provide a reliable `call_id` for server-side
    sideband attachment?
 6. How often do stored transcripts diverge from what the model appeared to
    understand?

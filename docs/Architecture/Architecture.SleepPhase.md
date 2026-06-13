@@ -80,7 +80,7 @@ Manual review remains the boundary for decision-kind candidates.
 - Semantic deduplication or contradiction handling during promotion
 - Replay UI or report view for deterministic sleep comparison
 
-Last reviewed: 2026-06-06 against the Phase 7 shared sleep-view implementation.
+Last reviewed: 2026-06-06 against the shared sleep-view implementation.
 
 ## Summary
 

@@ -3105,3 +3105,27 @@ Refs: crates/qsf_app/src/experiments/live_memory_extraction.rs,
 crates/qsf_app/src/experiments/sleep_phase_session_summary.rs,
 crates/qsf_realtime_server/src/realtime/sideband.rs,
 docs/Experiments/Experiment.LiveMemoryExtraction.md
+
+## 2026-06-13 - Durable docs use capability names
+
+Replaced numbered implementation-slice references in durable documentation with
+stable capability names so the docs remain understandable after implementation
+plans are archived.
+
+What changed:
+- Updated realtime, memory, audio, observability, tool, concept, research, and
+  experiment docs to name browser relay, server-side sideband, realtime tool
+  loop, live-memory extraction, and latency diagnostics directly.
+- Updated decision-log wording so accepted decisions stand without requiring
+  readers to resolve temporary implementation-slice numbers.
+
+Observed:
+- Historical diary entries still contain older numbered references and were left
+  unchanged per the diary instructions for committed entries.
+
+Refs: docs/DecisionLog.md,
+docs/Architecture/Architecture.RealtimeSessionServer.md,
+docs/Architecture/Architecture.MemorySystem.md,
+docs/Architecture/Architecture.StateAndObservability.md,
+docs/Concepts/Concept.RealtimeAudio.md,
+docs/Research/ResearchQuestions.Audio.md

@@ -86,7 +86,7 @@ artifacts are immutable and never migrated in place; versioned readers for older
 live in a separate compatibility module used for replay and analysis. Pure additive
 changes (new optional fields with serde defaults) do not bump the version; removed,
 renamed, or semantically changed fields do.
-Context: Phase 4 of Plan.FrameworkMVP introduces memory records. The framework's replay
+Context: The memory-record implementation introduces durable memory records. The framework's replay
 goal — "would the same input retrieve the same memories?" — is incompatible with
 forward-migrating old run artifacts, which would distort historical evidence. Adding the
 version field at v1 is cheap; retrofitting it later is not. Memory records and
@@ -102,7 +102,7 @@ docs/Architecture/Architecture.MemorySystem.md
 
 ## 2026-05-11 - Model access uses explicit roles and optional provider adapters
 Decision: Model invocations are expressed as typed `ModelRole` plus `ModelRequest` pairs and execute through a synchronous `ModelClient` boundary. The OpenAI-backed path remains an optional adapter over `openai_provider_kit` and is selected explicitly by configuration rather than automatically when `OPENAI_API_KEY` happens to be present.
-Context: Phase 6 needed deterministic model-role experiments and a real OpenAI-backed path without forcing the whole runtime loop async or letting ambient environment variables silently change behavior.
+Context: The model-role work needed deterministic experiments and a real OpenAI-backed path without forcing the whole runtime loop async or letting ambient environment variables silently change behavior.
 Consequences: Mock and OpenAI clients share one provider-agnostic contract, model-role traces can stay uniform across providers, and future async or multi-provider work changes the adapter/effects boundary rather than every call site. Possessing an API key alone does not switch the runtime away from deterministic mock behavior.
 Refs: Cargo.toml, crates/qsf_app/src/models,
 crates/qsf_app/src/experiments/model_role_smoke.rs,
@@ -113,7 +113,7 @@ Decision: Real streaming transcription inputs are selected explicitly through
 `QSF_TRANSCRIPT_PROVIDER` and `QSF_TRANSCRIPT_INPUT_SOURCE`; the default path remains
 deterministic simulation, and provider adapters report transcript metadata rather than
 persisting raw audio.
-Context: Phase 9 introduced OpenAI Realtime WebSocket transcription plus prerecorded
+Context: The realtime transcription work introduced OpenAI Realtime WebSocket transcription plus prerecorded
 WAV and live microphone evaluation paths. Real audio depends on credentials, devices,
 permissions, network behavior, and local recording conditions, so it should not activate
 just because those capabilities are compiled in.
@@ -124,7 +124,7 @@ Refs: crates/qsf_app/src/audio/transcript_provider.rs,
 crates/qsf_app/src/experiments/streaming_transcription_mvp.rs
 
 ## 2026-05-13 - Feature-gated audio providers need explicit compile checks
-Decision: Phase 9 real-audio readiness includes compiling the `qsf_app/openai` feature
+Decision: Real-audio readiness includes compiling the `qsf_app/openai` feature
 path, not only running the default simulated transcript tests.
 Context: The default build kept deterministic streaming transcription tests green, but
 the OpenAI realtime transcription adapter had drifted against current CPAL and
@@ -138,11 +138,11 @@ docs/EngineeringDiary.md
 ## 2026-05-13 - Realtime transcription optimizes for latency first
 Decision: The OpenAI realtime transcription adapter defaults to `gpt-realtime-whisper`.
 `gpt-4o-transcribe` remains an evaluation alternative for accuracy-sensitive runs.
-Context: Phase 9 live tests proved the provider boundary. A follow-up model review
+Context: Live realtime transcription tests proved the provider boundary. A follow-up model review
 rechecked the official OpenAI model catalog and realtime transcription guide, which
 list `gpt-realtime-whisper` as the lowest-latency streaming transcription path for
 live audio and transcript deltas. The project values realtime presence, so latency is
-the first defaulting criterion for Phase 9.
+the first defaulting criterion for realtime transcription.
 Consequences: `gpt-realtime-whisper` is the first provider-backed transcription
 target. Accuracy comparisons should use explicit model selection rather than changing
 the default away from the realtime path. Full speech-to-speech work remains separate
@@ -156,7 +156,7 @@ https://developers.openai.com/api/docs/models/gpt-realtime-whisper
 Decision: Realtime voice-session providers are side-effect adapters. Provider tool-call
 requests are recorded as QSF `ToolRequested` events with automatic execution disabled
 until the QSF tool permission boundary explicitly handles them.
-Context: Phase 10 introduces full voice-session provider events, including possible
+Context: The realtime voice-session work introduces full provider events, including possible
 function/tool requests from realtime models. The project needs voice-native behavior
 without letting provider sessions bypass reducers, memory rules, or tool permissions.
 Consequences: Realtime voice providers may report requested tool calls, but they must
@@ -195,7 +195,7 @@ docs/Experiments/Report.VoiceLoopComparison.2026-05-14.md
 
 ## 2026-05-15 - Voice memory source is explicit and opt-in
 Decision: The text-owned voice loop loads memory through a `VoiceLoopMemorySource`
-boundary. The deterministic Phase 4 fixture remains the default, and file-backed memory
+boundary. The deterministic memory-and-context fixture remains the default, and file-backed memory
 is selected explicitly with `QSF_VOICE_MEMORY_SOURCE=file` and `QSF_VOICE_MEMORY_FILE`.
 Context: Live voice turns proved that memory retrieval can participate in the answer
 path, but the toy fixture made retrieval quality arbitrary for real spoken prompts.
@@ -559,7 +559,7 @@ file-backed session-memory fixture unless the caller explicitly selects demo/fix
 memory; the text loop still resumes from a persisted `state/text-loop/memory-store.json`
 when that store exists.
 Context: A fresh text-loop state still retrieved project-memory records because the
-Rust experiment's fallback source is the deterministic Phase 4 fixture. That is useful
+Rust experiment's fallback source is the deterministic memory-and-context fixture. That is useful
 for repeatable demos but surprising for launcher-driven manual testing of a new
 session.
 Consequences: Local Windows launcher runs model "new session" as empty memory by
@@ -609,9 +609,8 @@ prompt is reworded accordingly to target non-obvious connections rather than
 mechanical co-occurrence.
 Context: Before this split, sleep duplicated cross-turn co-retrieval work the
 live loop could already do deterministically, and the sleep prompt asked the
-model for associations it had no advantage producing. Phase 5 of
-`Plan.AssociativeRecallAndDropDrivenAssociations.md` moved the mechanical work
-into the live loop and introduced the proposer interface with two initial
+model for associations it had no advantage producing. The associative-recall
+proposer-interface work moved the mechanical work into the live loop and introduced the proposer interface with two initial
 proposers (`LlmCandidateProposer`, `SafetyNetCoRetrievalProposer`).
 Consequences: Mechanical association edges land deterministically without
 waiting for sleep; sleep work focuses on signals the model is actually suited to
@@ -630,7 +629,7 @@ Decision: The multi-turn text loop, text-owned voice loop, and peer `voice-loop`
 surface default to the shared `state/session/` continuity root. Legacy
 `state/text-loop/` state remains a read-only fallback for continuity and is never
 rewritten in place.
-Context: Phase 6 moved the text loop onto the shared resolver so voice and text
+Context: The shared-session resolver work moved the text loop onto the shared resolver so voice and text
 runs continue one session by default rather than splitting into separate
 continuity universes.
 Consequences: New cross-session state should land in `state/session/`; any future
@@ -684,7 +683,7 @@ scripts/qsf.ps1
 Decision: Warm-turn summarization retries, token-budget ageing, cross-turn
 co-retrieval persistence, and session-end flush behavior belong to
 `crate::session::ageing` rather than the multi-turn text experiment.
-Context: Phase 3 needed one shared ageing boundary so the text loop and future
+Context: The session-ageing extraction needed one shared ageing boundary so the text loop and future
 session-owned callers can share the same policy and side effects while reducers
 stay pure and emit `SessionEvent`s.
 Consequences: Ageing policy changes should land in `session/ageing.rs`; the
@@ -771,10 +770,10 @@ docs/Plans/Design.RealtimeVoiceConversation.md,
 https://developers.openai.com/api/docs/guides/realtime-webrtc
 
 ## 2026-06-09 - Browser-relayed realtime events are diagnostic until sideband authority
-Decision: Phase-2 browser-relayed realtime provider events are untrusted,
+Decision: Browser-relayed realtime provider events are untrusted,
 diagnostic-only facts. They may be persisted for inspection, but they are excluded
 from sleep consolidation, continuity promotion, and durable memory. Trusted live
-voice exchanges begin when the Phase-3 server-side sideband becomes the
+voice exchanges begin when the server-side sideband becomes the
 authoritative event source.
 Context: The browser can observe useful media/session events, but it is not an
 authoritative source for provider facts. The server-side sideband can attach to
@@ -796,11 +795,11 @@ The browser client secret lifetime is governed by provider-returned
 `client_secret.expires_at`. The provider `call_id` binding is active-call scoped,
 invalidated on stop/error/expiry, and retained only for a short diagnostic cleanup
 grace.
-Context: The project needs concrete defaults so Phase 2 can exercise the new code
+Context: The project needs concrete defaults so the browser realtime path can exercise the new code
 path by default. Current OpenAI docs identify `gpt-realtime-2` as the most capable
 realtime voice model, recommend `marin`/`cedar` for voice quality, expose
 `server_vad` for turn detection, and provide `expires_at` for client secrets.
-Consequences: Phase-2 tests and manual verification should expect these defaults.
+Consequences: Browser realtime tests and manual verification should expect these defaults.
 Changing model, voice, VAD mode, or binding lifetime later requires an explicit
 decision or provider-drift note rather than an incidental implementation change.
 Refs: docs/Plans/Design.RealtimeVoiceConversation.md,
@@ -818,8 +817,8 @@ events cannot complete the wrong exchange.
 Context: The existing reducer was adequate for a single-turn bridge, but
 full-duplex provider events can overlap, arrive out of order, duplicate, or finish
 after interruption.
-Consequences: Phase 1 applies the completion identity change before provider
-integration. Phase 2 must include reducer tests for out-of-order transcript
+Consequences: The completion identity change lands before provider
+integration. Browser media work must include reducer tests for out-of-order transcript
 completion, duplicate provider events, interruption before `response.created`,
 response completion after interruption, and two user turns before the prior
 response finishes.
@@ -836,7 +835,7 @@ server-side, records permission/result/error/timing, returns a
 Context: Earlier realtime voice work deliberately prevented providers from
 executing tools directly. The live sideband design now needs a positive execution
 path without weakening the QSF permission and observability boundary.
-Consequences: Do not overload `auto_executed` as proof of execution. Phase 4 must
+Consequences: Do not overload `auto_executed` as proof of execution. Realtime tool-loop verification must
 prove both allowed read-only execution and denied non-allow-listed calls, with
 records linked by provider `call_id` or tool-call id.
 Refs: docs/Architecture/Architecture.ToolSystem.md,
@@ -871,7 +870,7 @@ persisted state DTOs, reducer functions, exchange records, continuation/resume
 classification, continuity manifest, sleep records, and the foundational context
 and content-hash value types. `qsf_app` keeps the effectful launcher/runtime edge,
 compatibility wrappers, and resume schema-upgrade logging.
-Context: Phase 1 completed the crate extraction and the reducer completion identity
+Context: The session-crate extraction completed the crate extraction and the reducer completion identity
 update. The resume loader also had to preserve the existing schema-upgrade log in
 `qsf_app` while moving the file I/O and schema upgrade logic into `qsf_session`.
 Consequences: Future crates such as the realtime server can depend on
@@ -891,12 +890,12 @@ client secret is minted or returned to the browser, and no credential of any kin
 leaves the server. Media (audio RTP) still flows directly browser<->OpenAI, so only
 signaling is proxied and no media latency is added.
 Context: Reverses the ephemeral-token portion of the two 2026-06-09 realtime entries
-referenced below. Phase-2 planning review found the prior design fused two distinct
+referenced below. Browser-media planning review found the prior design fused two distinct
 OpenAI flows (minting an ephemeral secret AND server-proxying the SDP), which is
 internally inconsistent: an ephemeral secret exists to let the untrusted browser talk
 directly to OpenAI, but the server was also proxying the exchange. The server-side
 flow is the only one consistent with the declared trust boundary (the browser is
-untrusted) and with the Phase-3 sideband, which attaches to the server-captured
+untrusted) and with the server-side sideband, which attaches to the server-captured
 `call_id`; a browser-reported `call_id` could not be authoritative.
 Consequences: `POST /api/realtime/session` allocates a `qsf_session_id` and returns
 only non-secret session config (it does not call OpenAI); `POST /api/realtime/sdp`
@@ -907,7 +906,7 @@ location, and session-config schema must still be verified against the live API 
 implementation time, recording drift before changing defaults. Fallback if the
 server-side path cannot supply session config or return the `call_id` to the server:
 the ephemeral-token flow with an explicitly browser-reported (untrusted) `call_id`
-until the Phase-3 sideband validates it.
+until the server-side sideband validates it.
 Reverses: "Browser realtime voice uses a dedicated live server" (ephemeral-token
 minting) and "Realtime browser voice MVP defaults" (browser client-secret lifetime),
 both 2026-06-09.
@@ -928,16 +927,16 @@ inspection server UI.
 Refs: crates/qsf_realtime_server/ui/*,
 docs/Architecture/Architecture.RealtimeSessionServer.md
 
-## 2026-06-09 - Phase-2 relay artifacts stay diagnostic-only and self-describing
+## 2026-06-09 - Browser relay artifacts stay diagnostic-only and self-describing
 Decision: Browser-relayed provider events are persisted only as untrusted
 diagnostics outside the shared continuity root, and the diagnostic records carry
 explicit source/trust markers plus the provider identity fields needed for
 correlation and replay.
-Context: Phase 2 intentionally keeps the browser relay untrusted. The same
-artifacts must remain understandable when Phase 3 adds authoritative sideband
+Context: The browser relay is intentionally untrusted. The same
+artifacts must remain understandable alongside authoritative sideband
 events, so the record shape needs to declare its trust level instead of relying
 on storage location alone.
-Consequences: Phase-2 relay events do not feed sleep consolidation or continuity
+Consequences: Browser relay events do not feed sleep consolidation or continuity
 promotion. Diagnostic persistence must record `call_id`, `event_id`, `item_id`,
 `previous_item_id`, and `response_id` alongside the exchange payload.
 Refs: crates/qsf_realtime_server/src/diagnostics.rs,
@@ -950,7 +949,7 @@ Decision: When a new user turn arrives before the previous response finishes,
 the live reducer finalizes the prior exchange first, marks it interrupted if the
 response was still streaming, and treats late lifecycle events for that exchange
 as no-ops.
-Context: Phase-2 speech-to-speech exchanges can arrive out of order and can be
+Context: Browser speech-to-speech exchanges can arrive out of order and can be
 interrupted mid-response. The single-active-exchange reducer must stay stable in
 the face of duplicate or stale provider events.
 Consequences: The live reducer keeps one active exchange at a time, suppresses
@@ -960,11 +959,11 @@ Refs: crates/qsf_session/src/live_state.rs,
 crates/qsf_realtime_server/src/realtime/routes.rs
 
 ## 2026-06-09 - Provider drift: `reasoning_effort` is not forwarded to OpenAI realtime calls
-Decision: The accepted Phase-2 session default `reasoning_effort = medium` is
+Decision: The accepted browser realtime session default `reasoning_effort = medium` is
 kept as QSF session metadata (still returned to the browser in the allocation
 response) but is **not** forwarded in the OpenAI `/v1/realtime/calls` session
 object.
-Context: First live verification of the server-side SDP exchange (Phase 2)
+Context: First live verification of the server-side SDP exchange
 returned `400 unknown_parameter` for `session.reasoning_effort`. The realtime
 calls session schema does not accept that field; `gpt-realtime-2` itself passed
 schema validation. Recorded here per Plan decision 4 ("record any drift
@@ -989,7 +988,7 @@ TypeScript; Rust stays domain-pure, emitting domain events/traces (and, for live
 read-only one-way event stream) but never dashboard signals. Rust owns the event/trace
 schema; the signal schema is a TypeScript-owned presentation contract. Offline replay
 stays a separate mode of the same view, fed from sealed run artifacts.
-Context: Phase 2 made a live browser voice session work, which already emits the live
+Context: The browser realtime voice path made a live browser voice session work, which already emits the live
 event stream the dashboard's deferred live-tail phase needed; a researcher wanting to
 "talk and watch the mind light up" should not juggle two pages. Keeping presentation
 logic out of Rust preserves the project's control-versus-observation boundary and matches
@@ -1025,7 +1024,7 @@ Decision: The realtime sideband connects to
 server-held `OPENAI_API_KEY` in the Authorization header.
 Context: OpenAI's realtime server-controls guide documents the server-side
 websocket attach path for an in-progress WebRTC call. This was verified against
-the live docs during implementation to confirm the Phase-3 attach shape.
+the live docs during implementation to confirm the server-side attach shape.
 Consequences: The browser never receives a credential. The realtime server must
 keep the key server-side, build the websocket URL from the captured `call_id`,
 and treat any drift from this attach shape as a docs-updating event.
@@ -1037,7 +1036,7 @@ https://developers.openai.com/api/docs/guides/realtime-server-controls
 Decision: The server-side sideband attached to the server-captured `call_id` is
 the authoritative trusted source for live realtime exchanges. The browser relay
 remains diagnostic-only and must not feed continuity.
-Context: Phase 3 introduces a server-owned websocket control plane that can
+Context: The server-owned websocket control plane can
 inject context before `response.create`, observe provider events first-hand, and
 promote only trusted completed exchanges into the shared continuity root.
 Consequences: Trusted sideband exchanges may be sleep/continuity eligible after
@@ -1052,7 +1051,7 @@ docs/Architecture/Architecture.StateAndObservability.md,
 docs/Architecture/Architecture.MemorySystem.md
 
 ## 2026-06-10 - Realtime per-turn injection disables automatic response creation
-Decision: The Phase-3 realtime default is `server_vad` with
+Decision: The realtime default is `server_vad` with
 `turn_detection.create_response = false`, and the sideband owns `response.create`
 timing after memory injection.
 Context: Automatic provider response creation can start before the server has
@@ -1084,19 +1083,19 @@ crates/qsf_realtime_server/src/realtime/routes.rs,
 docs/Architecture/Architecture.RealtimeSessionServer.md,
 docs/Architecture/Architecture.StateAndObservability.md
 
-## 2026-06-10 - Phase-4 live tool scope is the three read-only perception tools
-Decision: The Phase-4 realtime allow-list is exactly `search_memory`,
+## 2026-06-10 - Live tool scope is the three read-only perception tools
+Decision: The realtime allow-list is exactly `search_memory`,
 `get_associations`, and `inspect_session_state` — new read-only tools implemented
 in `qsf_realtime_server`. No existing `qsf_app` tool is exposed to the live model
-this phase. Long-term intent: the live model eventually gets the full tool set,
-as its own later phase, once the required data services move past the
+for this scope. Long-term intent: the live model eventually gets the full tool set
+once the required data services move past the
 no-`qsf_app` boundary.
-Context: External review of the Phase-4 plan flagged the allow-list scope as a
+Context: External review of the realtime tool-loop plan flagged the allow-list scope as a
 blocking product decision; exposing existing `qsf_app` tools live would require
 either moving `ProjectDocService`/durable-session access into lean crates or
 breaking the `qsf_realtime_server`-must-not-depend-on-`qsf_app` boundary. Owner
 confirmed the three-tool scope 2026-06-10.
-Consequences: Phase 4 proves the tool-loop machinery (permission decisions,
+Consequences: The read-only realtime scope proves the tool-loop machinery (permission decisions,
 execution records, exchange boundary, credential hygiene) against server-owned
 data only. The generic `qsf_tools` registry core is designed so the later
 full-exposure phase is an additive change.
@@ -1112,7 +1111,7 @@ evidence.
 Context: The only durable record of a realtime conversation is the promoted
 `Turn` list; live-only records would leave no artifact of what tools ran or were
 denied (logs only), keep tool activity out of the read-only inspection surface,
-and deprive Phase-5 extraction/ageing of provenance and usage signal. Owner
+and deprive live-memory extraction/ageing of provenance and usage signal. Owner
 confirmed persistence 2026-06-10 after external review flagged it as a blocking
 schema decision.
 Consequences: The persisted session-state schema gains tool records behind
@@ -1133,7 +1132,7 @@ Context: With server-owned `response.create`, a tool loop produces multiple
 provider responses per turn, but the sideband tracked a single
 request-hash/message-count slot reset after each `response.done`. Recording only
 the final response would silently under-report cost and latency for trusted
-promotion and Phase-5 presence research.
+promotion and presence research.
 Consequences: Trusted promotion carries full-turn usage; token/latency accounting
 across a tool call is covered by tests; per-call detail lives on the execution
 record rather than inflating exchange-level fields.
@@ -1145,7 +1144,7 @@ Decision: The reusable tool trait, request, permission, result, metadata, and dy
 registry core live in `qsf_tools`; app-specific tool context access stays behind
 `qsf_app` adapters, and realtime tools use the same lean registry without depending
 on `qsf_app`.
-Context: Phase 4 needs realtime sideband tool execution while preserving the
+Context: Realtime sideband tool execution needs to preserve the
 `qsf_realtime_server` no-`qsf_app` boundary.
 Consequences: Concrete app tools can remain in `qsf_app`, while server-owned tools can
 be registered and permission-checked through the shared core.
@@ -1176,7 +1175,7 @@ Refs: crates/qsf_realtime_server/src/realtime/sideband.rs,
 crates/qsf_realtime_server/src/realtime/tools.rs
 
 ## 2026-06-10 - Realtime function-call wire shape
-Decision: Phase 4 uses OpenAI Realtime function tools declared on `session.tools` with
+Decision: The realtime tool loop uses OpenAI Realtime function tools declared on `session.tools` with
 `tool_choice`, returns results as `conversation.item.create` items of type
 `function_call_output`, and then sends `response.create`.
 Context: Official OpenAI Realtime tool documentation describes function tools as
@@ -1192,7 +1191,7 @@ crates/qsf_realtime_protocol/src/lib.rs
 Decision: Browser realtime voice sessions use the stable QSF session id `default`
 unless the operator explicitly starts `qsf_realtime_server` with
 `--random-session-id`.
-Context: The Phase-4 live tool test showed that UUID-per-run session ids made local
+Context: The live realtime tool test showed that UUID-per-run session ids made local
 memory reuse brittle: the memory store was seeded under one session directory while
 the live call used another. The operator preference is for a reusable default
 identity unless random isolation is explicitly requested.
@@ -1278,7 +1277,7 @@ continuity root `state/realtime/continuity/default`, reads only promoted trusted
 `SessionState.turns` as the canonical transcript source, treats matching
 persisted exchanges as metadata only, and falls back to a smoke input when the
 continuity root is absent or malformed.
-Context: Phase 5 needed an extraction pass that could reuse the existing sleep
+Context: Live-memory extraction needed a pass that could reuse the existing sleep
 summarizer and review/commit machinery without giving `qsf_realtime_server` a
 `qsf_app` dependency. Inspecting the persisted continuity artifacts showed that
 turns already hold the canonical transcript, tool records, and memory context,
@@ -1288,7 +1287,7 @@ report through review, memory promotion, and association deduplication.
 Consequences: Extraction provenance is labeled inline in the input text, the
 commit path can stay shared, realtime ageing explicitly reuses the existing
 warm-turn summary path before consolidation, and malformed or missing continuity
-artifacts do not block the phase. Latency and interruption observability remain
+artifacts do not block extraction. Latency and interruption observability remain
 diagnostics-only and are kept outside durable continuity.
 Refs: crates/qsf_app/src/experiments/live_memory_extraction.rs,
 crates/qsf_app/src/experiments/sleep_phase_session_summary.rs,

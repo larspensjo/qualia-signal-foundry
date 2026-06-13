@@ -246,4 +246,4 @@ turn latency.
 The voice loop now has an opt-in file-backed memory source through
 `QSF_VOICE_MEMORY_SOURCE=file` and `QSF_VOICE_MEMORY_FILE=<path>`. Next, use that
 boundary with approved sleep-phase memory candidates or a small session memory store,
-then compare retrieval quality against the Phase 4 fixture.
+then compare retrieval quality against the memory-and-context fixture.

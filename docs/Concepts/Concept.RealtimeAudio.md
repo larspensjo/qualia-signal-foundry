@@ -25,9 +25,9 @@ Exploratory concept with one accepted implementation direction:
 - `docs/Plans/Plan.RealtimeVoiceConversation.md`
 - `docs/Architecture/Architecture.RealtimeSessionServer.md`
 
-The Phase-0 baseline for the first browser speech-to-speech slice was accepted on
-2026-06-09. This concept remains broader than that plan and should not be read as
-an implementation commitment unless the decision log says so.
+The browser speech-to-speech defaults for the first realtime slice were accepted
+on 2026-06-09. This concept remains broader than that plan and should not be read
+as an implementation commitment unless the decision log says so.
 
 Realtime audio is also the path toward QSF's eventual primary operating mode. The
 named experiments below are validation steps for that mode, not an indication that
@@ -51,9 +51,10 @@ Realtime audio also produces research signals that text alone does not:
 The important project question is not just how to play audio. It is how live
 speech should connect to memory, attention, state, and observable continuity.
 
-Phase 5 moves one of those questions into implementation by extracting trusted
-realtime continuity roots in `qsf_app` and recording live-loop latency and
-interruption diagnostics in the realtime server.
+The live-memory extraction and presence diagnostics work moves one of those
+questions into implementation by extracting trusted realtime continuity roots in
+`qsf_app` and recording live-loop latency and interruption diagnostics in the
+realtime server.
 
 ## Three Planes
 
@@ -156,7 +157,7 @@ Status: implemented as the deterministic QSF-owned voice path.
 ### Realtime Browser Voice MVP
 
 Use browser WebRTC for speech-to-speech conversation, with provider VAD and
-barge-in. Record Phase-2 browser-relayed events as diagnostic-only QSF exchanges.
+barge-in. Record browser-relayed events as diagnostic-only QSF exchanges.
 
 Questions it should answer:
 

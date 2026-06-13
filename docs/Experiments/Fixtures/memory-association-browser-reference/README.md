@@ -7,7 +7,7 @@ This fixture is a tracked reference continuity bundle for QA testing the memory 
 - `text-loop/session-state.json` captures a mock multi-turn text-loop session after resuming from a consolidated sleep brief.
 - `text-loop/continuity-manifest.json` captures the manifest after a follow-up awake session, so `sleep_pending` is true and the next resume mode is `awake_continuation`.
 - `text-loop/consolidated-brief.json` and `text-loop/archive/` preserve the sleep output that bootstrapped the follow-up session.
-- `text-loop/memory-store.json` is curated from generated state: it includes the phase-four seed memory records, the generated sleep-promoted memory, live co-retrieval associations, varied edge weights, mixed memory kinds, reinforcement counts, and some unreinforced records.
+- `text-loop/memory-store.json` is curated from generated state: it includes the memory-and-context seed records, the generated sleep-promoted memory, live co-retrieval associations, varied edge weights, mixed memory kinds, reinforcement counts, and some unreinforced records.
 
 ## QA Focus
 

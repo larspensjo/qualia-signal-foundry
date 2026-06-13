@@ -5,7 +5,7 @@
 Maturity: Sketch
 
 This document captures the accepted architecture for the browser-based realtime
-voice conversation server and the implemented Phase-4 server sideband behavior.
+voice conversation server and the implemented server-side sideband behavior.
 This server is the planned home for QSF's eventual primary realtime conversation
 mode, not a one-off experiment server.
 
@@ -22,11 +22,11 @@ mode, not a one-off experiment server.
   OpenAI realtime calls endpoint with the server-held API key, captures
   `call_id`, stores the `{ qsf_session_id <-> call_id }` binding, and returns
   the SDP answer.
-- The Phase-3 server-side sideband now attaches to the server-captured
+- The server-side sideband now attaches to the server-captured
   `call_id`, injects memory before `response.create`, promotes trusted
   completed exchanges into the shared continuity root, and treats the browser
   relay as diagnostic-only.
-- The Phase-4 sideband declares a read-only realtime tool allow-list
+- The realtime sideband declares a read-only realtime tool allow-list
   (`search_memory`, `get_associations`, `inspect_session_state`), records
   `ToolRequested` and `ToolResolved` events, executes tools outside the session
   mutex, returns `function_call_output`, and re-issues `response.create`.
@@ -34,7 +34,7 @@ mode, not a one-off experiment server.
   exchange; finalization waits for the eventual spoken response. Tool-loop model
   usage is aggregated onto the trusted exchange, while each tool execution keeps
   per-response usage.
-- Phase 5 adds live-loop latency observations for final transcript, memory
+- Live-loop latency observations cover final transcript, memory
   injection, response creation, and first audio, plus durable diagnostics for
   interrupted trusted exchanges.
 - `WS /api/realtime/events` accepts typed browser relay envelopes, validates
@@ -46,7 +46,7 @@ mode, not a one-off experiment server.
 - `crates/qsf_realtime_server/ui/` is a dedicated Vite + TypeScript + Biome +
   Vitest browser preview surface with a minimal WebRTC client and relay-envelope
   mapping tests.
-- The shared reducer overlap matrix now handles the phase-2 out-of-order and
+- The shared reducer overlap matrix now handles the browser-relay out-of-order and
   interruption cases inside `qsf_session`.
 
 **Partial:**
@@ -58,13 +58,9 @@ mode, not a one-off experiment server.
 
 **Not yet implemented:**
 
-- Phase 5 memory extraction / presence refinement for the browser live mode.
-  The explicit extraction pass is offline consolidation: after it consumes a
-  realtime continuity root, the continuity manifest resumes from the
-  consolidated brief even when the run produced no promoted memory records.
 - Full `qsf_app` tool exposure to the live realtime model.
 
-Last reviewed: 2026-06-13 against the implemented Phase-5 latency and
+Last reviewed: 2026-06-13 against the implemented live-loop latency and
 interruption diagnostics.
 
 ## Purpose
@@ -83,7 +79,7 @@ tests, but the intended operator experience is a normal realtime conversation mo
 The current `qsf.ps1 app -Experiment ...` path remains a harness for today's
 experiments, not the final shape for this server.
 
-## Accepted Phase-0 Defaults
+## Accepted Browser Realtime Defaults
 
 - Crate: `qsf_realtime_server`.
 - Browser media: WebRTC, owned by the browser.
@@ -155,7 +151,7 @@ mode should not be exposed only as `app -Experiment <name>`.
 
 ## Trust Model
 
-Phase 2 has only browser-relayed provider events. The browser is not an
+The browser relay is not an
 authoritative source for provider facts, so relayed events are:
 
 - schema-validated,
@@ -165,8 +161,8 @@ authoritative source for provider facts, so relayed events are:
 - persisted only as diagnostic artifacts with explicit source/trust markers,
 - excluded from sleep consolidation and continuity promotion.
 
-Phase 3 introduces the server-side sideband. Events observed through that sideband
-are authoritative and may produce trusted, sleep-eligible exchanges.
+Events observed through the server-side sideband are authoritative and may
+produce trusted, sleep-eligible exchanges.
 
 ## Provider Event Mapping Contract
 
@@ -207,8 +203,8 @@ Reducer tests for the first implementation must cover:
 state, events, exchanges, persistence DTOs, continuity manifest, and event-record
 contracts.
 
-It should not require the full `qsf_app` runtime for the Phase-2 media slice. Later
-phases may add explicit dependencies or adapter crates for:
+It should not require the full `qsf_app` runtime for the browser media slice.
+Later capabilities may add explicit dependencies or adapter crates for:
 
 - memory retrieval and working-memory packet construction,
 - sleep/live-memory eligibility policy,
@@ -217,7 +213,7 @@ phases may add explicit dependencies or adapter crates for:
 
 ## Verification
 
-Phase 2 automated verification:
+Browser media automated verification:
 
 - session route returns non-secret defaults,
 - SDP proxy stores `call_id`,
@@ -226,7 +222,7 @@ Phase 2 automated verification:
 - reducer overlap/out-of-order matrix is green,
 - browser event-mapping TypeScript tests pass.
 
-Phase 2 human verification:
+Browser media human verification:
 
 - open browser,
 - start session,

@@ -6,7 +6,7 @@ Running
 
 ## Summary
 
-Validate the Phase-4 realtime tool plane: during a live voice session, the model
+Validate the realtime tool plane: during a live voice session, the model
 can request read-only QSF perception tools, the server sideband executes or denies
 them under an allow-list, returns `function_call_output`, and keeps the trusted
 exchange open until the eventual spoken response.
@@ -44,7 +44,7 @@ promotion rules.
 
 - Write-capable tools
 - Existing `qsf_app` project-document or recall-turn tools in the live model
-- Phase-5 memory extraction and presence cues
+- Live-memory extraction and presence cues
 
 ## Setup
 
@@ -69,7 +69,7 @@ promotion rules.
 - `cargo test` covers reducer persistence, protocol builders/parsers, permission
   decisions, malformed-argument recovery, mixed-output function calls, loop-cap
   recovery, and lock-free sideband execution.
-- `cargo clippy --all-targets -- -D warnings` and `cargo fmt` are the phase gates.
+- `cargo clippy --all-targets -- -D warnings` and `cargo fmt` are the completion gates.
 
 ## Human Observations
 

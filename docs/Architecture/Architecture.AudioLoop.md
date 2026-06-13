@@ -10,8 +10,8 @@ This document captures an early candidate architecture for real-time audio inter
 
 The transcript-first pipeline, text-owned voice loop, and realtime provider bridge
 described later in this document are implemented. A browser-based full-duplex
-realtime voice conversation has an accepted Phase-0 design baseline, but is not
-implemented yet.
+realtime voice conversation now has dedicated server/UI infrastructure, with
+human-verified end-to-end barge-in evaluation still pending.
 
 **Implemented today (all under the optional `openai` Cargo feature):**
 
@@ -83,7 +83,7 @@ implemented yet.
 - Translation provider (`gpt-realtime-translate`) integration
 - A live debug UI for audio state
 
-Last reviewed: 2026-06-10 against the implemented Phase-3 manual-response
+Last reviewed: 2026-06-10 against the implemented manual-response
 preview path and the still-pending human audio verification.
 
 ## Summary
@@ -722,7 +722,7 @@ The next live audio step is the browser realtime voice MVP described in
 `docs/Plans/Plan.RealtimeVoiceConversation.md` and
 `docs/Architecture/Architecture.RealtimeSessionServer.md`: WebRTC media in the
 browser, `qsf_realtime_server` for server-side SDP rendezvous, diagnostic-only
-event relay in Phase 2, and authoritative sideband control in Phase 3.
+browser relay events, and authoritative sideband control.
 
 Do not let the realtime model become the whole simulated mind. The media plane may
 be provider-owned, but memory, context injection, tool permission, event logs, sleep

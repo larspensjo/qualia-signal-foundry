@@ -28,7 +28,7 @@ QSF owns the transcript-to-context-to-model-to-output path.
 - Voice memory source selection uses `QSF_VOICE_MEMORY_SOURCE`.
 - Default memory source: `memory_store`, resolved from the shared session state
   directory.
-- Optional deterministic fixture source: `QSF_VOICE_MEMORY_SOURCE=phase_four_fixture`.
+- Optional deterministic memory-and-context fixture source: `QSF_VOICE_MEMORY_SOURCE=phase_four_fixture`.
 - Optional file memory source: `QSF_VOICE_MEMORY_SOURCE=file` with
   `QSF_VOICE_MEMORY_FILE` pointing at a JSON `MemoryFixture`.
 - Repeatable example file source:
@@ -207,7 +207,7 @@ same way text turns do.
   cross-checking events and traces.
 - The voice loop can now load memory from an opt-in JSON file source with
   `QSF_VOICE_MEMORY_SOURCE=file` and `QSF_VOICE_MEMORY_FILE=<path>`. The deterministic
-  default remains `phase_four_fixture`.
+  default remains the deterministic `phase_four_fixture` fixture source.
 - Live file-backed memory validation artifact:
   `runs/2026-05-15-090612-text-owned-voice-loop`.
 - That run used `docs\Experiments\Fixtures\voice-memory.example.json`, selected

@@ -1,7 +1,7 @@
 # Experiment.LiveMemoryExtraction
 
 ## Status
-Completed 2026-06-13. Validation record for phase 5 live memory extraction and presence observability.
+Completed 2026-06-13. Validation record for live memory extraction and presence observability.
 
 ## Goal
 Extract reviewable memory candidates from the trusted realtime continuity root without mutating the live voice loop, while keeping interruption and latency signals durable for later inspection.

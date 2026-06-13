@@ -203,9 +203,9 @@ Live interaction state
 
 Realtime presence therefore produces raw material for later memory consolidation.
 
-Phase 5 adds a concrete observability slice for that idea: trusted interruptions
-are recorded as durable diagnostics, and the live loop emits stage-by-stage and
-end-to-end latency observations.
+The live-loop diagnostics add a concrete observability slice for that idea:
+trusted interruptions are recorded as durable diagnostics, and the live loop
+emits stage-by-stage and end-to-end latency observations.
 
 ## Relationship to External Inputs
 
@@ -451,8 +451,8 @@ Evaluate whether this improves perceived presence.
 Exploratory.
 
 Realtime presence is a central concept. The full behavior is still exploratory,
-but the first browser speech-to-speech architecture has an accepted Phase-0
-decision baseline as of 2026-06-09.
+but the first browser speech-to-speech architecture has accepted defaults and
+dedicated server/UI infrastructure as of 2026-06-13.
 
 The next useful step is the realtime browser voice MVP with detailed logging,
 followed by a focused review of latency, interruption behavior, transcript

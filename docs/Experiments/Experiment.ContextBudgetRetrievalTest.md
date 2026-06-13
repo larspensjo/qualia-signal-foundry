@@ -9,7 +9,7 @@
 Completed.
 
 Implemented as the registered `context-budget-retrieval-test` experiment. The
-experiment now runs deterministically against the Phase 4 memory fixture, compares
+experiment now runs deterministically against the memory-and-context fixture, compares
 retrieval strategies under a deliberately small two-fragment budget, and emits
 `memory-fixture.json` plus `context-budget-comparison.md` run artifacts.
 

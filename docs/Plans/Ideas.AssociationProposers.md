@@ -2,16 +2,15 @@
 
 ## Status
 
-Idea backlog. Opened alongside the Phase 5 landing of the sleep proposer
-interface in `Plan.AssociativeRecallAndDropDrivenAssociations.md`. None of the
+Idea backlog. Opened alongside the sleep proposer interface landing. None of the
 entries below are committed work; they are candidate proposers for the sleep
 pipeline that need a measurable signal before promotion.
 
 ## Purpose
 
-The Phase 5 design split mechanical association work (live, on drop and on
-session end) from non-obvious associations (sleep, via a pluggable proposer
-interface). Two proposers ship as of Phase 5: `LlmCandidateProposer` and
+The implemented proposer design split mechanical association work (live, on drop
+and on session end) from non-obvious associations (sleep, via a pluggable
+proposer interface). Two proposers ship today: `LlmCandidateProposer` and
 `SafetyNetCoRetrievalProposer`. Future proposers should enter through this
 backlog with a stated signal, a noise risk, and an evaluation plan — not by
 direct addition to the sleep pipeline.

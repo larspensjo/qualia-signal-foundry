@@ -55,7 +55,7 @@ candidate categories listed below still have no shared module.
 - `qsf_realtime_server` now also records trusted sideband exchange promotion into
   the shared continuity root, while keeping browser relay exchanges confined to
   relay diagnostics.
-- Phase 5 extends the realtime observability surface with live-loop latency
+- Live-loop latency diagnostics extend the realtime observability surface with
   observations and durable diagnostics for interrupted trusted exchanges.
 - Realtime tool activity has two distinct records: `ToolRequestRecord` captures
   the provider request, and `ToolExecutionRecord` captures the permission
@@ -78,25 +78,25 @@ candidate categories listed below still have no shared module.
   graph inspection and contradiction handling are not implemented
 - **Tool State** is exposed through registry metadata, app event logs, and
   realtime request/execution records; there is no separate `ToolState` summary
+- **Realtime Session State** for browser speech-to-speech exists across
+  `qsf_session` and `qsf_realtime_server`: provider `call_id` bindings, browser
+  relay trust/source markers, diagnostic-only exchange records, authoritative
+  sideband attachment, and context-injection / tool-result correlation surfaces
+  are implemented, but there is no unified inspection model yet
 
 **Not yet implemented:**
 
 - **Identity / Self-Model State** — no module exists
 - **Research State** as a structured surface — experiment metadata lives in the
   report but not as an inspectable runtime category
-- **Realtime Session State** for browser speech-to-speech: provider `call_id`
-  bindings, browser relay trust/source markers, diagnostic-only exchange records,
-  authoritative sideband attachment, and context-injection / tool-result
-  correlation surfaces are split between `qsf_session` and
-  `qsf_realtime_server`.
 - Observability views beyond the per-run markdown report (no timeline UI, no
   memory-graph view, no cost dashboard)
 - `experiment_id` and `memory_update_id` correlation across runs
 
 Last reviewed: 2026-06-13 against explicit remember-this capture observability,
-retrieval skip reasons, the implemented Phase-3 sideband promotion path, the
-realtime diagnostic surface, Phase-4 realtime tool execution records, and the
-Phase-5 latency/interruption diagnostics.
+retrieval skip reasons, the implemented sideband promotion path, the realtime
+diagnostic surface, realtime tool execution records, and the live-loop
+latency/interruption diagnostics.
 
 ## Summary
 
