@@ -3035,3 +3035,26 @@ Observed:
 Refs: crates/qsf_realtime_server/src/realtime/tools.rs,
 docs/DecisionLog.md; implements: Session inspection reports completed turns and active
 exchange presence
+
+## 2026-06-13 - Realtime provider auto-interrupt disabled
+
+Realtime voice now keeps provider VAD for turn detection but disables provider-owned
+auto-interruption so the sideband can decide from final transcripts instead of raw VAD.
+
+What changed:
+- Added an explicit `interrupt_response` parameter to the realtime protocol session
+  update builder and set the realtime server/UI defaults to `false`.
+- Ignored empty final transcripts in the sideband before they can create a trusted
+  exchange or emit `response.create`.
+- Added a protocol `response.cancel` builder and emit it before a sideband-owned
+  interruption starts the replacement turn.
+- Updated the browser parser/reducer so nested cancelled `response.done` events return
+  the UI to idle instead of leaving it in "Speaking".
+- Recorded the sideband-owned interruption rule in `DecisionLog.md`.
+
+Refs: crates/qsf_realtime_protocol/src/lib.rs,
+crates/qsf_realtime_server/src/state.rs,
+crates/qsf_realtime_server/src/realtime/sideband.rs,
+crates/qsf_realtime_server/ui/src/realtime.ts,
+docs/Architecture/Architecture.RealtimeSessionServer.md,
+docs/DecisionLog.md; implements: Realtime sideband owns interruption decisions

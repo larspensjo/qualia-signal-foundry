@@ -93,6 +93,7 @@ pub fn build_openai_realtime_conversation_session_update(
     output_modalities: &[String],
     pcm_rate_hz: u32,
     create_response: bool,
+    interrupt_response: bool,
     tools: &[RealtimeToolDefinition],
     tool_choice: Option<&str>,
     input_transcription_model: Option<&str>,
@@ -112,7 +113,7 @@ pub fn build_openai_realtime_conversation_session_update(
                     "turn_detection": {
                         "type": "server_vad",
                         "create_response": create_response,
-                        "interrupt_response": true,
+                        "interrupt_response": interrupt_response,
                     },
                 },
                 "output": {
@@ -200,6 +201,12 @@ pub fn build_openai_realtime_response_create_with_tool_choice(
         value["response"]["tool_choice"] = Value::String(tool_choice.to_string());
     }
     value
+}
+
+pub fn build_openai_realtime_response_cancel() -> Value {
+    serde_json::json!({
+        "type": "response.cancel",
+    })
 }
 
 pub fn build_openai_realtime_function_call_output(call_id: &str, output: &str) -> Value {
@@ -401,6 +408,7 @@ mod tests {
             &["audio".to_string()],
             24_000,
             false,
+            false,
             &[],
             None,
             None,
@@ -408,6 +416,10 @@ mod tests {
 
         assert_eq!(
             update["session"]["audio"]["input"]["turn_detection"]["create_response"],
+            false
+        );
+        assert_eq!(
+            update["session"]["audio"]["input"]["turn_detection"]["interrupt_response"],
             false
         );
         assert!(update["session"]["audio"]["input"]["transcription"].is_null());
@@ -421,6 +433,7 @@ mod tests {
             "Speak briefly.",
             &["audio".to_string()],
             24_000,
+            false,
             false,
             &[],
             None,
@@ -472,6 +485,7 @@ mod tests {
             &["audio".to_string()],
             24_000,
             false,
+            false,
             &[RealtimeToolDefinition::function(
                 "lookup",
                 "Read memory.",
@@ -511,6 +525,13 @@ mod tests {
         );
 
         assert_eq!(item["response"]["tool_choice"], "none");
+    }
+
+    #[test]
+    fn response_cancel_uses_provider_cancel_event() {
+        let item = build_openai_realtime_response_cancel();
+
+        assert_eq!(item["type"], "response.cancel");
     }
 
     #[test]

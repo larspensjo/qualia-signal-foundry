@@ -84,9 +84,9 @@ experiments, not the final shape for this server.
 - Voice: `marin`.
 - Reasoning effort: `medium`.
 - Output modality: `["audio"]`.
-- Turn detection: provider `server_vad`, with `create_response = false` so the
-  sideband can inject context before issuing `response.create`; interruption
-  stays enabled.
+- Turn detection: provider `server_vad`, with `create_response = false` and
+  `interrupt_response = false` so the sideband owns context injection and
+  interruption decisions before issuing `response.create`.
 - Browser session config: `POST /api/realtime/session` returns non-secret
   accepted defaults; the browser receives no client secret.
 - `call_id` binding: active-call scoped, invalidated on stop/error/expiry, with

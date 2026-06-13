@@ -1229,3 +1229,18 @@ Consequences: Tool output and downstream consumers must treat completed promoted
 as the auditable count, and active exchanges are reported separately rather than being
 mixed into the completion total.
 Refs: crates/qsf_realtime_server/src/realtime/tools.rs
+
+## 2026-06-13 - Realtime sideband owns interruption decisions
+Decision: Browser realtime voice sessions keep provider `server_vad` enabled but set
+`interrupt_response = false`; QSF sideband logic, not provider auto-cancel, owns
+whether detected speech interrupts an in-flight response.
+Context: Live testing showed assistant audio or empty VAD tails could trigger provider
+auto-interruption before QSF received the final transcript and could classify it as
+noise.
+Consequences: The provider should not cancel assistant speech on raw VAD alone.
+Final transcripts remain the sideband's decision point for starting, ignoring, or
+interrupting turns; genuine interruptions send `response.cancel`, and empty final
+transcripts are diagnostic-only.
+Refs: crates/qsf_realtime_server/src/state.rs,
+crates/qsf_realtime_server/src/realtime/sideband.rs,
+crates/qsf_realtime_protocol/src/lib.rs

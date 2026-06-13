@@ -141,7 +141,7 @@ export const DEFAULT_SESSION_CONFIG: SessionConfig = {
       turn_detection: {
         type: "server_vad",
         create_response: false,
-        interrupt_response: true,
+        interrupt_response: false,
       },
     },
   },
@@ -282,9 +282,10 @@ function applyRelayEnvelope(state: ConversationState, envelope: RelayEnvelope): 
       };
     case "response_completed": {
       const text = envelope.text?.trim();
+      const phase = envelope.status && envelope.status !== "completed" ? "idle" : "speaking";
       return {
         ...base,
-        phase: "speaking",
+        phase,
         transcript: text
           ? appendTranscript(state.transcript, { role: "assistant", text })
           : state.transcript,
@@ -407,13 +408,25 @@ export function parseProviderDataChannelMessage(raw: string): ProviderDataChanne
     type,
     item_id: stringField(parsed.item_id),
     previous_item_id: stringField(parsed.previous_item_id),
-    response_id: stringField(parsed.response_id),
+    response_id: stringField(parsed.response_id) ?? nestedStringField(parsed, "response", "id"),
     transcript: stringField(parsed.transcript),
-    text: stringField(parsed.text),
-    status: stringField(parsed.status),
+    text: stringField(parsed.text) ?? nestedStringField(parsed, "response", "text"),
+    status: stringField(parsed.status) ?? nestedStringField(parsed, "response", "status"),
     audio_marker: stringField(parsed.audio_marker),
     payload: parsed.payload ?? parsed,
   };
+}
+
+function nestedStringField(
+  value: Record<string, unknown>,
+  objectKey: string,
+  fieldKey: string,
+): string | undefined {
+  const nested = value[objectKey];
+  if (!isRecord(nested)) {
+    return undefined;
+  }
+  return stringField(nested[fieldKey]);
 }
 
 function stringField(value: unknown): string | undefined {

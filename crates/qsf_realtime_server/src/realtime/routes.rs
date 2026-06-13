@@ -848,7 +848,7 @@ mod tests {
         );
         assert_eq!(
             json["session"]["audio"]["input"]["turn_detection"]["interrupt_response"],
-            true
+            false
         );
         // Input transcription must be enabled by default: the sideband gates
         // `response.create` on the transcription-completed event, so without a

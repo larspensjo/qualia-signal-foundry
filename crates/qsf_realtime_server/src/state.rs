@@ -282,7 +282,7 @@ impl BrowserSessionConfig {
                     turn_detection: OpenAiRealtimeTurnDetection {
                         kind: "server_vad".to_string(),
                         create_response: false,
-                        interrupt_response: true,
+                        interrupt_response: false,
                     },
                 },
             },
@@ -309,7 +309,7 @@ impl Default for BrowserSessionConfig {
                     turn_detection: BrowserSessionTurnDetection {
                         kind: "server_vad".to_string(),
                         create_response: false,
-                        interrupt_response: true,
+                        interrupt_response: false,
                     },
                 },
             },

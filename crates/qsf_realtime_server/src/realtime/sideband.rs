@@ -10,11 +10,11 @@ use qsf_context::ContextBudget;
 use qsf_memory::RetrievalStrategy;
 use qsf_realtime_protocol::{
     ResponseDoneOutputKind, build_openai_realtime_conversation_session_update,
-    build_openai_realtime_function_call_output, build_openai_realtime_response_create,
-    build_openai_realtime_response_create_with_tool_choice, extract_response_text,
-    parse_realtime_server_event, realtime_event_delta_text, realtime_event_response_id,
-    realtime_event_response_status, realtime_event_text, realtime_event_transcript,
-    realtime_event_type, realtime_response_done_output_kind,
+    build_openai_realtime_function_call_output, build_openai_realtime_response_cancel,
+    build_openai_realtime_response_create, build_openai_realtime_response_create_with_tool_choice,
+    extract_response_text, parse_realtime_server_event, realtime_event_delta_text,
+    realtime_event_response_id, realtime_event_response_status, realtime_event_text,
+    realtime_event_transcript, realtime_event_type, realtime_response_done_output_kind,
 };
 use qsf_session::{
     ContentHash, ContinuityManifest, Exchange, ExchangeModelUse, ExchangeOutput, LiveSessionEvent,
@@ -211,6 +211,7 @@ async fn connect_and_run_once(
             &session_config.output_modalities,
             DEFAULT_PCM_RATE_HZ,
             false,
+            false,
             &session_config.tools,
             Some("auto"),
             session_config.input_transcription_model.as_deref(),
@@ -321,6 +322,22 @@ async fn handle_provider_event(
                 .or_else(|| event.get("transcript").and_then(serde_json::Value::as_str))
                 .unwrap_or_default()
                 .to_string();
+            if transcript.trim().is_empty() {
+                guard
+                    .diagnostics
+                    .write(&DiagnosticRecord::IgnoredContinuationTranscript {
+                        qsf_session_id: qsf_session_id.to_string(),
+                        transcript,
+                        turn_phase: runtime_state.turn_phase,
+                        response_id: runtime_state.response_id.clone(),
+                        at: time::OffsetDateTime::now_utc(),
+                    })?;
+                log::warn!(
+                    "ignored empty final transcript for session `{qsf_session_id}` during {:?}",
+                    runtime_state.turn_phase
+                );
+                return Ok(());
+            }
             match classify_final_transcript(runtime_state.turn_phase, &transcript) {
                 TranscriptDisposition::IgnoreAsNoise => {
                     guard
@@ -384,6 +401,7 @@ async fn handle_provider_event(
                             "continuation interruption for session `{qsf_session_id}` landed before response.created; old response id is unknown"
                         );
                     }
+                    send_json(outbound_tx, build_openai_realtime_response_cancel())?;
 
                     let new_exchange_index = guard.new_trusted_exchange_index();
                     apply_live_session_event(
@@ -1972,6 +1990,28 @@ mod tests {
             "conversation.item.input_audio_transcription.completed",
             &serde_json::json!({
                 "type": "conversation.item.input_audio_transcription.completed",
+                "event_id": "evt-empty-after-cancel",
+                "item_id": "item-empty-after-cancel",
+                "transcript": ""
+            }),
+            &mut runtime_state,
+            &outbound_tx,
+        )
+        .await
+        .expect("empty post-cancel transcript");
+
+        assert!(outbound_rx.try_recv().is_err());
+        assert!(runtime_state.active_exchange_index.is_none());
+        assert!(runtime_state.pending_response_exchange.is_none());
+        assert_eq!(runtime_state.turn_phase, TurnPhase::Idle);
+
+        handle_provider_event(
+            &state,
+            &allocation.qsf_session_id,
+            "call-tools",
+            "conversation.item.input_audio_transcription.completed",
+            &serde_json::json!({
+                "type": "conversation.item.input_audio_transcription.completed",
                 "event_id": "evt-fresh",
                 "item_id": "item-fresh",
                 "transcript": "thanks"
@@ -2094,6 +2134,21 @@ mod tests {
         )
         .await
         .expect("interrupting transcript");
+
+        let cancel = outbound_rx.recv().await.expect("response.cancel");
+        assert!(
+            cancel
+                .to_text()
+                .expect("text")
+                .contains("\"response.cancel\"")
+        );
+        let fresh_response_create = outbound_rx.recv().await.expect("fresh response.create");
+        assert!(
+            fresh_response_create
+                .to_text()
+                .expect("text")
+                .contains("\"response.create\"")
+        );
 
         let stale_response_id = "response-old";
         assert!(runtime_state.stale_response_ids.contains(stale_response_id));

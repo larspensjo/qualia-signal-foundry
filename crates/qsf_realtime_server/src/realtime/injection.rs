@@ -47,6 +47,7 @@ pub fn build_memory_injection_packet(
         request.output_modalities,
         request.pcm_rate_hz,
         false,
+        false,
         &[],
         None,
         request.input_transcription_model,
@@ -195,6 +196,10 @@ mod tests {
         assert_eq!(packet.context_assembly.omitted.len(), 2);
         assert_eq!(
             packet.session_update["session"]["audio"]["input"]["turn_detection"]["create_response"],
+            false
+        );
+        assert_eq!(
+            packet.session_update["session"]["audio"]["input"]["turn_detection"]["interrupt_response"],
             false
         );
         assert_eq!(packet.conversation_item_create["item"]["role"], "system");
