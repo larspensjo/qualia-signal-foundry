@@ -51,6 +51,10 @@ Realtime audio also produces research signals that text alone does not:
 The important project question is not just how to play audio. It is how live
 speech should connect to memory, attention, state, and observable continuity.
 
+Phase 5 moves one of those questions into implementation by extracting trusted
+realtime continuity roots in `qsf_app` and recording live-loop latency and
+interruption diagnostics in the realtime server.
+
 ## Three Planes
 
 ### Media Plane

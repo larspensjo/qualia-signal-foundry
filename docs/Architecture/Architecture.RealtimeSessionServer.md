@@ -34,6 +34,9 @@ mode, not a one-off experiment server.
   exchange; finalization waits for the eventual spoken response. Tool-loop model
   usage is aggregated onto the trusted exchange, while each tool execution keeps
   per-response usage.
+- Phase 5 adds live-loop latency observations for final transcript, memory
+  injection, response creation, and first audio, plus durable diagnostics for
+  interrupted trusted exchanges.
 - `WS /api/realtime/events` accepts typed browser relay envelopes, validates
   them, deduplicates provider `event_id`, maps them into `qsf_session` relay
   diagnostics only, and persists diagnostic-only exchanges with explicit
@@ -56,9 +59,13 @@ mode, not a one-off experiment server.
 **Not yet implemented:**
 
 - Phase 5 memory extraction / presence refinement for the browser live mode.
+  The explicit extraction pass is offline consolidation: after it consumes a
+  realtime continuity root, the continuity manifest resumes from the
+  consolidated brief even when the run produced no promoted memory records.
 - Full `qsf_app` tool exposure to the live realtime model.
 
-Last reviewed: 2026-06-10 against the implemented Phase-4 realtime tool loop.
+Last reviewed: 2026-06-13 against the implemented Phase-5 latency and
+interruption diagnostics.
 
 ## Purpose
 

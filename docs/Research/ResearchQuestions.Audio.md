@@ -21,6 +21,10 @@ Long term, realtime voice conversation is the intended primary operating mode of
 QSF. The research questions here should therefore evaluate and shape that mode,
 not treat it as just another isolated experiment.
 
+Phase 5 adds direct evidence for the presence questions by extracting memory
+from trusted continuity roots and logging live-loop latency and interruption
+diagnostics for later review.
+
 Relevant related documents:
 
 - `docs/Concepts/Concept.RealtimePresence.md`

@@ -3,13 +3,14 @@
 ## Status
 
 Active implementation plan. Phase 0 (decisions & contracts), Phase 1 (extract
-`qsf_session`), Phase 2 (thin media plane — live browser voice), and Phase 3
-(authoritative sideband + memory injection) are **complete and human-tested**;
-**Phase 4 (model-invoked read-only perception tools) is the active phase**, expanded
-below into an actionable build and revised 2026-06-10 after external review
-(`Review.RealtimeVoiceConversation.phase4.Plan.codex.json`) — all open Phase-4
-decisions are now resolved (D12 stays verify-at-implementation). Phase 5 remains
-intentionally high-level until reached.
+`qsf_session`), Phase 2 (thin media plane — live browser voice), Phase 3
+(authoritative sideband + memory injection), and Phase 4 (model-invoked read-only
+perception tools) are **complete and human-tested**, with follow-on noise /
+exchange-integrity hardening landed 2026-06-12/13; **Phase 5 (live memory extraction +
+presence / interruption refinement) is the active phase**, expanded below into an
+actionable build and revised 2026-06-13. The last open Phase-5 product/research
+decision (D18, interruption-representation depth) is now resolved **diagnostics-only**
+(`DecisionLog.md`, 2026-06-13); everything needed to start is resolved.
 
 > Companion to the design note
 > [`Design.RealtimeVoiceConversation.md`](Design.RealtimeVoiceConversation.md), which
@@ -55,16 +56,16 @@ QSF.
 | 1 | Extract `qsf_session` crate (pure refactor) — complete (`45ed9cd`) | Yes | No |
 | 2 | Thin media plane — live browser voice — complete, human-tested 2026-06-09 | Yes | ✅ |
 | 3 | Authoritative sideband + memory injection — complete, human-tested 2026-06-10 | Yes | ✅ |
-| 4 | Model-invoked read-only perception tools — **active** | Yes | **Yes** |
-| 5 | Live memory extraction + presence refinement | Yes | **Yes** |
+| 4 | Model-invoked read-only perception tools — complete, human-tested 2026-06-11 | Yes | ✅ |
+| 5 | Live memory extraction + presence / interruption refinement — **active** | Yes | **Yes** |
 
 ---
 
-## Phases 0–3 — complete (compacted)
+## Phases 0–4 — complete (compacted)
 
 Full per-step detail lives in git history, `docs/DecisionLog.md`, and
-`EngineeringDiary.md`. What follows is the carry-forward that still constrains
-Phases 4–5.
+`docs/EngineeringDiary.md`. What follows is the carry-forward that still constrains
+Phase 5.
 
 ### Phase 0 — Decisions & contracts (accepted 2026-06-09)
 
@@ -90,21 +91,25 @@ Phases 4–5.
 
 ### Phase 1 — Extract `qsf_session` (pure refactor, `45ed9cd`)
 
-- **Lean dependency graph is the model for every extraction since** (and for Phase 4's
-  tool-registry move): `qsf_session` depends only on `anyhow`, `qsf_memory`,
-  `qsf_context` (since Phase 3), `serde`, `serde_json`, `tempfile`, `time`, `uuid` —
-  no `tokio`, `reqwest`, `engine_logging`, or provider crates.
+- **Lean dependency graph is the model for every extraction since** (it is how
+  Phase 4 made the tool registry reachable from the server, and how Phase 5 keeps
+  extraction out of the realtime server): `qsf_session` depends only on `anyhow`,
+  `qsf_memory`, `qsf_context` (since Phase 3), `serde`, `serde_json`, `tempfile`,
+  `time`, `uuid` — no `tokio`, `reqwest`, `engine_logging`, or provider crates.
 - `qsf_session` owns the pure reducer/state/event contracts (`LiveSessionEvent`,
   `LiveSessionState`, `Exchange`, `Turn`, `ProviderEventRecord`), persistence
   (`persist_session_state` / `load_session_state`), continuity manifest, sleep
-  records, `ContentHash`, and the `ToolCategory` / `ToolSideEffectLevel` enums
-  (`crates/qsf_session/src/tools.rs`) — **Phase 4 builds on these enums.**
+  records, `ContentHash`, the `ToolCategory` / `ToolSideEffectLevel` enums, and the
+  interruption contracts (`InterruptionRecord`, `InterruptionAction`,
+  `InterruptionStopOutcome`, `ExchangeStatus::Interrupted`,
+  `LiveSessionEvent::UserInterrupted`) — **Phase 5's interruption refinement builds on
+  these existing contracts, not new ones.**
 - **Persistence constraint:** `persist_session_state` skips
   `LiveSessionState.completed_exchanges` (in-memory only, guarded by test). Durable
   state requires promotion to a `Turn` (`Turn::try_from(&Exchange)`). The persisted
   `session-state.json` / `continuity-manifest.json` schemas are guarded by a golden
-  test — **any new persisted field (e.g. Phase-4 tool records) needs serde defaults
-  and golden-test updates to stay compatible.**
+  test (`crates/qsf_session/tests/session_state_schema.rs`) — **any new persisted
+  field needs serde defaults and golden-test updates to stay compatible.**
 - Reducer: single `active_exchange` / `active_response`; overlap policy **B**
   (finalize-prior); stale events for finalized exchanges are no-ops.
 
@@ -117,363 +122,360 @@ Phases 4–5.
   `Location` header), `WS /api/realtime/events` (relay, now diagnostic-only),
   `POST /api/realtime/stop`.
 - **`qsf_realtime_server` must not depend on `qsf_app`** — it uses the lean domain
-  crates only. This boundary held through Phase 3 and must hold in Phase 4.
+  crates only. This boundary held through Phase 4 and **constrains where Phase 5
+  extraction can run.**
 - Provider `event_id` dedupe/order is the server translator's job, not the reducer's.
 - `ProviderEventRecord` carries `call_id`, `event_id`, `item_id`, `previous_item_id`,
-  `response_id` — the same identity fields Phase 4 reuses to link tool calls.
+  `response_id` — the same identity fields later phases reuse.
 - Test pattern to mirror: provider endpoints are injected via `AppState` base URLs so
   tests run against mocked HTTP/WS servers, with key-absence assertions throughout.
+- **Carried-forward gap:** end-to-end / per-stage live-loop latency measurement was
+  deferred — **Phase 5 closes it.**
 
-### Phase 3 — Authoritative sideband + memory injection (complete, human-tested 2026-06-10)
-
-A live browser session completed a full memory-grounded voice turn: sideband attach,
-input transcription, per-turn memory injection, server-issued `response.create`,
-audible reply. **Carry-forward facts and constraints for Phase 4:**
+### Phase 3 — Authoritative sideband + memory injection (human-tested 2026-06-10)
 
 - **Crate layering (D1, landed):**
   `qsf_memory ← qsf_context ← qsf_session ← {qsf_app, qsf_realtime_server}`, with
-  `qsf_realtime_protocol` an independent lean leaf. Retrieval scoring
-  (`retrieve_memories` et al.) lives in `qsf_memory`; the context-assembly domain
-  (`ContextFragment`, `ContextBudget`, `ContextAssembly`, `assemble_context`, the
-  `From<&RetrievedMemory>` adapter) lives in `qsf_context`; realtime JSON
-  builders/parser live in `qsf_realtime_protocol` (`crates/qsf_realtime_protocol/src/lib.rs`).
-  `qsf_app` re-exports moved items through facades. **The same extract-to-lean-crate +
-  facade pattern is how Phase 4 makes the tool registry reachable from the server.**
-- **Sideband is authoritative (D2/D5/D6, landed in
-  `crates/qsf_realtime_server/src/realtime/sideband.rs`):** a long-lived task attaches
-  to `wss://api.openai.com/v1/realtime?call_id=...` with bearer `OPENAI_API_KEY`
-  (D3 **verified** against the provider's realtime server-controls docs, recorded in
-  `DecisionLog.md` 2026-06-10). Provider events flow through the pure translator into
+  `qsf_realtime_protocol` an independent lean leaf. Retrieval scoring lives in
+  `qsf_memory`; the context-assembly domain (`ContextFragment`, `ContextBudget`,
+  `assemble_context`) lives in `qsf_context`; realtime JSON builders/parser live in
+  `qsf_realtime_protocol`. `qsf_app` re-exports moved items through facades. **This
+  extract-to-lean-crate + facade pattern is reused throughout.**
+- **Sideband is authoritative (D2/D5/D6):** a long-lived task attaches to
+  `wss://api.openai.com/v1/realtime?call_id=...` with bearer `OPENAI_API_KEY` (D3
+  verified live). Provider events flow through the pure translator into
   `apply_live_session_event`; exchanges are stamped `Trusted`; the browser relay is
   UI-only diagnostics.
 - **Response timing is server-owned (D5):** default `create_response = false`; on each
-  committed user turn (`conversation.item.input_audio_transcription.completed` — input
-  transcription had to be explicitly enabled for this) the sideband retrieves memory,
-  injects a small packet (`conversation.item.create` + `session.update`, built by the
-  pure builder in `realtime/injection.rs`), then sends `response.create`. Live timing
-  was confirmed acceptable; latency parity is **not** an open issue. **Phase 4's tool
-  loop extends this same server-owned `response.create` choreography.**
+  committed user turn the sideband retrieves memory, injects a small packet
+  (`conversation.item.create` + `session.update`, built by the pure builder in
+  `realtime/injection.rs`), then sends `response.create`. Live timing confirmed
+  acceptable.
 - **Trusted promotion preconditions (D2):** `Turn::try_from(&Exchange)` hard-requires
-  `completed_at`, `output`, `context_assembly`, and `ExchangeModelUse`.
-  `context_assembly` comes from the injection builder; model use from `response.done`
-  usage. Only **complete** trusted exchanges promote into the shared continuity root
-  (`promote_completed_trusted_exchanges`); incomplete/failed/degraded never do.
-  **Phase-4 tool activity must not break these preconditions or finalize an exchange
-  mid-tool-loop.**
+  `completed_at`, `output`, `context_assembly`, and `ExchangeModelUse`. Only
+  **complete** trusted exchanges promote into the shared continuity root
+  (`promote_completed_trusted_exchanges`); incomplete/failed/degraded/interrupted
+  never do. **Phase-5 extraction reuses this trust gate as its eligibility filter.**
 - **Gap semantics (D6):** an unrecoverable/lossy sideband disconnect marks the session
   *degraded* until reconnect + `session.updated` acknowledgement; gap-window exchanges
-  are permanently non-promotable. Covered by tests in `sideband.rs`. **A disconnect
-  during a Phase-4 tool loop falls under the same rule.**
+  are permanently non-promotable.
 - The memory-store resolver (`realtime/memory_store.rs`:
   `load_session_memory_store` / `retrieve_session_memories`) handles
-  existing/absent/malformed/empty stores without panicking — **Phase 4's memory-search
-  tool should reuse it, not re-resolve stores.**
-- Key-absence assertions extend across the sideband; ageing/consolidation was
-  deliberately deferred to Phase 5. Sideband health is surfaced to the browser UI.
+  existing/absent/malformed/empty stores without panicking — **reuse it, do not
+  re-resolve stores.**
+- Key-absence assertions extend across the sideband; sideband health is surfaced to
+  the browser UI. **Ageing/consolidation of realtime memory was deliberately deferred
+  to Phase 5.**
+
+### Phase 4 — Model-invoked read-only perception tools (human-tested 2026-06-11)
+
+A live voice session had the model invoke read-only perception tools and speak a
+tool-grounded answer; non-allow-listed calls were proven unexecuted and recorded as
+denied. **Carry-forward facts and constraints for Phase 5:**
+
+- **`qsf_tools` lean generic registry crate landed (D7):** the `Tool` trait,
+  `ToolRequest`/`ToolPermission`, `ToolResult`, `ToolMetadata`, a parameters-bearing
+  `ToolDefinition`, and a dynamic (registered boxed tools) registry; `qsf_app::tools`
+  is a re-export facade (with `ToolDefinition` → `ModelToolDefinition` conversion).
+  `qsf_realtime_server` depends on `qsf_tools` — **still no `qsf_app` dependency.**
+  The generic registry is what makes the deferred "full tool set for the live model"
+  an additive change.
+- **Three read-only perception tools (D8)** in
+  `crates/qsf_realtime_server/src/realtime/tools.rs`: `search_memory`,
+  `get_associations`, `inspect_session_state`. `inspect_session_state` reports trusted
+  durable completion as `completed_exchange_count` and active-exchange presence
+  separately as `active_exchange_present` (the count-fix decision). No `qsf_app` tool
+  is exposed live yet (see "Deferred beyond Phase 5").
+- **Tool records persist on durable `Turn`s (D9):** `ToolExecutionRecord` +
+  `LiveSessionEvent::ToolResolved` (reduced purely, linked to `ToolRequestRecord` by
+  provider `call_id`) are persisted behind `#[serde(default)]` with golden tests
+  updated. Denials are durable records, not execution evidence; `auto_executed` is not
+  execution evidence. **Tool activity is therefore inspectable post-session and is
+  part of Phase-5 extraction input.**
+- **Tool loop choreography (D10/D11/D13):** a `response.done` whose output is a
+  function call does **not** finalize the exchange (the sideband suppresses
+  `OutputProduced`/`ModelRoleCompleted`/`ExchangeCompleted` for function-call
+  completions); the loop is capped (max 3 sequential tool calls/turn); denied calls
+  still receive a structured `function_call_output` + `response.create` for verbal
+  recovery; `ExchangeModelUse` aggregates token/latency across the loop. The permission
+  decision is a pure function; the sideband does **not** hold the session lock during
+  tool execution.
+- **Provider function-call wire shape verified (D12):** function tools declared on
+  `session.tools` with `tool_choice`; results returned as a `function_call_output`
+  `conversation.item.create`, then `response.create` — recorded in `DecisionLog.md`.
+- **Stable default session id (2026-06-11):** browser sessions use the stable QSF
+  session id `default` unless `--random-session-id` is passed; realtime continuity and
+  memory live at `state/realtime/continuity/default`. **Phase-5 extraction defaults to
+  this root.**
+
+### Follow-on hardening — noise & exchange integrity (2026-06-12/13)
+
+Landed after Phase 4 and directly feeding Phase 5's presence/interruption scope:
+
+- **Sideband-owned interruption (2026-06-13):** provider `server_vad` stays enabled but
+  `interrupt_response = false`; QSF decides from final transcripts whether to start,
+  ignore, or interrupt a turn. Genuine interruptions send `response.cancel`; empty
+  final transcripts are diagnostic-only. The sideband already emits
+  `LiveSessionEvent::UserInterrupted(InterruptionRecord)` into the **in-memory** exchange
+  model (`crates/qsf_realtime_server/src/realtime/sideband.rs:378`); persisting it is
+  Phase-5 step 4 (diagnostics-only, D18).
+- **Turn integrity (2026-06-12):** `realtime/turn_integrity.rs` guards the active
+  exchange across interruptions and cancelled continuations; in-flight continuation
+  courtesy transcripts and stale/superseded provider events are audited as
+  diagnostic-only (`diagnostics.rs`), never mutating the live exchange. Expected
+  recovery paths log at info, not warning.
+- **Latency observability scaffold:** `DiagnosticRecord::LatencyObservation` exists in
+  `crates/qsf_realtime_server/src/diagnostics.rs` and is already emitted (currently
+  around the SDP rendezvous in `realtime/routes.rs`). **Phase 5 extends it to live-loop
+  stages.**
 
 ---
 
-## Phase 4 — Tool plane: model-invoked read-only perception tools *(active)*
+## Phase 5 — Live memory extraction + presence / interruption refinement *(active)*
 
-**Outcome.** During a live voice conversation the model can invoke a small allow-list
-of **read-only** perception tools (search memory, retrieve associations, inspect
-session state). On a provider `function_call`, the sideband records the request,
-makes an explicit permission decision, executes via the tool registry, records the
-execution result (not just the intent), returns a `function_call_output` item, and
-re-issues `response.create` so the model speaks an answer grounded in the tool
-result. Non-allow-listed or over-privileged calls are **never executed** and are
-recorded as denied. No credential leaves the server; the trusted-promotion and
-degraded-gap rules from Phase 3 continue to hold.
+**Outcome.** After a live trusted realtime conversation, a lightweight extraction pass
+runs over the promoted **trusted** `Turn`s (and their tool records) in the realtime
+continuity root, reusing the existing sleep summarizer + association proposers to feed
+the existing review/consolidation/commit path — producing memory/association/decision
+candidates without changing the live loop. Realtime memory becomes subject to the
+existing ageing/consolidation discipline (the Phase-3 deferral). Separately, presence
+observability improves: interruptions are durably represented (building on the
+sideband's existing `UserInterrupted` emission) and end-to-end + per-stage live-loop
+latency is measured and surfaced (closing the Phase-2 latency-measurement gap), giving
+the presence research concrete signals. The trust boundary, trusted-promotion
+preconditions (D2), and degraded-gap semantics (D6) are unchanged.
 
-### Decisions — resolved 2026-06-10 (external review + owner confirmation)
+### Starting state (already landed)
 
-The blocking questions (D8 scope, D9 persistence) were confirmed by the owner after
-the external review (`Review.RealtimeVoiceConversation.phase4.Plan.codex.json`); the
-review's technical findings are folded into D7/D10 and the steps below. D12 remains a
-verify-at-implementation item. Numbering continues from Phase 3 (D1–D6).
+- Trusted `Turn`s promote to the shared continuity root
+  `state/realtime/continuity/<session>` (default `default`); only complete trusted
+  exchanges promote (D2); degraded/interrupted/incomplete exchanges do not.
+- Tool execution records (D9) persist on `Turn`s and are part of the extractable
+  record.
+- The sideband already emits `LiveSessionEvent::UserInterrupted(InterruptionRecord)`
+  into the **in-memory** exchange model (`qsf_session::Exchange.interruptions:
+  Vec<InterruptionRecord>`, `ExchangeStatus::Interrupted`, reduced purely in
+  `qsf_session::live_state`). **This is not durable today:** interrupted exchanges land
+  in `completed_exchanges` (which is `#[serde(skip)]`, in-memory only, guarded by
+  `persist_keeps_completed_exchanges_in_memory_only`) and are non-promotable (D2/D6), so
+  the `InterruptionRecord` reaches neither the continuity root nor the diagnostics log.
+  Step 4 therefore *adds* the diagnostic persistence path (D18); it is not a
+  confirmation pass.
+- `DiagnosticRecord::LatencyObservation` exists and is already emitted (SDP
+  rendezvous); the emission/record pattern is the template for live-loop latency.
+- The sleep machinery in `qsf_app` (`summarize_session`, the `AssociationProposer`
+  impls `llm_candidate` and `safety_net_co_retrieval`, `merge_and_dedupe`, the
+  `sleep/commit.rs` + `sleep/auto_promote.rs` review path, the text-based
+  `SleepInputBundle`) consumes **text input**, and `SleepPhaseSessionSummary` /
+  `RealtimeVoiceSession` experiments already exist as harness templates.
 
-- **D7 — resolved: extract a *generic* registry core into a lean `qsf_tools` crate.**
-  A move-as-is would not compile: today's `ToolRegistry`
-  (`crates/qsf_app/src/tools/tool_registry.rs`) hardcodes the four concrete `qsf_app`
-  tools and imports `qsf_app::models::ModelToolDefinition`, `ProjectDocService`, and
-  `SessionState`; even the `ToolContext` trait exposes app-typed accessors.
-  `qsf_tools` therefore receives a **generic core** instead: the `Tool` trait,
-  `ToolRequest`/`ToolPermission`, `ToolResult` (its context dependency is already
-  lean `qsf_context` via facade), `ToolMetadata`, a new parameters-bearing
-  **`ToolDefinition`** (name, description, JSON-schema parameters as
-  `serde_json::Value`) replacing the trait's `ModelToolDefinition` hook, and a
-  **dynamic registry** (registered boxed tools) replacing the hardcoded dispatch.
-  The `qsf_tools` `ToolContext` must not reference app types; app-specific context
-  access (session state, project docs) stays in `qsf_app` behind adapter/downcast
-  helpers. Concrete `qsf_app` tools do **not** move; `qsf_app::tools` re-exports the
-  moved generics (and converts `ToolDefinition` → `ModelToolDefinition`) so existing
-  call sites (`multi_turn_text_loop` tool/turn runtimes,
-  `tool_as_perception_calculator`, the concrete tools) compile unchanged. Crate
-  dependencies: `anyhow`, `serde`, `serde_json`, `qsf_session` (category enums),
-  `qsf_context` (context fragments); nothing heavier.
-- **D8 — resolved: three-tool perception scope.** Phase 4 exposes exactly
-  `search_memory(query)`, `get_associations(memory_id)`, and
-  `inspect_session_state()` — all `ToolCategory::ReadOnly` /
-  `ToolSideEffectLevel::ReadOnly`, implemented in `qsf_realtime_server` where their
-  data lives:
-  - `search_memory(query)` — association-weighted retrieval over the session's store
-    via the existing `retrieve_session_memories`
-    (`crates/qsf_realtime_server/src/realtime/memory_store.rs`), returning a small
-    capped list of memory summaries (reuse the `ContextBudget` discipline from the
-    injection builder — a tool result is a context payload too).
-  - `get_associations(memory_id)` — a **capped, deterministic neighborhood query**
-    over `qsf_memory` association records: bidirectional by default, sorted by
-    descending weight, explicit not-found vs. empty-neighborhood results, compact
-    summaries for dangling endpoints.
-  - `inspect_session_state()` — a compact summary of the live session (exchange
-    count, active exchange status, trust/degraded state) derived from
-    `LiveSessionState` — no internals dump.
-  No existing `qsf_app` tool is exposed live this phase: their data services
-  (`ProjectDocService`, durable-session access) sit behind the no-`qsf_app`
-  boundary. **Long-term intent (owner, 2026-06-10): the live model eventually gets
-  the full tool set; that lands as its own later phase** (see "Deferred beyond
-  Phase 5"), and the D7 generic registry is what makes it cheap.
-- **D9 — resolved: tool execution records persist onto durable `Turn`s.** Keep
-  `ToolRequested` (`ToolRequestRecord` in `crates/qsf_session/src/exchange.rs`) as
-  the request record; `auto_executed` is **not** execution evidence. Add a
-  `ToolExecutionRecord` to `qsf_session::exchange` — `exchange_index`, provider
-  `call_id` (links to the matching `ToolRequestRecord`), `tool_name`, permission
-  decision (allowed / denied-with-reason), status (completed / failed / aborted),
-  budget-capped result summary, error, requested/completed timing, per-response
-  model usage (D13), and the returning provider `event_id` — plus a
-  `LiveSessionEvent::ToolResolved(ToolExecutionRecord)` variant reduced purely onto
-  the active exchange. `Turn` gains the records behind `#[serde(default)]` with the
-  schema golden tests (`crates/qsf_session/tests/session_state_schema.rs`) updated,
-  so tool activity — including denials — is inspectable post-session, visible to the
-  read-only browser server, and available to Phase-5 extraction/ageing.
-- **D10 — confirmed, with revised enforcement point.** A `response.done` whose
-  output is a function call must **not** finalize the exchange — it stays active
-  across the tool loop and completes on the eventual audio response. Finalization
-  today is *emitted by the sideband* (`response.done` → `OutputProduced`,
-  `ModelRoleCompleted`, `ExchangeCompleted` in `realtime/sideband.rs`) and
-  `ProviderEventKind` has no tool-call variant, so the rule is enforced where the
-  completion events originate: the protocol layer classifies `response.done` output
-  (function-call vs. spoken message), a new `ProviderEventKind` / translator case
-  represents tool-call completion, and the sideband suppresses the finalization
-  events for function-call-only completions. The reducer handles the new events
-  purely (out-of-order matrix-style tests). Cap the loop (max 3 sequential tool
-  calls per turn) so a pathological model cannot spin; on cap, return a denial-style
-  output and force a spoken response.
-- **D11 — confirmed: denied calls get structured verbal recovery.** A
-  non-allow-listed or over-privileged call stays unexecuted and is recorded as
-  denied (the phase gate), but still receives a `function_call_output` containing a
-  brief structured denial followed by `response.create`, so the conversation
-  recovers verbally instead of leaving the provider waiting on a dangling call.
-- **D12 — verify at implementation time (unchanged, same caution as D3).** Working
-  assumption from the realtime API: tools are declared in `session.update` (`tools`
-  array with name/description/JSON-schema parameters + `tool_choice`), arguments
-  stream via `response.function_call_arguments.delta/.done`, and the completed call
-  appears as a `function_call` output item carrying the provider `call_id`; results
-  return as a `conversation.item.create` with a `function_call_output` item
-  referencing that `call_id`. **Verify against the live API before coding step 3;
-  record drift in `DecisionLog.md`.**
-- **D13 — resolved: model-use accounting aggregates across the tool loop.** A
-  tool-loop turn produces multiple `response.done` events (function-call
-  response(s) + the final spoken response), while the sideband runtime tracks a
-  single `current_request_hash`/`current_message_count` slot reset after each
-  `response.done`. Rule: the exchange's `ExchangeModelUse` **aggregates token counts
-  and total latency across all `response.done` events of the turn**; each
-  `ToolExecutionRecord` carries its own per-response usage/timing; the request hash
-  and message count reflect the final spoken response's request sequence.
-  Token/latency accounting across a tool call is covered by tests (step 5).
+### Decisions (numbering continues from Phase 4; D1–D13 are prior)
+
+- **D14 — decided: extraction runs in `qsf_app` over the realtime continuity root,
+  not in `qsf_realtime_server`.** The proposer/commit machinery lives in `qsf_app` and
+  consumes `qsf_app` types; `qsf_realtime_server` must not depend on `qsf_app` (the
+  boundary held through Phases 2–4). `qsf_app` already depends on `qsf_session` and can
+  read the continuity root, and `SleepInputBundle` is text-based, so building the
+  extraction input from promoted trusted `Turn`s is a read-only adaptation. This also
+  matches the presence concept's "keep the live loop cheap; defer consolidation to a
+  sleep-like phase between sessions." Concretely: a new `Experiment.LiveMemoryExtraction`
+  (or an extension of `SleepPhaseSessionSummary` to accept a realtime continuity
+  source) reads `state/realtime/continuity/<session>`, builds a `SleepInputBundle` from
+  the trusted `Turn`s (+ tool records), then runs `summarize_session` + the existing
+  proposers + `merge_and_dedupe` + the commit/auto-promote review path.
+- **D15 — decided: only trusted, promoted `Turn`s are extraction-eligible.**
+  Diagnostic-only exchanges, degraded/gap-window exchanges, and
+  interrupted/incomplete exchanges (which never promote, D2/D6) are excluded from the
+  extraction input. This keeps untrusted browser-relayed material out of long-term
+  memory and reuses the existing trust gate instead of inventing a new one.
+- **D16 — decided: extraction is explicitly invoked for Phase 5; auto-trigger at
+  session stop is deferred.** Auto-trigger would require the realtime server to invoke
+  `qsf_app` (boundary violation) or an out-of-process post-session hook — a larger
+  orchestration change. The incremental, testable slice is an explicit pass over a
+  named continuity root. Auto-trigger/orchestration is recorded under "Deferred beyond
+  Phase 5."
+- **D17 — decided: realtime memory ageing/consolidation reuses the existing ageing
+  path** (`qsf_memory` retrieval recency weighting + the `qsf_app` session ageing in
+  `crates/qsf_app/src/session/`), applied to the realtime session's memory store during
+  the extraction pass. No separate ageing model for realtime.
+- **D18 — decided (product/research): interruptions are diagnostics-only**
+  (`DecisionLog.md`, 2026-06-13). The durable `InterruptionRecord` already captures
+  `action`, `stop_outcome`, and `response_id`, and the sideband emits it — but only into
+  the in-memory exchange model, which is never persisted (see "Starting state"). Rather
+  than promote interruptions into the trusted continuity/memory schema, Phase 5 persists
+  the interrupted exchange + raw timing/silence signals to the per-session **diagnostics
+  log** and leaves the durable continuity schema and its golden tests unchanged. This
+  keeps interrupted/incomplete material out of trusted long-term memory (D2/D6), avoids
+  golden-test churn for an unvalidated research feature, stays durable-on-disk for
+  after-the-fact presence analysis, and matches `Concept.RealtimePresence` ("log
+  interruptions without over-interpreting them"). Durable enrichment (pause/silence
+  durations, barge-in classification, topic-shift flags) stays deferred beyond Phase 5,
+  to be promoted from diagnostics only if presence evaluation shows a concrete need.
+- **D19 — decided (with research note): extraction provenance uses both the
+  input-transcription text and the assistant-output text of each trusted `Turn`,
+  labeling each candidate's source.** ASR-vs-model transcript divergence (an open
+  `ResearchQuestions.Audio` item) is recorded as provenance, not reconciled in Phase 5;
+  reconciliation stays a research question.
 
 ### Architecture constraints (must hold)
 
-- `qsf_realtime_server` still must not depend on `qsf_app`; the tool registry arrives
-  via the lean `qsf_tools` crate (D7). Keep `main.rs` / `lib.rs` / `mod.rs` thin.
-- The reducer stays pure: `ToolRequested` / `ToolResolved` are reduced by
-  `apply_live_session_event` with no I/O; tool **execution** is the effectful edge
-  (sideband), feeding results back as events — `input -> action -> reducer -> state ->
-  render` is unchanged.
-- Permission decision logic (allow-list + category/side-effect caps via the existing
-  `ToolPermission::allows` machinery) must be a pure, unit-testable function separate
-  from async execution — same discipline as the Phase-3 injection builder.
-- The sideband must **not** hold the session lock during tool execution
-  (`handle_provider_event` takes the session mutex at entry today): snapshot the
-  needed state under the lock, drop the guard for the permission decision and tool
-  execution, then reacquire only to reduce `ToolResolved` and update runtime state.
-  Stop/disconnect races against the unlocked execution window are covered by tests.
-- Tool result payloads are budget-capped like injection packets; never dump a store.
-- Trusted-promotion preconditions (D2) and degraded-gap semantics (D6) are unchanged:
-  a disconnect mid-tool-loop aborts the loop, records the execution as aborted, and
-  the gap-window exchange remains non-promotable.
-- `OPENAI_API_KEY` stays server-side; extend the key-absence assertions to every tool
-  result, `function_call_output` payload, and log line.
+- `qsf_realtime_server` still must not depend on `qsf_app`. Extraction lives in
+  `qsf_app`; the realtime server only writes the continuity/diagnostic artifacts it
+  already writes. Keep `main.rs` / `lib.rs` / `mod.rs` thin.
+- Reducers stay pure: any new presence/latency events (if added) reduce with no I/O;
+  latency/interruption capture is the effectful edge (sideband/diagnostics) feeding
+  results back as events/records — `input -> action -> reducer -> state -> render` is
+  unchanged.
+- The "build `SleepInputBundle` from trusted `Turn`s" transform is a pure,
+  unit-testable function (same discipline as the Phase-3 injection builder and the
+  Phase-4 permission decision), separate from the async model/commit calls.
+- Persistence/schema: D18 resolved diagnostics-only, so Phase 5 adds **no** durable
+  continuity field and the `session_state_schema.rs` golden tests stay unchanged;
+  interruption/presence durability lives in the diagnostics log. (Any future durable
+  field would still go behind `#[serde(default)]` with golden-test updates, legacy
+  artifacts loading — that is deferred beyond Phase 5.)
+- Extraction must not mutate the live session or block the live loop; it runs over
+  persisted artifacts, independent of an active call.
+- `OPENAI_API_KEY` / key-absence assertions extend to every new extraction, latency,
+  and interruption artifact and log line.
 
 ### Incremental, independently reviewable steps (each ends green; commit per step)
 
-1. **Pure records first: `ToolExecutionRecord`, tool-call events, `Turn` persistence
-   (D9, D10, D13).** Add the record (including per-response usage/timing fields) and
-   the `LiveSessionEvent::ToolResolved` variant to `qsf_session`; add the
-   tool-call-completion representation (new `ProviderEventKind` variant) so a
-   function-call completion is expressible without finalization events; reduce
-   `ToolResolved` onto the active exchange, linked to its `ToolRequestRecord` by
-   provider `call_id`. Extend `Turn` with the persisted records behind serde
-   defaults and update the schema golden tests
-   (`crates/qsf_session/tests/session_state_schema.rs`). The
-   exchange-stays-active-across-the-loop behavior is *enforced* at the sideband
-   (step 5), where finalization events originate. *Verify (unit):* request→resolve
-   linking; denied/failed/aborted statuses representable; duplicate/late
-   `ToolResolved` for a finalized exchange is a no-op; legacy artifacts without tool
-   records still load; schema golden tests green. *Green:* full `cargo test`.
-2. **Extract the generic registry core into lean `qsf_tools` (D7).** Move the `Tool`
-   trait, `ToolRequest`/`ToolPermission`, `ToolResult`, `ToolMetadata`; add the
-   parameters-bearing `ToolDefinition`; replace the hardcoded four-tool dispatch
-   with a dynamic registry (registered boxed tools); keep the `qsf_tools`
-   `ToolContext` free of app types (app-typed context access stays in `qsf_app` as
-   adapters). `qsf_app::tools` becomes a re-exporting facade with its concrete
-   tools and a `ToolDefinition` → `ModelToolDefinition` conversion, so all existing
-   call sites compile unchanged; move the generic registry unit tests with the
-   code. No behavior change. *Green:* full `cargo test` (existing tool-loop
-   experiment tests prove parity).
-3. **Realtime protocol additions in `qsf_realtime_protocol` (D12, D10).** Pure
-   builders and parsers: tool declarations in the `session.update` builder from a
-   **protocol-native tool-definition DTO** (name, description, JSON-schema
-   parameters — the leaf crate stays independent; the server maps
-   `qsf_tools::ToolDefinition` into it), the `function_call_output`
-   `conversation.item.create` builder, extractors for the function-call
-   events/arguments and the provider tool `call_id` (extending
-   `parse_realtime_server_event`'s extractor family), and the **`response.done`
-   output classifier** (function-call vs. spoken output) that D10's sideband
-   enforcement consumes. *Verify (unit):* fixture-based round-trips for each
-   builder/parser, including malformed arguments JSON and mixed-output
-   `response.done` payloads. *Green.*
-4. **Implement the perception tools + allow-list wiring in the server (D8).** Three
-   `Tool` impls in `crates/qsf_realtime_server/src/realtime/` (e.g. `tools.rs`):
-   `search_memory` (reusing `retrieve_session_memories` + a `ContextBudget` cap),
-   `get_associations` (per the D8 spec: capped, deterministic, bidirectional,
-   weight-descending, explicit not-found vs. empty-neighborhood, compact summaries
-   for dangling endpoints), `inspect_session_state`. Build the per-session
-   allow-listed registry in `AppState`/`session_config`, and a **pure**
-   permission-decision function (allow-list + ReadOnly caps →
-   allowed/denied-with-reason). Defaults exercise the new path: the default session
-   declares the tools in `session.update`. *Verify (unit):* each tool against
-   existing/empty/malformed stores (mirror the Phase-3 resolver matrix); the
-   `get_associations` case matrix; caps enforced; the permission matrix including a
-   write-capable or unknown tool → denied. *Green.*
-5. **Sideband tool loop (D10, D11, D13, D6).** In `handle_provider_event`
-   (`realtime/sideband.rs`): classify `response.done` via the step-3 classifier; for
-   a function-call completion, suppress `OutputProduced`/`ModelRoleCompleted`/
-   `ExchangeCompleted`, record `ToolRequested`, then — **outside the session lock**
-   (snapshot under the lock, drop the guard, reacquire to reduce) — run the
-   permission decision and execute via the registry (or deny), record
-   `ToolResolved`, send the `function_call_output` item, then `response.create`;
-   aggregate model use across the loop per D13; enforce the per-turn loop cap;
-   abort + record on disconnect/stop. *Verify (mocked WS, mirroring the Phase-3
-   harness):* full chain function-call → decision → execution →
-   `function_call_output` → `response.create`; a non-allow-listed call is **never
-   executed** and is recorded as denied while the conversation recovers (D11); the
-   exchange stays active across the loop and the eventual trusted promotion carries
-   `context_assembly` + aggregated `ExchangeModelUse` (D13 token/latency accounting
-   asserted); disconnect/stop racing the unlocked execution window → aborted record
-   + degraded session, no promotion; key absent from all tool payloads/logs.
+1. **Pure extraction-input builder (`qsf_app`).** Add a pure function that reads a
+   realtime continuity root's promoted trusted `Turn`s (+ tool records) and builds a
+   `SleepInputBundle`. Use `SessionState.turns` as the **single canonical transcript
+   source** (`session_text` with labeled provenance per D19) and use the matching
+   persisted `exchanges` only as metadata for already-promoted turn indices — do **not**
+   feed both through `sleep_records()`, which would double-count each promoted voice turn
+   (HIGH-001). Populate `review_notes` from trust context; keep any extraction provenance
+   the summarizer must act on in `session_text` / `review_notes`, not artifact-only
+   `diagnostic_notes` (MEDIUM-002, see "Remaining Checks"). Exclude
+   non-trusted/degraded/interrupted/incomplete material per D15 — that material is already
+   absent from the continuity root, so these tests prove only *trusted promoted turns are
+   included*; interruption/degraded observability is tested against **diagnostics**, not
+   the continuity root (HIGH-002). *Verify (unit):* bundle content from a fixture
+   continuity root (trusted-only inclusion; **no duplicate transcript text**; tool records
+   reflected; empty/absent root handled; malformed artifact tolerated). *Green:* full
+   `cargo test`.
+2. **Wire the extraction pass (`qsf_app` experiment/entry; D14/D16/D17).** Add
+   `Experiment.LiveMemoryExtraction` (or extend `SleepPhaseSessionSummary` to accept a
+   realtime continuity source) that resolves a realtime continuity root, runs the
+   step-1 builder, calls `summarize_session`, runs the proposers (`llm_candidate`,
+   `safety_net_co_retrieval`) + `merge_and_dedupe`, applies ageing/consolidation (D17)
+   to the realtime memory store, and routes candidates through the existing
+   review/commit/auto-promote path. Defaults exercise the path (defaults to the
+   `default` continuity root). *Verify (experiment harness with a mocked
+   `ModelClient`):* end-to-end extraction over a fixture trusted session produces a
+   `SleepReport` and routes candidates to the existing review path; ageing applied; no
+   candidates from non-trusted material. *Green.*
+3. **Presence: live-loop latency observability (`qsf_realtime_server`).** Extend
+   `DiagnosticRecord::LatencyObservation` (reuse the existing record + emission pattern
+   in `realtime/routes.rs` / `realtime/sideband.rs`) to capture per-stage live-loop
+   latencies: final-input-transcript-received → memory-injected →
+   `response.create`-sent → `response.created`/first-audio, plus an end-to-end
+   speech-end → first-audio measure. Emit from the sideband at the existing turn
+   lifecycle points. Closes the Phase-2 latency-measurement gap. *Verify (unit /
+   mocked WS):* stage timestamps recorded in order; `latency_ms` computed; key absent
+   from all latency records. *Green.*
+4. **Presence: interruption observability (`qsf_realtime_server`; D18 diagnostics-only).**
+   At the point where an interrupted trusted exchange is currently dropped into in-memory
+   `completed_exchanges`, emit it to the per-session **diagnostics log** (reuse
+   `DiagnosticRecord::DiagnosticExchangeRecorded` with a trusted/sideband source, or add
+   a dedicated interruption diagnostic) carrying the `InterruptionRecord` + timing — this
+   is the new durable path, since interruptions are not persisted today. Confirm and test
+   that the interrupted exchange still follows the D2/D6 promotion rules (non-promotable,
+   absent from the continuity root). **No durable continuity-schema change** (per resolved
+   D18). *Verify (mocked WS, mirroring the Phase-3/4 harness):* an interruption
+   mid-response writes a durable **diagnostic** record carrying `action`/`stop_outcome`;
+   the interrupted exchange is non-promotable and absent from the continuity root;
+   presence signals are captured; key absent from all interruption/latency payloads.
    *Green.*
+5. **Surface presence signals (optional UI).** Only if `ui/` is touched: surface
+   end-to-end / per-stage latency and recent interruptions alongside the existing
+   sideband health in the browser UI (informational only). Gate with `npm run check`,
+   `npm test`, `npm run fmt`. Optional, not required this phase.
 6. **Gates + docs.** `cargo clippy --all-targets -- -D warnings`, `cargo fmt`; UI gate
-   (`npm run check`, `npm test`, `npm run fmt`) only if `ui/` is touched (e.g. if tool
-   activity is surfaced alongside sideband health — optional, not required this
-   phase). Docs per the list below, using the exact repo paths.
+   only if `ui/` changed. Docs per the list below, using the exact repo paths.
 
 ### Acceptance criteria
 
 - `cargo build`, full `cargo test`, clippy clean, `cargo fmt` applied; UI gate green
   if `ui/` changed.
-- `qsf_realtime_server` depends on `qsf_tools` (new) plus the existing lean crates —
-  still **no `qsf_app` dependency**; `qsf_app` behavior is unchanged through its
-  re-export facade (existing tool-loop tests green untouched).
-- Function-call → permission decision → registry execution → `function_call_output` →
-  `response.create` verified end-to-end against a mocked WS provider.
-- A non-allow-listed (or over-privileged) tool call is proven to stay **unexecuted
-  and recorded as denied**; `auto_executed` is not used as execution evidence —
-  execution facts live in `ToolExecutionRecord` (decision, status, result summary,
-  error, timing, returning event), linked by `call_id`.
-- A function-call response does not finalize the exchange; trusted promotion
-  preconditions (D2) and degraded-gap semantics (D6) hold across tool loops, verified
-  by tests; the per-turn tool-loop cap is enforced; promoted `ExchangeModelUse`
-  aggregates across the loop (D13).
-- `Turn` persists tool execution records behind serde defaults: legacy artifacts
-  still load, schema golden tests are green, and persisted result summaries are
-  budget-capped.
-- Defaults exercise the new path: the default realtime session declares the read-only
-  tools, and a model-issued call executes without extra configuration.
-- `OPENAI_API_KEY` proven absent from tool results, `function_call_output` payloads,
-  and logs.
-- D12 (provider function-call event shapes) verified against the live API, with any
-  drift recorded in `DecisionLog.md` before defaults change.
+- `qsf_realtime_server` still has **no `qsf_app` dependency**; extraction runs in
+  `qsf_app` over persisted continuity artifacts.
+- An extraction pass over a fixture trusted realtime continuity root produces a
+  `SleepReport` and routes memory/association/decision candidates through the existing
+  review/commit path; non-trusted/degraded/interrupted material is proven excluded
+  (D15).
+- Realtime memory ageing/consolidation is applied during the extraction pass (D17).
+- Per-stage and end-to-end live-loop latency is recorded via `LatencyObservation` and
+  is inspectable; the Phase-2 latency-measurement gap is closed.
+- Sideband-owned interruptions produce a durable *diagnostic* interruption record;
+  interrupted exchanges remain non-promotable (D2/D6) and absent from the continuity
+  root; presence signals are captured per the resolved D18 (diagnostics-only).
+- Any new durable field is behind `#[serde(default)]` with golden tests green; legacy
+  artifacts still load.
+- Defaults exercise the new path: extraction defaults to the `default` continuity root;
+  latency/interruption capture is on by default.
+- `OPENAI_API_KEY` proven absent from extraction inputs/outputs, latency/interruption
+  records, and logs.
+- D18 is resolved diagnostics-only and recorded in `DecisionLog.md`; step 4 adds a
+  durable *diagnostic* interruption record and changes no durable continuity schema.
 
-### Verification guidance (fits a live-service + tool-integration slice)
+### Verification guidance (fits an extraction + live-service observability slice)
 
-- *Automated (Rust):* reducer matrix for `ToolRequested`/`ToolResolved` linking;
-  the `response.done` output-classifier fixtures and the sideband-enforced
-  exchange-boundary rule (D10); permission-decision matrix (allow-listed / unknown /
-  over-privileged); per-tool store matrix (existing/empty/malformed) plus the
-  `get_associations` case matrix; protocol builder/parser fixtures (D12 shapes); the
-  mocked-WS sideband chain including denial, loop cap, disconnect-mid-loop, and
-  stop/disconnect racing the unlocked execution window; promotion preconditions and
-  aggregated model-use accounting (D13) across a tool loop; schema golden tests for
-  the persisted `Turn` tool records (D9); key-absence assertions extended to tool
-  payloads.
+- *Automated (Rust):* pure extraction-input-builder fixtures (trusted-only inclusion,
+  provenance labeling, notes from trust/degraded/interruption, empty/absent/malformed
+  roots); the extraction pass with a mocked `ModelClient` (`SleepReport` produced,
+  candidates routed, ageing applied, nothing from untrusted material);
+  latency-observation ordering/computation; the mocked-WS interruption chain (durable
+  diagnostic record, non-promotable interrupted exchange absent from the continuity
+  root); key-absence assertions on all new artifacts; schema golden tests if any durable
+  field is added.
 - *Automated (TS):* only if `ui/` changes — `npm run check` + `npm test` (Vitest).
-- **Human testing (required):** in a live browser session, ask something that
-  requires memory search (e.g. reference a fact known to be in the store but not in
-  the injected packet); confirm the model calls the tool and uses the result in its
-  spoken reply; ask for something absent and confirm a graceful spoken outcome;
-  inspect artifacts to confirm request + execution records and that tool results are
-  small; note the added per-tool-call latency (feeds the Phase-5 presence work and
-  the future Live Activation Dashboard "thinking" cue).
-- *Provider reality check:* confirm the `session.update` tools declaration, the
-  function-call event stream, and the `function_call_output` shape against the
-  current API (D12); record drift in `DecisionLog.md`.
+- **Human testing (required):** in a live browser session, hold a multi-turn
+  conversation including at least one interruption; after stopping, run the extraction
+  pass over the `default` continuity root and confirm sensible memory/association
+  candidates flow into the review path (and that nothing leaks from untrusted
+  exchanges); inspect latency observations and interruption records; evaluate presence
+  against the `Concept.RealtimePresence` open questions (`PresenceEvaluation`,
+  `InterruptionSemantics`, `LatencyBudget`) and record latency observations.
 
 ### Docs (per `ProjectWorkflow.md`)
 
-- `Experiment.LiveToolPerception` as the validation record.
-- Update `docs/Architecture/Architecture.ToolSystem.md` (the `qsf_tools` extraction,
-  the realtime perception tools, the live execution/permission path) and
-  `docs/Architecture/Architecture.StateAndObservability.md` (request vs. execution
-  records; persisted `Turn` tool records).
-- Refresh `docs/Architecture/Architecture.RealtimeSessionServer.md` (tool loop in
-  the sideband; update `Last reviewed:`).
-- `DecisionLog.md`: the resolved decisions (three-tool scope D8, `Turn` persistence
-  D9, model-use aggregation D13) were recorded 2026-06-10 at plan-revision time;
-  remaining entries land with implementation — the `qsf_tools` crate boundary (D7),
-  the function-call exchange-boundary rule and loop cap (D10) with denial feedback
-  (D11), and the verified provider function-call shapes (D12).
-- One `EngineeringDiary.md` entry (follow the diary's "How to use" header).
+- `Experiment.LiveMemoryExtraction` (or extend the sleep experiment doc) as the
+  validation record, plus a presence report.
+- Refresh `docs/Research/ResearchQuestions.Audio.md` (injection relevance; ASR-vs-model
+  transcript divergence per D19).
+- Update `docs/Concepts/Concept.RealtimeAudio.md` and cross-link
+  `docs/Concepts/Concept.RealtimePresence.md` (presence / latency / interruption
+  findings).
+- Refresh `docs/Architecture/Architecture.RealtimeSessionServer.md` (latency /
+  interruption observability), `docs/Architecture/Architecture.MemorySystem.md` and
+  `docs/Architecture/Architecture.StateAndObservability.md` (realtime extraction +
+  ageing; latency/interruption records); update each `Last reviewed:`.
+- `DecisionLog.md`: extraction location (D14), trust gate (D15), explicit invocation
+  (D16), realtime ageing (D17), the interruption-representation resolution (D18), and
+  extraction provenance (D19).
+- One `docs/EngineeringDiary.md` entry (follow the diary's "How to use" header).
 - README / launcher notes as the realtime mode grows.
-
----
-
-## Phase 5 — Live memory extraction + presence / interruption refinement
-
-**Scope.** Lightweight extraction over completed **trusted** turns (reuse the
-sleep/memory proposers) feeding the existing review/consolidation path. Refine
-interruption representation and end-to-end / per-stage latency reporting for presence
-research (including the latency-measurement gap carried forward from Phase 2 and the
-ageing/consolidation work deferred from Phase 3).
-
-**Verify (automated).** Extraction tests over trusted turns; latency measurements
-recorded.
-
-**Human testing (required).** Presence evaluation against the
-`Concept.RealtimePresence` open questions; record latency observations.
-
-**Docs.** Experiment doc + report; refresh `ResearchQuestions.Audio.md` (injection
-relevance, ASR-vs-model transcript divergence); update `Concept.RealtimeAudio.md` /
-cross-link `Concept.RealtimePresence`; diary entry.
 
 ### Deferred beyond Phase 5
 
-- **Full tool set for the live model (owner intent, 2026-06-10, recorded under
-  D8).** Expose the broader `qsf_app` tool set (project docs, recall-turn,
-  calculator, and successors) to the live realtime model as its own phase. Requires
-  moving the tools' data services (`ProjectDocService`, durable-session access)
-  past the no-`qsf_app` boundary; the D7 generic `qsf_tools` registry exists to
-  make that phase an additive change.
+- **Full tool set for the live model (owner intent, 2026-06-10, recorded under D8).**
+  Expose the broader `qsf_app` tool set (project docs, recall-turn, calculator, and
+  successors) to the live realtime model as its own phase. Requires moving the tools'
+  data services (`ProjectDocService`, durable-session access) past the no-`qsf_app`
+  boundary; the D7 generic `qsf_tools` registry exists to make that phase an additive
+  change.
+- **Automatic extraction trigger / orchestration (D16).** Auto-run extraction at
+  realtime session stop (or on a scheduled sleep cadence) via an out-of-process hook or
+  a launcher-owned post-session step, so consolidation does not require an explicit
+  manual pass — without giving `qsf_realtime_server` a `qsf_app` dependency.
+- **Durable interruption enrichment** (D18 resolved diagnostics-only): richer
+  interruption signals (pause/silence durations, barge-in classification, topic-shift
+  flags) promoted from diagnostics into the durable model once presence evaluation shows
+  a concrete need.
 
 ---
 
@@ -498,7 +500,8 @@ qsf.ps1 <realtime-conversation-mode>
 ```
 
 The experiment runner should remain available for regression tests, fixture-backed
-validation, and phase reports.
+validation, and phase reports — including the Phase-5 `Experiment.LiveMemoryExtraction`
+pass over a realtime continuity root.
 
 ---
 
@@ -513,39 +516,54 @@ validation, and phase reports.
   root and are sleep-eligible while diagnostic exchanges are not; the
   injection-payload builder matrix is green; no credential leaks through the sideband;
   confirmed live 2026-06-10.
-- **Phase 4 gate:** the function-call → decision → execution → output → response chain
-  is green against a mocked provider; a non-allow-listed tool is proven unexecuted and
-  recorded as denied; trusted promotion and degraded semantics hold across tool loops;
-  no credential leaks through tool payloads.
+- **Phase 4 gate (met):** the function-call → decision → execution → output → response
+  chain is green against a mocked provider; a non-allow-listed tool is proven
+  unexecuted and recorded as denied; trusted promotion and degraded semantics hold
+  across tool loops; no credential leaks through tool payloads; confirmed live
+  2026-06-11.
+- **Phase 5 gate:** an extraction pass over a fixture trusted continuity root produces
+  a `SleepReport` and routes candidates through the existing review/commit path with
+  non-trusted material proven excluded; per-stage + end-to-end latency is recorded;
+  interruptions produce durable records and interrupted exchanges stay non-promotable;
+  no credential leaks through extraction/latency/interruption artifacts.
 - **Human testing required at Phases 2–5** for, respectively: the live spoken
-  experience (done), cross-session continuity (done), model-invoked tool use, and
-  presence.
+  experience (done), cross-session continuity (done), model-invoked tool use (done),
+  and presence + extraction quality.
 
 ## Remaining Checks Before Each Phase
 
-- **Phases 0–3 (complete):** all prior-phase open questions are resolved and recorded
-  in `DecisionLog.md` / `EngineeringDiary.md`; the D3 attach shape and D5 manual-response
-  timing were both confirmed live 2026-06-10. Keep overlap policy B (D4) unless the
-  authoritative sideband reveals real overlap — still a watch item, not a change.
-- **Phase 4 (active):** D7–D11 and D13 are resolved/confirmed 2026-06-10 (external
-  review `Review.RealtimeVoiceConversation.phase4.Plan.codex.json` + owner): generic
-  `qsf_tools` core, three-tool scope, `Turn` persistence, sideband-enforced exchange
-  boundary with loop cap, structured denial feedback, aggregated model-use
-  accounting — recorded in `DecisionLog.md` (D8/D9/D13) at plan-revision time. Only
-  D12 (provider function-call shapes) remains: verify against the live API at step 3
-  and record drift.
+- **Phases 0–4 (complete):** all prior-phase open questions are resolved and recorded
+  in `DecisionLog.md` / `EngineeringDiary.md`; the D3 attach shape, D5 manual-response
+  timing, and D12 provider function-call shapes were all confirmed live. Keep overlap
+  policy B (D4) unless the authoritative sideband reveals real overlap — still a watch
+  item, not a change.
+- **Phase 5 (active):** D14–D19 are decided (D18 resolved diagnostics-only,
+  `DecisionLog.md` 2026-06-13). Confirm the realtime continuity-root layout
+  (`state/realtime/continuity/<session>`) and the `SleepInputBundle` adaptation against
+  the actual promoted-`Turn` artifacts before step 1. Two implementation calls remain
+  before the steps they affect:
+  - *Before steps 1–2 (MEDIUM-002):* `build_sleep_user_prompt` includes `review_notes`
+    but **not** `diagnostic_notes` today, so any tool/trust/provenance context the
+    summarizer must act on belongs in `session_text` or `review_notes`; keep
+    `diagnostic_notes` artifact-only unless that contract is deliberately changed.
+  - *Before step 3 (MEDIUM-001):* no `input_audio_buffer.speech_stopped` handler exists
+    yet, so an "end-to-end speech-end → first-audio" metric would be a proxy off the
+    final-transcript timestamp. Either add a speech-stopped handler or name the metric
+    `final-transcript-received → first-audio`; tests assert the exact event source per
+    stage.
 - **All phases:** confirm the provider-event mapping contract still holds against the
-  actual event stream — Phase 4 adds the first function-call events through the
-  authoritative sideband.
+  actual event stream.
 
 ## Documentation Updates (per `ProjectWorkflow.md`)
 
-Summarized per phase above. Aggregate touch-list: `DecisionLog.md` (Phases 0–3 entries
+Summarized per phase above. Aggregate touch-list: `DecisionLog.md` (Phases 0–4 entries
 have landed, including the authoritative-sideband, extraction-boundary,
-trusted-promotion, manual-response-default, gap-semantics, and verified-attach entries;
-Phase 4 adds the read-only-tools, `qsf_tools`-boundary, execution-recording,
-exchange-boundary, and verified-function-call entries), `EngineeringDiary.md` (one
-entry per logical application change), `README.md` and launcher documentation (as
+trusted-promotion, manual-response-default, gap-semantics, verified-attach,
+read-only-tools, `qsf_tools`-boundary, execution-recording, verified-function-call,
+stable-default-session, and sideband-owned-interruption entries; Phase 5 adds the
+extraction-location, trust-gate, explicit-invocation, realtime-ageing,
+interruption-representation, and extraction-provenance entries), `EngineeringDiary.md`
+(one entry per logical application change), `README.md` and launcher documentation (as
 phases land), refreshes to `Architecture.RealtimeSessionServer.md`,
 `Architecture.AudioLoop.md`, `Architecture.ToolSystem`, `Architecture.MemorySystem`,
 `Architecture.StateAndObservability`, `ResearchQuestions.Audio.md`,

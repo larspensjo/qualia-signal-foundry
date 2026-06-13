@@ -13,6 +13,7 @@ use crate::runtime::run_context::RunContext;
 
 use super::accept_reviewed_memory::AcceptReviewedMemoryExperiment;
 use super::audio_preparation_layer::AudioPreparationLayerExperiment;
+use super::live_memory_extraction::LiveMemoryExtractionExperiment;
 use super::memory_and_context::{
     AssociativeMemoryToyModelExperiment, ContextBudgetRetrievalTestExperiment,
 };
@@ -37,6 +38,7 @@ pub enum ExperimentName {
     ModelRoleSmokeTest,
     MultiTurnTextLoop,
     RealtimeVoiceSession,
+    LiveMemoryExtraction,
     AcceptReviewedMemory,
     ReviewedMemoryDraft,
     SleepPhaseSessionSummary,
@@ -56,6 +58,7 @@ impl ExperimentName {
             Self::ModelRoleSmokeTest => "model-role-smoke-test",
             Self::MultiTurnTextLoop => "multi-turn-text-loop",
             Self::RealtimeVoiceSession => "realtime-voice-session",
+            Self::LiveMemoryExtraction => "live-memory-extraction",
             Self::AcceptReviewedMemory => "accept-reviewed-memory",
             Self::ReviewedMemoryDraft => "reviewed-memory-draft",
             Self::SleepPhaseSessionSummary => "sleep-phase-session-summary",
@@ -86,6 +89,9 @@ impl ExperimentName {
             }
             Self::RealtimeVoiceSession => {
                 "Run a realtime voice-session provider and map session events back into QSF records"
+            }
+            Self::LiveMemoryExtraction => {
+                "Extract reviewable memory candidates from trusted realtime continuity artifacts"
             }
             Self::AcceptReviewedMemory => {
                 "Accept a reviewed memory draft and write it as the durable reviewed voice-memory fixture"
@@ -328,6 +334,7 @@ fn experiment_for(name: ExperimentName) -> Box<dyn Experiment> {
         ExperimentName::ModelRoleSmokeTest => Box::new(ModelRoleSmokeExperiment),
         ExperimentName::MultiTurnTextLoop => Box::new(MultiTurnTextLoopExperiment),
         ExperimentName::RealtimeVoiceSession => Box::new(RealtimeVoiceSessionExperiment),
+        ExperimentName::LiveMemoryExtraction => Box::new(LiveMemoryExtractionExperiment),
         ExperimentName::AcceptReviewedMemory => Box::new(AcceptReviewedMemoryExperiment),
         ExperimentName::ReviewedMemoryDraft => Box::new(ReviewedMemoryDraftExperiment),
         ExperimentName::SleepPhaseSessionSummary => Box::new(SleepPhaseSessionSummaryExperiment),

@@ -24,13 +24,14 @@ use qsf_session::{
 };
 use qsf_tools::ToolRequest;
 use sha2::Digest;
+use time::OffsetDateTime;
 use tokio::sync::{mpsc, watch};
 use tokio_tungstenite::{
     connect_async,
     tungstenite::{Message, client::IntoClientRequest},
 };
 
-use crate::diagnostics::DiagnosticRecord;
+use crate::diagnostics::{DiagnosticRecord, DiagnosticTrust};
 use crate::realtime::injection::{
     DEFAULT_PCM_RATE_HZ, MemoryInjectionRequest, assemble_memory_context,
     build_memory_injection_packet,
@@ -82,6 +83,11 @@ struct SidebandRuntimeState {
     active_exchange_index: Option<usize>,
     pending_response_exchange: Option<usize>,
     turn_phase: TurnPhase,
+    final_transcript_received_at: Option<OffsetDateTime>,
+    memory_injected_at: Option<OffsetDateTime>,
+    response_create_sent_at: Option<OffsetDateTime>,
+    response_created_at: Option<OffsetDateTime>,
+    first_audio_received_at: Option<OffsetDateTime>,
     response_started_at: Option<Instant>,
     response_id: Option<String>,
     current_request_hash: Option<ContentHash>,
@@ -92,12 +98,18 @@ struct SidebandRuntimeState {
     accumulated_output_tokens: u32,
     tool_calls_in_turn: usize,
     stale_response_ids: HashSet<String>,
+    latency_record_labels_emitted: HashSet<String>,
 }
 
 impl SidebandRuntimeState {
     /// Clears in-flight response accounting without touching exchange ownership
     /// or stale-response tracking.
     fn clear_in_flight_response_state(&mut self) {
+        self.final_transcript_received_at = None;
+        self.memory_injected_at = None;
+        self.response_create_sent_at = None;
+        self.response_created_at = None;
+        self.first_audio_received_at = None;
         self.response_id = None;
         self.response_started_at = None;
         self.current_request_hash = None;
@@ -107,6 +119,7 @@ impl SidebandRuntimeState {
         self.accumulated_cached_input_tokens = 0;
         self.accumulated_output_tokens = 0;
         self.tool_calls_in_turn = 0;
+        self.latency_record_labels_emitted.clear();
     }
 }
 
@@ -394,6 +407,8 @@ async fn handle_provider_event(
                         &mut guard.session_state,
                         LiveSessionEvent::UserInterrupted(interruption),
                     );
+                    let interrupted_exchange =
+                        guard.session_state.live.active_exchange.as_ref().cloned();
                     if let Some(response_id) = runtime_state.response_id.clone() {
                         runtime_state.stale_response_ids.insert(response_id);
                     } else {
@@ -431,9 +446,17 @@ async fn handle_provider_event(
                         },
                     );
                     runtime_state.clear_in_flight_response_state();
+                    runtime_state.final_transcript_received_at = Some(OffsetDateTime::now_utc());
                     runtime_state.active_exchange_index = Some(new_exchange_index);
                     runtime_state.pending_response_exchange = None;
                     runtime_state.turn_phase = TurnPhase::Idle;
+                    if let Some(exchange) = interrupted_exchange {
+                        record_interrupted_exchange_diagnostic(
+                            &guard.diagnostics,
+                            qsf_session_id,
+                            &exchange,
+                        )?;
+                    }
                 }
                 TranscriptDisposition::StartTurn => {
                     let exchange_index = ensure_authoritative_exchange(&mut guard);
@@ -456,6 +479,7 @@ async fn handle_provider_event(
                             final_transcript: transcript.clone(),
                         },
                     );
+                    runtime_state.final_transcript_received_at = Some(OffsetDateTime::now_utc());
                     runtime_state.active_exchange_index = Some(exchange_index);
                     runtime_state.pending_response_exchange = None;
                     runtime_state.turn_phase = TurnPhase::Idle;
@@ -509,6 +533,7 @@ async fn handle_provider_event(
                 .unwrap_or_default();
 
             let mut guard = session.lock().await;
+            let diagnostics = guard.diagnostics.clone();
             if let Some(exchange_index) = runtime_state.active_exchange_index {
                 apply_live_session_event(
                     &mut guard.session_state,
@@ -521,6 +546,17 @@ async fn handle_provider_event(
                     },
                 );
             }
+            runtime_state.memory_injected_at = Some(OffsetDateTime::now_utc());
+            let final_transcript_received_at = runtime_state.final_transcript_received_at;
+            let memory_injected_at = runtime_state.memory_injected_at;
+            record_latency_observation_if_ready(
+                runtime_state,
+                &diagnostics,
+                qsf_session_id,
+                "final_transcript_received_to_memory_injected",
+                final_transcript_received_at,
+                memory_injected_at,
+            )?;
             drop(guard);
 
             if let Some(packet) = packet {
@@ -537,6 +573,16 @@ async fn handle_provider_event(
             );
             turn_request_values.push(response_create.clone());
             send_json(outbound_tx, response_create)?;
+            runtime_state.response_create_sent_at = Some(OffsetDateTime::now_utc());
+            let response_create_sent_at = runtime_state.response_create_sent_at;
+            record_latency_observation_if_ready(
+                runtime_state,
+                &diagnostics,
+                qsf_session_id,
+                "memory_injected_to_response_create_sent",
+                memory_injected_at,
+                response_create_sent_at,
+            )?;
             runtime_state.current_request_hash = Some(hash_request_sequence(&turn_request_values));
             runtime_state.current_message_count = turn_request_values.len();
             runtime_state.pending_response_exchange = runtime_state.active_exchange_index;
@@ -582,8 +628,10 @@ async fn handle_provider_event(
             }
             runtime_state.response_id = response_id.clone();
             runtime_state.response_started_at = Some(Instant::now());
+            runtime_state.response_created_at = Some(OffsetDateTime::now_utc());
 
             let exchange_index = ensure_authoritative_exchange(&mut guard);
+            let diagnostics = guard.diagnostics.clone();
             apply_live_session_event(
                 &mut guard.session_state,
                 LiveSessionEvent::ProviderEventRecorded(ProviderEventRecord {
@@ -616,12 +664,32 @@ async fn handle_provider_event(
                         .map(str::to_string),
                 }),
             );
+            let response_create_sent_at = runtime_state.response_create_sent_at;
+            let response_created_at = runtime_state.response_created_at;
+            let first_audio_received_at = runtime_state.first_audio_received_at;
+            record_latency_observation_if_ready(
+                runtime_state,
+                &diagnostics,
+                qsf_session_id,
+                "response_create_sent_to_response_created",
+                response_create_sent_at,
+                response_created_at,
+            )?;
+            record_latency_observation_if_ready(
+                runtime_state,
+                &diagnostics,
+                qsf_session_id,
+                "response_created_to_first_audio",
+                response_created_at,
+                first_audio_received_at,
+            )?;
         }
         "response.output_audio.delta"
         | "response.audio.delta"
         | "response.output_audio_transcript.delta"
         | "response.output_audio_transcript.done" => {
             let exchange_index = ensure_authoritative_exchange(&mut guard);
+            let diagnostics = guard.diagnostics.clone();
             apply_live_session_event(
                 &mut guard.session_state,
                 LiveSessionEvent::ProviderEventRecorded(ProviderEventRecord {
@@ -656,6 +724,28 @@ async fn handle_provider_event(
                         .map(str::to_string),
                 }),
             );
+            if runtime_state.first_audio_received_at.is_none() {
+                runtime_state.first_audio_received_at = Some(OffsetDateTime::now_utc());
+            }
+            let response_created_at = runtime_state.response_created_at;
+            let first_audio_received_at = runtime_state.first_audio_received_at;
+            let final_transcript_received_at = runtime_state.final_transcript_received_at;
+            record_latency_observation_if_ready(
+                runtime_state,
+                &diagnostics,
+                qsf_session_id,
+                "response_created_to_first_audio",
+                response_created_at,
+                first_audio_received_at,
+            )?;
+            record_latency_observation_if_ready(
+                runtime_state,
+                &diagnostics,
+                qsf_session_id,
+                "final_transcript_received_to_first_audio",
+                final_transcript_received_at,
+                first_audio_received_at,
+            )?;
         }
         "response.done" => {
             handle_response_done_event(
@@ -946,6 +1036,67 @@ struct PendingToolExecution {
 struct ToolResolutionOutput {
     record: qsf_session::ToolExecutionRecord,
     output_message: serde_json::Value,
+}
+
+fn record_latency_observation_once(
+    runtime_state: &mut SidebandRuntimeState,
+    diagnostics: &crate::diagnostics::DiagnosticWriter,
+    qsf_session_id: &str,
+    label: &'static str,
+    started_at: OffsetDateTime,
+    finished_at: OffsetDateTime,
+) -> anyhow::Result<()> {
+    if !runtime_state
+        .latency_record_labels_emitted
+        .insert(label.to_string())
+    {
+        return Ok(());
+    }
+
+    diagnostics.write(&DiagnosticRecord::LatencyObservation {
+        qsf_session_id: qsf_session_id.to_string(),
+        label: label.to_string(),
+        started_at,
+        finished_at,
+        latency_ms: (finished_at - started_at).whole_milliseconds() as i64,
+    })?;
+    Ok(())
+}
+
+fn record_latency_observation_if_ready(
+    runtime_state: &mut SidebandRuntimeState,
+    diagnostics: &crate::diagnostics::DiagnosticWriter,
+    qsf_session_id: &str,
+    label: &'static str,
+    started_at: Option<OffsetDateTime>,
+    finished_at: Option<OffsetDateTime>,
+) -> anyhow::Result<()> {
+    let (Some(started_at), Some(finished_at)) = (started_at, finished_at) else {
+        return Ok(());
+    };
+
+    record_latency_observation_once(
+        runtime_state,
+        diagnostics,
+        qsf_session_id,
+        label,
+        started_at,
+        finished_at,
+    )
+}
+
+fn record_interrupted_exchange_diagnostic(
+    diagnostics: &crate::diagnostics::DiagnosticWriter,
+    qsf_session_id: &str,
+    exchange: &Exchange,
+) -> anyhow::Result<()> {
+    diagnostics.write(&DiagnosticRecord::DiagnosticExchangeRecorded {
+        qsf_session_id: qsf_session_id.to_string(),
+        source: "sideband_interruption".to_string(),
+        trust: DiagnosticTrust::Trusted,
+        recorded_at: OffsetDateTime::now_utc(),
+        exchange: exchange.clone(),
+    })
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -1498,7 +1649,7 @@ mod tests {
     use tokio::sync::mpsc;
 
     use super::*;
-    use crate::diagnostics::DiagnosticRecord;
+    use crate::diagnostics::{DiagnosticRecord, DiagnosticTrust};
 
     fn state(tempdir: &TempDir) -> AppState {
         AppState::new_with_realtime_ws_base_url(
@@ -2307,6 +2458,201 @@ mod tests {
                 .turns
                 .iter()
                 .all(|turn| turn.assistant_response != "stale answer")
+        );
+    }
+
+    #[tokio::test]
+    async fn live_loop_latency_observations_record_each_stage_once() {
+        let tempdir = TempDir::new().expect("tempdir");
+        let state = state(&tempdir);
+        let allocation = state.create_session().await.expect("session");
+        let mut runtime_state = SidebandRuntimeState::default();
+        let (outbound_tx, mut outbound_rx) = mpsc::unbounded_channel();
+
+        start_test_turn(
+            &state,
+            &allocation.qsf_session_id,
+            &mut runtime_state,
+            &outbound_tx,
+        )
+        .await;
+        outbound_rx.recv().await.expect("initial response.create");
+
+        handle_provider_event(
+            &state,
+            &allocation.qsf_session_id,
+            "call-latency",
+            "response.created",
+            &serde_json::json!({
+                "type": "response.created",
+                "event_id": "evt-response-created",
+                "response": {
+                    "id": "response-latency",
+                    "status": "in_progress"
+                }
+            }),
+            &mut runtime_state,
+            &outbound_tx,
+        )
+        .await
+        .expect("response.created");
+
+        handle_provider_event(
+            &state,
+            &allocation.qsf_session_id,
+            "call-latency",
+            "response.audio.delta",
+            &serde_json::json!({
+                "type": "response.audio.delta",
+                "event_id": "evt-first-audio",
+                "response": {
+                    "id": "response-latency",
+                    "status": "in_progress"
+                },
+                "delta": "AA=="
+            }),
+            &mut runtime_state,
+            &outbound_tx,
+        )
+        .await
+        .expect("first audio");
+
+        handle_provider_event(
+            &state,
+            &allocation.qsf_session_id,
+            "call-latency",
+            "response.done",
+            &serde_json::json!({
+                "type": "response.done",
+                "event_id": "evt-response-done",
+                "response": {
+                    "id": "response-latency",
+                    "status": "completed",
+                    "output": [{
+                        "type": "message",
+                        "content": [{
+                            "type": "output_text",
+                            "text": "latency answer"
+                        }]
+                    }],
+                    "usage": {
+                        "input_tokens": 1,
+                        "output_tokens": 1
+                    }
+                }
+            }),
+            &mut runtime_state,
+            &outbound_tx,
+        )
+        .await
+        .expect("response done");
+
+        let records = diagnostic_records(&state, &allocation.qsf_session_id).await;
+        let latency_labels = records
+            .iter()
+            .filter_map(|record| match record {
+                DiagnosticRecord::LatencyObservation { label, .. } => Some(label.as_str()),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+
+        assert_eq!(
+            latency_labels,
+            vec![
+                "final_transcript_received_to_memory_injected",
+                "memory_injected_to_response_create_sent",
+                "response_create_sent_to_response_created",
+                "response_created_to_first_audio",
+                "final_transcript_received_to_first_audio",
+            ]
+        );
+        assert!(records.iter().all(|record| {
+            !serde_json::to_string(record)
+                .expect("diagnostic json")
+                .contains("test-api-key")
+        }));
+        for record in records {
+            if let DiagnosticRecord::LatencyObservation { latency_ms, .. } = record {
+                assert!(latency_ms >= 0);
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn interrupted_exchange_is_persisted_as_a_trusted_diagnostic() {
+        let tempdir = TempDir::new().expect("tempdir");
+        let state = state(&tempdir);
+        let allocation = state.create_session().await.expect("session");
+        let mut runtime_state = SidebandRuntimeState::default();
+        let (outbound_tx, mut outbound_rx) = mpsc::unbounded_channel();
+
+        start_test_turn(
+            &state,
+            &allocation.qsf_session_id,
+            &mut runtime_state,
+            &outbound_tx,
+        )
+        .await;
+        outbound_rx.recv().await.expect("initial response.create");
+
+        handle_provider_event(
+            &state,
+            &allocation.qsf_session_id,
+            "call-interrupt",
+            "conversation.item.input_audio_transcription.completed",
+            &serde_json::json!({
+                "type": "conversation.item.input_audio_transcription.completed",
+                "event_id": "evt-interrupt",
+                "item_id": "item-interrupt",
+                "transcript": "stop"
+            }),
+            &mut runtime_state,
+            &outbound_tx,
+        )
+        .await
+        .expect("interrupting transcript");
+
+        outbound_rx.recv().await.expect("response.cancel");
+        outbound_rx.recv().await.expect("fresh response.create");
+
+        let records = diagnostic_records(&state, &allocation.qsf_session_id).await;
+        let interrupted = records
+            .iter()
+            .find(|record| {
+                if let DiagnosticRecord::DiagnosticExchangeRecorded { source, trust, .. } = record {
+                    source == "sideband_interruption" && *trust == DiagnosticTrust::Trusted
+                } else {
+                    false
+                }
+            })
+            .expect("interrupted exchange diagnostic");
+
+        match interrupted {
+            DiagnosticRecord::DiagnosticExchangeRecorded {
+                exchange,
+                source,
+                trust,
+                ..
+            } => {
+                assert_eq!(source, "sideband_interruption");
+                assert_eq!(*trust, DiagnosticTrust::Trusted);
+                assert_eq!(exchange.status, qsf_session::ExchangeStatus::Interrupted);
+                let interrupted_json = serde_json::to_string(interrupted).expect("diagnostic json");
+                assert!(!interrupted_json.contains("test-api-key"));
+            }
+            _ => unreachable!(),
+        }
+
+        let runtime = state
+            .session_runtime(&allocation.qsf_session_id)
+            .await
+            .expect("runtime");
+        let guard = runtime.lock().await;
+        assert!(guard.session_state.turns.is_empty());
+        assert_eq!(guard.session_state.live.completed_exchanges.len(), 1);
+        assert_eq!(
+            guard.session_state.live.completed_exchanges[0].status,
+            qsf_session::ExchangeStatus::Interrupted
         );
     }
 

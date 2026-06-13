@@ -3073,3 +3073,35 @@ What changed:
   distinguishable from genuinely degraded sideband trust.
 
 Refs: crates/qsf_realtime_server/src/realtime/sideband.rs
+
+## 2026-06-13 - Live memory extraction and presence diagnostics
+
+Implemented live-memory extraction from trusted realtime conversations and added
+presence diagnostics for latency and interruptions.
+
+What changed:
+- Added `Experiment.LiveMemoryExtraction` in `qsf_app` with a pure builder that
+  reads trusted promoted turns as the canonical transcript source and treats
+  persisted exchanges as metadata only.
+- Reused the existing sleep summarizer, review artifact writer, and commit path
+  so extraction routes into the same review/auto-promote flow as sleep.
+- Applied the existing warm-turn ageing path during extraction and shared the
+  transcript-formatting helpers used by sleep and live extraction.
+- Added realtime latency observations for the live loop and a durable
+  diagnostics record for interrupted trusted exchanges in
+  `qsf_realtime_server`.
+- Added a validation experiment doc for live memory extraction.
+
+Observed:
+- The fallback smoke input keeps the extraction experiment runnable when the
+  realtime continuity root is missing or malformed.
+- A successful extraction is an offline consolidation pass; it can move the
+  realtime continuity root to consolidated-brief resume mode even when no memory
+  candidates promote.
+- The sideband now records stage latencies and trusted interruption diagnostics
+  without changing the durable continuity schema.
+
+Refs: crates/qsf_app/src/experiments/live_memory_extraction.rs,
+crates/qsf_app/src/experiments/sleep_phase_session_summary.rs,
+crates/qsf_realtime_server/src/realtime/sideband.rs,
+docs/Experiments/Experiment.LiveMemoryExtraction.md

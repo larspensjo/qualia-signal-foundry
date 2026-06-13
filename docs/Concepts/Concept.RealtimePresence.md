@@ -203,6 +203,10 @@ Live interaction state
 
 Realtime presence therefore produces raw material for later memory consolidation.
 
+Phase 5 adds a concrete observability slice for that idea: trusted interruptions
+are recorded as durable diagnostics, and the live loop emits stage-by-stage and
+end-to-end latency observations.
+
 ## Relationship to External Inputs
 
 Audio is likely the first external input, but the concept can extend to other inputs:

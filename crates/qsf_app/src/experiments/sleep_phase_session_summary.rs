@@ -15,6 +15,9 @@ use crate::session::{SessionState, SleepRecord, StateDirectoryResolution};
 use crate::sleep::{SleepInputBundle, SleepReport, summarize_session};
 
 use super::registry::{Experiment, ExperimentName, ExperimentOutcome};
+use super::transcript_format::{
+    append_labelled_value, append_recalled_items, append_retrieved_memory_block,
+};
 
 const SESSION_TEXT: &str = "Session transcript:\n- We introduced typed model roles and a deterministic mock model.\n- The runtime still routes observable behavior through explicit events and traces.\n- Sleep phase should summarize the session, extract candidate memories, surface open questions, and keep decision candidates provisional.\n- Nothing in the sleep phase should silently become an accepted decision.";
 
@@ -185,7 +188,7 @@ impl SleepPhaseSessionSummaryExperiment {
     }
 }
 
-fn commit_cross_session_sleep(
+pub(crate) fn commit_cross_session_sleep(
     context: &RunContext,
     report: &SleepReport,
     mut outcome: ExperimentOutcome,
@@ -451,47 +454,6 @@ fn latest_sleep_record_completion(session: &SessionState) -> Option<std::time::S
         .max()
 }
 
-fn append_labelled_value(transcript: &mut String, label: &str, value: &str, placeholder: &str) {
-    transcript.push_str(label);
-    transcript.push_str(":\n");
-    let rendered = if value.trim().is_empty() {
-        placeholder
-    } else {
-        value.trim()
-    };
-    transcript.push_str(rendered);
-    transcript.push('\n');
-}
-
-fn append_retrieved_memory_block(transcript: &mut String, retrieved_memory_block: &str) {
-    if retrieved_memory_block.trim().is_empty() {
-        return;
-    }
-
-    transcript.push_str("Retrieved memory block:\n");
-    transcript.push_str(retrieved_memory_block.trim());
-    transcript.push('\n');
-}
-
-fn append_recalled_items(
-    transcript: &mut String,
-    label: &str,
-    recalled_items: &[crate::session::RecallRecord],
-) {
-    if recalled_items.is_empty() {
-        return;
-    }
-
-    transcript.push_str(label);
-    transcript.push_str(":\n");
-    for recall in recalled_items {
-        transcript.push_str(&format!(
-            "- {} recalled turn {} via {}\n",
-            recall.call_id, recall.turn_id, recall.tool_name
-        ));
-    }
-}
-
 fn append_interruption_block(
     transcript: &mut String,
     interruptions: &[crate::session::InterruptionRecord],
@@ -518,7 +480,7 @@ fn append_interruption_block(
     }
 }
 
-fn write_sleep_artifacts(
+pub(crate) fn write_sleep_artifacts(
     context: &RunContext,
     requested_provider: &str,
     input: &SleepInputBundle,

@@ -1271,3 +1271,27 @@ Refs: crates/qsf_realtime_server/src/diagnostics.rs,
 crates/qsf_realtime_server/src/realtime/sideband.rs,
 crates/qsf_session/src/live_state.rs, crates/qsf_session/src/persistence.rs,
 docs/Concepts/Concept.RealtimePresence.md
+
+## 2026-06-13 - Realtime live memory extraction uses trusted continuity root
+Decision: Live memory extraction runs in `qsf_app` against the realtime
+continuity root `state/realtime/continuity/default`, reads only promoted trusted
+`SessionState.turns` as the canonical transcript source, treats matching
+persisted exchanges as metadata only, and falls back to a smoke input when the
+continuity root is absent or malformed.
+Context: Phase 5 needed an extraction pass that could reuse the existing sleep
+summarizer and review/commit machinery without giving `qsf_realtime_server` a
+`qsf_app` dependency. Inspecting the persisted continuity artifacts showed that
+turns already hold the canonical transcript, tool records, and memory context,
+while exchanges are useful only as metadata for provenance and interruption
+observability. The existing sleep commit path already knows how to route a
+report through review, memory promotion, and association deduplication.
+Consequences: Extraction provenance is labeled inline in the input text, the
+commit path can stay shared, realtime ageing explicitly reuses the existing
+warm-turn summary path before consolidation, and malformed or missing continuity
+artifacts do not block the phase. Latency and interruption observability remain
+diagnostics-only and are kept outside durable continuity.
+Refs: crates/qsf_app/src/experiments/live_memory_extraction.rs,
+crates/qsf_app/src/experiments/sleep_phase_session_summary.rs,
+crates/qsf_realtime_server/src/realtime/sideband.rs,
+docs/Experiments/Experiment.LiveMemoryExtraction.md;
+implements: Live memory extraction + presence / interruption refinement

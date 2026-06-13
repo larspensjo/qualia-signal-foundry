@@ -55,6 +55,8 @@ candidate categories listed below still have no shared module.
 - `qsf_realtime_server` now also records trusted sideband exchange promotion into
   the shared continuity root, while keeping browser relay exchanges confined to
   relay diagnostics.
+- Phase 5 extends the realtime observability surface with live-loop latency
+  observations and durable diagnostics for interrupted trusted exchanges.
 - Realtime tool activity has two distinct records: `ToolRequestRecord` captures
   the provider request, and `ToolExecutionRecord` captures the permission
   decision, status, capped result summary, error, timing, per-response model
@@ -91,9 +93,10 @@ candidate categories listed below still have no shared module.
   memory-graph view, no cost dashboard)
 - `experiment_id` and `memory_update_id` correlation across runs
 
-Last reviewed: 2026-06-10 against explicit remember-this capture observability,
+Last reviewed: 2026-06-13 against explicit remember-this capture observability,
 retrieval skip reasons, the implemented Phase-3 sideband promotion path, the
-realtime diagnostic surface, and Phase-4 realtime tool execution records.
+realtime diagnostic surface, Phase-4 realtime tool execution records, and the
+Phase-5 latency/interruption diagnostics.
 
 ## Summary
 

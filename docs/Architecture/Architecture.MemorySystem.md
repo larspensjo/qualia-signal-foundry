@@ -52,6 +52,10 @@ future retrieval backends.
   processing, including voice exchanges through the shared normalized sleep view
   ([sleep/auto_promote.rs](../../crates/qsf_app/src/sleep/auto_promote.rs),
   [experiments/sleep_phase_session_summary.rs](../../crates/qsf_app/src/experiments/sleep_phase_session_summary.rs))
+- Phase 5 adds a live-memory extraction pass in `qsf_app` that reads trusted
+  realtime continuity roots, builds extraction input from promoted turns, and
+  applies the existing warm-turn ageing path before routing candidates through
+  the existing review and commit path.
 - Live-loop co-retrieval association formation and retrieved-memory reinforcement
   ([memory/co_retrieval.rs](../../crates/qsf_app/src/memory/co_retrieval.rs),
   [experiments/multi_turn_text_loop.rs](../../crates/qsf_app/src/experiments/multi_turn_text_loop.rs))
@@ -104,9 +108,9 @@ future retrieval backends.
 - Sleep-side consolidation over voice exchanges is now shared with text turns,
   but richer semantic typing of the resulting memories is still shallow
 
-Last reviewed: 2026-06-10 against the shared live-memory-runtime phase, the
-lean `qsf_memory` / `qsf_context` extraction, and the implemented Phase-3
-trusted sideband path. Live-loop co-retrieval handles mechanical edges, sleep
+Last reviewed: 2026-06-13 against the Phase-5 live-memory extraction pass,
+the shared live-memory-runtime phase, and the implemented Phase-3 trusted
+sideband path. Live-loop co-retrieval handles mechanical edges, sleep
 contributes safety-net and LLM-candidate associations through the proposer
 interface, and both text and text-owned voice sessions flow through the shared
 memory store, shared live-memory runtime, and sleep consolidation path by
