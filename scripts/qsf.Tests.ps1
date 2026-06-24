@@ -87,3 +87,45 @@ Describe "qsf.ps1 deterministic environment" {
         $delta.Clears | Should -Not -Contain "QSF_CUSTOM_API_KEY"
     }
 }
+
+Describe "qsf.ps1 realtime launcher" {
+    BeforeAll {
+        $script:QsfSkipAutoRun = $true
+        . $script:LauncherScript -Command "help"
+    }
+
+    BeforeEach {
+        [System.Environment]::SetEnvironmentVariable("OPENAI_API_KEY", $null, "Process")
+    }
+
+    It "resolves the browser UI target by default" {
+        $target = Get-UiTarget -Target ""
+
+        $target.Name | Should -Be "browser"
+        $target.Dir | Should -Be (Join-Path $projectRoot "crates/qsf_browser_server/ui")
+    }
+
+    It "resolves the realtime UI target" {
+        $target = Get-UiTarget -Target "realtime"
+
+        $target.Name | Should -Be "realtime"
+        $target.Dir | Should -Be (Join-Path $projectRoot "crates/qsf_realtime_server/ui")
+    }
+
+    It "rejects an unknown ui target" {
+        { Get-UiTarget -Target "bogus" } | Should -Throw "*Unknown ui target*"
+    }
+
+    It "fails fast when the required secret is absent" {
+        { Test-RequiredSecret -Name "OPENAI_API_KEY" } | Should -Throw "*OPENAI_API_KEY is not set*"
+    }
+
+    It "passes silently when the required secret is present without echoing it" {
+        [System.Environment]::SetEnvironmentVariable("OPENAI_API_KEY", "super-secret-value", "Process")
+
+        $output = Test-RequiredSecret -Name "OPENAI_API_KEY" 6>&1
+
+        $output | Should -BeNullOrEmpty
+        ($output | Out-String) | Should -Not -Match "super-secret-value"
+    }
+}

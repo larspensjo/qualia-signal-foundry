@@ -18,7 +18,8 @@ param(
     [string]$Store = "state/text-loop/memory-store.json",
     [string]$BindHost = "127.0.0.1",
     [int]$Port = 3939,
-    [switch]$Workbench
+    [switch]$Workbench,
+    [switch]$RandomSessionId
 )
 
 $ErrorActionPreference = "Stop"
@@ -29,6 +30,13 @@ $defaultStore = "state/text-loop/memory-store.json"
 $sampleStore = "crates/qsf_browser_server/tests/fixtures/small-store.json"
 $emptySessionMemoryFile = "docs/Experiments/Fixtures/session-memory.empty.json"
 $uiDir = Join-Path $projectRoot "crates/qsf_browser_server/ui"
+$realtimeUiDir = Join-Path $projectRoot "crates/qsf_realtime_server/ui"
+# These must match qsf_realtime_server's cli.rs DEFAULT_PORT and the Vite dev server
+# in crates/qsf_realtime_server/ui/vite.config.ts (whose /api proxy is pinned to 3940),
+# so the realtime command does not expose -Port/-BindHost overrides.
+$realtimeServerPort = 3940
+$realtimeUiPort = 5174
+$realtimeUiUrl = "http://localhost:$realtimeUiPort"
 $profilesPath = Join-Path $PSScriptRoot "qsf.profiles.json"
 $script:QsfExitCode = 0
 $script:QsfScriptBoundParameters = @{} + $PSBoundParameters
@@ -456,8 +464,9 @@ Usage:
   .\scripts\qsf.ps1 help
   .\scripts\qsf.ps1 app [-Experiment <name>] [-LaunchProfile <name>] [-VoiceMemoryFile <path>] [-SessionMemorySource <auto|empty|file|fixture>] [-SessionMemoryFile <path>] [-DemoMemory]
   .\scripts\qsf.ps1 browser [<store>] [-Store <path>] [-BindHost <ip>] [-Port <port>]
-  .\scripts\qsf.ps1 ui
+  .\scripts\qsf.ps1 ui [browser|realtime]
   .\scripts\qsf.ps1 workbench [<store>] [-Store <path>] [-BindHost <ip>] [-Port <port>]
+  .\scripts\qsf.ps1 realtime [-RandomSessionId]
   .\scripts\qsf.ps1 doctor [-LaunchProfile <name>] [-Workbench]
   .\scripts\qsf.ps1 list experiments
   .\scripts\qsf.ps1 list profiles
@@ -471,6 +480,8 @@ Defaults:
   Text-loop session memory through launcher: empty file source; persisted store wins
   Text-loop session limit through launcher: allow over limit
   UI directory:  crates/qsf_browser_server/ui
+  Realtime server: 127.0.0.1:$realtimeServerPort (state/realtime); requires OPENAI_API_KEY
+  Realtime UI:     crates/qsf_realtime_server/ui (Vite on $realtimeUiUrl)
 
 Examples:
   .\scripts\qsf.ps1 app -Experiment multi-turn-text-loop
@@ -480,6 +491,9 @@ Examples:
   .\scripts\qsf.ps1 app -Experiment text-owned-voice-loop -LaunchProfile file-memory -VoiceMemoryFile docs/Experiments/Fixtures/voice-memory.example.json
   .\scripts\qsf.ps1 browser -Store $sampleStore -BindHost 127.0.0.1 -Port 3939
   .\scripts\qsf.ps1 ui
+  .\scripts\qsf.ps1 ui realtime
+  .\scripts\qsf.ps1 realtime
+  .\scripts\qsf.ps1 realtime -RandomSessionId
   .\scripts\qsf.ps1 workbench $sampleStore
   .\scripts\qsf.ps1 doctor -Workbench
   .\scripts\qsf.ps1 list experiments
@@ -639,6 +653,14 @@ function Invoke-Doctor {
         Add-DoctorCheck $checks (New-DoctorCheck -Status "warn" -Name "UI dependencies" -Message "Missing. Run before UI/workbench use: cd crates/qsf_browser_server/ui; npm install")
     }
 
+    $realtimeNodeModules = Join-Path $realtimeUiDir "node_modules"
+    if (Test-Path -LiteralPath $realtimeNodeModules -PathType Container) {
+        Add-DoctorCheck $checks (New-DoctorCheck -Status "ok" -Name "Realtime UI dependencies" -Message "crates/qsf_realtime_server/ui/node_modules exists.")
+    }
+    else {
+        Add-DoctorCheck $checks (New-DoctorCheck -Status "warn" -Name "Realtime UI dependencies" -Message "Missing. Run before realtime use: cd crates/qsf_realtime_server/ui; npm install")
+    }
+
     $resolvedDefaultStore = Join-Path $projectRoot $defaultStore
     if (Test-Path -LiteralPath $resolvedDefaultStore -PathType Leaf) {
         Add-DoctorCheck $checks (New-DoctorCheck -Status "ok" -Name "Default memory store" -Message $defaultStore)
@@ -656,6 +678,13 @@ function Invoke-Doctor {
     }
     else {
         Add-DoctorCheck $checks (New-DoctorCheck -Status "ok" -Name "Port 3939" -Message "127.0.0.1:3939 appears available.")
+    }
+
+    if (Test-PortOccupied -HostName "127.0.0.1" -PortNumber $realtimeServerPort) {
+        Add-DoctorCheck $checks (New-DoctorCheck -Status "warn" -Name "Port $realtimeServerPort" -Message "127.0.0.1:$realtimeServerPort appears occupied; the realtime server uses it.")
+    }
+    else {
+        Add-DoctorCheck $checks (New-DoctorCheck -Status "ok" -Name "Port $realtimeServerPort" -Message "127.0.0.1:$realtimeServerPort appears available.")
     }
 
     if ([string]::IsNullOrEmpty([System.Environment]::GetEnvironmentVariable("OPENAI_API_KEY", "Process"))) {
@@ -704,9 +733,14 @@ function Invoke-Doctor {
 }
 
 function Test-UiDependencies {
-    $nodeModules = Join-Path $uiDir "node_modules"
+    param(
+        [string]$Dir = $uiDir
+    )
+
+    $nodeModules = Join-Path $Dir "node_modules"
     if (-not (Test-Path -LiteralPath $nodeModules -PathType Container)) {
-        Write-Error "UI dependencies are missing. Run: cd crates/qsf_browser_server/ui; npm install"
+        $relativeDir = ([System.IO.Path]::GetRelativePath($projectRoot, $Dir)) -replace '\\', '/'
+        Write-Error "UI dependencies are missing. Run: cd $relativeDir; npm install"
     }
 }
 
@@ -789,9 +823,61 @@ function Invoke-BrowserServer {
     )
 }
 
+function Get-UiTarget {
+    param(
+        [AllowEmptyString()]
+        [string]$Target
+    )
+
+    switch ($Target.ToLowerInvariant()) {
+        "" { [pscustomobject]@{ Name = "browser"; Dir = $uiDir } }
+        "browser" { [pscustomobject]@{ Name = "browser"; Dir = $uiDir } }
+        "realtime" { [pscustomobject]@{ Name = "realtime"; Dir = $realtimeUiDir } }
+        default { Write-Error "Unknown ui target '$Target'. Supported targets: browser, realtime" }
+    }
+}
+
 function Invoke-Ui {
-    Test-UiDependencies
-    Invoke-LoggedCommand -Executable "npm" -Arguments @("run", "dev") -WorkingDirectory $uiDir
+    $target = Get-UiTarget -Target $Subject
+    Test-UiDependencies -Dir $target.Dir
+    Invoke-LoggedCommand -Executable "npm" -Arguments @("run", "dev") -WorkingDirectory $target.Dir
+}
+
+function Start-UiDevProcess {
+    param(
+        [Parameter(Mandatory = $true)]
+        [ValidateSet("browser", "realtime")]
+        [string]$Target
+    )
+
+    $psExe = (Get-Command "pwsh" -ErrorAction Stop).Source
+    $argumentList = @(
+        "-NoExit",
+        "-NoProfile",
+        "-ExecutionPolicy",
+        "Bypass",
+        "-File",
+        $PSCommandPath,
+        "ui",
+        $Target
+    )
+    Write-Host "Starting UI process: $(Format-Command -Executable $psExe -Arguments $argumentList)"
+    $uiProcess = Start-Process -FilePath $psExe -ArgumentList $argumentList -WorkingDirectory $projectRoot -PassThru
+    Write-Host "UI process PID: $($uiProcess.Id)"
+    return $uiProcess
+}
+
+function Stop-SpawnedProcess {
+    param(
+        [object]$Process
+    )
+
+    if ($null -ne $Process -and -not $Process.HasExited) {
+        Write-Host "Stopping UI process PID $($Process.Id)"
+        if (-not $Process.CloseMainWindow()) {
+            Stop-Process -Id $Process.Id -ErrorAction SilentlyContinue
+        }
+    }
 }
 
 function Invoke-Workbench {
@@ -804,30 +890,77 @@ function Invoke-Workbench {
     Write-Host "Health: $apiUrl/api/health"
     Write-Host "UI (open this in your browser): http://localhost:5173"
 
-    $psExe = (Get-Command "pwsh" -ErrorAction Stop).Source
-    $argumentList = @(
-        "-NoExit",
-        "-NoProfile",
-        "-ExecutionPolicy",
-        "Bypass",
-        "-File",
-        $PSCommandPath,
-        "ui"
-    )
-    Write-Host "Starting UI process: $(Format-Command -Executable $psExe -Arguments $argumentList)"
-    $uiProcess = Start-Process -FilePath $psExe -ArgumentList $argumentList -WorkingDirectory $projectRoot -PassThru
-    Write-Host "UI process PID: $($uiProcess.Id)"
-
+    $uiProcess = Start-UiDevProcess -Target "browser"
     try {
         Invoke-BrowserServer -StorePath $storePath
     }
     finally {
-        if ($null -ne $uiProcess -and -not $uiProcess.HasExited) {
-            Write-Host "Stopping UI process PID $($uiProcess.Id)"
-            if (-not $uiProcess.CloseMainWindow()) {
-                Stop-Process -Id $uiProcess.Id -ErrorAction SilentlyContinue
-            }
+        Stop-SpawnedProcess -Process $uiProcess
+    }
+}
+
+function Test-RequiredSecret {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$Name
+    )
+
+    $value = [System.Environment]::GetEnvironmentVariable($Name, "Process")
+    if ([string]::IsNullOrEmpty($value)) {
+        Write-Error "$Name is not set in the current environment. Set it before launching; the launcher never prints its value."
+    }
+}
+
+function Start-BrowserWhenReady {
+    param(
+        [Parameter(Mandatory = $true)]
+        [int]$PortNumber,
+
+        [Parameter(Mandatory = $true)]
+        [string]$Url,
+
+        [int]$TimeoutSeconds = 20
+    )
+
+    $deadline = (Get-Date).AddSeconds($TimeoutSeconds)
+    while ((Get-Date) -lt $deadline) {
+        if (Test-PortOccupied -HostName "127.0.0.1" -PortNumber $PortNumber) {
+            break
         }
+        Start-Sleep -Milliseconds 400
+    }
+
+    if (-not (Test-PortOccupied -HostName "127.0.0.1" -PortNumber $PortNumber)) {
+        Write-Host "UI dev server not reachable yet on port $PortNumber; opening browser anyway."
+    }
+
+    Write-Host "Opening browser: $Url"
+    Start-Process $Url
+}
+
+function Invoke-RealtimeServer {
+    $arguments = @("run", "-p", "qsf_realtime_server")
+    if ($RandomSessionId) {
+        $arguments += @("--", "--random-session-id")
+    }
+    Invoke-LoggedCommand -Executable "cargo" -Arguments $arguments
+}
+
+function Invoke-Realtime {
+    Test-RequiredSecret -Name "OPENAI_API_KEY"
+    Test-UiDependencies -Dir $realtimeUiDir
+
+    Write-Host "Realtime server API: http://127.0.0.1:$realtimeServerPort"
+    Write-Host "Realtime UI (open this in your browser): $realtimeUiUrl"
+    Write-Host "OPENAI_API_KEY: present in environment; value not shown"
+
+    $uiProcess = Start-UiDevProcess -Target "realtime"
+    try {
+        Start-BrowserWhenReady -PortNumber $realtimeUiPort -Url $realtimeUiUrl
+        Invoke-RealtimeServer
+    }
+    finally {
+        Stop-SpawnedProcess -Process $uiProcess
     }
 }
 
@@ -852,6 +985,9 @@ if (Test-QsfAutoRunEnabled) {
         }
         "workbench" {
             Invoke-Workbench
+        }
+        "realtime" {
+            Invoke-Realtime
         }
         "doctor" {
             Invoke-Doctor

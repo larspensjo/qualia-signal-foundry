@@ -12,6 +12,7 @@ $script:QsfCompletionCommands = @(
     "browser",
     "ui",
     "workbench",
+    "realtime",
     "doctor",
     "list",
     "help"
@@ -20,6 +21,11 @@ $script:QsfCompletionCommands = @(
 $script:QsfCompletionListSubjects = @(
     "experiments",
     "profiles"
+)
+
+$script:QsfCompletionUiTargets = @(
+    "browser",
+    "realtime"
 )
 
 $script:QsfCompletionSessionMemorySources = @(
@@ -226,6 +232,11 @@ $qsfCompleter = {
 
         if ($nativeContext.Arguments.Count -eq 1 -and $nativeContext.Arguments[0] -in @("browser", "workbench")) {
             Select-QsfCompletionMatches -Values (Get-QsfCompletionStorePaths) -WordToComplete $wordToComplete
+            return
+        }
+
+        if ($nativeContext.Arguments.Count -eq 1 -and $nativeContext.Arguments[0] -eq "ui") {
+            Select-QsfCompletionMatches -Values $script:QsfCompletionUiTargets -WordToComplete $wordToComplete
             return
         }
 

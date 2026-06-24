@@ -1294,3 +1294,23 @@ crates/qsf_app/src/experiments/sleep_phase_session_summary.rs,
 crates/qsf_realtime_server/src/realtime/sideband.rs,
 docs/Experiments/Experiment.LiveMemoryExtraction.md;
 implements: Live memory extraction + presence / interruption refinement
+
+## 2026-06-14 - `realtime` is the first-class live-conversation launcher command
+Type: Decision
+Decision: The realtime voice conversation operator surface is the launcher command
+`qsf.ps1 realtime`. It starts `qsf_realtime_server` (foreground) and the realtime
+Vite UI (separate window) together, requires `OPENAI_API_KEY` to be present (verified
+without printing), and uses the fixed ports 3940 (server) and 5174 (UI) rather than
+exposing `-Port`/`-BindHost`.
+Context: The realtime server and UI entry points have stabilized, so the previously
+deferred operator command could be named. The realtime UI's Vite dev proxy is pinned
+to the server on `127.0.0.1:3940`, so a configurable server port would silently break
+the proxy; the server itself reads only `OPENAI_API_KEY` and consumes none of the
+launcher's managed `QSF_*` variables, so the command applies no environment defaults.
+Consequences: Live conversation is launched with one command instead of two manual
+terminals. `realtime` intentionally has no port/host flags; changing the ports
+requires updating both `qsf_realtime_server`'s `cli.rs` default and the UI
+`vite.config.ts` proxy in lockstep. The experiment runner stays the harness for
+regression and fixture-backed validation.
+Refs: scripts/qsf.ps1, crates/qsf_realtime_server/src/cli.rs,
+crates/qsf_realtime_server/ui/vite.config.ts

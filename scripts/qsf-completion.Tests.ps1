@@ -26,9 +26,17 @@ Describe "qsf.ps1 argument completion" {
         $completions | Should -Contain "browser"
         $completions | Should -Contain "ui"
         $completions | Should -Contain "workbench"
+        $completions | Should -Contain "realtime"
         $completions | Should -Contain "doctor"
         $completions | Should -Contain "list"
         $completions | Should -Contain "help"
+    }
+
+    It "completes ui targets" {
+        $completions = Complete-QsfInput -InputText ".\scripts\qsf.ps1 ui "
+
+        $completions | Should -Contain "browser"
+        $completions | Should -Contain "realtime"
     }
 
     It "completes list targets" {

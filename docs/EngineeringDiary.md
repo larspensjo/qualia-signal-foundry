@@ -3129,3 +3129,32 @@ docs/Architecture/Architecture.MemorySystem.md,
 docs/Architecture/Architecture.StateAndObservability.md,
 docs/Concepts/Concept.RealtimeAudio.md,
 docs/Research/ResearchQuestions.Audio.md
+
+## 2026-06-14 - First-class `realtime` launcher command
+
+The PowerShell launcher gained a `realtime` command that runs the live voice
+conversation locally in one invocation, replacing the manual two-terminal flow
+(`cargo run -p qsf_realtime_server` plus `npm run dev` in the realtime UI).
+
+What changed:
+- `scripts/qsf.ps1`: added `Invoke-Realtime`, which verifies `OPENAI_API_KEY`
+  is present without printing it, checks the realtime UI dependencies, spawns the
+  realtime Vite UI in a separate window, opens the browser to the UI once its port
+  is reachable, and runs `qsf_realtime_server` in the foreground; Ctrl+C stops the
+  server and the launcher then closes the UI window.
+- Generalized the `ui` command to take a `browser`|`realtime` target and extracted
+  shared `Start-UiDevProcess` / `Stop-SpawnedProcess` helpers, which `workbench`
+  now reuses; parameterized `Test-UiDependencies` by directory.
+- `doctor` now also reports the realtime UI dependencies and port `3940`.
+- Added `realtime` and the `ui` targets to tab completion
+  (`scripts/qsf-completion.ps1`) and covered the new helpers with Pester tests.
+
+Observed:
+- The realtime server and Vite UI ports are fixed (`3940`/`5174`) because the UI
+  dev proxy is pinned to the server, so `realtime` deliberately does not expose
+  `-Port`/`-BindHost`; the launcher applies no `QSF_*` env defaults because the
+  realtime server reads only `OPENAI_API_KEY`.
+
+Refs: scripts/qsf.ps1, scripts/qsf-completion.ps1, scripts/qsf.Tests.ps1,
+scripts/qsf-completion.Tests.ps1, README.md; implements: First-class realtime
+launcher command

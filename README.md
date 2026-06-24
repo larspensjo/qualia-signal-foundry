@@ -144,10 +144,10 @@ On Windows, the documented happy path for common local launches is the repositor
 launcher. It is a thin wrapper over Cargo and npm: it prints the underlying command
 and any child-process environment changes before execution.
 
-Today the app side of the launcher is experiment-centric (`app -Experiment ...`).
-The planned realtime voice conversation path should eventually become a first-class
-launcher mode that starts the realtime server and browser UI together; until that
-server exists, the experiment runner remains the correct development harness.
+The app side of the launcher is experiment-centric (`app -Experiment ...`) and remains
+the harness for regression and fixture-backed experiments. The realtime voice
+conversation path is now a first-class launcher command, `realtime`, which starts the
+`qsf_realtime_server` API and its browser UI together (see below).
 
 ```powershell
 pwsh -NoProfile -File .\scripts\qsf.ps1 help
@@ -210,10 +210,11 @@ Check local prerequisites without starting Cargo, Vite, or the API server:
 .\scripts\qsf.ps1 doctor -Workbench
 ```
 
-`doctor` reports PowerShell, Cargo, Rust, Node/npm, UI dependencies, the default
-memory store, port `3939`, and whether `OPENAI_API_KEY` is present without printing
-its value. General checks warn about optional UI or OpenAI prerequisites; `-Workbench`
-turns workbench requirements into failures.
+`doctor` reports PowerShell, Cargo, Rust, Node/npm, UI dependencies (browser and
+realtime), the default memory store, ports `3939` and `3940`, and whether
+`OPENAI_API_KEY` is present without printing its value. General checks warn about
+optional UI or OpenAI prerequisites; `-Workbench` turns workbench requirements into
+failures.
 
 Start the memory browser API with the default store, host, and port:
 
@@ -235,6 +236,13 @@ Start the Vite UI from `crates/qsf_browser_server/ui`:
 .\scripts\qsf.ps1 ui
 ```
 
+The `ui` command takes an optional target; `ui realtime` starts the Vite UI from
+`crates/qsf_realtime_server/ui` instead (used by the `realtime` command below):
+
+```powershell
+.\scripts\qsf.ps1 ui realtime
+```
+
 If UI dependencies are missing, run:
 
 ```powershell
@@ -254,15 +262,36 @@ UI process ID and attempts to close that process when the API exits.
 Open the workbench at `http://localhost:5173/`; port `3939` is the backend API and
 its root page only points to the Vite UI and `/api/health`.
 
+Start a live realtime voice conversation — the realtime server and its browser UI
+together — in one command:
+
+```powershell
+.\scripts\qsf.ps1 realtime
+.\scripts\qsf.ps1 realtime -RandomSessionId
+```
+
+`realtime` verifies `OPENAI_API_KEY` is present (the server requires it and the value
+is never printed), checks the realtime UI dependencies, starts the Vite UI in a
+separate PowerShell window, opens your browser to `http://localhost:5174` once the UI
+is reachable, and runs `qsf_realtime_server` in the current terminal so its logs are
+visible. Press Ctrl+C in that terminal to stop; the launcher then closes the UI
+window. The realtime server and UI ports are fixed at `3940` and `5174` because the
+Vite dev proxy is pinned to the server, so `realtime` does not take `-Port`/`-BindHost`.
+By default it uses the stable `default` QSF session id (reusing local memory and
+continuity); pass `-RandomSessionId` to allocate a fresh session id per run.
+
 #### Launcher troubleshooting
 
-- **Blocked port:** `doctor` reports whether `127.0.0.1:3939` appears occupied. Stop
-  the existing process or launch with another port, for example
-  `.\scripts\qsf.ps1 browser -Port 3940`.
-- **Missing API key:** OpenAI-backed profiles require `OPENAI_API_KEY` in the current
-  shell before launch. The launcher checks presence but never prints the value.
+- **Blocked port:** `doctor` reports whether `127.0.0.1:3939` and `127.0.0.1:3940`
+  appear occupied. For the browser server, stop the existing process or launch with
+  another port, for example `.\scripts\qsf.ps1 browser -Port 3950`. The realtime
+  server's port is fixed at `3940`; free it before running `realtime`.
+- **Missing API key:** OpenAI-backed profiles and the `realtime` command require
+  `OPENAI_API_KEY` in the current shell before launch. The launcher checks presence
+  but never prints the value.
 - **Missing UI dependencies:** If `ui` or `workbench` reports missing dependencies,
-  run `cd crates/qsf_browser_server/ui; npm install`.
+  run `cd crates/qsf_browser_server/ui; npm install`. For `realtime` (or `ui
+  realtime`), run `cd crates/qsf_realtime_server/ui; npm install`.
 - **Execution policy:** If the script is blocked by local PowerShell policy, use the
   one-shot bypass form:
 
