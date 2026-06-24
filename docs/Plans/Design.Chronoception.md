@@ -273,7 +273,8 @@ Per `docs/ProjectFrame/ProjectWorkflow.md`, the implementation plan should also:
   [Architecture.Overview.md](../../docs/Architecture/Architecture.Overview.md)
   (a grasp of time / temporal signal moves toward implemented) and, once built,
   add an `Architecture.Chronoception.md` with an *Implementation Status* section.
-- Add an `EngineeringDiary.md` entry per logical change.
+- Keep commit messages clear enough to carry the implementation chronology, and
+  update active project documents when current behavior or design changes.
 - Optionally promote the deferred *subjective/felt time* facet into a
   `Concept.SubjectiveTime.md` so the wider idea is preserved.
 - Consider an `Experiment.*` that exercises the temporal frame + gap event

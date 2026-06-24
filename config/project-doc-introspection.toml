@@ -14,5 +14,4 @@ include = [
 
 exclude = [
   "docs/Reviews/**",
-  "docs/EngineeringDiary.md",
 ]

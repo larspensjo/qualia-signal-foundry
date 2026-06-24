@@ -63,9 +63,7 @@ QSF.
 
 ## Phases 0–4 — complete (compacted)
 
-Full per-step detail lives in git history, `docs/DecisionLog.md`, and
-`docs/EngineeringDiary.md`. What follows is the carry-forward that still constrains
-Phase 5.
+Full per-step detail lives in git history, `docs/DecisionLog.md`. What follows is the carry-forward that still constrains Phase 5.
 
 ### Phase 0 — Decisions & contracts (accepted 2026-06-09)
 
@@ -457,7 +455,8 @@ preconditions (D2), and degraded-gap semantics (D6) are unchanged.
 - `DecisionLog.md`: extraction location (D14), trust gate (D15), explicit invocation
   (D16), realtime ageing (D17), the interruption-representation resolution (D18), and
   extraction provenance (D19).
-- One `docs/EngineeringDiary.md` entry (follow the diary's "How to use" header).
+- Clear commit history for implementation chronology; update active project
+  documents when current behavior or design changes.
 - README / launcher notes as the realtime mode grows.
 
 ### Deferred beyond Phase 5
@@ -533,7 +532,7 @@ pass over a realtime continuity root.
 ## Remaining Checks Before Each Phase
 
 - **Phases 0–4 (complete):** all prior-phase open questions are resolved and recorded
-  in `DecisionLog.md` / `EngineeringDiary.md`; the D3 attach shape, D5 manual-response
+  in `DecisionLog.md` / archived historical notes; the D3 attach shape, D5 manual-response
   timing, and D12 provider function-call shapes were all confirmed live. Keep overlap
   policy B (D4) unless the authoritative sideband reveals real overlap — still a watch
   item, not a change.
@@ -562,9 +561,8 @@ trusted-promotion, manual-response-default, gap-semantics, verified-attach,
 read-only-tools, `qsf_tools`-boundary, execution-recording, verified-function-call,
 stable-default-session, and sideband-owned-interruption entries; Phase 5 adds the
 extraction-location, trust-gate, explicit-invocation, realtime-ageing,
-interruption-representation, and extraction-provenance entries), `EngineeringDiary.md`
-(one entry per logical application change), `README.md` and launcher documentation (as
-phases land), refreshes to `Architecture.RealtimeSessionServer.md`,
+interruption-representation, and extraction-provenance entries), `README.md` and
+launcher documentation (as phases land), refreshes to `Architecture.RealtimeSessionServer.md`,
 `Architecture.AudioLoop.md`, `Architecture.ToolSystem`, `Architecture.MemorySystem`,
 `Architecture.StateAndObservability`, `ResearchQuestions.Audio.md`,
 `Concept.RealtimeAudio.md` (+ `Concept.RealtimePresence` cross-link), and one

@@ -387,7 +387,6 @@ docs/
   Experiments/      experiment specs and reports
   Research/         research notes and references
   Reviews/          plan and code reviews
-  EngineeringDiary.md   chronological log of every change and observation
   DecisionLog.md        durable record of deliberate commitments
 
 runs/   per-run output artifacts (gitignored)
@@ -411,7 +410,6 @@ docs/Plans/               in-flight plans and brainstorm ideas
 docs/Experiments/         experiment specs and reports
 docs/Research/            research notes
 docs/Reviews/             plan and code review notes
-docs/EngineeringDiary.md  chronological "what happened" log
 docs/DecisionLog.md       deliberate commitments
 ```
 
@@ -423,10 +421,10 @@ The documentation should help both a project manager and a researcher understand
 - which experiments should be run next
 - why earlier decisions were made
 
-`EngineeringDiary.md` records every code change and notable observation in
-chronological order. `DecisionLog.md` is reserved for durable commitments —
-architecture rules, scope boundaries, and reusable conventions — and is the source
-of truth for what the project has agreed to do going forward.
+The git commit log records implementation chronology. `DecisionLog.md` is reserved
+for durable commitments — architecture rules, scope boundaries, and reusable
+conventions — and is the source of truth for what the project has agreed to do
+going forward.
 
 ## Design Philosophy
 

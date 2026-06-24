@@ -35,9 +35,6 @@ pub fn kind_for_path(path: &str) -> DocKind {
     if path == "docs/DecisionLog.md" {
         return DocKind::Decision;
     }
-    if path == "docs/EngineeringDiary.md" {
-        return DocKind::Diary;
-    }
     DocKind::Unknown
 }
 

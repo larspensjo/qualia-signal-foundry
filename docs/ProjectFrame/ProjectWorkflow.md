@@ -21,8 +21,7 @@ The normal flow is:
 
 ```text
 Idea or discussion
-  -> Engineering diary
-  -> Concept note
+  -> Concept note / research question / plan
   -> Research question
   -> Experiment backlog
   -> Planned experiment
@@ -33,38 +32,38 @@ Idea or discussion
 
 Not every idea must pass through every stage.
 
-Some ideas may stay in the diary. Some may become concept notes. Some may become experiments. Only a few should become accepted architecture or formal decisions.
+Some ideas may stay in concept, research, or plan documents. Some may become experiments. Only a few should become accepted architecture or formal decisions.
 
 ## Stage 1: Capture
 
 Use:
 
 ```text
-docs/EngineeringDiary.md
+docs/Concepts/Concept.*.md
+docs/Research/ResearchQuestions.*.md
+docs/Plans/Idea.*.md
+docs/Plans/Plan.*.md
+docs/Experiments/Experiment.*.md
 ```
 
 Purpose:
 
-Chronological "what happened" log. Records every submitted code change plus rough
-thoughts, discussion summaries, surprises, concerns, and emerging ideas.
+Capture new thinking in the lowest-confidence active document that fits the work.
+Do not maintain a separate chronological implementation diary; implementation
+chronology lives in the git commit log.
 
 Use this for:
 
-- every code change submitted (one entry per logical change; an entry can cover
-  several related commits)
-- informal notes
-- brainstorming summaries
-- observations from coding
+- informal notes that affect current project direction
+- brainstorming summaries that may become concept or idea documents
+- observations from coding that should update an experiment, plan, architecture
+  status section, or decision
 - questions that are not yet well-formed
-- surprising behavior
-- small implementation discoveries
+- surprising behavior that changes an experiment result or follow-up
+- implementation discoveries that affect current architecture or workflow
 - early experiment impressions
 
-The diary is allowed to be messy for non-code entries. It should preserve thinking
-before it is organized. Decisions and commitments do not belong here — they go in
-`docs/DecisionLog.md`.
-
-See `docs/EngineeringDiary.md` for the entry template.
+Decisions and commitments go in `docs/DecisionLog.md`.
 
 ## Stage 2: Clarify Concepts
 
@@ -215,7 +214,7 @@ event logs
 trace output
 metrics
 manual observations
-EngineeringDiary.md
+experiment reports
 ```
 
 Separate:
@@ -351,9 +350,10 @@ Use the decision log for:
 
 Do not use the decision log for:
 
-- implementation summaries (those are diary entries)
-- bug-fix postmortems on their own (those are diary entries; only the durable rule, if
-  any, is a decision-log entry)
+- implementation summaries (those belong in commits, pull requests, reports, or
+  relevant project documents)
+- bug-fix postmortems on their own (only the durable rule, if any, is a
+  decision-log entry)
 - casual ideas or speculation
 
 ## Stage 10: Continue the Loop
@@ -416,13 +416,6 @@ Should define the document kinds, the maturity tag taxonomy, and the authority
 ranking a reader should use when documents disagree. Authoritative for how any
 other document should be weighted.
 
-### `docs/EngineeringDiary.md`
-
-Chronological activity log and observations.
-
-Should record every submitted code change plus informal notes, observations, surprises,
-and evolving thoughts. One entry per logical change.
-
 ### `docs/Concepts/`
 
 Exploratory idea documents.
@@ -462,7 +455,7 @@ the review document.
 Deliberate commitments only.
 
 Should capture decisions and their reasoning. Implementation summaries and bug-fix
-postmortems do not belong here — those go in the diary.
+postmortems do not belong here unless they produce a durable rule.
 
 ### `docs/Plans/`
 
@@ -490,7 +483,7 @@ pattern for adding a new framework capability or running a new experiment:
 6. Update architecture only where the result clarifies design — include or refresh
    the Implementation Status section of any affected architecture document.
 7. Add decisions only if something should now be treated as settled.
-8. Add a diary entry for the logical change.
+8. Keep the commit message clear enough to carry the implementation chronology.
 ```
 
 Keep stages small enough that each one is independently verifiable. Prefer the
@@ -501,7 +494,7 @@ uses yet.
 
 Use these rules to decide when something moves between document types.
 
-### Diary to Concept
+### Capture to Concept
 
 Promote when an idea appears repeatedly or seems central.
 
@@ -557,7 +550,7 @@ Avoid premature decisions.
 
 A statement should not become a decision just because it appears in:
 
-- a diary entry
+- a commit message or pull-request summary
 - a concept note
 - an architecture sketch
 - an experiment hypothesis
@@ -610,13 +603,16 @@ If the project feels uncertain, that is acceptable. Capture the uncertainty.
 
 Good research questions prevent vague discomfort from becoming hidden design risk.
 
-## Diary Discipline
+## Chronology Discipline
 
-Use the diary for chronology, not final truth.
+Use git history for implementation chronology.
 
-The diary is where the project remembers how thinking evolved.
+Do not duplicate commit-log information into a separate project document. When a
+change affects current project understanding, update the relevant active document
+instead.
 
-If a diary entry becomes important, promote it into a concept, question, experiment, architecture note, or decision.
+If historical diary material becomes important again, promote it into a concept,
+question, experiment, architecture note, or decision.
 
 ## Handling AI-Generated Suggestions
 
@@ -641,7 +637,7 @@ Put them in one of these places:
 
 ```text
 Small or fresh issue:
-  EngineeringDiary.md
+  nearest active plan, experiment, review, or issue tracker
 
 Conceptual uncertainty:
   Concept.*.md

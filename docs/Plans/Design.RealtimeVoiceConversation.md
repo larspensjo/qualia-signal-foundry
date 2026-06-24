@@ -429,7 +429,8 @@ Accepted on 2026-06-09:
   `Architecture.StateAndObservability` now note the accepted future realtime
   surfaces.
 - **DecisionLog.md:** accepted Phase-0 decisions plus later entries as code lands.
-- **EngineeringDiary.md:** one entry per logical change.
+- **Commit history:** clear commits carry implementation chronology; active project
+  documents are updated when current behavior or design changes.
 - **README.md / launcher docs:** update "What works today" and the PowerShell
   launcher section as phases land, making the eventual first-class realtime mode
   clear.

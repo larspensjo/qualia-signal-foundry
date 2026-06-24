@@ -97,10 +97,9 @@ exclude=["docs/Reviews/**"]"#,
     }
 
     #[test]
-    fn default_production_allowlist_excludes_diary_and_reviews() {
+    fn default_production_allowlist_excludes_reviews() {
         let allowlist =
             Allowlist::from_file(workspace_config_path()).expect("production allowlist must load");
-        assert!(!allowlist.allows("docs/EngineeringDiary.md"));
         assert!(!allowlist.allows("docs/Reviews/anything.md"));
         assert!(allowlist.allows("docs/ProjectFrame/ProjectVision.md"));
         assert!(allowlist.allows("docs/DecisionLog.md"));

@@ -11,7 +11,7 @@ pub const SESSION_SYSTEM_PROMPT: &str = "You are a concise conversational respon
 pub const PROJECT_DOC_INTROSPECTION_PROMPT: &str = "\
 You can consult the project's own documents to ground questions about Qualia Signal Foundry. Use search_project_docs to find relevant material, then read_project_doc to pull a focused excerpt or a bounded slice from the most promising one.\n\
 \n\
-Every result carries a kind (Frame, Concept, Research, Plan, Idea, Design, Architecture, ExperimentSpec, ExperimentReport, Decision, Diary, or Unknown) and, where applicable, a maturity tag (Brainstorm, Sketch, Candidate, Accepted, Implemented, Deprecated, or Unknown).\n\
+Every result carries a kind (Frame, Concept, Research, Plan, Idea, Design, Architecture, ExperimentSpec, ExperimentReport, Decision, or Unknown) and, where applicable, a maturity tag (Brainstorm, Sketch, Candidate, Accepted, Implemented, Deprecated, or Unknown).\n\
 \n\
 Attribute lightly in your reply, using kind and maturity to hedge:\n\
   - \"The project's accepted framing says...\"         (Frame, or Accepted Concept)\n\

@@ -6,7 +6,8 @@ project has agreed to do going forward.
 ## How to use
 ### How to add new entries
 - One entry per decision. Decisions are commitments, not summaries of work.
-- Implementation summaries and bug-fix postmortems belong in `EngineeringDiary.md`.
+- Implementation summaries and bug-fix postmortems belong in commits, pull requests,
+  reports, or the project document whose current content changed.
 - Reversals of prior decisions get their own entry referencing the original.
 - Keep entries concise and reference concrete artifacts.
 - New entries go to the end of the file.
@@ -25,12 +26,12 @@ project has agreed to do going forward.
 - Do not modify older entries if they were commited.
 
 ## Entry Template
-
+```
 ## YYYY-MM-DD - <decision title>
 Decision: <the rule, in present tense>
 Context: <why this was decided now>
-Consequences: <what this constrains or implies going forward>
-Refs: path/to/file.rs, experiment, prior decision (for reversals), etc.
+Consequences: <what this constrains or implies going forward at a high level without referencing code>
+```
 
 ## 2026-05-09 - Unidirectional event-reducer-state flow
 Type: Decision
@@ -1314,3 +1315,18 @@ requires updating both `qsf_realtime_server`'s `cli.rs` default and the UI
 regression and fixture-backed validation.
 Refs: scripts/qsf.ps1, crates/qsf_realtime_server/src/cli.rs,
 crates/qsf_realtime_server/ui/vite.config.ts
+
+## 2026-06-24 - Engineering diary archived
+Decision: `docs/EngineeringDiary.md` is archived and is no longer an active required project
+document. Implementation chronology is carried by the git commit log; current
+project knowledge is recorded by updating the relevant active document, and durable
+commitments remain in `docs/DecisionLog.md`.
+Context: The diary mostly duplicated information already available in commit
+history, while also creating a second place that every implementation change had to
+maintain. This reverses the active-diary portion of the 2026-05-09 diary and
+decision-log document contracts decision.
+Consequences: Repository workflow instructions no longer require a diary entry per
+logical change, the project-document status model treats archived documents as
+historical context only, and project-document introspection no longer advertises a
+live `Diary` document kind.
+reverses: 2026-05-09 - Diary and decision-log document contracts

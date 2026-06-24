@@ -12,7 +12,6 @@ pub enum DocKind {
     Architecture,
     ExperimentSpec,
     ExperimentReport,
-    Diary,
     Decision,
     Unknown,
 }

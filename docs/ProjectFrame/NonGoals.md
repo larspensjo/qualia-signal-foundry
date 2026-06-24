@@ -190,7 +190,8 @@ Large context windows may be useful, but they should not become the default solu
 
 The documentation should not be interpreted as a fixed specification unless a document clearly says so.
 
-Some documents will be stable project framing. Others will be concept notes, research questions, checklists, diary entries, experiments, or candidate architectures.
+Some documents will be stable project framing. Others will be concept notes, research
+questions, checklists, experiments, candidate architectures.
 
 The documentation system should support uncertainty.
 

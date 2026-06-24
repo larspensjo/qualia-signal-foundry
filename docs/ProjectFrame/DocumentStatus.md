@@ -30,7 +30,6 @@ to the live system.
 | `docs/Experiments/Experiment.*.md` | Experiment spec | Planned or run experiment | Setup is authoritative; results are evidence, not commitment |
 | `docs/Experiments/Report.*.md` | Experiment report | Outcome of one specific run | Evidence about that run only; not a generalization |
 | `docs/Reviews/` | Review | Plan or code review at a specific point | Snapshot in time; preferred resolution is in the decision log |
-| `docs/EngineeringDiary.md` | Diary | Chronological log of what was done | Reliable for *what happened*; not for *what is current* |
 | `docs/DecisionLog.md` | Decision | Deliberate commitments | Source of truth for accepted project rules |
 
 ## Maturity Tags
@@ -70,8 +69,6 @@ When two documents disagree, prefer them in this order:
    reasoning; never sufficient as evidence that a feature exists.
 7. **Experiment specs and reports** — evidence about specific runs only; do not
    generalize.
-8. **Diary entries** — reliable for "this happened on this date"; not a description
-   of current state.
 
 A common failure mode is treating a *Plan* or *Idea* document as evidence that a
 feature is implemented. Plan and Idea documents describe intent; only code, the
@@ -95,7 +92,7 @@ reality.
 
 Each section also carries a **Last reviewed** date. If significant code changes have
 landed after that date, the section may be stale; verify the affected claims against
-the diary or the source before relying on them.
+the source before relying on them.
 
 ## Reading the Documentation From Cold
 
@@ -108,9 +105,7 @@ A reader new to the project should usually:
    section for the current shape.
 4. Drop into focused architecture documents as needed, again starting with their
    *Implementation Status* section.
-5. Read `docs/EngineeringDiary.md` (tail) for recent activity and context that has
-   not yet been promoted.
-6. Only then consult Plans, Ideas, Concepts, and Research questions for direction
+5. Consult Plans, Ideas, Concepts, and Research questions for direction
    and uncertainty.
 
 This ordering avoids the most common failure mode: forming a picture of "what the

@@ -213,14 +213,13 @@ The project should preserve:
 - design sketches
 - experiments
 - decision records
-- diary-like development notes
 
 Not every idea should become architecture. Some ideas should remain as concepts, questions, or experiments until there is enough evidence to promote them.
 
 A useful progression is:
 
 ```text
-Diary note
+Commit-history observation or discussion
   -> Concept note
   -> Research question
   -> Experiment

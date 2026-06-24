@@ -240,7 +240,7 @@ exclude=[]"#,
         let err = read(
             &fixtures_root(),
             &allow_all(),
-            "../../docs/EngineeringDiary.md",
+            "../../README.md",
             None,
             10_000,
         )
