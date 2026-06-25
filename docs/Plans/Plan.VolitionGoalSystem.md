@@ -6,10 +6,10 @@ Active build plan. Phase 1 (document the concept) is **complete**: the idea is
 captured in [`Idea.VolitionGoalSystem.md`](Idea.VolitionGoalSystem.md) and the
 decision "Volition is an explicit research surface" is recorded in
 [`DecisionLog.md`](../DecisionLog.md) (2026-05-15). **Phase 2 (static tension and
-goal fixture) is the active phase**; its validation scaffold is
+goal fixture) is complete**; its validation scaffold is
 [`Experiment.VolitionGoalFixture.md`](../Experiments/Experiment.VolitionGoalFixture.md).
-Phases 3–8 are sketched at a high level and expanded immediately before they are
-executed.
+Phase 3 is the next slice to expand immediately before it is executed. Phases 4–8
+remain sketched at a high level until they are ready.
 
 > Companion to the idea note
 > [`Idea.VolitionGoalSystem.md`](Idea.VolitionGoalSystem.md), which is authoritative
@@ -59,7 +59,7 @@ influencing behavior.
 | Phase | Slice | Code? | Human test? | Validation scaffold |
 |-------|-------|-------|-------------|---------------------|
 | 1 | Document the concept; record the research-surface decision — **complete** | No | No | — |
-| 2 | Static tension/goal fixture + deterministic, budget-bounded selection — **active** | Yes | Light | `Experiment.VolitionGoalFixture` |
+| 2 | Static tension/goal fixture + deterministic, budget-bounded selection — **complete** | Yes | Light | `Experiment.VolitionGoalFixture` |
 | 3 | Trace-backed initiative proposals (pre-initiative traces) | Yes | Light | `Experiment.VolitionTraceBackedInitiative` (future) |
 | 4 | Event-driven salience, satisfaction, blocking, cooldown | Yes | Yes | `Experiment.VolitionSalienceAndSatisfaction` (future) |
 | 5 | Arbitration and multi-goal conflict resolution | Yes | Yes | `Experiment.VolitionArbitrationConflict` (future) |
@@ -74,7 +74,7 @@ influencing behavior.
 Captured the idea and fixed the boundary between internal initiative and external
 agency. Recorded as a research surface in the decision log (2026-05-15). No code.
 
-### Phase 2 — Static tension and goal fixture (active)
+### Phase 2 — Static tension and goal fixture (complete)
 
 Introduce a pure `volition` module and a hand-authored, read-only fixture of tensions
 and goals, plus a deterministic selector that picks a budget-bounded, input-relevant

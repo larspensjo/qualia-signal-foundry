@@ -6,7 +6,13 @@
 
 ## Status
 
-Planned.
+Completed.
+
+Implemented as the registered `volition-goal-fixture` experiment. The run loads a
+static tension/goal fixture, selects budget-bounded goals with a deterministic
+selector, maps selected goals into `RuntimeState` context fragments, records the
+selection as `InputReceived` and `TraceRecorded` observability, and writes
+`volition-fixture.json` plus `volition-goal-fixture.md` artifacts.
 
 This is the first build slice of the volition/goal system: the static tension and goal
 fixture. The overall sequencing lives in
@@ -275,38 +281,66 @@ implementation shows that trace details cannot make selection legible.
 
 ## Workflow & Documents To Update
 
-Per [ProjectWorkflow.md](../ProjectFrame/ProjectWorkflow.md), this is Stage 5 (a
-planned experiment). The following are expected to change as it progresses:
+Per [ProjectWorkflow.md](../ProjectFrame/ProjectWorkflow.md), this slice has moved
+from planning to evidence. The remaining documentation follow-through is:
 
-- **Now (planning):** this experiment doc; a backlog entry in
-  [Experiment.Backlog.md](Experiment.Backlog.md); the matching slice in
-  [Plan.VolitionGoalSystem.md](../Plans/Plan.VolitionGoalSystem.md).
-- **On implementation:** the experiment registry and a new `volition` module (code
-  only — no architecture promotion yet).
-- **After running:** fill in Results / Interpretation / Follow-Up below.
-- **Only if results warrant it:** add an *Implementation Status* note to
-  [Architecture.RuntimeLoop.md](../Architecture/Architecture.RuntimeLoop.md) (and/or
-  a new volition architecture doc) describing the candidate goal-selection structure,
-  and record any promoted decision in [DecisionLog.md](../DecisionLog.md). Do not
-  promote architecture or decisions before the experiment produces evidence.
+- **This experiment doc:** keep Results / Interpretation current if the selector
+  changes materially.
+- **[Plan.VolitionGoalSystem.md](../Plans/Plan.VolitionGoalSystem.md):** mark Phase 2
+  complete and keep later phases high-level until they are expanded.
+- **Only if later evidence warrants it:** add an *Implementation Status* note to
+  [Architecture.RuntimeLoop.md](../Architecture/Architecture.RuntimeLoop.md) or a
+  dedicated volition architecture doc, and promote any durable decision to
+  [DecisionLog.md](../DecisionLog.md).
 
 ## Results
 
-_To be filled in after running._
+Implemented in `crates/qsf_app/src/experiments/volition_goal_fixture.rs` with the
+shared pure selector in `crates/qsf_app/src/volition.rs`.
 
 ### What Happened
 
+- The static fixture loads four tensions and four accepted goals.
+- Each goal is mapped into a `RuntimeState` `ContextFragment` and passed through the
+  existing `assemble_context` budget flow.
+- Scripted inputs record `InputReceived` events, then trace the selection run and
+  mirror the trace with `TraceRecorded`.
+- The direct-task baseline selects no goals and proposes no initiatives.
+- The continuity input selects relevant goals, and the perturbation pass shows that
+  removing one keyword changes the selected set predictably.
+
 ### Measurements
+
+- 3 scripted inputs plus 1 perturbation run.
+- 0 goals selected for the baseline input.
+- 2 selected goals for the continuity input under the default budget.
+- 2 trace records for each selection run path: one direct trace record plus one
+  `TraceRecorded` event.
 
 ### Observations
 
+- The selection path stays pure and inspectable.
+- Reusing `RuntimeState` fragments keeps the experiment inside the existing context
+  schema.
+- The report makes omitted goals legible without adding goal-specific event types.
+
 ### Surprises
+
+- The simple keyword baseline was enough to separate the direct task from the goal-
+  relevant inputs for this phase.
 
 ### Failure Modes
 
+- The fixture is hand-authored, so it can be overfit.
+- Keyword matching is intentionally narrow and may not survive later phases once
+  salience and arbitration exist.
+
 ## Interpretation
 
-_To be filled in after running. Separate Observed / Interpreted / Uncertain._
+The phase 2 slice is working as intended: a small fixture, deterministic selection,
+budget-bounded context assembly, and trace-backed candidate initiatives can live in
+the current architecture without introducing new goal-specific event types or effect
+execution. The result is useful as a research baseline, not as a final volition model.
 
 ## Follow-Up Questions
 

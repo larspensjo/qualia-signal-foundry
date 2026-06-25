@@ -13,5 +13,6 @@ pub mod runtime;
 pub mod session;
 pub mod sleep;
 pub mod tools;
+pub mod volition;
 
 pub use cli::run as run_cli;

@@ -27,6 +27,7 @@ use super::streaming_transcription_mvp::StreamingTranscriptionMvpExperiment;
 use super::text_owned_voice_loop::TextOwnedVoiceLoopExperiment;
 use super::tool_as_perception_calculator::ToolAsPerceptionCalculatorExperiment;
 use super::voice_loop::{VOICE_LOOP_DESCRIPTION, VoiceLoopExperiment};
+use super::volition_goal_fixture::VolitionGoalFixtureExperiment;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, ValueEnum)]
 #[value(rename_all = "kebab-case")]
@@ -46,6 +47,7 @@ pub enum ExperimentName {
     TextOwnedVoiceLoop,
     VoiceLoop,
     ToolAsPerceptionCalculator,
+    VolitionGoalFixture,
 }
 
 impl ExperimentName {
@@ -66,6 +68,7 @@ impl ExperimentName {
             Self::TextOwnedVoiceLoop => "text-owned-voice-loop",
             Self::VoiceLoop => "voice-loop",
             Self::ToolAsPerceptionCalculator => "tool-as-perception-calculator",
+            Self::VolitionGoalFixture => "volition-goal-fixture",
         }
     }
 
@@ -111,6 +114,9 @@ impl ExperimentName {
             Self::VoiceLoop => VOICE_LOOP_DESCRIPTION,
             Self::ToolAsPerceptionCalculator => {
                 "Execute a compute-only calculator tool and treat the result as a context candidate"
+            }
+            Self::VolitionGoalFixture => {
+                "Select budget-bounded volition goals from a static fixture and trace candidate initiatives"
             }
         }
     }
@@ -344,6 +350,7 @@ fn experiment_for(name: ExperimentName) -> Box<dyn Experiment> {
         ExperimentName::ToolAsPerceptionCalculator => {
             Box::new(ToolAsPerceptionCalculatorExperiment)
         }
+        ExperimentName::VolitionGoalFixture => Box::new(VolitionGoalFixtureExperiment),
     }
 }
 
@@ -395,6 +402,21 @@ mod tests {
 
         assert_eq!(ExperimentName::VoiceLoop.to_string(), "voice-loop");
         assert!(voice_loop.description.contains("voice-loop"));
+    }
+
+    #[test]
+    fn volition_goal_fixture_experiment_is_registered() {
+        let experiments = available_experiments();
+        let volition = experiments
+            .iter()
+            .find(|experiment| experiment.id == ExperimentName::VolitionGoalFixture.id())
+            .unwrap();
+
+        assert_eq!(
+            ExperimentName::VolitionGoalFixture.to_string(),
+            "volition-goal-fixture"
+        );
+        assert!(volition.description.contains("volition goals"));
     }
 
     #[test]
