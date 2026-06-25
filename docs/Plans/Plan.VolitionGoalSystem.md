@@ -8,7 +8,8 @@ decision "Volition is an explicit research surface" is recorded in
 [`DecisionLog.md`](../DecisionLog.md) (2026-05-15). **Phase 2 (static tension and
 goal fixture) is complete**; its validation scaffold is
 [`Experiment.VolitionGoalFixture.md`](../Experiments/Experiment.VolitionGoalFixture.md).
-Phase 3 now has a validation scaffold in
+**Phase 3 (trace-backed initiative proposals) is complete**; its validation scaffold
+is
 [`Experiment.VolitionTraceBackedInitiative.md`](../Experiments/Experiment.VolitionTraceBackedInitiative.md).
 Phases 4–8 remain sketched at a high level until they are ready.
 
@@ -61,7 +62,7 @@ influencing behavior.
 |-------|-------|-------|-------------|---------------------|
 | 1 | Document the concept; record the research-surface decision — **complete** | No | No | — |
 | 2 | Static tension/goal fixture + deterministic, budget-bounded selection — **complete** | Yes | Light | `Experiment.VolitionGoalFixture` |
-| 3 | Trace-backed initiative proposals (pre-initiative traces) | Yes | Light | `Experiment.VolitionTraceBackedInitiative` |
+| 3 | Trace-backed initiative proposals (pre-initiative traces) — **complete** | Yes | Light | `Experiment.VolitionTraceBackedInitiative` |
 | 4 | Event-driven salience, satisfaction, blocking, cooldown | Yes | Yes | `Experiment.VolitionSalienceAndSatisfaction` (future) |
 | 5 | Arbitration and multi-goal conflict resolution | Yes | Yes | `Experiment.VolitionArbitrationConflict` (future) |
 | 6 | Reflection-generated goal candidates (proposed, not auto-accepted) | Yes | Yes | future |
@@ -96,15 +97,26 @@ any effect and without a model call.
 - Full scope, fixture, inputs, and success/failure criteria live in
   [`Experiment.VolitionGoalFixture.md`](../Experiments/Experiment.VolitionGoalFixture.md).
 
-### Phase 3 — Trace-backed initiative proposals
+### Phase 3 — Trace-backed initiative proposals (complete)
 
 Add a pre-initiative trace recorded *before* any behavior could change, capturing the
 active tension, goal, detected delta, candidate initiatives, and local candidate-choice
 result. This is not full arbitration; that remains a later slice. Still no effect
 execution.
 
+- **Built:** a pure additive trace layer over the Phase 2 selector
+  (`build_pre_initiative_traces`) plus `PreInitiativeTrace`, `DeltaAssessment`,
+  `DetectedDelta`, `TensionProvenance`, `InitiativeChoice`, and `LosingCandidate`
+  types in the `volition` module; a registered `volition-trace-backed-initiative`
+  experiment that records one trace per selected goal (and a single explicit no-delta
+  trace for the baseline) without changing selection behavior.
+- **Resolved open questions:** losing-candidate reasons are deterministic and
+  precedence-based (first allowed effect wins; semantic/structured reasons deferred to
+  arbitration); delta vs. baseline is modeled as a `DeltaAssessment` enum so the
+  no-delta case is type-enforced; tension priority is recorded as provenance only with
+  an explicit note that it did not drive selection.
 - **Verify:** every proposed initiative has a preceding trace that connects goal →
-  delta → chosen effect; losing candidates are recorded.
+  delta → chosen effect; losing candidates are recorded; no trace executes an effect.
 - Full scope and success/failure criteria live in
   [`Experiment.VolitionTraceBackedInitiative.md`](../Experiments/Experiment.VolitionTraceBackedInitiative.md).
 

@@ -122,6 +122,74 @@ pub struct GoalSelectionResult {
     pub assembly: ContextAssembly,
 }
 
+/// Explicit reminder that tension priority bias is recorded as provenance only and is
+/// not treated as a proven selection mechanism in the trace-backed-initiative slice.
+pub const TENSION_PRIORITY_NOTE: &str = "Tensions are recorded as goal provenance only; \
+their priority bias did not determine selection and is not treated as proven architecture.";
+
+/// Inspectable provenance for a tension that contributed to a selected goal. Recorded
+/// for legibility, not as evidence that tension priority drove selection.
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+pub struct TensionProvenance {
+    pub tension_id: String,
+    pub title: String,
+    pub priority_bias: TensionPriority,
+}
+
+/// A detected discrepancy between the input and a goal's concern. Cites the input
+/// evidence that matched and the goal's own satisfaction/concern summary so the delta
+/// stays more informative than a bare keyword match.
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+pub struct DetectedDelta {
+    pub matched_evidence: Vec<String>,
+    pub goal_concern_summary: String,
+}
+
+/// Whether an input produced a goal-relevant delta or an explicit, recorded no-delta
+/// reason. Baseline inputs must carry `NoDelta` so the absence of an initiative is
+/// legible rather than implicit.
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case", tag = "kind")]
+pub enum DeltaAssessment {
+    Delta(DetectedDelta),
+    NoDelta { reason: String },
+}
+
+/// A candidate initiative that lost the local, single-goal choice, with a deterministic
+/// precedence-based rejection reason. This is trace scaffolding, not cross-goal
+/// arbitration.
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+pub struct LosingCandidate {
+    pub proposal: InitiativeProposal,
+    pub reason: String,
+}
+
+/// The local choice between candidate initiatives derived from a single selected goal:
+/// the proposed (winning) bounded effect plus the losing candidates and why they lost.
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+pub struct InitiativeChoice {
+    pub proposed: InitiativeProposal,
+    pub losing: Vec<LosingCandidate>,
+}
+
+/// A pre-initiative trace recorded before any behavior could change. It connects an
+/// active goal to its tension provenance, the detected delta (or explicit no-delta
+/// reason), the candidate initiatives, and the proposed bounded effect — while
+/// executing nothing.
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+pub struct PreInitiativeTrace {
+    pub input: String,
+    pub goal_id: Option<String>,
+    pub goal_title: Option<String>,
+    pub goal_summary: Option<String>,
+    pub tensions: Vec<TensionProvenance>,
+    pub tension_priority_note: String,
+    pub delta: DeltaAssessment,
+    pub choice: Option<InitiativeChoice>,
+    pub allowed_rationale: Option<String>,
+    pub executed: bool,
+}
+
 pub fn static_fixture() -> VolitionFixture {
     VolitionFixture {
         tensions: vec![
@@ -343,6 +411,123 @@ pub fn select_goals(
     }
 }
 
+/// Build pre-initiative traces from an already-computed selection result. This is a
+/// pure, additive layer over `select_goals`: it records why each selected goal would
+/// propose a bounded effect, and an explicit no-delta reason when nothing was selected.
+/// It executes no effect and does not change selection behavior.
+pub fn build_pre_initiative_traces(
+    result: &GoalSelectionResult,
+    fixture: &VolitionFixture,
+) -> Vec<PreInitiativeTrace> {
+    if result.selected.is_empty() {
+        return vec![PreInitiativeTrace {
+            input: result.input.clone(),
+            goal_id: None,
+            goal_title: None,
+            goal_summary: None,
+            tensions: Vec::new(),
+            tension_priority_note: TENSION_PRIORITY_NOTE.to_string(),
+            delta: DeltaAssessment::NoDelta {
+                reason: no_delta_reason(result),
+            },
+            choice: None,
+            allowed_rationale: None,
+            executed: false,
+        }];
+    }
+
+    result
+        .selected
+        .iter()
+        .map(|selection| pre_initiative_trace_for_goal(&result.input, selection, fixture))
+        .collect()
+}
+
+fn pre_initiative_trace_for_goal(
+    input: &str,
+    selection: &GoalSelection,
+    fixture: &VolitionFixture,
+) -> PreInitiativeTrace {
+    let goal = &selection.goal;
+    let tensions = tension_provenance(goal, fixture);
+    let choice = initiative_choice(goal, &selection.matched_terms);
+    let allowed_rationale = choice.as_ref().map(|choice| {
+        format!(
+            "effect '{}' is listed in goal '{}' allowed_effects and is a bounded internal effect (no write-capable external action)",
+            choice.proposed.effect, goal.id
+        )
+    });
+
+    PreInitiativeTrace {
+        input: input.to_string(),
+        goal_id: Some(goal.id.clone()),
+        goal_title: Some(goal.title.clone()),
+        goal_summary: Some(goal.summary.clone()),
+        tensions,
+        tension_priority_note: TENSION_PRIORITY_NOTE.to_string(),
+        delta: DeltaAssessment::Delta(DetectedDelta {
+            matched_evidence: selection.matched_terms.clone(),
+            goal_concern_summary: goal.satisfaction_condition_summary.clone(),
+        }),
+        choice,
+        allowed_rationale,
+        executed: false,
+    }
+}
+
+fn tension_provenance(goal: &Goal, fixture: &VolitionFixture) -> Vec<TensionProvenance> {
+    goal.tension_ids
+        .iter()
+        .filter_map(|tension_id| {
+            fixture
+                .tensions
+                .iter()
+                .find(|tension| tension.id == *tension_id)
+        })
+        .map(|tension| TensionProvenance {
+            tension_id: tension.id.clone(),
+            title: tension.title.clone(),
+            priority_bias: tension.priority_bias,
+        })
+        .collect()
+}
+
+fn initiative_choice(goal: &Goal, matched_terms: &[String]) -> Option<InitiativeChoice> {
+    let (chosen_effect, losing_effects) = goal.allowed_effects.split_first()?;
+    let proposed = initiative_for_effect(goal, *chosen_effect, matched_terms);
+
+    let losing = losing_effects
+        .iter()
+        .map(|effect| LosingCandidate {
+            proposal: initiative_for_effect(goal, *effect, matched_terms),
+            reason: format!(
+                "not selected: goal '{}' orders '{}' after the chosen effect '{}' in allowed_effects precedence",
+                goal.id, effect, chosen_effect
+            ),
+        })
+        .collect();
+
+    Some(InitiativeChoice { proposed, losing })
+}
+
+fn no_delta_reason(result: &GoalSelectionResult) -> String {
+    let mut reasons: Vec<String> = Vec::new();
+    for omitted in &result.omitted {
+        if !reasons.iter().any(|reason| reason == &omitted.reason) {
+            reasons.push(omitted.reason.clone());
+        }
+    }
+
+    if reasons.is_empty() {
+        "no goal was selected and no goals were available to omit".to_string()
+    } else {
+        format!(
+            "no goal selected; the input carries no tracked volition delta (omitted goals: {})",
+            reasons.join("; ")
+        )
+    }
+}
+
 fn initiative_for_goal(goal: &Goal, matched_terms: &[String]) -> InitiativeProposal {
     let effect = goal
         .allowed_effects
@@ -350,6 +535,14 @@ fn initiative_for_goal(goal: &Goal, matched_terms: &[String]) -> InitiativePropo
         .copied()
         .unwrap_or(AllowedEffect::Reflect);
 
+    initiative_for_effect(goal, effect, matched_terms)
+}
+
+fn initiative_for_effect(
+    goal: &Goal,
+    effect: AllowedEffect,
+    matched_terms: &[String],
+) -> InitiativeProposal {
     InitiativeProposal {
         goal_id: goal.id.clone(),
         goal_title: goal.title.clone(),
@@ -495,7 +688,10 @@ impl fmt::Display for TensionPriority {
 
 #[cfg(test)]
 mod tests {
-    use super::{GoalSelectionResult, select_goals, static_fixture};
+    use super::{
+        DeltaAssessment, GoalSelectionResult, build_pre_initiative_traces, select_goals,
+        static_fixture,
+    };
     use crate::context::ContextBudget;
 
     #[test]
@@ -611,5 +807,148 @@ mod tests {
             json["selected"][0]["goal"]["id"],
             "avoid-overstating-impl-status"
         );
+    }
+
+    #[test]
+    fn selected_goal_trace_records_delta_tensions_and_choice() {
+        let fixture = static_fixture();
+        let result = select_goals(
+            "We never settled how voice memory affects continuity.",
+            &fixture,
+            ContextBudget::new(2, 80),
+        );
+        let traces = build_pre_initiative_traces(&result, &fixture);
+
+        let trace = traces
+            .iter()
+            .find(|trace| trace.goal_id.as_deref() == Some("clarify-weak-evidence-topic"))
+            .expect("continuity input should trace the weak-evidence goal");
+
+        match &trace.delta {
+            DeltaAssessment::Delta(delta) => {
+                assert!(!delta.matched_evidence.is_empty());
+                assert!(!delta.goal_concern_summary.is_empty());
+            }
+            DeltaAssessment::NoDelta { reason } => {
+                panic!("expected a delta, got no-delta reason: {reason}")
+            }
+        }
+
+        assert!(
+            !trace.tensions.is_empty(),
+            "selected goal should record tension provenance"
+        );
+
+        assert_eq!(
+            trace.goal_summary.as_deref(),
+            Some(
+                "Surface a research question when the input points at uncertain or under-explained material."
+            ),
+            "selected-goal trace should be self-contained with the goal summary"
+        );
+
+        let choice = trace
+            .choice
+            .as_ref()
+            .expect("selected goal proposes an effect");
+        assert_eq!(choice.proposed.effect.to_string(), "reflect");
+        assert_eq!(choice.losing.len(), 1);
+        assert_eq!(
+            choice.losing[0].proposal.effect.to_string(),
+            "propose-experiment"
+        );
+        assert!(!choice.losing[0].reason.is_empty());
+    }
+
+    #[test]
+    fn baseline_input_produces_single_no_delta_trace() {
+        let fixture = static_fixture();
+        let result = select_goals(
+            "Give me the build command.",
+            &fixture,
+            ContextBudget::new(2, 80),
+        );
+        let traces = build_pre_initiative_traces(&result, &fixture);
+
+        assert_eq!(traces.len(), 1);
+        let trace = &traces[0];
+        assert!(trace.goal_id.is_none());
+        assert!(trace.goal_summary.is_none());
+        assert!(trace.choice.is_none());
+        assert!(matches!(trace.delta, DeltaAssessment::NoDelta { .. }));
+    }
+
+    #[test]
+    fn traces_never_execute_an_effect() {
+        let fixture = static_fixture();
+        for input in [
+            "We never settled how voice memory affects continuity.",
+            "Give me the build command.",
+            "Is the goal system implemented yet?",
+        ] {
+            let result = select_goals(input, &fixture, ContextBudget::new(2, 80));
+            let traces = build_pre_initiative_traces(&result, &fixture);
+            assert!(traces.iter().all(|trace| !trace.executed));
+        }
+    }
+
+    #[test]
+    fn traces_are_deterministic_for_the_same_input() {
+        let fixture = static_fixture();
+        let input = "We never settled how voice memory affects continuity.";
+        let first = build_pre_initiative_traces(
+            &select_goals(input, &fixture, ContextBudget::new(2, 80)),
+            &fixture,
+        );
+        let second = build_pre_initiative_traces(
+            &select_goals(input, &fixture, ContextBudget::new(2, 80)),
+            &fixture,
+        );
+
+        assert_eq!(first, second);
+    }
+
+    #[test]
+    fn every_selected_goal_trace_carries_a_proposed_effect() {
+        let fixture = static_fixture();
+        let result = select_goals(
+            "We never settled how voice memory affects continuity.",
+            &fixture,
+            ContextBudget::new(2, 80),
+        );
+        let traces = build_pre_initiative_traces(&result, &fixture);
+
+        assert!(!traces.is_empty());
+        for trace in &traces {
+            assert!(trace.goal_id.is_some());
+            assert!(matches!(trace.delta, DeltaAssessment::Delta(_)));
+            assert!(trace.choice.is_some());
+            assert!(trace.allowed_rationale.is_some());
+        }
+    }
+
+    #[test]
+    fn serialized_traces_are_deterministic_for_the_full_scripted_set() {
+        let fixture = static_fixture();
+        let scripted_inputs = [
+            "Is the goal system implemented yet?",
+            "We never settled how voice memory affects continuity.",
+            "Give me the build command.",
+            "Should we turn the volition note into a tiny experiment?",
+        ];
+
+        let serialize_all = || {
+            let mut serialized = String::new();
+            for input in scripted_inputs {
+                let result = select_goals(input, &fixture, ContextBudget::new(2, 80));
+                for trace in build_pre_initiative_traces(&result, &fixture) {
+                    serialized.push_str(&serde_json::to_string(&trace).unwrap());
+                    serialized.push('\n');
+                }
+            }
+            serialized
+        };
+
+        assert_eq!(serialize_all(), serialize_all());
     }
 }

@@ -28,6 +28,7 @@ use super::text_owned_voice_loop::TextOwnedVoiceLoopExperiment;
 use super::tool_as_perception_calculator::ToolAsPerceptionCalculatorExperiment;
 use super::voice_loop::{VOICE_LOOP_DESCRIPTION, VoiceLoopExperiment};
 use super::volition_goal_fixture::VolitionGoalFixtureExperiment;
+use super::volition_trace_backed_initiative::VolitionTraceBackedInitiativeExperiment;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, ValueEnum)]
 #[value(rename_all = "kebab-case")]
@@ -48,6 +49,7 @@ pub enum ExperimentName {
     VoiceLoop,
     ToolAsPerceptionCalculator,
     VolitionGoalFixture,
+    VolitionTraceBackedInitiative,
 }
 
 impl ExperimentName {
@@ -69,6 +71,7 @@ impl ExperimentName {
             Self::VoiceLoop => "voice-loop",
             Self::ToolAsPerceptionCalculator => "tool-as-perception-calculator",
             Self::VolitionGoalFixture => "volition-goal-fixture",
+            Self::VolitionTraceBackedInitiative => "volition-trace-backed-initiative",
         }
     }
 
@@ -117,6 +120,9 @@ impl ExperimentName {
             }
             Self::VolitionGoalFixture => {
                 "Select budget-bounded volition goals from a static fixture and trace candidate initiatives"
+            }
+            Self::VolitionTraceBackedInitiative => {
+                "Record pre-initiative traces for selected volition goals before any effect could change behavior"
             }
         }
     }
@@ -351,6 +357,9 @@ fn experiment_for(name: ExperimentName) -> Box<dyn Experiment> {
             Box::new(ToolAsPerceptionCalculatorExperiment)
         }
         ExperimentName::VolitionGoalFixture => Box::new(VolitionGoalFixtureExperiment),
+        ExperimentName::VolitionTraceBackedInitiative => {
+            Box::new(VolitionTraceBackedInitiativeExperiment)
+        }
     }
 }
 

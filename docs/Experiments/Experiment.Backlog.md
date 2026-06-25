@@ -50,7 +50,7 @@ Later
 | `Experiment.SleepPhaseSessionSummary` | High | Completed | Does a session-end summary improve continuity in the next session? |
 | `Experiment.ProjectDocLiveRegressionAudit` | High | Proposed | Can live project-doc tool turns preserve prompt-prefix continuity and retrieve expected docs? |
 | `Experiment.VolitionGoalFixture` | Medium | Completed | Can a static tension/goal fixture deterministically select input-relevant goals and propose candidate initiatives without executing any effect? |
-| `Experiment.VolitionTraceBackedInitiative` | Medium | Planned | Can pre-initiative traces explain goal → delta → candidate initiatives → proposed bounded effect before any behavior changes? |
+| `Experiment.VolitionTraceBackedInitiative` | Medium | Completed | Can pre-initiative traces explain goal → delta → candidate initiatives → proposed bounded effect before any behavior changes? |
 | `Experiment.StreamingTranscriptionMVP` | Medium | Completed | Can live speech be represented as observable partial and final transcript events? |
 | `Experiment.AudioLoopMVP` | Medium | Superseded | Can a minimal audio loop create a stronger sense of presence than text-only interaction? |
 | `Experiment.ToolAsPerceptionCalculator` | Medium | Completed | How should a simple read-only computational tool be represented as perception? |
@@ -311,7 +311,7 @@ Possible success criteria:
 ### Experiment.VolitionTraceBackedInitiative
 
 **Priority:** Medium
-**Status:** Planned
+**Status:** Completed
 
 Next validation slice for the volition/goal system: record serialized
 pre-initiative traces before any proposed initiative can affect behavior. It reuses
@@ -322,7 +322,7 @@ The experiment tests whether a trace can connect selected goal → active tensio
 provenance → detected input delta or no-delta reason → candidate initiative effects
 → proposed bounded effect and losing candidates, while still executing no effect.
 
-Planned in [Experiment.VolitionTraceBackedInitiative.md](Experiment.VolitionTraceBackedInitiative.md).
+Completed in [Experiment.VolitionTraceBackedInitiative.md](Experiment.VolitionTraceBackedInitiative.md).
 
 Related documents:
 

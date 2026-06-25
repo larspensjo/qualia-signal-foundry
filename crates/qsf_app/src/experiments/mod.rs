@@ -18,6 +18,7 @@ mod tool_as_perception_calculator;
 mod transcript_format;
 mod voice_loop;
 mod volition_goal_fixture;
+mod volition_trace_backed_initiative;
 
 pub use registry::{
     Experiment, ExperimentInfo, ExperimentName, ExperimentOutcome, ExperimentRunSummary,

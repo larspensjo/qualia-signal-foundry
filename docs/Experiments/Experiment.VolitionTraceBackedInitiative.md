@@ -6,7 +6,11 @@
 
 ## Status
 
-Planned.
+Completed. Implemented as the registered `volition-trace-backed-initiative`
+experiment. Pre-initiative traces are built by the pure additive
+`build_pre_initiative_traces` layer over the Phase 2 selector in
+`crates/qsf_app/src/volition.rs`; the experiment runner lives in
+`crates/qsf_app/src/experiments/volition_trace_backed_initiative.rs`.
 
 ## Summary
 
@@ -294,31 +298,76 @@ a validation scaffold until implemented and observed. Documentation follow-throu
 
 ## Results
 
-Not run yet.
+Run: `runs/2026-06-25-115342-volition-trace-backed-initiative/`
+(`cargo run -p qsf_app -- experiment volition-trace-backed-initiative`). Full
+workspace `cargo test` (356 passed, 1 ignored in `qsf_app`), `cargo clippy
+--all-targets -- -D warnings` (clean), and `cargo fmt` all green.
 
 ### What Happened
 
-TBD.
+The four scripted inputs (A–D) ran through the existing static fixture selector, and a
+pure pre-initiative trace was built for every selected goal, plus a single explicit
+no-delta trace for the direct-task baseline. Each trace records the selected goal
+(id, title, and summary), tension provenance (with an explicit note that priority did
+not drive selection), a `DeltaAssessment` (delta or no-delta reason), the proposed
+bounded effect, and any losing candidates with deterministic precedence reasons. The
+trace record details and `TraceRecorded` event also carry a compact selector snapshot
+(selected and omitted goals with relevance scores, matched terms, and omission reasons)
+so non-selected goals stay inspectable. No effect was executed. Traces are serialized
+to `pre-initiative-traces.jsonl` and summarized in
+`volition-trace-backed-initiative.md`.
 
 ### Measurements
 
-TBD.
+- scripted inputs run: 4
+- selected goals: input-a 1, input-b 2, input-c 0, input-d 1
+- pre-initiative traces written: 5 (1 + 2 + 1 baseline + 1)
+- candidate initiatives per selected goal: 1–2 (goals with two allowed effects produced
+  one winner + one loser)
+- losing candidates recorded: 2 total (both for input-b)
+- traces with explicit delta: 4; with explicit no-delta reason: 1
+- executed effects: 0
+- determinism: the pure pre-initiative trace values are deterministic for the same
+  input, and serializing the full scripted trace set twice yields byte-identical
+  `pre-initiative-traces.jsonl` content (both asserted by unit tests). The separate
+  `traces.jsonl` records intentionally include per-run UUIDs and timestamps and are
+  therefore not byte-identical across runs.
 
 ### Observations
 
-TBD.
+- Input B is the trace-focused case: `clarify-weak-evidence-topic` proposes `reflect`
+  and rejects `propose-experiment`; `resurface-open-thread` proposes `retrieve-context`
+  and rejects `surface-open-thread`. The rejection reasons are precedence-based, not
+  semantic.
+- The baseline (input C) trace carries a no-delta reason derived from the selector's
+  omission reasons rather than a hand-written string.
+- The trace record details and `TraceRecorded` event preserve omitted selector state
+  (e.g. input B records `avoid-overstating-impl-status` and `propose-followup-experiment`
+  as omitted with their reasons), so a reviewer can see why non-selected goals lost.
+- Tension provenance appears on every selected-goal trace but is explicitly marked as
+  non-determining.
 
 ### Surprises
 
-TBD.
+- None. Selector behavior was unchanged; the trace layer is strictly additive.
 
 ### Failure Modes
 
-TBD.
+- The detected delta still leans on matched keywords plus the goal's own concern
+  summary, so its evidential strength is bounded by the static fixture.
+- Losing-candidate reasons are precedence-based only; semantic rejection reasons are
+  deferred to the arbitration slice.
 
 ## Interpretation
 
-TBD.
+The slice meets its success criteria: every proposed initiative is backed by a
+preceding, deterministic, replayable trace that connects goal → tension provenance →
+delta → candidate effects → proposed bounded effect and losing candidates, with a clear
+no-execution marker and an explicit no-delta baseline. Tension priority is recorded as
+provenance without claiming validated architecture, and the local candidate-choice rule
+stayed small (first allowed effect wins) without growing into multi-goal arbitration.
+This satisfies the decision candidate of requiring a serialized pre-initiative trace
+before any future initiative is allowed to influence behavior.
 
 ## Follow-Up Questions
 
