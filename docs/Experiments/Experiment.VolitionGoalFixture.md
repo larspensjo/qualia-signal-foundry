@@ -296,42 +296,70 @@ from planning to evidence. The remaining documentation follow-through is:
 ## Results
 
 Implemented in `crates/qsf_app/src/experiments/volition_goal_fixture.rs` with the
-shared pure selector in `crates/qsf_app/src/volition.rs`.
+shared pure selector in `crates/qsf_app/src/volition.rs`. Latest validation run:
+`runs/2026-06-25-091658-volition-goal-fixture/` (`cargo run -p qsf_app -- experiment
+volition-goal-fixture`). Full workspace `cargo test` (351 passed, 1 ignored), `cargo
+clippy --all-targets -- -D warnings`, and `cargo fmt` are all green.
 
 ### What Happened
 
 - The static fixture loads four tensions and four accepted goals.
 - Each goal is mapped into a `RuntimeState` `ContextFragment` and passed through the
-  existing `assemble_context` budget flow.
-- Scripted inputs record `InputReceived` events, then trace the selection run and
-  mirror the trace with `TraceRecorded`.
-- The direct-task baseline selects no goals and proposes no initiatives.
-- The continuity input selects relevant goals, and the perturbation pass shows that
-  removing one keyword changes the selected set predictably.
+  existing `assemble_context` budget flow under a `{max_fragments: 2,
+  max_estimated_tokens: 80}` budget.
+- Each scripted input records an `InputReceived` event, then a selection
+  `TraceRecord` is written and mirrored by a `TraceRecorded` event.
+- The implementation-status input (`input-a`) selects exactly one goal
+  (`avoid-overstating-impl-status` → `reflect`), with the three keyword-mismatched
+  goals omitted.
+- The continuity input (`input-b`) selects two goals
+  (`clarify-weak-evidence-topic` → `reflect`, `resurface-open-thread` →
+  `retrieve-context`) using 44 of 80 token budget.
+- The direct-task baseline (`input-c`) selects no goals and proposes no initiatives;
+  every goal is omitted with `no activation keywords matched`.
+- The perturbation pass reruns `input-b` after removing the `continuity` keyword from
+  `resurface-open-thread`; that goal drops out and only `clarify-weak-evidence-topic`
+  remains.
 
 ### Measurements
 
+- Fixture pool: 4 tensions, 4 accepted goals.
 - 3 scripted inputs plus 1 perturbation run.
-- 0 goals selected for the baseline input.
-- 2 selected goals for the continuity input under the default budget.
-- 2 trace records for each selection run path: one direct trace record plus one
-  `TraceRecorded` event.
+- Goals selected per run: `input-a` = 1, `input-b` = 2, `input-c` (baseline) = 0,
+  perturbation = 1.
+- `input-b` token budget used vs. available: 44 / 80.
+- Observability: 10 events written (`events.jsonl`) and 4 selection traces written
+  (`traces.jsonl`) — one `TraceRecord` plus one `TraceRecorded` event per selection
+  run, using only the existing `InputReceived` / `TraceRecorded` event types.
+- All five selector unit tests pass (baseline-empty, determinism, token-budget
+  enforcement, fixture perturbation, serialization).
 
 ### Observations
 
-- The selection path stays pure and inspectable.
+- Selected goals are relevant to each input: status wording activates the
+  boundary/coherence goal, continuity/voice/memory wording activates the
+  curiosity and continuity goals, and the bare build request activates nothing.
+- The selection path stays pure and inspectable; selection happens in a pure
+  selector and only events/traces are emitted as side effects.
 - Reusing `RuntimeState` fragments keeps the experiment inside the existing context
-  schema.
-- The report makes omitted goals legible without adding goal-specific event types.
+  schema without a goal-specific source kind or event type.
+- Both the trace details and the `volition-goal-fixture.md` report make omitted goals
+  legible (each carries a skip reason), and relevance scores combine matched-keyword
+  count, base priority, and tension priority bias.
 
 ### Surprises
 
 - The simple keyword baseline was enough to separate the direct task from the goal-
-  relevant inputs for this phase.
+  relevant inputs for this phase; no richer matching was needed to meet the success
+  criteria.
+- Under the default budget the continuity input fits both selected goals (44/80
+  tokens), so the fragment/token cap only bites in the dedicated tight-budget unit
+  test rather than in the scripted runs.
 
 ### Failure Modes
 
-- The fixture is hand-authored, so it can be overfit.
+- The fixture is hand-authored, so relevance and keywords can be overfit to the
+  scripted inputs.
 - Keyword matching is intentionally narrow and may not survive later phases once
   salience and arbitration exist.
 
@@ -341,6 +369,22 @@ The phase 2 slice is working as intended: a small fixture, deterministic selecti
 budget-bounded context assembly, and trace-backed candidate initiatives can live in
 the current architecture without introducing new goal-specific event types or effect
 execution. The result is useful as a research baseline, not as a final volition model.
+
+On the two open questions the plan flagged for this phase:
+
+- **Is deterministic keyword/priority relevance enough?** For this fixture, yes —
+  exact-term keyword matching plus priority scoring cleanly separated the goal-relevant
+  inputs from the baseline and ordered selection predictably under budget. It is
+  adequate to validate the mechanism, but it is brittle by construction (no stemming,
+  synonyms, or phrase matching), so a richer match is likely needed once goals are
+  derived dynamically rather than hand-authored.
+- **Does the tension layer earn its place at this scale?** Only weakly. Tensions feed
+  a `priority_bias` bonus into the relevance score, but selection order in every
+  scripted run was already determined by matched-keyword count and goal base priority;
+  the tension bonus never changed an outcome. The tension layer is currently justified
+  more as vocabulary and future provenance (which pressure a goal serves) than as a
+  selection-affecting signal. Its value should be re-judged once event-driven salience
+  exists.
 
 ## Follow-Up Questions
 
