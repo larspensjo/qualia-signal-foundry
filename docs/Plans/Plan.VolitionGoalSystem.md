@@ -8,8 +8,9 @@ decision "Volition is an explicit research surface" is recorded in
 [`DecisionLog.md`](../DecisionLog.md) (2026-05-15). **Phase 2 (static tension and
 goal fixture) is complete**; its validation scaffold is
 [`Experiment.VolitionGoalFixture.md`](../Experiments/Experiment.VolitionGoalFixture.md).
-Phase 3 is the next slice to expand immediately before it is executed. Phases 4–8
-remain sketched at a high level until they are ready.
+Phase 3 now has a validation scaffold in
+[`Experiment.VolitionTraceBackedInitiative.md`](../Experiments/Experiment.VolitionTraceBackedInitiative.md).
+Phases 4–8 remain sketched at a high level until they are ready.
 
 > Companion to the idea note
 > [`Idea.VolitionGoalSystem.md`](Idea.VolitionGoalSystem.md), which is authoritative
@@ -60,7 +61,7 @@ influencing behavior.
 |-------|-------|-------|-------------|---------------------|
 | 1 | Document the concept; record the research-surface decision — **complete** | No | No | — |
 | 2 | Static tension/goal fixture + deterministic, budget-bounded selection — **complete** | Yes | Light | `Experiment.VolitionGoalFixture` |
-| 3 | Trace-backed initiative proposals (pre-initiative traces) | Yes | Light | `Experiment.VolitionTraceBackedInitiative` (future) |
+| 3 | Trace-backed initiative proposals (pre-initiative traces) | Yes | Light | `Experiment.VolitionTraceBackedInitiative` |
 | 4 | Event-driven salience, satisfaction, blocking, cooldown | Yes | Yes | `Experiment.VolitionSalienceAndSatisfaction` (future) |
 | 5 | Arbitration and multi-goal conflict resolution | Yes | Yes | `Experiment.VolitionArbitrationConflict` (future) |
 | 6 | Reflection-generated goal candidates (proposed, not auto-accepted) | Yes | Yes | future |
@@ -98,11 +99,14 @@ any effect and without a model call.
 ### Phase 3 — Trace-backed initiative proposals
 
 Add a pre-initiative trace recorded *before* any behavior could change, capturing the
-active tension, goal, detected delta, candidate initiatives, and arbitration result.
-Still no effect execution.
+active tension, goal, detected delta, candidate initiatives, and local candidate-choice
+result. This is not full arbitration; that remains a later slice. Still no effect
+execution.
 
 - **Verify:** every proposed initiative has a preceding trace that connects goal →
   delta → chosen effect; losing candidates are recorded.
+- Full scope and success/failure criteria live in
+  [`Experiment.VolitionTraceBackedInitiative.md`](../Experiments/Experiment.VolitionTraceBackedInitiative.md).
 
 ### Phase 4 — Salience, satisfaction, blocking, cooldown
 

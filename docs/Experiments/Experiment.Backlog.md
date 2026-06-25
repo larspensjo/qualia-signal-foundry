@@ -49,7 +49,8 @@ Later
 | `Experiment.ContextBudgetRetrievalTest` | High | Completed | How should the system select memories under a small context budget? |
 | `Experiment.SleepPhaseSessionSummary` | High | Completed | Does a session-end summary improve continuity in the next session? |
 | `Experiment.ProjectDocLiveRegressionAudit` | High | Proposed | Can live project-doc tool turns preserve prompt-prefix continuity and retrieve expected docs? |
-| `Experiment.VolitionGoalFixture` | Medium | Planned | Can a static tension/goal fixture deterministically select input-relevant goals and propose candidate initiatives without executing any effect? |
+| `Experiment.VolitionGoalFixture` | Medium | Completed | Can a static tension/goal fixture deterministically select input-relevant goals and propose candidate initiatives without executing any effect? |
+| `Experiment.VolitionTraceBackedInitiative` | Medium | Planned | Can pre-initiative traces explain goal → delta → candidate initiatives → proposed bounded effect before any behavior changes? |
 | `Experiment.StreamingTranscriptionMVP` | Medium | Completed | Can live speech be represented as observable partial and final transcript events? |
 | `Experiment.AudioLoopMVP` | Medium | Superseded | Can a minimal audio loop create a stronger sense of presence than text-only interaction? |
 | `Experiment.ToolAsPerceptionCalculator` | Medium | Completed | How should a simple read-only computational tool be represented as perception? |
@@ -265,19 +266,21 @@ Possible success criteria:
 ### Experiment.VolitionGoalFixture
 
 **Priority:** Medium
-**Status:** Planned
+**Status:** Completed
 
 First build slice of the volition/goal system: a small, static, read-only fixture of
 tensions and goals tested with deterministic, budget-bounded goal selection against
 scripted inputs. Sequenced in `Plans/Plan.VolitionGoalSystem.md`; rationale and
 candidate state shapes in `Plans/Idea.VolitionGoalSystem.md`.
 
-The experiment establishes the `tension → goal → initiative` distinction in code,
-proves that goal selection can be deterministic and replayable, and emits traces
+The experiment established the `tension → goal → initiative` distinction in code,
+showed that goal selection can be deterministic and replayable, and emitted traces
 linking input → active goal → candidate initiative — without any model call and
-without executing any effect.
+without executing any effect. The result did not show tension priority materially
+affecting selection at this scale, so later experiments should treat tensions as
+provenance until further evidence exists.
 
-Planned in [Experiment.VolitionGoalFixture.md](Experiment.VolitionGoalFixture.md).
+Completed in [Experiment.VolitionGoalFixture.md](Experiment.VolitionGoalFixture.md).
 
 Related documents:
 
@@ -304,6 +307,49 @@ Possible success criteria:
 - A direct-task baseline input selects no goals.
 - Traces connect input → active goal → candidate initiative, including omissions.
 - Changing the fixture changes selection in the expected direction.
+
+### Experiment.VolitionTraceBackedInitiative
+
+**Priority:** Medium
+**Status:** Planned
+
+Next validation slice for the volition/goal system: record serialized
+pre-initiative traces before any proposed initiative can affect behavior. It reuses
+the static fixture and selector from `Experiment.VolitionGoalFixture`, but treats
+active tensions as provenance rather than proven priority architecture.
+
+The experiment tests whether a trace can connect selected goal → active tension
+provenance → detected input delta or no-delta reason → candidate initiative effects
+→ proposed bounded effect and losing candidates, while still executing no effect.
+
+Planned in [Experiment.VolitionTraceBackedInitiative.md](Experiment.VolitionTraceBackedInitiative.md).
+
+Related documents:
+
+```text
+Plans/Plan.VolitionGoalSystem.md
+Plans/Idea.VolitionGoalSystem.md
+Experiments/Experiment.VolitionGoalFixture.md
+Architecture/Architecture.RuntimeLoop.md
+Architecture/Architecture.ContextManagement.md
+Architecture/Architecture.StateAndObservability.md
+DecisionLog.md  (2026-05-15 "Volition is an explicit research surface")
+```
+
+Possible scope:
+
+- pure pre-initiative trace shape
+- deterministic detected-delta or no-delta reasons for scripted inputs
+- candidate initiative generation from selected goals' allowed effects
+- losing candidates with rejection reasons
+- explicit no-execution marker in every trace
+
+Possible success criteria:
+
+- Every proposed initiative has a preceding trace.
+- The trace connects goal, delta, proposed effect, and losing candidates.
+- The direct-task baseline records no selected goal, no delta, and no candidate.
+- No initiative effect is emitted or executed.
 
 ### Experiment.StreamingTranscriptionMVP
 

@@ -286,8 +286,9 @@ from planning to evidence. The remaining documentation follow-through is:
 
 - **This experiment doc:** keep Results / Interpretation current if the selector
   changes materially.
-- **[Plan.VolitionGoalSystem.md](../Plans/Plan.VolitionGoalSystem.md):** mark Phase 2
-  complete and keep later phases high-level until they are expanded.
+- **[Plan.VolitionGoalSystem.md](../Plans/Plan.VolitionGoalSystem.md):** mark the
+  static tension and goal fixture slice complete and keep later slices high-level
+  until they are expanded.
 - **Only if later evidence warrants it:** add an *Implementation Status* note to
   [Architecture.RuntimeLoop.md](../Architecture/Architecture.RuntimeLoop.md) or a
   dedicated volition architecture doc, and promote any durable decision to
@@ -365,10 +366,11 @@ clippy --all-targets -- -D warnings`, and `cargo fmt` are all green.
 
 ## Interpretation
 
-The phase 2 slice is working as intended: a small fixture, deterministic selection,
-budget-bounded context assembly, and trace-backed candidate initiatives can live in
-the current architecture without introducing new goal-specific event types or effect
-execution. The result is useful as a research baseline, not as a final volition model.
+The static tension and goal fixture slice is working as intended: a small fixture,
+deterministic selection, budget-bounded context assembly, and trace-backed candidate
+initiatives can live in the current architecture without introducing new goal-specific
+event types or effect execution. The result is useful as a research baseline, not as a
+final volition model.
 
 On the two open questions the plan flagged for this phase:
 
