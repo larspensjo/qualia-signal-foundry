@@ -9,12 +9,12 @@
 - When creating complex plans, they should be divided into incremental phases that can be tested.
 
 ## Planning & Documentation
-- When creating a plan, make it clear how to verify each phase. Point out where external human testing is recommended. Save them to the `docs/plans/` folder unless explicitly told otherwise. Check with the docs\DecisionLog.md.
+- Distinguish the two planning tracks (see `docs/ProjectFrame/DocumentStatus.md` and `docs/ProjectFrame/ProjectWorkflow.md`): a multi-phase effort gets a phased `docs/Plans/Plan.*.md`; a single self-contained, testable slice gets a `docs/Experiments/Experiment.*.md`. A `Plan.*.md` sequences phases, each validated by an `Experiment.*.md` scaffold.
+- When creating a plan, make it clear how to verify each phase, and point out where external human testing is recommended. Save plans to the `docs/Plans/` folder unless explicitly told otherwise. Check with `docs/DecisionLog.md`.
 - When implementing a plan, surface its open questions or ambiguities before silently resolving them.
 - When adding a feature behind a config flag or threshold, the default values must exercise the new code path.
-- When creating a plan, make it clear how to verify each step. Point out where external human testing is recommended.
-- When creatign a plan, check with docs\ProjectFrame\ProjectWorkflow.md what documents should be updated, and include that in the plan.
-- Plans are ephemeral documents, and archived when implemented. Never refer to plans or phases from repository documents.
+- When creating a plan, check `docs/ProjectFrame/ProjectWorkflow.md` for what documents should be updated, and include that in the plan.
+- Plans are ephemeral documents, archived when implemented. Never refer to plan phase numbers from durable repository documents (experiment specs, architecture, the decision log, or code); name the behavior instead.
 
 ## Architecture
 - Preserve the unidirectional data flow: input -> action -> reducer -> state -> render, with side effects isolated and fed back as actions.

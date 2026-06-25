@@ -49,6 +49,7 @@ Later
 | `Experiment.ContextBudgetRetrievalTest` | High | Completed | How should the system select memories under a small context budget? |
 | `Experiment.SleepPhaseSessionSummary` | High | Completed | Does a session-end summary improve continuity in the next session? |
 | `Experiment.ProjectDocLiveRegressionAudit` | High | Proposed | Can live project-doc tool turns preserve prompt-prefix continuity and retrieve expected docs? |
+| `Experiment.VolitionGoalFixture` | Medium | Planned | Can a static tension/goal fixture deterministically select input-relevant goals and propose candidate initiatives without executing any effect? |
 | `Experiment.StreamingTranscriptionMVP` | Medium | Completed | Can live speech be represented as observable partial and final transcript events? |
 | `Experiment.AudioLoopMVP` | Medium | Superseded | Can a minimal audio loop create a stronger sense of presence than text-only interaction? |
 | `Experiment.ToolAsPerceptionCalculator` | Medium | Completed | How should a simple read-only computational tool be represented as perception? |
@@ -68,7 +69,7 @@ Later
 
 ### Experiment.AssociativeMemoryToyModel
 
-**Priority:** High  
+**Priority:** High
 **Status:** Completed
 
 Built a small toy version of associative memory using simple text memories, weighted links, recency, and reinforcement.
@@ -108,7 +109,7 @@ Useful observations:
 
 ### Experiment.FrameworkSkeletonMVP
 
-**Priority:** High  
+**Priority:** High
 **Status:** Completed
 
 Created the smallest runnable project framework that can host later experiments.
@@ -142,7 +143,7 @@ Possible success criteria:
 
 ### Experiment.EventLogAndTraceMVP
 
-**Priority:** High  
+**Priority:** High
 **Status:** Completed
 
 Defined and tested a minimal event log and trace system.
@@ -177,7 +178,7 @@ Possible success criteria:
 
 ### Experiment.ContextBudgetRetrievalTest
 
-**Priority:** High  
+**Priority:** High
 **Status:** Completed
 
 Compared several ways of selecting context under a small budget.
@@ -210,7 +211,7 @@ Possible success criteria:
 
 ### Experiment.SleepPhaseSessionSummary
 
-**Priority:** High  
+**Priority:** High
 **Status:** Completed
 
 Ran a simple session-end sleep phase that produces a summary, memory candidates, association candidates, open questions, decision candidates, future context hints, and review notes.
@@ -234,7 +235,7 @@ Possible success criteria:
 
 ### Experiment.ProjectDocLiveRegressionAudit
 
-**Priority:** High  
+**Priority:** High
 **Status:** Proposed
 
 Audit the live multi-turn project-doc introspection path after manual verification found
@@ -260,6 +261,49 @@ Possible success criteria:
 - The trace is sufficient to explain any remaining retrieval miss.
 
 ## Medium-Priority Experiments
+
+### Experiment.VolitionGoalFixture
+
+**Priority:** Medium
+**Status:** Planned
+
+First build slice of the volition/goal system: a small, static, read-only fixture of
+tensions and goals tested with deterministic, budget-bounded goal selection against
+scripted inputs. Sequenced in `Plans/Plan.VolitionGoalSystem.md`; rationale and
+candidate state shapes in `Plans/Idea.VolitionGoalSystem.md`.
+
+The experiment establishes the `tension → goal → initiative` distinction in code,
+proves that goal selection can be deterministic and replayable, and emits traces
+linking input → active goal → candidate initiative — without any model call and
+without executing any effect.
+
+Planned in [Experiment.VolitionGoalFixture.md](Experiment.VolitionGoalFixture.md).
+
+Related documents:
+
+```text
+Plans/Plan.VolitionGoalSystem.md
+Plans/Idea.VolitionGoalSystem.md
+Architecture/Architecture.RuntimeLoop.md
+Architecture/Architecture.ContextManagement.md
+Architecture/Architecture.StateAndObservability.md
+DecisionLog.md  (2026-05-15 "Volition is an explicit research surface")
+```
+
+Possible scope:
+
+- pure `Tension` / `Goal` / `InitiativeProposal` types and a static fixture
+- a deterministic goal selector reusing `ContextBudget` / `assemble_context`
+- selection traces (selected + omitted goals, with rationale)
+- candidate initiative proposals (proposed only, never executed)
+- a perturbation run showing selection changes predictably
+
+Possible success criteria:
+
+- Selection is deterministic and replayable.
+- A direct-task baseline input selects no goals.
+- Traces connect input → active goal → candidate initiative, including omissions.
+- Changing the fixture changes selection in the expected direction.
 
 ### Experiment.StreamingTranscriptionMVP
 
@@ -301,7 +345,7 @@ Possible success criteria:
 
 ### Experiment.AudioLoopMVP
 
-**Priority:** Medium  
+**Priority:** Medium
 **Status:** Superseded
 
 This broad audio-loop proposal was split into narrower experiments after streaming transcription events worked.
@@ -336,7 +380,7 @@ Possible success criteria:
 
 ### Experiment.ToolAsPerceptionCalculator
 
-**Priority:** Medium  
+**Priority:** Medium
 **Status:** Completed
 
 Gave the system access to a simple calculator-like tool and represented the result as an observation rather than an action.
@@ -358,7 +402,7 @@ Possible success criteria:
 
 ### Experiment.MemoryDecayPolicy
 
-**Priority:** Medium  
+**Priority:** Medium
 **Status:** Proposed
 
 Compare simple memory decay strategies.
@@ -390,7 +434,7 @@ Possible success criteria:
 
 ### Experiment.ModelRoleSplitLiveVsSleep
 
-**Priority:** Medium  
+**Priority:** Medium
 **Status:** Proposed
 
 Compare a single-model flow with a split between live interaction and sleep consolidation.
@@ -411,7 +455,7 @@ Possible success criteria:
 
 ### Experiment.ContextTraceInspection
 
-**Priority:** Medium  
+**Priority:** Medium
 **Status:** Proposed
 
 Inspect context assembly traces after interactions and evaluate whether they explain the system's behavior.
@@ -433,7 +477,7 @@ Possible success criteria:
 
 ### Experiment.InterruptionHandlingAudio
 
-**Priority:** Later  
+**Priority:** Later
 **Status:** Idea
 
 Explore how the system should react when the user interrupts while it is speaking.
@@ -448,7 +492,7 @@ Research/ResearchQuestions.Audio.md
 
 ### Experiment.ExternalInputEventStream
 
-**Priority:** Later  
+**Priority:** Later
 **Status:** Idea
 
 Normalize external inputs such as audio, file changes, tool observations, or future video signals into runtime events.
@@ -463,7 +507,7 @@ Architecture/Architecture.StateAndObservability.md
 
 ### Experiment.MemoryPromotionRules
 
-**Priority:** Later  
+**Priority:** Later
 **Status:** Idea
 
 Test rules for deciding when an event should become durable memory.
@@ -477,7 +521,7 @@ Architecture/Architecture.SleepPhase.md
 
 ### Experiment.AssociationReinforcement
 
-**Priority:** Later  
+**Priority:** Later
 **Status:** Idea
 
 Test which signals should strengthen links between memories.
@@ -491,7 +535,7 @@ Architecture/Architecture.MemorySystem.md
 
 ### Experiment.ToolResultMemoryPromotion
 
-**Priority:** Later  
+**Priority:** Later
 **Status:** Idea
 
 Test whether tool observations should become memories and under what conditions.
@@ -505,7 +549,7 @@ Architecture/Architecture.MemorySystem.md
 
 ### Experiment.CostPerModelRole
 
-**Priority:** Later  
+**Priority:** Later
 **Status:** Idea
 
 Measure whether splitting model roles increases cost too much or reduces cost by allowing cheaper specialized models.
@@ -519,7 +563,7 @@ Architecture/Architecture.ContextManagement.md
 
 ### Experiment.SleepTraceAudit
 
-**Priority:** Later  
+**Priority:** Later
 **Status:** Idea
 
 Review sleep-phase traces to determine whether consolidation changes are understandable and appropriate.
@@ -533,7 +577,7 @@ Architecture/Architecture.StateAndObservability.md
 
 ### Experiment.ReplaySingleRuntimeStep
 
-**Priority:** Later  
+**Priority:** Later
 **Status:** Idea
 
 Capture enough information to inspect or rerun a single runtime step.

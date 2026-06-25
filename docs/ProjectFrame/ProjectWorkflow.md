@@ -34,6 +34,32 @@ Not every idea must pass through every stage.
 
 Some ideas may stay in concept, research, or plan documents. Some may become experiments. Only a few should become accepted architecture or formal decisions.
 
+## Document Tracks: Plans vs Experiments
+
+The word "plan" is overloaded, so two document tracks can look like they compete. They
+do not — they are complementary. `docs/ProjectFrame/DocumentStatus.md` is the
+authoritative map of where each kind lives.
+
+- **`docs/Plans/`** is the *thinking and sequencing* track:
+  - `Idea.*.md` — brainstorm-stage proposal.
+  - `Design.*.md` — a focused design decision supporting a plan.
+  - `Plan.*.md` — a phased implementation plan that sequences work into testable
+    slices, with verification and human-test markers per phase.
+- **`docs/Experiments/`** is the *validation* track:
+  - `Experiment.*.md` — a planned or run experiment (one testable slice).
+  - `Report.*.md` — the outcome of one specific run.
+
+Rule of thumb:
+
+- A single self-contained, testable slice → an `Experiment.*.md`.
+- A multi-phase effort → a `Plan.*.md` that sequences the phases, with each phase
+  validated by an `Experiment.*.md` scaffold. See `Plan.RealtimeVoiceConversation.md`
+  for the established pattern.
+
+Phase numbers live only inside the `Plan.*.md` (an ephemeral document). Do not cite
+plan phase numbers from durable documents such as experiment specs, architecture, the
+decision log, or code — name the behavior instead (see `Agents.md`).
+
 ## Stage 1: Capture
 
 Use:
