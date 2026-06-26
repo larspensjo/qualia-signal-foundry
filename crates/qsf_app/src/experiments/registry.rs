@@ -29,6 +29,7 @@ use super::tool_as_perception_calculator::ToolAsPerceptionCalculatorExperiment;
 use super::voice_loop::{VOICE_LOOP_DESCRIPTION, VoiceLoopExperiment};
 use super::volition_arbitration_conflict::VolitionArbitrationConflictExperiment;
 use super::volition_goal_fixture::VolitionGoalFixtureExperiment;
+use super::volition_reflection_goal_candidates::VolitionReflectionGoalCandidatesExperiment;
 use super::volition_salience_and_satisfaction::VolitionSalienceAndSatisfactionExperiment;
 use super::volition_trace_backed_initiative::VolitionTraceBackedInitiativeExperiment;
 
@@ -54,6 +55,7 @@ pub enum ExperimentName {
     VolitionTraceBackedInitiative,
     VolitionSalienceAndSatisfaction,
     VolitionArbitrationConflict,
+    VolitionReflectionGoalCandidates,
 }
 
 impl ExperimentName {
@@ -78,6 +80,7 @@ impl ExperimentName {
             Self::VolitionTraceBackedInitiative => "volition-trace-backed-initiative",
             Self::VolitionSalienceAndSatisfaction => "volition-salience-and-satisfaction",
             Self::VolitionArbitrationConflict => "volition-arbitration-conflict",
+            Self::VolitionReflectionGoalCandidates => "volition-reflection-goal-candidates",
         }
     }
 
@@ -135,6 +138,9 @@ impl ExperimentName {
             }
             Self::VolitionArbitrationConflict => {
                 "Replay a scripted multi-turn sequence exercising no_selection, single_selection, and conflict_resolved arbitration outcomes — no effect is executed"
+            }
+            Self::VolitionReflectionGoalCandidates => {
+                "Replay a scripted propose/accept/reject/inert sequence to exercise reflection-generated goal candidates — no effect is executed and accepted candidates are not wired into any selector"
             }
         }
     }
@@ -377,6 +383,9 @@ fn experiment_for(name: ExperimentName) -> Box<dyn Experiment> {
         }
         ExperimentName::VolitionArbitrationConflict => {
             Box::new(VolitionArbitrationConflictExperiment)
+        }
+        ExperimentName::VolitionReflectionGoalCandidates => {
+            Box::new(VolitionReflectionGoalCandidatesExperiment)
         }
     }
 }

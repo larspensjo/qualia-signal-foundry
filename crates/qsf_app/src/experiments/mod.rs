@@ -19,6 +19,7 @@ mod transcript_format;
 mod voice_loop;
 mod volition_arbitration_conflict;
 mod volition_goal_fixture;
+mod volition_reflection_goal_candidates;
 mod volition_salience_and_satisfaction;
 mod volition_trace_backed_initiative;
 

@@ -18,10 +18,10 @@ its validation scaffold is
 in [`Design.VolitionArbitration.md`](Design.VolitionArbitration.md) and its
 validation scaffold is
 [`Experiment.VolitionArbitrationConflict.md`](../Experiments/Experiment.VolitionArbitrationConflict.md).
-**Phase 6 (reflection-generated goal candidates) is being expanded** — its detail is
-in this document and its validation scaffold will be
-`Experiment.VolitionReflectionGoalCandidates.md`. Phases 7–8 remain sketched at a
-high level until they are ready.
+**Phase 6 (reflection-generated goal candidates) is complete**; its design is captured
+in this document and its validation scaffold is
+[`Experiment.VolitionReflectionGoalCandidates.md`](../Experiments/Experiment.VolitionReflectionGoalCandidates.md).
+Phases 7–8 remain sketched at a high level until they are ready.
 
 > Companion to the idea note
 > [`Idea.VolitionGoalSystem.md`](Idea.VolitionGoalSystem.md), which is authoritative
@@ -75,7 +75,7 @@ influencing behavior.
 | 3 | Trace-backed initiative proposals (pre-initiative traces) — **complete** | Yes | Light | `Experiment.VolitionTraceBackedInitiative` |
 | 4 | Event-driven salience, satisfaction, blocking, cooldown — **complete** | Yes | Yes | `Experiment.VolitionSalienceAndSatisfaction` |
 | 5 | Arbitration and multi-goal conflict resolution — **complete** | Yes | Yes | `Experiment.VolitionArbitrationConflict` |
-| 6 | Reflection-generated goal candidates (proposed, not auto-accepted) — **expanding** | Yes | Yes | `Experiment.VolitionReflectionGoalCandidates` |
+| 6 | Reflection-generated goal candidates (proposed, not auto-accepted) — **complete** | Yes | Yes | `Experiment.VolitionReflectionGoalCandidates` |
 | 7 | Bounded internal initiative execution | Yes | Yes | future |
 | 8 | Optional inspectable mode/bias state | Yes | Yes | future |
 
@@ -167,12 +167,14 @@ experiment confirmed that `boundary-preservation` (tier 1) consistently outranks
 tests pass. Design decisions: [`Design.VolitionArbitration.md`](Design.VolitionArbitration.md).
 Validation scaffold: [`Experiment.VolitionArbitrationConflict.md`](../Experiments/Experiment.VolitionArbitrationConflict.md).
 
-### Phase 6 — Reflection-generated goal candidates
+### Phase 6 — Reflection-generated goal candidates (complete)
 
-Let a reflection/sleep step propose goal candidates with evidence references. Proposals
-stay in `Proposed` status until an explicit accept or reject event moves them; nothing
-is silently promoted. This is a pure, model-free slice — the proposer function maps
-scripted open questions to candidates deterministically, without any LLM call.
+Added a pure, model-free proposer that maps scripted open questions to
+`ProposedGoalCandidate` values by keyword-matching against tension ids and summaries.
+Proposals stay in `VolitionState::pending_candidates` until an explicit accept or reject
+event moves them; nothing is silently promoted. Accepted candidates land in
+`VolitionState::accepted_candidates`, distinct from fixture-seeded goals and not wired
+into any selector in this phase.
 
 #### Open questions to resolve before building
 
@@ -369,9 +371,10 @@ expanded, not silently resolved:
 - **Phase 5:** Probabilistic arbitration is deferred — Phase 5 is deterministic only.
   If introduced later it must be gated behind an explicit experiment mode flag and
   recorded in traces. *(Confirmed resolved.)*
-- **Phase 6:** The four open questions from the Phase 6 detail above must be confirmed
-  before implementation: (1) pending vs. accepted storage boundary, (2) selector
-  wiring deferral, (3) minimal evidence ref shape, (4) pending-candidate cap.
+- **Phase 6:** *(Resolved.)* (1) `pending_candidates` and `accepted_candidates` are
+  separate collections, distinct from fixture-seeded `goals`. (2) Selector wiring is
+  deferred to Phase 7. (3) `EvidenceRef` newtype enforces non-empty evidence for
+  proposals. (4) No hard cap in Phase 6; the experiment scripts ≤4 questions.
 - **Phase 7:** How should accepted candidates from Phase 6 wire into the selector and
   initiative pipeline? Should they merge into the fixture-backed `goals` map or remain
   in a separate `accepted_candidates` collection?

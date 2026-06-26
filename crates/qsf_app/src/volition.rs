@@ -389,6 +389,141 @@ impl fmt::Display for EvidenceRefError {
     }
 }
 
+/// A goal candidate proposed by a reflection step. Stays in `VolitionState::pending_candidates`
+/// until explicitly accepted or rejected. Cannot be constructed with an empty
+/// `proposal_evidence` — use `try_new`.
+#[derive(Clone, Debug, PartialEq, Serialize)]
+pub struct ProposedGoalCandidate {
+    id: String,
+    title: String,
+    summary: String,
+    tension_ids: Vec<String>,
+    scope: GoalScope,
+    base_priority: u8,
+    allowed_effects: Vec<AllowedEffect>,
+    satisfaction_condition_summary: String,
+    proposal_evidence: Vec<EvidenceRef>,
+    source_description: String,
+}
+
+impl ProposedGoalCandidate {
+    #[allow(clippy::too_many_arguments)]
+    pub fn try_new(
+        id: String,
+        title: String,
+        summary: String,
+        tension_ids: Vec<String>,
+        scope: GoalScope,
+        base_priority: u8,
+        allowed_effects: Vec<AllowedEffect>,
+        satisfaction_condition_summary: String,
+        proposal_evidence: Vec<EvidenceRef>,
+        source_description: String,
+    ) -> Result<Self, &'static str> {
+        if proposal_evidence.is_empty() {
+            return Err("proposal_evidence must not be empty");
+        }
+        Ok(Self {
+            id,
+            title,
+            summary,
+            tension_ids,
+            scope,
+            base_priority,
+            allowed_effects,
+            satisfaction_condition_summary,
+            proposal_evidence,
+            source_description,
+        })
+    }
+
+    pub fn id(&self) -> &str {
+        &self.id
+    }
+
+    pub fn proposal_evidence(&self) -> &[EvidenceRef] {
+        &self.proposal_evidence
+    }
+
+    pub fn tension_ids(&self) -> &[String] {
+        &self.tension_ids
+    }
+
+    pub fn title(&self) -> &str {
+        &self.title
+    }
+
+    fn into_goal(self, acceptance_evidence: EvidenceRef) -> Goal {
+        let mut evidence_refs: Vec<String> = self
+            .proposal_evidence
+            .iter()
+            .map(|e| e.to_string())
+            .collect();
+        evidence_refs.push(acceptance_evidence.to_string());
+        Goal {
+            id: self.id,
+            title: self.title,
+            summary: self.summary,
+            tension_ids: self.tension_ids,
+            status: GoalStatus::Accepted,
+            scope: self.scope,
+            base_priority: self.base_priority,
+            activation_keywords: vec![],
+            allowed_effects: self.allowed_effects,
+            satisfaction_condition_summary: self.satisfaction_condition_summary,
+            evidence_refs,
+            estimated_tokens: 20,
+            source_reference: self.source_description,
+        }
+    }
+}
+
+/// Shadow struct used only for deserialization; validates via `ProposedGoalCandidate::try_new`
+/// so that the non-empty `proposal_evidence` invariant is enforced even through serde.
+#[derive(Deserialize)]
+struct ProposedGoalCandidateRaw {
+    id: String,
+    title: String,
+    summary: String,
+    tension_ids: Vec<String>,
+    scope: GoalScope,
+    base_priority: u8,
+    allowed_effects: Vec<AllowedEffect>,
+    satisfaction_condition_summary: String,
+    proposal_evidence: Vec<EvidenceRef>,
+    source_description: String,
+}
+
+impl<'de> Deserialize<'de> for ProposedGoalCandidate {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let raw = ProposedGoalCandidateRaw::deserialize(deserializer)?;
+        Self::try_new(
+            raw.id,
+            raw.title,
+            raw.summary,
+            raw.tension_ids,
+            raw.scope,
+            raw.base_priority,
+            raw.allowed_effects,
+            raw.satisfaction_condition_summary,
+            raw.proposal_evidence,
+            raw.source_description,
+        )
+        .map_err(serde::de::Error::custom)
+    }
+}
+
+/// Result of `propose_goal_candidates`: matched candidates and questions that matched no
+/// tension (for caller inspection without needing to infer from count differences).
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+pub struct GoalCandidateProposalResult {
+    pub candidates: Vec<ProposedGoalCandidate>,
+    pub unmatched_questions: Vec<String>,
+}
+
 /// Dynamic, per-goal state tracked within a run. Separate from the read-only fixture.
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 pub struct GoalDynamicState {
@@ -422,8 +557,13 @@ impl GoalDynamicState {
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 pub struct VolitionState {
     pub tick: u64,
-    /// Keyed by goal id.
+    /// Keyed by goal id. Fixture-seeded goals only.
     pub goals: BTreeMap<String, GoalDynamicState>,
+    /// Proposed goal candidates awaiting explicit accept or reject.
+    pub pending_candidates: Vec<ProposedGoalCandidate>,
+    /// Accepted goal data records keyed by goal id. Distinct from `goals`; not wired into
+    /// any selector in Phase 6.
+    pub accepted_candidates: BTreeMap<String, Goal>,
 }
 
 impl VolitionState {
@@ -435,7 +575,12 @@ impl VolitionState {
             .filter(|goal| goal.status == GoalStatus::Accepted)
             .map(|goal| (goal.id.clone(), GoalDynamicState::initial()))
             .collect();
-        Self { tick: 0, goals }
+        Self {
+            tick: 0,
+            goals,
+            pending_candidates: Vec::new(),
+            accepted_candidates: BTreeMap::new(),
+        }
     }
 
     pub fn goal(&self, goal_id: &str) -> Option<&GoalDynamicState> {
@@ -495,6 +640,25 @@ pub enum VolitionEvent {
     /// Applied unconditionally each turn to guarantee state.tick is monotonically
     /// increasing even when no lifecycle events are emitted.
     TickAdvanced {
+        tick: u64,
+    },
+    /// Appends a proposed goal candidate to `pending_candidates`. Does not auto-accept.
+    GoalCandidateAdded {
+        candidate: ProposedGoalCandidate,
+        tick: u64,
+    },
+    /// Moves a pending candidate to `accepted_candidates`. No-op if the candidate id is
+    /// not in `pending_candidates`.
+    GoalCandidateAccepted {
+        goal_id: String,
+        acceptance_evidence: EvidenceRef,
+        tick: u64,
+    },
+    /// Removes a pending candidate from `pending_candidates`. Rejection reason is
+    /// captured in the event log; no durable state for rejected candidates is kept.
+    GoalCandidateRejected {
+        goal_id: String,
+        reason: String,
         tick: u64,
     },
 }
@@ -559,6 +723,27 @@ pub fn apply(mut state: VolitionState, event: VolitionEvent) -> VolitionState {
             }
         }
         VolitionEvent::TickAdvanced { .. } => {}
+        VolitionEvent::GoalCandidateAdded { candidate, .. } => {
+            state.pending_candidates.push(candidate);
+        }
+        VolitionEvent::GoalCandidateAccepted {
+            goal_id,
+            acceptance_evidence,
+            ..
+        } => {
+            if let Some(pos) = state
+                .pending_candidates
+                .iter()
+                .position(|c| c.id() == goal_id)
+            {
+                let candidate = state.pending_candidates.remove(pos);
+                let goal = candidate.into_goal(acceptance_evidence);
+                state.accepted_candidates.insert(goal_id, goal);
+            }
+        }
+        VolitionEvent::GoalCandidateRejected { goal_id, .. } => {
+            state.pending_candidates.retain(|c| c.id() != goal_id);
+        }
     }
     state
 }
@@ -572,7 +757,10 @@ fn event_tick(event: &VolitionEvent) -> u64 {
         | VolitionEvent::GoalDecayed { tick, .. }
         | VolitionEvent::GoalCooldownElapsed { tick, .. }
         | VolitionEvent::GoalRetired { tick, .. }
-        | VolitionEvent::TickAdvanced { tick } => *tick,
+        | VolitionEvent::TickAdvanced { tick }
+        | VolitionEvent::GoalCandidateAdded { tick, .. }
+        | VolitionEvent::GoalCandidateAccepted { tick, .. }
+        | VolitionEvent::GoalCandidateRejected { tick, .. } => *tick,
     }
 }
 
@@ -1272,6 +1460,96 @@ impl fmt::Display for AllowedEffect {
             Self::SurfaceOpenThread => "surface-open-thread",
         })
     }
+}
+
+/// Map open questions to `ProposedGoalCandidate` values by matching question terms against
+/// tension ids and summaries. Pure and deterministic — no model call. Questions that match
+/// no tension are collected in `unmatched_questions`.
+pub fn propose_goal_candidates(
+    open_questions: &[String],
+    fixture: &VolitionFixture,
+) -> GoalCandidateProposalResult {
+    let mut candidates = Vec::new();
+    let mut unmatched_questions = Vec::new();
+
+    for question in open_questions {
+        let question_terms = normalize_terms(question);
+        let matched_tension_ids: Vec<String> = fixture
+            .tensions
+            .iter()
+            .filter(|tension| tension_matches_question(tension, &question_terms))
+            .map(|tension| tension.id.clone())
+            .collect();
+
+        if matched_tension_ids.is_empty() {
+            unmatched_questions.push(question.clone());
+            continue;
+        }
+
+        let trimmed = question.trim();
+        let evidence = EvidenceRef::try_new(format!("open-question: {trimmed}"))
+            .expect("trimmed question is non-empty; construction cannot fail");
+        let id = question_to_slug(trimmed);
+
+        let candidate = ProposedGoalCandidate::try_new(
+            id,
+            trimmed.to_string(),
+            trimmed.to_string(),
+            matched_tension_ids,
+            GoalScope::Session,
+            70,
+            vec![AllowedEffect::Reflect],
+            format!("The question '{trimmed}' is resolved or addressed."),
+            vec![evidence],
+            format!("open-question: {trimmed}"),
+        )
+        .expect("evidence is non-empty; construction cannot fail");
+
+        candidates.push(candidate);
+    }
+
+    GoalCandidateProposalResult {
+        candidates,
+        unmatched_questions,
+    }
+}
+
+fn tension_matches_question(tension: &Tension, question_terms: &[String]) -> bool {
+    let id_terms: Vec<String> = tension.id.split('-').map(str::to_lowercase).collect();
+    let summary_terms = normalize_terms(&tension.summary);
+    question_terms.iter().any(|term| {
+        id_terms.iter().any(|id_term| id_term == term)
+            || summary_terms.iter().any(|s_term| s_term == term)
+    })
+}
+
+fn question_to_slug(question: &str) -> String {
+    let slug: String = question
+        .chars()
+        .take(50)
+        .map(|c| {
+            if c.is_ascii_alphanumeric() {
+                c.to_ascii_lowercase()
+            } else {
+                '-'
+            }
+        })
+        .collect();
+
+    let mut result = String::new();
+    let mut prev_hyphen = false;
+    for c in slug.chars() {
+        if c == '-' {
+            if !prev_hyphen {
+                result.push(c);
+            }
+            prev_hyphen = true;
+        } else {
+            result.push(c);
+            prev_hyphen = false;
+        }
+    }
+    format!("proposed-{}", result.trim_matches('-'))
 }
 
 impl fmt::Display for TensionPriority {
@@ -2395,5 +2673,319 @@ mod tests {
         for loser in &arbitration.losers {
             assert!(!loser.selection.initiative.goal_id.is_empty());
         }
+    }
+
+    // ── Phase 6: ProposedGoalCandidate ─────────────────────────────────────────
+
+    use super::ProposedGoalCandidate;
+
+    fn make_candidate(id: &str) -> ProposedGoalCandidate {
+        let evidence = EvidenceRef::try_new(format!("open-question: {id}")).unwrap();
+        ProposedGoalCandidate::try_new(
+            id.to_string(),
+            format!("Title {id}"),
+            format!("Summary for {id}"),
+            vec![],
+            GoalScope::Session,
+            70,
+            vec![AllowedEffect::Reflect],
+            "Satisfied when resolved.".to_string(),
+            vec![evidence],
+            format!("source: {id}"),
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn proposed_goal_candidate_rejects_empty_evidence() {
+        let result = ProposedGoalCandidate::try_new(
+            "test-id".to_string(),
+            "Test".to_string(),
+            "Summary".to_string(),
+            vec![],
+            GoalScope::Session,
+            80,
+            vec![AllowedEffect::Reflect],
+            "Satisfied when done.".to_string(),
+            vec![],
+            "open-question: test".to_string(),
+        );
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn proposed_goal_candidate_accepts_valid_evidence() {
+        let evidence = EvidenceRef::try_new("open-question: test question").unwrap();
+        let result = ProposedGoalCandidate::try_new(
+            "test-id".to_string(),
+            "Test".to_string(),
+            "Summary".to_string(),
+            vec![],
+            GoalScope::Session,
+            80,
+            vec![AllowedEffect::Reflect],
+            "Satisfied when done.".to_string(),
+            vec![evidence],
+            "open-question: test question".to_string(),
+        );
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn goal_candidate_added_appends_to_pending_candidates() {
+        let fixture = static_fixture();
+        let state = VolitionState::from_fixture(&fixture);
+        let candidate = make_candidate("cand-1");
+
+        let state = apply(
+            state,
+            VolitionEvent::GoalCandidateAdded { candidate, tick: 1 },
+        );
+
+        assert_eq!(state.pending_candidates.len(), 1);
+        assert_eq!(state.pending_candidates[0].id(), "cand-1");
+    }
+
+    #[test]
+    fn goal_candidate_added_does_not_auto_accept() {
+        let fixture = static_fixture();
+        let state = VolitionState::from_fixture(&fixture);
+        let candidate = make_candidate("cand-1");
+
+        let state = apply(
+            state,
+            VolitionEvent::GoalCandidateAdded { candidate, tick: 1 },
+        );
+
+        assert!(!state.accepted_candidates.contains_key("cand-1"));
+    }
+
+    #[test]
+    fn goal_candidate_accepted_moves_candidate_to_accepted() {
+        let fixture = static_fixture();
+        let state = VolitionState::from_fixture(&fixture);
+        let candidate = make_candidate("cand-accept");
+
+        let state = apply(
+            state,
+            VolitionEvent::GoalCandidateAdded { candidate, tick: 1 },
+        );
+        let acceptance_evidence = EvidenceRef::try_new("experiment: confirmed useful").unwrap();
+        let state = apply(
+            state,
+            VolitionEvent::GoalCandidateAccepted {
+                goal_id: "cand-accept".to_string(),
+                acceptance_evidence,
+                tick: 2,
+            },
+        );
+
+        assert!(
+            !state
+                .pending_candidates
+                .iter()
+                .any(|c| c.id() == "cand-accept")
+        );
+        assert!(state.accepted_candidates.contains_key("cand-accept"));
+    }
+
+    #[test]
+    fn goal_candidate_accepted_without_prior_add_is_noop() {
+        let fixture = static_fixture();
+        let state = VolitionState::from_fixture(&fixture);
+        let acceptance_evidence = EvidenceRef::try_new("experiment: confirmed").unwrap();
+
+        let state = apply(
+            state,
+            VolitionEvent::GoalCandidateAccepted {
+                goal_id: "nonexistent".to_string(),
+                acceptance_evidence,
+                tick: 1,
+            },
+        );
+
+        assert!(!state.accepted_candidates.contains_key("nonexistent"));
+    }
+
+    #[test]
+    fn goal_candidate_rejected_removes_from_pending() {
+        let fixture = static_fixture();
+        let state = VolitionState::from_fixture(&fixture);
+        let candidate = make_candidate("cand-reject");
+
+        let state = apply(
+            state,
+            VolitionEvent::GoalCandidateAdded { candidate, tick: 1 },
+        );
+        let state = apply(
+            state,
+            VolitionEvent::GoalCandidateRejected {
+                goal_id: "cand-reject".to_string(),
+                reason: "Not relevant enough.".to_string(),
+                tick: 2,
+            },
+        );
+
+        assert!(
+            !state
+                .pending_candidates
+                .iter()
+                .any(|c| c.id() == "cand-reject")
+        );
+        assert!(!state.accepted_candidates.contains_key("cand-reject"));
+    }
+
+    #[test]
+    fn remaining_candidate_stays_in_pending_across_tick() {
+        let fixture = static_fixture();
+        let state = VolitionState::from_fixture(&fixture);
+        let candidate = make_candidate("cand-stay");
+
+        let state = apply(
+            state,
+            VolitionEvent::GoalCandidateAdded { candidate, tick: 1 },
+        );
+        let state = apply(state, VolitionEvent::TickAdvanced { tick: 2 });
+
+        assert_eq!(
+            state
+                .pending_candidates
+                .iter()
+                .filter(|c| c.id() == "cand-stay")
+                .count(),
+            1
+        );
+        assert!(!state.accepted_candidates.contains_key("cand-stay"));
+    }
+
+    #[test]
+    fn accepted_candidates_are_distinct_from_fixture_goals() {
+        let fixture = static_fixture();
+        let state = VolitionState::from_fixture(&fixture);
+        let candidate = make_candidate("new-cand");
+
+        let state = apply(
+            state,
+            VolitionEvent::GoalCandidateAdded { candidate, tick: 1 },
+        );
+        let acceptance_evidence = EvidenceRef::try_new("trace-abc").unwrap();
+        let state = apply(
+            state,
+            VolitionEvent::GoalCandidateAccepted {
+                goal_id: "new-cand".to_string(),
+                acceptance_evidence,
+                tick: 2,
+            },
+        );
+
+        assert!(
+            !state.goals.contains_key("new-cand"),
+            "accepted candidate must not appear in fixture goals map"
+        );
+        assert!(state.accepted_candidates.contains_key("new-cand"));
+    }
+
+    // ── propose_goal_candidates ──────────────────────────────────────────────────
+
+    use super::propose_goal_candidates;
+
+    #[test]
+    fn propose_goal_candidates_matched_question_becomes_candidate() {
+        let fixture = static_fixture();
+        let result = propose_goal_candidates(
+            &["Is continuity preserved across sessions?".to_string()],
+            &fixture,
+        );
+        assert_eq!(result.candidates.len(), 1);
+        assert!(result.unmatched_questions.is_empty());
+        assert!(!result.candidates[0].proposal_evidence().is_empty());
+    }
+
+    #[test]
+    fn propose_goal_candidates_unmatched_question_goes_to_unmatched_list() {
+        let fixture = static_fixture();
+        let result = propose_goal_candidates(&["What time is it?".to_string()], &fixture);
+        assert!(result.candidates.is_empty());
+        assert_eq!(result.unmatched_questions.len(), 1);
+    }
+
+    #[test]
+    fn propose_goal_candidates_is_deterministic() {
+        let fixture = static_fixture();
+        let questions = vec![
+            "Is continuity preserved across sessions?".to_string(),
+            "What time is it?".to_string(),
+        ];
+        let first = propose_goal_candidates(&questions, &fixture);
+        let second = propose_goal_candidates(&questions, &fixture);
+        assert_eq!(first.candidates.len(), second.candidates.len());
+        for (a, b) in first.candidates.iter().zip(second.candidates.iter()) {
+            assert_eq!(a.id(), b.id());
+        }
+    }
+
+    #[test]
+    fn proposed_candidates_have_nonempty_evidence_refs() {
+        let fixture = static_fixture();
+        let result = propose_goal_candidates(
+            &["Research curiosity about unresolved questions.".to_string()],
+            &fixture,
+        );
+        for candidate in &result.candidates {
+            assert!(!candidate.proposal_evidence().is_empty());
+        }
+    }
+
+    #[test]
+    fn accepted_candidates_not_wired_into_selector() {
+        let fixture = static_fixture();
+        let state = VolitionState::from_fixture(&fixture);
+        let candidate = make_candidate("cand-selector");
+
+        let state = apply(
+            state,
+            VolitionEvent::GoalCandidateAdded { candidate, tick: 1 },
+        );
+        let acceptance_evidence = EvidenceRef::try_new("trace-1").unwrap();
+        let state = apply(
+            state,
+            VolitionEvent::GoalCandidateAccepted {
+                goal_id: "cand-selector".to_string(),
+                acceptance_evidence,
+                tick: 2,
+            },
+        );
+
+        let result = super::select_goals_with_salience(
+            "cand selector",
+            &fixture,
+            &state,
+            ContextBudget::new(4, 200),
+        );
+        assert!(
+            result.selected.iter().all(|s| s.goal.id != "cand-selector"),
+            "accepted candidate must not appear in selector output"
+        );
+    }
+
+    #[test]
+    fn proposed_goal_candidate_deserialization_rejects_empty_evidence() {
+        let json = serde_json::json!({
+            "id": "test-id",
+            "title": "Test",
+            "summary": "Summary",
+            "tension_ids": [],
+            "scope": "session",
+            "base_priority": 70,
+            "allowed_effects": [],
+            "satisfaction_condition_summary": "Resolved.",
+            "proposal_evidence": [],
+            "source_description": "test"
+        });
+        let result = serde_json::from_value::<ProposedGoalCandidate>(json);
+        assert!(
+            result.is_err(),
+            "deserializing empty proposal_evidence must fail"
+        );
     }
 }
