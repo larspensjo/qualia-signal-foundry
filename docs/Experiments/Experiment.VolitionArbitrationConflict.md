@@ -6,8 +6,9 @@
 
 ## Status
 
-Planned. This scaffold defines the scope and success criteria for the arbitration slice
-of the volition system. The phase sequencing and design decisions live in
+Implemented and run (2026-06-26). All success criteria met. Run artifact:
+`runs/2026-06-26-144440-volition-arbitration-conflict/`. The phase sequencing and
+design decisions live in
 [Plan.VolitionGoalSystem.md](../Plans/Plan.VolitionGoalSystem.md) and
 [Design.VolitionArbitration.md](../Plans/Design.VolitionArbitration.md). The
 rationale, terminology, and candidate state shapes live in
@@ -240,8 +241,44 @@ fixture) are a signal that a tension assignment is missing.
 
 ## Results
 
-*(To be filled in after running the experiment.)*
+Run: `2026-06-26-144440-volition-arbitration-conflict`
+
+All three required `arbitration_status` values appeared exactly once across the scripted
+turns, with ticks advancing monotonically (1, 2, 3):
+
+| Turn | Tick | Input | Status | Selected | Winner | Winner tier | Winner tension | Losers |
+|---:|---:|---|---|---|---|---:|---|---|
+| 1 | 1 | What is two plus two? | `no_selection` | — | — | — | — | — |
+| 2 | 2 | What is the current research direction for the memory system? | `single_selection` | clarify-weak-evidence-topic | clarify-weak-evidence-topic | 7 | research-curiosity | — |
+| 3 | 3 | Is the continuity thread complete enough to be confident in the evidence? | `conflict_resolved` | resurface-open-thread, avoid-overstating-impl-status, clarify-weak-evidence-topic | avoid-overstating-impl-status | 1 | boundary-preservation | resurface-open-thread, clarify-weak-evidence-topic |
+
+- `executed_effects=0` on every turn.
+- 3 structured traces written; 8 structured events written.
+- All 54 volition unit tests pass; `cargo clippy --all-targets -- -D warnings` clean.
+
+A `VolitionEvent::TickAdvanced` variant was added to the reducer to guarantee
+`state.tick` advances each turn even when `tick_events` emits no lifecycle events (which
+occurs at low ticks with zero-salience goals). A regression test
+`ticks_increase_monotonically_across_scripted_turns` covers this invariant.
 
 ## Interpretation
 
-*(To be filled in after results are reviewed.)*
+The hypothesis holds: `arbitrate(selections, fixture)` resolves cross-goal conflict
+deterministically by tension tier, records every losing goal with structured tension
+provenance, and produces a replayable result — executing no effect and requiring no
+change to any existing selector or reducer.
+
+In the conflict turn (Turn 3), `boundary-preservation` (tier 1) outranked
+`continuity-preservation` (tier 5) and `research-curiosity` (tier 7) as expected. The
+loser list answered "why did X lose to Y?" from tier numbers and tension names without
+external explanation.
+
+The `no_selection` and `single_selection` turns are clearly distinguishable from
+`conflict_resolved` in the artifact — no silent-failure ambiguity.
+
+Open questions for follow-up experiments:
+- Should the arbitration result be wired into the pre-initiative trace so the full
+  select→arbitrate→trace chain is visible in one record?
+- Are tier assignments (1, 4, 5, 7) well-calibrated, or should any be adjusted?
+- Should tiers 2, 3, 6, 8 be covered by placeholder tensions now, or only when a
+  concrete experiment needs them?

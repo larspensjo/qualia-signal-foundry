@@ -17,6 +17,7 @@ mod text_owned_voice_loop;
 mod tool_as_perception_calculator;
 mod transcript_format;
 mod voice_loop;
+mod volition_arbitration_conflict;
 mod volition_goal_fixture;
 mod volition_salience_and_satisfaction;
 mod volition_trace_backed_initiative;

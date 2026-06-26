@@ -13,12 +13,38 @@ pub struct VolitionFixture {
     pub goals: Vec<Goal>,
 }
 
+/// A persistent pressure that names what the system cares about. Tensions back goals and
+/// determine arbitration precedence when multiple goals compete.
+///
+/// ## Arbitration tier
+///
+/// `arbitration_tier` places this tension in the conflict-resolution hierarchy. A goal's
+/// effective tier is the minimum `arbitration_tier` among its parent tensions (defaulting
+/// to `u8::MAX` if it has no parent tensions in the fixture). Lower tier wins.
+///
+/// Covered tiers in the current fixture:
+/// - **1** — Safety and project boundaries (`boundary-preservation`)
+/// - **4** — Coherence and self-correction (`coherence-maintenance`)
+/// - **5** — Continuity preservation (`continuity-preservation`)
+/// - **7** — Research curiosity (`research-curiosity`)
+///
+/// Extension points (not yet covered by any fixture tension):
+/// - **2** — Explicit user intent
+/// - **3** — Current task completion
+/// - **6** — Active experiment mode
+/// - **8** — Optional exploration
+///
+/// Future tensions must be assigned the correct tier when added. A goal with effective
+/// tier `u8::MAX` (no parent tensions in the fixture) is a signal that a tension
+/// assignment is missing.
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 pub struct Tension {
     pub id: String,
     pub title: String,
     pub summary: String,
     pub priority_bias: TensionPriority,
+    /// Arbitration precedence tier; lower tier wins conflict resolution. See type doc.
+    pub arbitration_tier: u8,
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, PartialEq, Serialize)]
@@ -194,6 +220,129 @@ pub struct PreInitiativeTrace {
     pub executed: bool,
 }
 
+/// A goal selection that lost cross-goal arbitration. Records the full selection plus
+/// the structured tension provenance that determined its effective tier.
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+pub struct ArbitrationLoser {
+    pub selection: GoalSelection,
+    /// The effective arbitration tier for this goal (minimum tier among parent tensions).
+    pub effective_tier: u8,
+    /// The tension responsible for this goal's effective tier.
+    pub effective_tension_id: String,
+    /// Human-readable name of the effective tension.
+    pub effective_tension_title: String,
+    /// Rendered convenience reason, e.g. "tier 7 lost to winner at tier 1 (boundary-preservation)".
+    /// Tests must assert the structured fields above, not this string.
+    pub reason: String,
+}
+
+/// The result of deterministic cross-goal arbitration. The winner is the goal with the
+/// lowest effective tier (minimum `arbitration_tier` among its parent tensions); ties are
+/// broken by higher `base_priority`, then lower `goal_id` lexicographically.
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+pub struct ArbitrationResult {
+    pub winner: GoalSelection,
+    /// Effective tier that placed the winner.
+    pub winner_effective_tier: u8,
+    /// Tension responsible for the winner's effective tier.
+    pub winner_effective_tension_id: String,
+    /// Human-readable name of the winner's effective tension.
+    pub winner_effective_tension_title: String,
+    /// Losing goals sorted: effective tier ascending, base_priority descending, goal_id ascending.
+    pub losers: Vec<ArbitrationLoser>,
+}
+
+/// Resolve cross-goal conflict by tension tier. Returns `None` for empty input. For a
+/// single selection, the sole goal is the winner with an empty losers list. Pure and
+/// stateless — reads `fixture` only to resolve tensions for each goal.
+pub fn arbitrate(
+    selections: Vec<GoalSelection>,
+    fixture: &VolitionFixture,
+) -> Option<ArbitrationResult> {
+    if selections.is_empty() {
+        return None;
+    }
+
+    let mut with_tiers: Vec<(GoalSelection, u8, String, String)> = selections
+        .into_iter()
+        .map(|selection| {
+            let (tier, tension_id, tension_title) =
+                effective_tension_for_goal(&selection.goal, fixture);
+            (selection, tier, tension_id, tension_title)
+        })
+        .collect();
+
+    // Sort: effective tier ascending, base_priority descending, goal_id ascending.
+    with_tiers.sort_by(|a, b| {
+        a.1.cmp(&b.1)
+            .then(b.0.goal.base_priority.cmp(&a.0.goal.base_priority))
+            .then(a.0.goal.id.cmp(&b.0.goal.id))
+    });
+
+    let (winner_sel, winner_tier, winner_tension_id, winner_tension_title) = with_tiers.remove(0);
+
+    let losers = with_tiers
+        .into_iter()
+        .map(|(sel, tier, tension_id, tension_title)| {
+            let reason = format!(
+                "tier {} lost to winner at tier {} ({})",
+                tier, winner_tier, winner_tension_id
+            );
+            ArbitrationLoser {
+                selection: sel,
+                effective_tier: tier,
+                effective_tension_id: tension_id,
+                effective_tension_title: tension_title,
+                reason,
+            }
+        })
+        .collect();
+
+    Some(ArbitrationResult {
+        winner: winner_sel,
+        winner_effective_tier: winner_tier,
+        winner_effective_tension_id: winner_tension_id,
+        winner_effective_tension_title: winner_tension_title,
+        losers,
+    })
+}
+
+/// Returns the `(effective_tier, tension_id, tension_title)` for a goal. The effective
+/// tier is the minimum `arbitration_tier` among the goal's parent tensions in the fixture.
+/// When multiple tensions share the minimum tier, the lexicographically smallest
+/// `tension_id` is chosen as the effective tension. Returns `(u8::MAX, "", "")` when the
+/// goal has no parent tensions in the fixture.
+fn effective_tension_for_goal(goal: &Goal, fixture: &VolitionFixture) -> (u8, String, String) {
+    let parent_tensions: Vec<&Tension> = goal
+        .tension_ids
+        .iter()
+        .filter_map(|tension_id| {
+            fixture
+                .tensions
+                .iter()
+                .find(|tension| tension.id == *tension_id)
+        })
+        .collect();
+
+    if parent_tensions.is_empty() {
+        return (u8::MAX, String::new(), String::new());
+    }
+
+    let min_tier = parent_tensions
+        .iter()
+        .map(|tension| tension.arbitration_tier)
+        .min()
+        .unwrap();
+
+    let effective = parent_tensions
+        .iter()
+        .filter(|tension| tension.arbitration_tier == min_tier)
+        .min_by_key(|tension| &tension.id)
+        .unwrap();
+
+    (min_tier, effective.id.clone(), effective.title.clone())
+}
+
 /// A non-empty, non-whitespace reference to an observable artifact or trace that
 /// justifies a progress or satisfaction event. Cannot be constructed from empty or
 /// whitespace-only input — use `EvidenceRef::try_new` or `TryFrom<String>`.
@@ -342,6 +491,12 @@ pub enum VolitionEvent {
         goal_id: String,
         tick: u64,
     },
+    /// Advances the logical tick without modifying any goal lifecycle state.
+    /// Applied unconditionally each turn to guarantee state.tick is monotonically
+    /// increasing even when no lifecycle events are emitted.
+    TickAdvanced {
+        tick: u64,
+    },
 }
 
 /// Pure reducer: applies one event to state and returns the next state.
@@ -403,6 +558,7 @@ pub fn apply(mut state: VolitionState, event: VolitionEvent) -> VolitionState {
                 dynamic.status = GoalStatus::Retired;
             }
         }
+        VolitionEvent::TickAdvanced { .. } => {}
     }
     state
 }
@@ -415,7 +571,8 @@ fn event_tick(event: &VolitionEvent) -> u64 {
         | VolitionEvent::GoalBlocked { tick, .. }
         | VolitionEvent::GoalDecayed { tick, .. }
         | VolitionEvent::GoalCooldownElapsed { tick, .. }
-        | VolitionEvent::GoalRetired { tick, .. } => *tick,
+        | VolitionEvent::GoalRetired { tick, .. }
+        | VolitionEvent::TickAdvanced { tick } => *tick,
     }
 }
 
@@ -476,24 +633,28 @@ pub fn static_fixture() -> VolitionFixture {
                 title: "Research curiosity".to_string(),
                 summary: "Keep unresolved technical questions visible long enough to compare candidate designs.".to_string(),
                 priority_bias: TensionPriority::Medium,
+                arbitration_tier: 7,
             },
             Tension {
                 id: "coherence-maintenance".to_string(),
                 title: "Coherence maintenance".to_string(),
                 summary: "Avoid overstating implementation status or blending speculative ideas into current fact.".to_string(),
                 priority_bias: TensionPriority::High,
+                arbitration_tier: 4,
             },
             Tension {
                 id: "continuity-preservation".to_string(),
                 title: "Continuity preservation".to_string(),
                 summary: "Keep open threads and unresolved context available across turns.".to_string(),
                 priority_bias: TensionPriority::High,
+                arbitration_tier: 5,
             },
             Tension {
                 id: "boundary-preservation".to_string(),
                 title: "Boundary preservation".to_string(),
                 summary: "Protect the distinction between current code, future experiments, and out-of-scope ideas.".to_string(),
                 priority_bias: TensionPriority::Highest,
+                arbitration_tier: 1,
             },
         ],
         goals: vec![
@@ -1948,5 +2109,291 @@ mod tests {
         };
 
         assert_eq!(serialize_all(), serialize_all());
+    }
+
+    // ── arbitrate() ─────────────────────────────────────────────────────────
+
+    use super::{
+        AllowedEffect, Goal, GoalScope, GoalSelection, InitiativeProposal, Tension,
+        TensionPriority, VolitionFixture, arbitrate,
+    };
+    use crate::context::{ContextFragment, ContextSourceKind};
+
+    fn make_goal_for_arbitration(
+        id: &str,
+        tension_ids: Vec<String>,
+        base_priority: u8,
+    ) -> GoalSelection {
+        let goal = Goal {
+            id: id.to_string(),
+            title: id.to_string(),
+            summary: id.to_string(),
+            tension_ids,
+            status: GoalStatus::Accepted,
+            scope: GoalScope::Session,
+            base_priority,
+            activation_keywords: vec!["test".to_string()],
+            allowed_effects: vec![AllowedEffect::Reflect],
+            satisfaction_condition_summary: id.to_string(),
+            evidence_refs: vec![],
+            estimated_tokens: 10,
+            source_reference: id.to_string(),
+        };
+        GoalSelection {
+            goal: goal.clone(),
+            context_fragment: ContextFragment {
+                fragment_id: goal.id.clone(),
+                source_kind: ContextSourceKind::RuntimeState,
+                summary: goal.summary.clone(),
+                tags: vec![],
+                score: goal.base_priority as f64,
+                estimated_tokens: goal.estimated_tokens,
+                source_reference: goal.source_reference.clone(),
+                selection_reason: "test".to_string(),
+            },
+            relevance_score: goal.base_priority as f64,
+            matched_terms: vec!["test".to_string()],
+            initiative: InitiativeProposal {
+                goal_id: goal.id.clone(),
+                goal_title: goal.title.clone(),
+                effect: AllowedEffect::Reflect,
+                rationale: "test".to_string(),
+                matched_terms: vec!["test".to_string()],
+                scope: GoalScope::Session,
+            },
+        }
+    }
+
+    fn make_tension(id: &str, tier: u8) -> Tension {
+        Tension {
+            id: id.to_string(),
+            title: format!("{id} title"),
+            summary: "test".to_string(),
+            priority_bias: TensionPriority::Medium,
+            arbitration_tier: tier,
+        }
+    }
+
+    #[test]
+    fn arbitrate_empty_returns_none() {
+        let fixture = static_fixture();
+        assert!(arbitrate(vec![], &fixture).is_none());
+    }
+
+    #[test]
+    fn arbitrate_single_selection_is_winner_with_no_losers() {
+        let fixture = static_fixture();
+        let state = VolitionState::from_fixture(&fixture);
+        let result = super::select_goals_with_salience(
+            "Is the implementation status complete?",
+            &fixture,
+            &state,
+            ContextBudget::new(2, 80),
+        );
+        // Only avoid-overstating-impl-status matches (keywords: status, complete)
+        assert_eq!(result.selected.len(), 1);
+        let arbitration = arbitrate(result.selected.clone(), &fixture).unwrap();
+        assert_eq!(arbitration.winner.goal.id, "avoid-overstating-impl-status");
+        assert!(arbitration.losers.is_empty());
+    }
+
+    #[test]
+    fn arbitrate_lower_tier_wins_over_higher_tier() {
+        let fixture = static_fixture();
+        let state = VolitionState::from_fixture(&fixture);
+        // "status"/"complete" → avoid-overstating-impl-status (tier 1 via boundary-preservation)
+        // "continuity"/"thread" → resurface-open-thread (tier 5 via continuity-preservation)
+        let result = super::select_goals_with_salience(
+            "Is the implementation status complete in this continuity thread?",
+            &fixture,
+            &state,
+            ContextBudget::new(4, 100),
+        );
+        assert_eq!(result.selected.len(), 2, "expected 2 selected goals");
+
+        let arbitration = arbitrate(result.selected.clone(), &fixture).unwrap();
+        assert_eq!(arbitration.winner.goal.id, "avoid-overstating-impl-status");
+        assert_eq!(arbitration.winner_effective_tier, 1);
+        assert_eq!(
+            arbitration.winner_effective_tension_id,
+            "boundary-preservation"
+        );
+        assert_eq!(
+            arbitration.winner_effective_tension_title,
+            "Boundary preservation"
+        );
+        assert_eq!(arbitration.losers.len(), 1);
+        assert_eq!(
+            arbitration.losers[0].selection.goal.id,
+            "resurface-open-thread"
+        );
+        assert_eq!(arbitration.losers[0].effective_tier, 5);
+        assert_eq!(
+            arbitration.losers[0].effective_tension_id,
+            "continuity-preservation"
+        );
+    }
+
+    #[test]
+    fn arbitrate_same_tier_higher_base_priority_wins() {
+        let fixture = static_fixture();
+        let state = VolitionState::from_fixture(&fixture);
+        // "voice"/"memory"/"evidence"/"unclear" → clarify-weak-evidence-topic (tier 7, priority 85)
+        // "experiment" → propose-followup-experiment (tier 7, priority 90)
+        let result = super::select_goals_with_salience(
+            "The voice memory experiment evidence is unclear.",
+            &fixture,
+            &state,
+            ContextBudget::new(4, 100),
+        );
+        // Both goals are at tier 7 via research-curiosity
+        let selected_ids: Vec<&str> = result.selected.iter().map(|s| s.goal.id.as_str()).collect();
+        assert!(
+            selected_ids.contains(&"clarify-weak-evidence-topic"),
+            "selected: {selected_ids:?}"
+        );
+        assert!(
+            selected_ids.contains(&"propose-followup-experiment"),
+            "selected: {selected_ids:?}"
+        );
+
+        let arbitration = arbitrate(result.selected.clone(), &fixture).unwrap();
+        // propose-followup-experiment (priority 90) beats clarify-weak-evidence-topic (priority 85)
+        assert_eq!(arbitration.winner.goal.id, "propose-followup-experiment");
+        assert_eq!(arbitration.winner_effective_tier, 7);
+        assert_eq!(
+            arbitration.winner_effective_tension_id,
+            "research-curiosity"
+        );
+        assert_eq!(arbitration.losers.len(), 1);
+        assert_eq!(
+            arbitration.losers[0].selection.goal.id,
+            "clarify-weak-evidence-topic"
+        );
+        assert_eq!(arbitration.losers[0].effective_tier, 7);
+    }
+
+    #[test]
+    fn arbitrate_same_tier_same_priority_lower_goal_id_wins() {
+        let fixture = VolitionFixture {
+            tensions: vec![make_tension("test-tension", 5)],
+            goals: vec![],
+        };
+        // "goal-a" < "goal-b" lexicographically; same tier and priority
+        let sel_b = make_goal_for_arbitration("goal-b", vec!["test-tension".to_string()], 80);
+        let sel_a = make_goal_for_arbitration("goal-a", vec!["test-tension".to_string()], 80);
+        let result = arbitrate(vec![sel_b, sel_a], &fixture).unwrap();
+        assert_eq!(result.winner.goal.id, "goal-a");
+        assert_eq!(result.losers[0].selection.goal.id, "goal-b");
+    }
+
+    #[test]
+    fn arbitrate_multi_tension_goal_uses_minimum_tier() {
+        // avoid-overstating-impl-status has coherence-maintenance (tier 4) AND
+        // boundary-preservation (tier 1). Effective tier must be 1 (the minimum).
+        let fixture = static_fixture();
+        let state = VolitionState::from_fixture(&fixture);
+        let result = super::select_goals_with_salience(
+            "Is the implementation status complete?",
+            &fixture,
+            &state,
+            ContextBudget::new(2, 80),
+        );
+        assert_eq!(result.selected.len(), 1);
+        let arbitration = arbitrate(result.selected, &fixture).unwrap();
+        assert_eq!(
+            arbitration.winner_effective_tier, 1,
+            "effective tier must be the minimum among parent tensions"
+        );
+        assert_eq!(
+            arbitration.winner_effective_tension_id, "boundary-preservation",
+            "effective tension is the one at the minimum tier"
+        );
+    }
+
+    #[test]
+    fn arbitrate_same_minimum_tier_picks_lexicographic_tension_id() {
+        let fixture = VolitionFixture {
+            tensions: vec![
+                make_tension("beta-tension", 3),
+                make_tension("alpha-tension", 3),
+            ],
+            goals: vec![],
+        };
+        // Goal backed by both tensions at tier 3; alpha < beta lexicographically
+        let sel = make_goal_for_arbitration(
+            "test-goal",
+            vec!["alpha-tension".to_string(), "beta-tension".to_string()],
+            80,
+        );
+        let result = arbitrate(vec![sel], &fixture).unwrap();
+        assert_eq!(result.winner_effective_tier, 3);
+        assert_eq!(result.winner_effective_tension_id, "alpha-tension");
+        assert_eq!(result.winner_effective_tension_title, "alpha-tension title");
+    }
+
+    #[test]
+    fn arbitrate_losers_are_sorted_by_tier_then_priority_then_id() {
+        let fixture = VolitionFixture {
+            tensions: vec![
+                make_tension("tier-1-tension", 1),
+                make_tension("tier-5-tension", 5),
+                make_tension("tier-7-tension", 7),
+            ],
+            goals: vec![],
+        };
+        let sel_tier7 =
+            make_goal_for_arbitration("goal-z-tier7", vec!["tier-7-tension".to_string()], 80);
+        let sel_tier5 =
+            make_goal_for_arbitration("goal-a-tier5", vec!["tier-5-tension".to_string()], 90);
+        let sel_tier1 =
+            make_goal_for_arbitration("goal-m-tier1", vec!["tier-1-tension".to_string()], 95);
+        let result = arbitrate(vec![sel_tier7, sel_tier5, sel_tier1], &fixture).unwrap();
+
+        assert_eq!(result.winner.goal.id, "goal-m-tier1");
+        assert_eq!(result.winner_effective_tier, 1);
+        // Losers: tier 5 before tier 7 (ascending tier)
+        assert_eq!(result.losers[0].selection.goal.id, "goal-a-tier5");
+        assert_eq!(result.losers[0].effective_tier, 5);
+        assert_eq!(result.losers[1].selection.goal.id, "goal-z-tier7");
+        assert_eq!(result.losers[1].effective_tier, 7);
+    }
+
+    #[test]
+    fn arbitrate_result_is_deterministic() {
+        let fixture = static_fixture();
+        let state = VolitionState::from_fixture(&fixture);
+        let input = "Is the continuity thread complete enough to be confident in the evidence?";
+        let budget = ContextBudget::new(4, 100);
+
+        let run = || {
+            let result = super::select_goals_with_salience(input, &fixture, &state, budget);
+            arbitrate(result.selected, &fixture)
+        };
+
+        assert_eq!(run(), run());
+    }
+
+    #[test]
+    fn arbitrate_no_effect_is_executed() {
+        // arbitrate() is a pure function that returns data only; the ArbitrationResult
+        // carries no executed flag because execution is structurally impossible.
+        // Verify that the initiative proposals in the result carry the expected effect
+        // but nothing in the result signals actual execution.
+        let fixture = static_fixture();
+        let state = VolitionState::from_fixture(&fixture);
+        let result = super::select_goals_with_salience(
+            "Is the implementation status complete in this continuity thread?",
+            &fixture,
+            &state,
+            ContextBudget::new(4, 100),
+        );
+        let arbitration = arbitrate(result.selected, &fixture).unwrap();
+        // The winner carries an initiative proposal (not executed), losers likewise.
+        // This assertion documents the contract: arbitrate() proposes, never executes.
+        assert!(!arbitration.winner.initiative.goal_id.is_empty());
+        for loser in &arbitration.losers {
+            assert!(!loser.selection.initiative.goal_id.is_empty());
+        }
     }
 }

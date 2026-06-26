@@ -15,9 +15,9 @@ is
 its validation scaffold
 [`Experiment.VolitionSalienceAndSatisfaction.md`](../Experiments/Experiment.VolitionSalienceAndSatisfaction.md)
 is implemented and ready to run. **Phase 5 (arbitration and conflict resolution) is
-designed**; its design is captured in
+complete**; its design is captured in
 [`docs/Plans/Design.VolitionArbitration.md`](Design.VolitionArbitration.md)
-and its validation scaffold will be
+and its validation scaffold is
 [`Experiment.VolitionArbitrationConflict.md`](../Experiments/Experiment.VolitionArbitrationConflict.md).
 Phases 6–8 remain sketched at a high level until they are ready.
 
@@ -72,7 +72,7 @@ influencing behavior.
 | 2 | Static tension/goal fixture + deterministic, budget-bounded selection — **complete** | Yes | Light | `Experiment.VolitionGoalFixture` |
 | 3 | Trace-backed initiative proposals (pre-initiative traces) — **complete** | Yes | Light | `Experiment.VolitionTraceBackedInitiative` |
 | 4 | Event-driven salience, satisfaction, blocking, cooldown — **complete** | Yes | Yes | `Experiment.VolitionSalienceAndSatisfaction` |
-| 5 | Arbitration and multi-goal conflict resolution — **designed** | Yes | Yes | `Experiment.VolitionArbitrationConflict` |
+| 5 | Arbitration and multi-goal conflict resolution — **complete** | Yes | Yes | `Experiment.VolitionArbitrationConflict` |
 | 6 | Reflection-generated goal candidates (proposed, not auto-accepted) | Yes | Yes | future |
 | 7 | Bounded internal initiative execution | Yes | Yes | future |
 | 8 | Optional inspectable mode/bias state | Yes | Yes | future |

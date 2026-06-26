@@ -27,6 +27,7 @@ use super::streaming_transcription_mvp::StreamingTranscriptionMvpExperiment;
 use super::text_owned_voice_loop::TextOwnedVoiceLoopExperiment;
 use super::tool_as_perception_calculator::ToolAsPerceptionCalculatorExperiment;
 use super::voice_loop::{VOICE_LOOP_DESCRIPTION, VoiceLoopExperiment};
+use super::volition_arbitration_conflict::VolitionArbitrationConflictExperiment;
 use super::volition_goal_fixture::VolitionGoalFixtureExperiment;
 use super::volition_salience_and_satisfaction::VolitionSalienceAndSatisfactionExperiment;
 use super::volition_trace_backed_initiative::VolitionTraceBackedInitiativeExperiment;
@@ -52,6 +53,7 @@ pub enum ExperimentName {
     VolitionGoalFixture,
     VolitionTraceBackedInitiative,
     VolitionSalienceAndSatisfaction,
+    VolitionArbitrationConflict,
 }
 
 impl ExperimentName {
@@ -75,6 +77,7 @@ impl ExperimentName {
             Self::VolitionGoalFixture => "volition-goal-fixture",
             Self::VolitionTraceBackedInitiative => "volition-trace-backed-initiative",
             Self::VolitionSalienceAndSatisfaction => "volition-salience-and-satisfaction",
+            Self::VolitionArbitrationConflict => "volition-arbitration-conflict",
         }
     }
 
@@ -129,6 +132,9 @@ impl ExperimentName {
             }
             Self::VolitionSalienceAndSatisfaction => {
                 "Replay a scripted multi-turn sequence to exercise salience rise/decay, satisfaction cooldown, blocked visibility, and retirement"
+            }
+            Self::VolitionArbitrationConflict => {
+                "Replay a scripted multi-turn sequence exercising no_selection, single_selection, and conflict_resolved arbitration outcomes — no effect is executed"
             }
         }
     }
@@ -368,6 +374,9 @@ fn experiment_for(name: ExperimentName) -> Box<dyn Experiment> {
         }
         ExperimentName::VolitionSalienceAndSatisfaction => {
             Box::new(VolitionSalienceAndSatisfactionExperiment)
+        }
+        ExperimentName::VolitionArbitrationConflict => {
+            Box::new(VolitionArbitrationConflictExperiment)
         }
     }
 }
