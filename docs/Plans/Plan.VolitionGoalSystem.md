@@ -11,10 +11,10 @@ goal fixture) is complete**; its validation scaffold is
 **Phase 3 (trace-backed initiative proposals) is complete**; its validation scaffold
 is
 [`Experiment.VolitionTraceBackedInitiative.md`](../Experiments/Experiment.VolitionTraceBackedInitiative.md).
-**Phase 4 (event-driven salience, satisfaction, blocking, cooldown) is now expanded
-for implementation** — see its detail below; its validation scaffold
+**Phase 4 (event-driven salience, satisfaction, blocking, cooldown) is complete**;
+its validation scaffold
 [`Experiment.VolitionSalienceAndSatisfaction.md`](../Experiments/Experiment.VolitionSalienceAndSatisfaction.md)
-is a planned skeleton, ready to fill in after a run. Phases 5–8 remain sketched at a
+is implemented and ready to run. Phases 5–8 remain sketched at a
 high level until they are ready.
 
 > Companion to the idea note
@@ -67,7 +67,7 @@ influencing behavior.
 | 1 | Document the concept; record the research-surface decision — **complete** | No | No | — |
 | 2 | Static tension/goal fixture + deterministic, budget-bounded selection — **complete** | Yes | Light | `Experiment.VolitionGoalFixture` |
 | 3 | Trace-backed initiative proposals (pre-initiative traces) — **complete** | Yes | Light | `Experiment.VolitionTraceBackedInitiative` |
-| 4 | Event-driven salience, satisfaction, blocking, cooldown — **expanded, ready to build** | Yes | Yes | `Experiment.VolitionSalienceAndSatisfaction` (planned) |
+| 4 | Event-driven salience, satisfaction, blocking, cooldown — **complete** | Yes | Yes | `Experiment.VolitionSalienceAndSatisfaction` |
 | 5 | Arbitration and multi-goal conflict resolution | Yes | Yes | `Experiment.VolitionArbitrationConflict` (future) |
 | 6 | Reflection-generated goal candidates (proposed, not auto-accepted) | Yes | Yes | future |
 | 7 | Bounded internal initiative execution | Yes | Yes | future |

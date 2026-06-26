@@ -1,3 +1,4 @@
+use std::collections::BTreeMap;
 use std::fmt;
 
 use serde::{Deserialize, Serialize};
@@ -64,6 +65,9 @@ pub struct Goal {
 pub enum GoalStatus {
     Proposed,
     Accepted,
+    Active,
+    Blocked,
+    Satisfied,
     Cooldown,
     Retired,
 }
@@ -188,6 +192,280 @@ pub struct PreInitiativeTrace {
     pub choice: Option<InitiativeChoice>,
     pub allowed_rationale: Option<String>,
     pub executed: bool,
+}
+
+/// A non-empty, non-whitespace reference to an observable artifact or trace that
+/// justifies a progress or satisfaction event. Cannot be constructed from empty or
+/// whitespace-only input — use `EvidenceRef::try_new` or `TryFrom<String>`.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct EvidenceRef(String);
+
+impl EvidenceRef {
+    pub fn try_new(value: impl Into<String>) -> Result<Self, EvidenceRefError> {
+        let value = value.into();
+        let trimmed = value.trim();
+        if trimmed.is_empty() {
+            return Err(EvidenceRefError::Empty);
+        }
+        Ok(Self(trimmed.to_string()))
+    }
+
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+impl TryFrom<String> for EvidenceRef {
+    type Error = EvidenceRefError;
+
+    fn try_from(value: String) -> Result<Self, Self::Error> {
+        Self::try_new(value)
+    }
+}
+
+impl fmt::Display for EvidenceRef {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str(&self.0)
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum EvidenceRefError {
+    Empty,
+}
+
+impl fmt::Display for EvidenceRefError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str("evidence ref must not be empty or whitespace-only")
+    }
+}
+
+/// Dynamic, per-goal state tracked within a run. Separate from the read-only fixture.
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+pub struct GoalDynamicState {
+    pub status: GoalStatus,
+    /// Integer salience points; rises on activation/progress, decays per tick linearly.
+    pub salience: i32,
+    pub reinforcement_count: u32,
+    pub progress_evidence_refs: Vec<EvidenceRef>,
+    pub last_activated_tick: Option<u64>,
+    pub last_satisfied_tick: Option<u64>,
+    /// Tick at which cooldown ends and the goal returns to Accepted.
+    pub cooldown_until_tick: Option<u64>,
+}
+
+impl GoalDynamicState {
+    fn initial() -> Self {
+        Self {
+            status: GoalStatus::Accepted,
+            salience: 0,
+            reinforcement_count: 0,
+            progress_evidence_refs: Vec::new(),
+            last_activated_tick: None,
+            last_satisfied_tick: None,
+            cooldown_until_tick: None,
+        }
+    }
+}
+
+/// Durable-within-a-run volition state: a logical tick and per-goal dynamic state for
+/// all Accepted goals seeded from the fixture.
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+pub struct VolitionState {
+    pub tick: u64,
+    /// Keyed by goal id.
+    pub goals: BTreeMap<String, GoalDynamicState>,
+}
+
+impl VolitionState {
+    /// Seed initial state from the fixture's Accepted goals.
+    pub fn from_fixture(fixture: &VolitionFixture) -> Self {
+        let goals = fixture
+            .goals
+            .iter()
+            .filter(|goal| goal.status == GoalStatus::Accepted)
+            .map(|goal| (goal.id.clone(), GoalDynamicState::initial()))
+            .collect();
+        Self { tick: 0, goals }
+    }
+
+    pub fn goal(&self, goal_id: &str) -> Option<&GoalDynamicState> {
+        self.goals.get(goal_id)
+    }
+}
+
+/// Salience points added when a goal is activated (first keyword match in a turn).
+pub const SALIENCE_ACTIVATION_BONUS: i32 = 10;
+/// Salience points added when progress evidence is recorded.
+pub const SALIENCE_PROGRESS_BONUS: i32 = 5;
+/// Salience points lost per tick from GoalDecayed.
+pub const SALIENCE_DECAY_PER_TICK: i32 = 2;
+/// Ticks of cooldown after a goal is satisfied.
+pub const COOLDOWN_SPAN_TICKS: u64 = 3;
+/// Ticks of inactivity after which an unproductive goal is retired.
+pub const RETIREMENT_INACTIVITY_TICKS: u64 = 10;
+
+/// One event per explicit lifecycle transition. The tick is the monotonic counter at the
+/// time the event is produced; the reducer uses it to set timestamp fields.
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case", tag = "kind")]
+pub enum VolitionEvent {
+    GoalActivated {
+        goal_id: String,
+        tick: u64,
+    },
+    GoalProgressObserved {
+        goal_id: String,
+        evidence: EvidenceRef,
+        tick: u64,
+    },
+    GoalSatisfied {
+        goal_id: String,
+        evidence: EvidenceRef,
+        tick: u64,
+    },
+    GoalBlocked {
+        goal_id: String,
+        tick: u64,
+    },
+    /// Salience-only decay; never changes status.
+    GoalDecayed {
+        goal_id: String,
+        tick: u64,
+    },
+    /// Transitions a Cooldown goal back to Accepted.
+    GoalCooldownElapsed {
+        goal_id: String,
+        tick: u64,
+    },
+    GoalRetired {
+        goal_id: String,
+        tick: u64,
+    },
+}
+
+/// Pure reducer: applies one event to state and returns the next state.
+/// The only place lifecycle status changes; selectors never mutate lifecycle.
+pub fn apply(mut state: VolitionState, event: VolitionEvent) -> VolitionState {
+    state.tick = state.tick.max(event_tick(&event));
+    match event {
+        VolitionEvent::GoalActivated { goal_id, tick } => {
+            let dynamic = state
+                .goals
+                .entry(goal_id)
+                .or_insert_with(GoalDynamicState::initial);
+            dynamic.status = GoalStatus::Active;
+            dynamic.salience = (dynamic.salience + SALIENCE_ACTIVATION_BONUS).max(0);
+            dynamic.last_activated_tick = Some(tick);
+        }
+        VolitionEvent::GoalProgressObserved {
+            goal_id,
+            evidence,
+            tick: _,
+        } => {
+            if let Some(dynamic) = state.goals.get_mut(&goal_id) {
+                dynamic.reinforcement_count += 1;
+                dynamic.salience = (dynamic.salience + SALIENCE_PROGRESS_BONUS).max(0);
+                dynamic.progress_evidence_refs.push(evidence);
+            }
+        }
+        VolitionEvent::GoalSatisfied {
+            goal_id,
+            evidence,
+            tick,
+        } => {
+            if let Some(dynamic) = state.goals.get_mut(&goal_id) {
+                dynamic.status = GoalStatus::Cooldown;
+                dynamic.salience = 0;
+                dynamic.last_satisfied_tick = Some(tick);
+                dynamic.cooldown_until_tick = Some(tick + COOLDOWN_SPAN_TICKS);
+                dynamic.progress_evidence_refs.push(evidence);
+            }
+        }
+        VolitionEvent::GoalBlocked { goal_id, tick: _ } => {
+            if let Some(dynamic) = state.goals.get_mut(&goal_id) {
+                dynamic.status = GoalStatus::Blocked;
+            }
+        }
+        VolitionEvent::GoalDecayed { goal_id, tick: _ } => {
+            if let Some(dynamic) = state.goals.get_mut(&goal_id) {
+                dynamic.salience = (dynamic.salience - SALIENCE_DECAY_PER_TICK).max(0);
+            }
+        }
+        VolitionEvent::GoalCooldownElapsed { goal_id, tick: _ } => {
+            if let Some(dynamic) = state.goals.get_mut(&goal_id) {
+                dynamic.status = GoalStatus::Accepted;
+                dynamic.cooldown_until_tick = None;
+            }
+        }
+        VolitionEvent::GoalRetired { goal_id, tick: _ } => {
+            if let Some(dynamic) = state.goals.get_mut(&goal_id) {
+                dynamic.status = GoalStatus::Retired;
+            }
+        }
+    }
+    state
+}
+
+fn event_tick(event: &VolitionEvent) -> u64 {
+    match event {
+        VolitionEvent::GoalActivated { tick, .. }
+        | VolitionEvent::GoalProgressObserved { tick, .. }
+        | VolitionEvent::GoalSatisfied { tick, .. }
+        | VolitionEvent::GoalBlocked { tick, .. }
+        | VolitionEvent::GoalDecayed { tick, .. }
+        | VolitionEvent::GoalCooldownElapsed { tick, .. }
+        | VolitionEvent::GoalRetired { tick, .. } => *tick,
+    }
+}
+
+/// Given the current state and the next tick, returns any tick-driven events that should
+/// be applied: decay for all active/accepted goals, cooldown-elapsed for goals whose
+/// cooldown has ended, retirement for goals that have been inactive too long.
+pub fn tick_events(state: &VolitionState, new_tick: u64) -> Vec<VolitionEvent> {
+    let mut events = Vec::new();
+    for (goal_id, dynamic) in &state.goals {
+        match dynamic.status {
+            GoalStatus::Cooldown => {
+                if let Some(cooldown_until) = dynamic.cooldown_until_tick {
+                    if new_tick >= cooldown_until {
+                        events.push(VolitionEvent::GoalCooldownElapsed {
+                            goal_id: goal_id.clone(),
+                            tick: new_tick,
+                        });
+                    }
+                }
+            }
+            GoalStatus::Active | GoalStatus::Accepted => {
+                if dynamic.salience > 0 {
+                    events.push(VolitionEvent::GoalDecayed {
+                        goal_id: goal_id.clone(),
+                        tick: new_tick,
+                    });
+                }
+                let last_active = dynamic.last_activated_tick.unwrap_or(0);
+                if new_tick.saturating_sub(last_active) >= RETIREMENT_INACTIVITY_TICKS
+                    && dynamic.reinforcement_count == 0
+                    && dynamic.salience == 0
+                {
+                    events.push(VolitionEvent::GoalRetired {
+                        goal_id: goal_id.clone(),
+                        tick: new_tick,
+                    });
+                }
+            }
+            GoalStatus::Blocked => {
+                if dynamic.salience > 0 {
+                    events.push(VolitionEvent::GoalDecayed {
+                        goal_id: goal_id.clone(),
+                        tick: new_tick,
+                    });
+                }
+            }
+            GoalStatus::Proposed | GoalStatus::Satisfied | GoalStatus::Retired => {}
+        }
+    }
+    events
 }
 
 pub fn static_fixture() -> VolitionFixture {
@@ -411,6 +689,155 @@ pub fn select_goals(
     }
 }
 
+/// Result of salience-aware goal selection. Adds suppressed and blocked goal lists
+/// alongside the standard selected/omitted partitions.
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+pub struct SalienceGoalSelectionResult {
+    pub input: String,
+    pub input_terms: Vec<String>,
+    pub budget: ContextBudget,
+    pub selected: Vec<GoalSelection>,
+    pub omitted: Vec<OmittedGoal>,
+    /// Goals suppressed because their runtime status is Cooldown.
+    pub suppressed_cooldown: Vec<OmittedGoal>,
+    /// Goals kept visible even though they cannot be selected (Blocked status).
+    pub visible_blocked: Vec<OmittedGoal>,
+    pub assembly: ContextAssembly,
+}
+
+/// Salience-aware selector. Reuses Phase 2 relevance scoring and adds a salience term.
+/// Cooldown goals are suppressed; Blocked goals are kept visible but not selected.
+/// The existing stateless `select_goals` is unchanged.
+pub fn select_goals_with_salience(
+    input: &str,
+    fixture: &VolitionFixture,
+    state: &VolitionState,
+    budget: ContextBudget,
+) -> SalienceGoalSelectionResult {
+    let input_terms = normalize_terms(input);
+    let mut evaluated_fragments: Vec<GoalEvaluation> = Vec::new();
+    let mut omitted = Vec::new();
+    let mut suppressed_cooldown = Vec::new();
+    let mut visible_blocked = Vec::new();
+
+    for goal in &fixture.goals {
+        let dynamic_status = state
+            .goals
+            .get(&goal.id)
+            .map(|dynamic| dynamic.status)
+            .unwrap_or(goal.status);
+
+        // Suppress Cooldown goals entirely.
+        if matches!(dynamic_status, GoalStatus::Cooldown) {
+            suppressed_cooldown.push(OmittedGoal {
+                goal: goal.clone(),
+                relevance_score: 0.0,
+                matched_terms: Vec::new(),
+                reason: format!("goal status is {dynamic_status} (cooldown suppressed)"),
+            });
+            continue;
+        }
+
+        // Skip non-selectable statuses (Proposed, Retired).
+        if matches!(dynamic_status, GoalStatus::Proposed | GoalStatus::Retired) {
+            omitted.push(OmittedGoal {
+                goal: goal.clone(),
+                relevance_score: 0.0,
+                matched_terms: Vec::new(),
+                reason: format!("goal status is {dynamic_status}"),
+            });
+            continue;
+        }
+
+        let matched_terms = matched_keywords(goal, &input_terms);
+
+        // Blocked goals stay visible but are not selected.
+        if matches!(dynamic_status, GoalStatus::Blocked) {
+            visible_blocked.push(OmittedGoal {
+                goal: goal.clone(),
+                relevance_score: 0.0,
+                matched_terms,
+                reason: "goal status is blocked (visible unresolved tension)".to_string(),
+            });
+            continue;
+        }
+
+        if matched_terms.is_empty() {
+            omitted.push(OmittedGoal {
+                goal: goal.clone(),
+                relevance_score: 0.0,
+                matched_terms,
+                reason: "no activation keywords matched".to_string(),
+            });
+            continue;
+        }
+
+        let salience = state
+            .goals
+            .get(&goal.id)
+            .map(|dynamic| dynamic.salience)
+            .unwrap_or(0);
+        let relevance_score =
+            compute_relevance_with_salience(goal, fixture, &matched_terms, salience);
+        let fragment = build_fragment(goal, relevance_score, &matched_terms);
+        evaluated_fragments.push(GoalEvaluation {
+            goal: goal.clone(),
+            matched_terms,
+            relevance_score,
+            fragment,
+        });
+    }
+
+    let assembly = assemble_context(
+        evaluated_fragments
+            .iter()
+            .map(|evaluation| evaluation.fragment.clone())
+            .collect(),
+        budget,
+    );
+
+    let mut selected = Vec::new();
+    for selection in &assembly.selected {
+        let evaluation = evaluated_fragments
+            .iter()
+            .find(|candidate| candidate.fragment.fragment_id == selection.fragment.fragment_id)
+            .expect("selected fragment must map back to an evaluated goal");
+
+        selected.push(GoalSelection {
+            goal: evaluation.goal.clone(),
+            context_fragment: selection.fragment.clone(),
+            relevance_score: evaluation.relevance_score,
+            matched_terms: evaluation.matched_terms.clone(),
+            initiative: initiative_for_goal(&evaluation.goal, &evaluation.matched_terms),
+        });
+    }
+
+    for omission in &assembly.omitted {
+        if let Some(evaluation) = evaluated_fragments
+            .iter()
+            .find(|candidate| candidate.fragment.fragment_id == omission.fragment.fragment_id)
+        {
+            omitted.push(OmittedGoal {
+                goal: evaluation.goal.clone(),
+                relevance_score: evaluation.relevance_score,
+                matched_terms: evaluation.matched_terms.clone(),
+                reason: omission.reason.clone(),
+            });
+        }
+    }
+
+    SalienceGoalSelectionResult {
+        input: input.to_string(),
+        input_terms,
+        budget,
+        selected,
+        omitted,
+        suppressed_cooldown,
+        visible_blocked,
+        assembly,
+    }
+}
+
 /// Build pre-initiative traces from an already-computed selection result. This is a
 /// pure, additive layer over `select_goals`: it records why each selected goal would
 /// propose a bounded effect, and an explicit no-delta reason when nothing was selected.
@@ -580,6 +1007,15 @@ fn build_fragment(goal: &Goal, relevance_score: f64, matched_terms: &[String]) -
     }
 }
 
+fn compute_relevance_with_salience(
+    goal: &Goal,
+    fixture: &VolitionFixture,
+    matched_terms: &[String],
+    salience: i32,
+) -> f64 {
+    compute_relevance(goal, fixture, matched_terms) + salience as f64
+}
+
 fn compute_relevance(goal: &Goal, fixture: &VolitionFixture, matched_terms: &[String]) -> f64 {
     let matched_bonus = matched_terms.len() as f64 * 100.0;
     let base_priority = goal.base_priority as f64;
@@ -647,6 +1083,9 @@ impl fmt::Display for GoalStatus {
         formatter.write_str(match self {
             Self::Proposed => "proposed",
             Self::Accepted => "accepted",
+            Self::Active => "active",
+            Self::Blocked => "blocked",
+            Self::Satisfied => "satisfied",
             Self::Cooldown => "cooldown",
             Self::Retired => "retired",
         })
@@ -689,10 +1128,569 @@ impl fmt::Display for TensionPriority {
 #[cfg(test)]
 mod tests {
     use super::{
-        DeltaAssessment, GoalSelectionResult, build_pre_initiative_traces, select_goals,
-        static_fixture,
+        COOLDOWN_SPAN_TICKS, DeltaAssessment, EvidenceRef, GoalSelectionResult, GoalStatus,
+        RETIREMENT_INACTIVITY_TICKS, SALIENCE_ACTIVATION_BONUS, SALIENCE_DECAY_PER_TICK,
+        VolitionEvent, VolitionState, apply, build_pre_initiative_traces, select_goals,
+        static_fixture, tick_events,
     };
     use crate::context::ContextBudget;
+
+    // ── EvidenceRef validation ──────────────────────────────────────────────
+
+    #[test]
+    fn evidence_ref_rejects_empty_string() {
+        assert!(EvidenceRef::try_new("").is_err());
+    }
+
+    #[test]
+    fn evidence_ref_rejects_whitespace_only() {
+        assert!(EvidenceRef::try_new("   ").is_err());
+        assert!(EvidenceRef::try_new("\t\n").is_err());
+    }
+
+    #[test]
+    fn evidence_ref_accepts_non_empty() {
+        let r = EvidenceRef::try_new("docs/Experiment.md").unwrap();
+        assert_eq!(r.as_str(), "docs/Experiment.md");
+    }
+
+    #[test]
+    fn evidence_ref_try_from_string_works() {
+        let r = EvidenceRef::try_from("trace-42".to_string()).unwrap();
+        assert_eq!(r.as_str(), "trace-42");
+    }
+
+    // ── GoalActivated ───────────────────────────────────────────────────────
+
+    #[test]
+    fn goal_activated_sets_active_and_raises_salience() {
+        let fixture = static_fixture();
+        let state = VolitionState::from_fixture(&fixture);
+        let goal_id = "clarify-weak-evidence-topic";
+
+        let state = apply(
+            state,
+            VolitionEvent::GoalActivated {
+                goal_id: goal_id.to_string(),
+                tick: 1,
+            },
+        );
+
+        let dynamic = state.goal(goal_id).unwrap();
+        assert_eq!(dynamic.status, GoalStatus::Active);
+        assert_eq!(dynamic.salience, SALIENCE_ACTIVATION_BONUS);
+        assert_eq!(dynamic.last_activated_tick, Some(1));
+    }
+
+    #[test]
+    fn repeated_activations_raise_salience_monotonically_before_decay() {
+        let fixture = static_fixture();
+        let mut state = VolitionState::from_fixture(&fixture);
+        let goal_id = "clarify-weak-evidence-topic";
+
+        let mut prev_salience = 0;
+        for tick in 1..=5 {
+            state = apply(
+                state,
+                VolitionEvent::GoalActivated {
+                    goal_id: goal_id.to_string(),
+                    tick,
+                },
+            );
+            let s = state.goal(goal_id).unwrap().salience;
+            assert!(
+                s > prev_salience,
+                "salience should rise monotonically, tick={tick}"
+            );
+            prev_salience = s;
+        }
+    }
+
+    #[test]
+    fn irrelevant_goal_stays_at_zero_salience() {
+        let fixture = static_fixture();
+        let state = VolitionState::from_fixture(&fixture);
+        let activated_id = "clarify-weak-evidence-topic";
+        let other_id = "avoid-overstating-impl-status";
+
+        let state = apply(
+            state,
+            VolitionEvent::GoalActivated {
+                goal_id: activated_id.to_string(),
+                tick: 1,
+            },
+        );
+
+        assert_eq!(state.goal(other_id).unwrap().salience, 0);
+    }
+
+    // ── GoalProgressObserved ────────────────────────────────────────────────
+
+    #[test]
+    fn progress_appends_evidence_ref_and_increments_reinforcement() {
+        let fixture = static_fixture();
+        let state = VolitionState::from_fixture(&fixture);
+        let goal_id = "clarify-weak-evidence-topic";
+        let evidence = EvidenceRef::try_new("trace-42").unwrap();
+
+        let state = apply(
+            state,
+            VolitionEvent::GoalActivated {
+                goal_id: goal_id.to_string(),
+                tick: 1,
+            },
+        );
+        let state = apply(
+            state,
+            VolitionEvent::GoalProgressObserved {
+                goal_id: goal_id.to_string(),
+                evidence: evidence.clone(),
+                tick: 2,
+            },
+        );
+
+        let dynamic = state.goal(goal_id).unwrap();
+        assert_eq!(dynamic.reinforcement_count, 1);
+        assert!(dynamic.progress_evidence_refs.contains(&evidence));
+        assert!(dynamic.salience > SALIENCE_ACTIVATION_BONUS);
+    }
+
+    // ── GoalDecayed ─────────────────────────────────────────────────────────
+
+    #[test]
+    fn decay_lowers_salience_by_deterministic_amount() {
+        let fixture = static_fixture();
+        let state = VolitionState::from_fixture(&fixture);
+        let goal_id = "clarify-weak-evidence-topic";
+
+        let state = apply(
+            state,
+            VolitionEvent::GoalActivated {
+                goal_id: goal_id.to_string(),
+                tick: 1,
+            },
+        );
+        let salience_before = state.goal(goal_id).unwrap().salience;
+
+        let state = apply(
+            state,
+            VolitionEvent::GoalDecayed {
+                goal_id: goal_id.to_string(),
+                tick: 2,
+            },
+        );
+
+        let salience_after = state.goal(goal_id).unwrap().salience;
+        assert_eq!(salience_before - salience_after, SALIENCE_DECAY_PER_TICK);
+        assert_eq!(
+            state.goal(goal_id).unwrap().status,
+            GoalStatus::Active,
+            "decay must not change status"
+        );
+    }
+
+    #[test]
+    fn decay_does_not_go_below_zero() {
+        let fixture = static_fixture();
+        let state = VolitionState::from_fixture(&fixture);
+        let goal_id = "clarify-weak-evidence-topic";
+
+        let state = apply(
+            state,
+            VolitionEvent::GoalActivated {
+                goal_id: goal_id.to_string(),
+                tick: 1,
+            },
+        );
+        let mut state = state;
+        for tick in 2..=20 {
+            state = apply(
+                state,
+                VolitionEvent::GoalDecayed {
+                    goal_id: goal_id.to_string(),
+                    tick,
+                },
+            );
+        }
+
+        assert_eq!(state.goal(goal_id).unwrap().salience, 0);
+    }
+
+    // ── GoalSatisfied + GoalCooldownElapsed ─────────────────────────────────
+
+    #[test]
+    fn satisfaction_enters_cooldown_and_resets_salience() {
+        let fixture = static_fixture();
+        let state = VolitionState::from_fixture(&fixture);
+        let goal_id = "clarify-weak-evidence-topic";
+        let evidence = EvidenceRef::try_new("docs/trace.md").unwrap();
+
+        let state = apply(
+            state,
+            VolitionEvent::GoalActivated {
+                goal_id: goal_id.to_string(),
+                tick: 1,
+            },
+        );
+        let state = apply(
+            state,
+            VolitionEvent::GoalSatisfied {
+                goal_id: goal_id.to_string(),
+                evidence,
+                tick: 2,
+            },
+        );
+
+        let dynamic = state.goal(goal_id).unwrap();
+        assert_eq!(dynamic.status, GoalStatus::Cooldown);
+        assert_eq!(dynamic.salience, 0);
+        assert_eq!(dynamic.last_satisfied_tick, Some(2));
+        assert_eq!(dynamic.cooldown_until_tick, Some(2 + COOLDOWN_SPAN_TICKS));
+    }
+
+    #[test]
+    fn cooldown_elapsed_returns_goal_to_accepted() {
+        let fixture = static_fixture();
+        let state = VolitionState::from_fixture(&fixture);
+        let goal_id = "clarify-weak-evidence-topic";
+        let evidence = EvidenceRef::try_new("docs/trace.md").unwrap();
+
+        let state = apply(
+            state,
+            VolitionEvent::GoalActivated {
+                goal_id: goal_id.to_string(),
+                tick: 1,
+            },
+        );
+        let state = apply(
+            state,
+            VolitionEvent::GoalSatisfied {
+                goal_id: goal_id.to_string(),
+                evidence,
+                tick: 2,
+            },
+        );
+        let state = apply(
+            state,
+            VolitionEvent::GoalCooldownElapsed {
+                goal_id: goal_id.to_string(),
+                tick: 2 + COOLDOWN_SPAN_TICKS,
+            },
+        );
+
+        let dynamic = state.goal(goal_id).unwrap();
+        assert_eq!(dynamic.status, GoalStatus::Accepted);
+        assert!(dynamic.cooldown_until_tick.is_none());
+    }
+
+    // ── GoalBlocked ─────────────────────────────────────────────────────────
+
+    #[test]
+    fn blocked_goal_keeps_status_and_nonzero_salience() {
+        let fixture = static_fixture();
+        let state = VolitionState::from_fixture(&fixture);
+        let goal_id = "clarify-weak-evidence-topic";
+
+        let state = apply(
+            state,
+            VolitionEvent::GoalActivated {
+                goal_id: goal_id.to_string(),
+                tick: 1,
+            },
+        );
+        let salience_before = state.goal(goal_id).unwrap().salience;
+        let state = apply(
+            state,
+            VolitionEvent::GoalBlocked {
+                goal_id: goal_id.to_string(),
+                tick: 2,
+            },
+        );
+
+        let dynamic = state.goal(goal_id).unwrap();
+        assert_eq!(dynamic.status, GoalStatus::Blocked);
+        assert_eq!(
+            dynamic.salience, salience_before,
+            "blocked must preserve salience"
+        );
+    }
+
+    // ── GoalRetired ──────────────────────────────────────────────────────────
+
+    #[test]
+    fn retired_goal_reaches_retired_status() {
+        let fixture = static_fixture();
+        let state = VolitionState::from_fixture(&fixture);
+        let goal_id = "clarify-weak-evidence-topic";
+
+        let state = apply(
+            state,
+            VolitionEvent::GoalRetired {
+                goal_id: goal_id.to_string(),
+                tick: 1,
+            },
+        );
+
+        assert_eq!(state.goal(goal_id).unwrap().status, GoalStatus::Retired);
+    }
+
+    // ── tick_events ──────────────────────────────────────────────────────────
+
+    #[test]
+    fn tick_events_emits_decay_for_active_goal_with_salience() {
+        let fixture = static_fixture();
+        let state = VolitionState::from_fixture(&fixture);
+        let goal_id = "clarify-weak-evidence-topic";
+
+        let state = apply(
+            state,
+            VolitionEvent::GoalActivated {
+                goal_id: goal_id.to_string(),
+                tick: 1,
+            },
+        );
+        let events = tick_events(&state, 2);
+
+        assert!(events.iter().any(|event| matches!(
+            event,
+            VolitionEvent::GoalDecayed { goal_id: id, .. } if id == "clarify-weak-evidence-topic"
+        )));
+    }
+
+    #[test]
+    fn tick_events_emits_retirement_for_zero_salience_inactive_goal() {
+        let fixture = static_fixture();
+        let state = VolitionState::from_fixture(&fixture);
+        let goal_id = "clarify-weak-evidence-topic";
+
+        let events = tick_events(&state, RETIREMENT_INACTIVITY_TICKS);
+
+        assert!(events.iter().any(|event| matches!(
+            event,
+            VolitionEvent::GoalRetired { goal_id: id, .. } if id == goal_id
+        )));
+    }
+
+    #[test]
+    fn tick_events_emits_cooldown_elapsed_after_span() {
+        let fixture = static_fixture();
+        let state = VolitionState::from_fixture(&fixture);
+        let goal_id = "clarify-weak-evidence-topic";
+        let evidence = EvidenceRef::try_new("docs/trace.md").unwrap();
+
+        let state = apply(
+            state,
+            VolitionEvent::GoalActivated {
+                goal_id: goal_id.to_string(),
+                tick: 1,
+            },
+        );
+        let state = apply(
+            state,
+            VolitionEvent::GoalSatisfied {
+                goal_id: goal_id.to_string(),
+                evidence,
+                tick: 2,
+            },
+        );
+
+        let events = tick_events(&state, 2 + COOLDOWN_SPAN_TICKS);
+
+        assert!(events.iter().any(|event| matches!(
+            event,
+            VolitionEvent::GoalCooldownElapsed { goal_id: id, .. } if id == goal_id
+        )));
+    }
+
+    // ── select_goals_with_salience ───────────────────────────────────────────
+
+    #[test]
+    fn salience_aware_selector_matches_stateless_when_state_is_empty() {
+        let fixture = static_fixture();
+        let state = VolitionState::from_fixture(&fixture);
+        let input = "We never settled how voice memory affects continuity.";
+        let budget = ContextBudget::new(2, 80);
+
+        let stateless = select_goals(input, &fixture, budget);
+        let salience_result = super::select_goals_with_salience(input, &fixture, &state, budget);
+
+        let stateless_ids: Vec<_> = stateless.selected.iter().map(|s| &s.goal.id).collect();
+        let salience_ids: Vec<_> = salience_result
+            .selected
+            .iter()
+            .map(|s| &s.goal.id)
+            .collect();
+        assert_eq!(
+            stateless_ids, salience_ids,
+            "empty state must not alter selection"
+        );
+    }
+
+    #[test]
+    fn cooldown_goal_is_suppressed_from_selection() {
+        let fixture = static_fixture();
+        let state = VolitionState::from_fixture(&fixture);
+        let goal_id = "clarify-weak-evidence-topic";
+        let evidence = EvidenceRef::try_new("docs/trace.md").unwrap();
+
+        let state = apply(
+            state,
+            VolitionEvent::GoalActivated {
+                goal_id: goal_id.to_string(),
+                tick: 1,
+            },
+        );
+        let state = apply(
+            state,
+            VolitionEvent::GoalSatisfied {
+                goal_id: goal_id.to_string(),
+                evidence,
+                tick: 2,
+            },
+        );
+
+        let input = "We never settled how voice memory affects continuity.";
+        let result =
+            super::select_goals_with_salience(input, &fixture, &state, ContextBudget::new(2, 80));
+
+        assert!(
+            result.selected.iter().all(|s| s.goal.id != goal_id),
+            "cooldown goal must not appear in selected"
+        );
+        assert!(
+            result
+                .suppressed_cooldown
+                .iter()
+                .any(|s| s.goal.id == goal_id),
+            "cooldown goal must appear in suppressed_cooldown"
+        );
+    }
+
+    #[test]
+    fn blocked_goal_stays_visible_but_not_selected() {
+        let fixture = static_fixture();
+        let state = VolitionState::from_fixture(&fixture);
+        let goal_id = "clarify-weak-evidence-topic";
+
+        let state = apply(
+            state,
+            VolitionEvent::GoalActivated {
+                goal_id: goal_id.to_string(),
+                tick: 1,
+            },
+        );
+        let state = apply(
+            state,
+            VolitionEvent::GoalBlocked {
+                goal_id: goal_id.to_string(),
+                tick: 2,
+            },
+        );
+
+        let input = "We never settled how voice memory affects continuity.";
+        let result =
+            super::select_goals_with_salience(input, &fixture, &state, ContextBudget::new(2, 80));
+
+        assert!(
+            result.selected.iter().all(|s| s.goal.id != goal_id),
+            "blocked goal must not appear in selected"
+        );
+        assert!(
+            result.visible_blocked.iter().any(|s| s.goal.id == goal_id),
+            "blocked goal must stay visible in visible_blocked"
+        );
+        assert!(
+            result.visible_blocked.iter().all(|s| !s.reason.is_empty()),
+            "blocked goal must carry a reason"
+        );
+    }
+
+    // ── Tick monotonicity ────────────────────────────────────────────────────
+
+    #[test]
+    fn reducer_tick_never_decreases_on_lower_tick_event() {
+        let fixture = static_fixture();
+        let state = VolitionState::from_fixture(&fixture);
+        let goal_id = "clarify-weak-evidence-topic";
+
+        let state = apply(
+            state,
+            VolitionEvent::GoalActivated {
+                goal_id: goal_id.to_string(),
+                tick: 5,
+            },
+        );
+        assert_eq!(state.tick, 5);
+
+        let state = apply(
+            state,
+            VolitionEvent::GoalDecayed {
+                goal_id: goal_id.to_string(),
+                tick: 3,
+            },
+        );
+        assert_eq!(state.tick, 5, "lower-tick event must not regress tick");
+    }
+
+    #[test]
+    fn reducer_tick_is_stable_across_same_tick_events() {
+        let fixture = static_fixture();
+        let state = VolitionState::from_fixture(&fixture);
+        let goal_id = "clarify-weak-evidence-topic";
+
+        let state = apply(
+            state,
+            VolitionEvent::GoalActivated {
+                goal_id: goal_id.to_string(),
+                tick: 4,
+            },
+        );
+        let state = apply(
+            state,
+            VolitionEvent::GoalDecayed {
+                goal_id: goal_id.to_string(),
+                tick: 4,
+            },
+        );
+        assert_eq!(state.tick, 4, "duplicate-tick event must not move tick");
+    }
+
+    // ── Replay determinism ───────────────────────────────────────────────────
+
+    #[test]
+    fn same_event_sequence_yields_identical_state() {
+        let fixture = static_fixture();
+        let evidence = EvidenceRef::try_new("docs/trace.md").unwrap();
+
+        let run = || {
+            let state = VolitionState::from_fixture(&fixture);
+            let goal_id = "clarify-weak-evidence-topic";
+            let state = apply(
+                state,
+                VolitionEvent::GoalActivated {
+                    goal_id: goal_id.to_string(),
+                    tick: 1,
+                },
+            );
+            let state = apply(
+                state,
+                VolitionEvent::GoalProgressObserved {
+                    goal_id: goal_id.to_string(),
+                    evidence: evidence.clone(),
+                    tick: 2,
+                },
+            );
+            apply(
+                state,
+                VolitionEvent::GoalBlocked {
+                    goal_id: goal_id.to_string(),
+                    tick: 3,
+                },
+            )
+        };
+
+        assert_eq!(run(), run());
+    }
 
     #[test]
     fn baseline_input_selects_no_goals() {

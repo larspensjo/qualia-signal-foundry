@@ -28,6 +28,7 @@ use super::text_owned_voice_loop::TextOwnedVoiceLoopExperiment;
 use super::tool_as_perception_calculator::ToolAsPerceptionCalculatorExperiment;
 use super::voice_loop::{VOICE_LOOP_DESCRIPTION, VoiceLoopExperiment};
 use super::volition_goal_fixture::VolitionGoalFixtureExperiment;
+use super::volition_salience_and_satisfaction::VolitionSalienceAndSatisfactionExperiment;
 use super::volition_trace_backed_initiative::VolitionTraceBackedInitiativeExperiment;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, ValueEnum)]
@@ -50,6 +51,7 @@ pub enum ExperimentName {
     ToolAsPerceptionCalculator,
     VolitionGoalFixture,
     VolitionTraceBackedInitiative,
+    VolitionSalienceAndSatisfaction,
 }
 
 impl ExperimentName {
@@ -72,6 +74,7 @@ impl ExperimentName {
             Self::ToolAsPerceptionCalculator => "tool-as-perception-calculator",
             Self::VolitionGoalFixture => "volition-goal-fixture",
             Self::VolitionTraceBackedInitiative => "volition-trace-backed-initiative",
+            Self::VolitionSalienceAndSatisfaction => "volition-salience-and-satisfaction",
         }
     }
 
@@ -123,6 +126,9 @@ impl ExperimentName {
             }
             Self::VolitionTraceBackedInitiative => {
                 "Record pre-initiative traces for selected volition goals before any effect could change behavior"
+            }
+            Self::VolitionSalienceAndSatisfaction => {
+                "Replay a scripted multi-turn sequence to exercise salience rise/decay, satisfaction cooldown, blocked visibility, and retirement"
             }
         }
     }
@@ -359,6 +365,9 @@ fn experiment_for(name: ExperimentName) -> Box<dyn Experiment> {
         ExperimentName::VolitionGoalFixture => Box::new(VolitionGoalFixtureExperiment),
         ExperimentName::VolitionTraceBackedInitiative => {
             Box::new(VolitionTraceBackedInitiativeExperiment)
+        }
+        ExperimentName::VolitionSalienceAndSatisfaction => {
+            Box::new(VolitionSalienceAndSatisfactionExperiment)
         }
     }
 }

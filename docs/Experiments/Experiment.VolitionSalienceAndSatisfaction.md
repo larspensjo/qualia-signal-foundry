@@ -6,7 +6,9 @@
 
 ## Status
 
-Planned (skeleton). Not yet implemented. This scaffold defines the scope for the
+Implemented (2026-06-25). Code is in place; run
+`cargo run -p qsf_app -- experiment volition-salience-and-satisfaction` to produce
+artifacts. Results section pending a run. This scaffold defines the scope for the
 salience/satisfaction/blocking/cooldown slice of the volition system; the phase
 sequencing lives in
 [Plan.VolitionGoalSystem.md](../Plans/Plan.VolitionGoalSystem.md), and the rationale,
