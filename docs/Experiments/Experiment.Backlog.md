@@ -51,8 +51,9 @@ Later
 | `Experiment.ProjectDocLiveRegressionAudit` | High | Proposed | Can live project-doc tool turns preserve prompt-prefix continuity and retrieve expected docs? |
 | `Experiment.VolitionGoalFixture` | Medium | Completed | Can a static tension/goal fixture deterministically select input-relevant goals and propose candidate initiatives without executing any effect? |
 | `Experiment.VolitionTraceBackedInitiative` | Medium | Completed | Can pre-initiative traces explain goal → delta → candidate initiatives → proposed bounded effect before any behavior changes? |
-| `Experiment.VolitionSalienceAndSatisfaction` | Medium | Running | Can a pure, replayable volition state raise/decay salience and satisfy, block, cool down, and retire goals from evidence without executing any effect? |
-| `Experiment.VolitionArbitrationConflict` | Medium | Planned | Can a pure arbitrate() function resolve cross-goal conflict by tension tier, record structured provenance for every loser, and produce deterministic replayable output without executing any effect? |
+| `Experiment.VolitionSalienceAndSatisfaction` | Medium | Completed | Can a pure, replayable volition state raise/decay salience and satisfy, block, cool down, and retire goals from evidence without executing any effect? |
+| `Experiment.VolitionArbitrationConflict` | Medium | Completed | Can a pure arbitrate() function resolve cross-goal conflict by tension tier, record structured provenance for every loser, and produce deterministic replayable output without executing any effect? |
+| `Experiment.VolitionReflectionGoalCandidates` | Medium | Planned | Can a pure, model-free proposer map scripted open questions to goal candidates with evidence refs, and can accept/reject events move candidates through a durable pending-review state without influencing any selector? |
 | `Experiment.StreamingTranscriptionMVP` | Medium | Completed | Can live speech be represented as observable partial and final transcript events? |
 | `Experiment.AudioLoopMVP` | Medium | Superseded | Can a minimal audio loop create a stronger sense of presence than text-only interaction? |
 | `Experiment.ToolAsPerceptionCalculator` | Medium | Completed | How should a simple read-only computational tool be represented as perception? |
@@ -356,16 +357,12 @@ Possible success criteria:
 ### Experiment.VolitionSalienceAndSatisfaction
 
 **Priority:** Medium
-**Status:** Running
+**Status:** Completed
 
 Extends the stateless fixture and trace slices by adding the first durable-within-a-run
 volition state. A pure `VolitionState` updated via a `VolitionEvent` reducer tracks
 per-goal salience, lifecycle status, cooldown, and evidence-backed progress across a
 scripted multi-turn sequence.
-
-Code is implemented; run
-`cargo run -p qsf_app -- experiment volition-salience-and-satisfaction` to produce
-artifacts. Results and interpretation are pending a run.
 
 Related documents:
 
@@ -389,7 +386,7 @@ Possible success criteria:
 ### Experiment.VolitionArbitrationConflict
 
 **Priority:** Medium
-**Status:** Planned
+**Status:** Completed
 
 Adds deterministic cross-goal arbitration as a pure additive layer over the
 salience-aware selector. A new `arbitrate()` function resolves conflicts by tension
@@ -414,6 +411,37 @@ Possible success criteria:
 - Conflict turns produce non-empty `losers` with structured tension provenance.
 - Loser ordering is deterministic.
 - Replay produces identical output.
+- No effect is executed.
+
+### Experiment.VolitionReflectionGoalCandidates
+
+**Priority:** Medium
+**Status:** Planned
+
+Let a reflection/sleep step propose goal candidates with evidence references. Proposals
+stay in pending review until an explicit accept or reject event moves them; nothing is
+silently promoted. The proposer function is pure and model-free — it maps scripted open
+questions to candidates deterministically.
+
+Related documents:
+
+```text
+Plans/Plan.VolitionGoalSystem.md
+Plans/Idea.VolitionGoalSystem.md
+Experiments/Experiment.VolitionArbitrationConflict.md
+DecisionLog.md  (2026-05-15 "Volition is an explicit research surface")
+```
+
+Possible success criteria:
+
+- `propose_goal_candidates` is deterministic: same input produces identical output.
+- Questions that match no fixture tension appear in `unmatched_questions` and produce no candidate.
+- `GoalCandidateAdded` appends to `pending_candidates`; does not auto-accept.
+- `GoalCandidateAccepted` moves the candidate to `accepted_candidates` and removes it from pending.
+- `GoalCandidateRejected` removes the candidate from `pending_candidates`; reason is in the event log.
+- A remaining (neither accepted nor rejected) candidate stays in `pending_candidates` across ticks.
+- `accepted_candidates` is distinct from fixture-seeded `goals`; no accepted candidate influences any selector in this phase.
+- Replay produces identical state and event logs.
 - No effect is executed.
 
 ### Experiment.StreamingTranscriptionMVP
