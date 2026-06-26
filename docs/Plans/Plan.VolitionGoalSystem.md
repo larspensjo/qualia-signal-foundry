@@ -14,8 +14,12 @@ is
 **Phase 4 (event-driven salience, satisfaction, blocking, cooldown) is complete**;
 its validation scaffold
 [`Experiment.VolitionSalienceAndSatisfaction.md`](../Experiments/Experiment.VolitionSalienceAndSatisfaction.md)
-is implemented and ready to run. Phases 5–8 remain sketched at a
-high level until they are ready.
+is implemented and ready to run. **Phase 5 (arbitration and conflict resolution) is
+designed**; its design is captured in
+[`docs/Plans/Design.VolitionArbitration.md`](Design.VolitionArbitration.md)
+and its validation scaffold will be
+[`Experiment.VolitionArbitrationConflict.md`](../Experiments/Experiment.VolitionArbitrationConflict.md).
+Phases 6–8 remain sketched at a high level until they are ready.
 
 > Companion to the idea note
 > [`Idea.VolitionGoalSystem.md`](Idea.VolitionGoalSystem.md), which is authoritative
@@ -68,7 +72,7 @@ influencing behavior.
 | 2 | Static tension/goal fixture + deterministic, budget-bounded selection — **complete** | Yes | Light | `Experiment.VolitionGoalFixture` |
 | 3 | Trace-backed initiative proposals (pre-initiative traces) — **complete** | Yes | Light | `Experiment.VolitionTraceBackedInitiative` |
 | 4 | Event-driven salience, satisfaction, blocking, cooldown — **complete** | Yes | Yes | `Experiment.VolitionSalienceAndSatisfaction` |
-| 5 | Arbitration and multi-goal conflict resolution | Yes | Yes | `Experiment.VolitionArbitrationConflict` (future) |
+| 5 | Arbitration and multi-goal conflict resolution — **designed** | Yes | Yes | `Experiment.VolitionArbitrationConflict` |
 | 6 | Reflection-generated goal candidates (proposed, not auto-accepted) | Yes | Yes | future |
 | 7 | Bounded internal initiative execution | Yes | Yes | future |
 | 8 | Optional inspectable mode/bias state | Yes | Yes | future |
@@ -124,124 +128,108 @@ execution.
 - Full scope and success/failure criteria live in
   [`Experiment.VolitionTraceBackedInitiative.md`](../Experiments/Experiment.VolitionTraceBackedInitiative.md).
 
-### Phase 4 — Salience, satisfaction, blocking, cooldown (expanded for implementation)
+### Phase 4 — Salience, satisfaction, blocking, cooldown (complete)
 
-Phases 2–3 are stateless: each scripted input is selected against an immutable fixture,
-and the pre-initiative trace is recomputed from scratch. Phase 4 adds the first
-*durable-within-a-run* volition state — a pure, replayable layer in which events raise,
-lower, satisfy, block, or retire goals across a sequence of turns, so that selection on
-a later turn depends on what happened on earlier turns. No effect is executed and no
-write-capable external action is added; the only new coupling is that salience and
-lifecycle status feed goal *selection* ordering and visibility.
+Added the first durable-within-a-run volition state: a pure, replayable `VolitionState`
+holding per-goal `status`, `salience`, `reinforcement_count`, `progress_evidence_refs`,
+and cooldown/tick fields, seeded from the immutable fixture. A `VolitionEvent` enum
+drives all lifecycle transitions via a pure `apply(state, event) -> state` reducer;
+progress and satisfaction events require an `EvidenceRef` (a validated newtype) so
+evidence-free updates are structurally impossible. Salience rises on activation and
+evidence-backed progress, decays linearly per tick, resets on satisfaction, and is
+preserved under blocking. Cooldown suppresses a satisfied goal from selection until
+`GoalCooldownElapsed` returns it to `Accepted`; an unproductive goal receives
+`GoalRetired`. A `select_goals_with_salience` selector adds the salience term while
+keeping blocked goals visible with a distinct reason, and the earlier stateless
+selectors are untouched. The `volition-salience-and-satisfaction` experiment replays a
+scripted multi-turn sequence and snapshots state after each turn.
 
-This is the project's first test of the idea doc's reward-as-evidence-backed-update
-discipline: satisfaction and progress must reference observable evidence (a source
-reference to an event, artifact, or trace), never a model assertion. The reducer stays
-pure; the matcher that turns evidence into events stays at the side-effect boundary.
-
-**Build (incremental sub-slices; each builds, tests green, clippy clean, then `fmt`):**
-
-1. *Lifecycle + live state.* Extend `GoalStatus` with the runtime states the idea doc
-   names but the fixture does not yet use — `Active`, `Blocked`, `Satisfied` — keeping
-   `Proposed`/`Accepted`/`Cooldown`/`Retired` (and update its `Display`). Introduce a
-   pure `VolitionState` holding per-goal dynamic state *separate from* the read-only
-   fixture: runtime `status`, `salience`, `reinforcement_count`,
-   `progress_evidence_refs`, `last_activated_tick`, `last_satisfied_tick`, and
-   `cooldown_until_tick`. The fixture stays immutable and is the seed for `Accepted`
-   goals. Add a deterministic logical `tick` (a monotonic counter advanced per
-   processed event) so decay and cooldown are replayable without wall-clock time.
-2. *Volition events + pure reducer.* Define a `VolitionEvent` enum with one variant per
-   transition so every lifecycle advance is explicit and replayable: `GoalActivated`,
-   `GoalProgressObserved`, `GoalSatisfied`, `GoalBlocked`, `GoalDecayed` (salience-only,
-   never a status change), `GoalCooldownElapsed` (`Cooldown -> Accepted`), and
-   `GoalRetired` (`-> Retired`). A pure `apply(state, event) -> state` is the only place
-   status changes; the selector never mutates lifecycle and there is no hidden tick
-   logic. The tick-driven events (`GoalDecayed`, `GoalCooldownElapsed`, `GoalRetired`)
-   are emitted deterministically from the tick at the boundary (or by a pure helper
-   that, given state plus a new tick, returns the events to apply), never silently
-   inside another event. Progress- and satisfaction-bearing events carry an
-   `EvidenceRef` — a validated newtype around a non-empty, non-whitespace string with a
-   fallible constructor (`EvidenceRef::try_new` / `TryFrom<String>`) used in
-   `VolitionEvent`, in `progress_evidence_refs`, and in tests — so an evidence-free
-   progress or satisfaction cannot be constructed; a regression test asserts that
-   empty/whitespace evidence is rejected. The reducer records evidence and updates
-   salience/status; it never judges whether evidence is *semantically* valid (that
-   stays in the deterministic matcher at the side-effect boundary).
-3. *Salience, decay, cooldown, retirement rules.* Activation and evidence-backed
-   progress raise salience; `GoalDecayed` lowers it by a deterministic per-tick rule
-   without changing status. `GoalSatisfied` records satisfaction evidence, sets the
-   observable snapshot status `Satisfied` at that tick, resets salience, and opens a
-   cooldown window (`cooldown_until_tick = tick + span`); the goal then reads as
-   `Cooldown` until `GoalCooldownElapsed` returns it to `Accepted`. `GoalBlocked` sets
-   `Blocked` but preserves salience so the goal stays a visible unresolved tension. A
-   goal that stays unproductive past the retirement threshold receives `GoalRetired`.
-   Thresholds must default to values a single standard scripted run actually crosses
-   (at least one decay, one cooldown elapse, one retirement).
-4. *Salience-aware selection.* Add a pure `select_goals_with_salience(input, fixture,
-   &state, budget)` that reuses the Phase 2 relevance scoring, adds a salience term,
-   suppresses goals in `Cooldown`, and keeps `Blocked` goals visible (surfaced with a
-   distinct blocked reason rather than silently dropped). Keep the existing stateless
-   `select_goals` and `build_pre_initiative_traces` untouched so earlier runs stay
-   byte-stable; the new selector is the salience entry point.
-5. *Validation scaffold.* Register a `volition-salience-and-satisfaction` experiment
-   (new `ExperimentName` variant + runner under `crates/qsf_app/src/experiments/`) that
-   replays a scripted multi-turn sequence of inputs and events against the fixture,
-   snapshots `VolitionState` after each turn, and writes the salience/lifecycle trace.
-   Full scope lives in
-   [`Experiment.VolitionSalienceAndSatisfaction.md`](../Experiments/Experiment.VolitionSalienceAndSatisfaction.md)
-   (a planned skeleton; fill in Results after a run).
-
-- **Verify (automated):** repeated relevant inputs raise a goal's salience
-  monotonically before decay, while an irrelevant input leaves salience at zero;
-  per-tick decay lowers salience by the deterministic rule; evidence-backed progress
-  appends the source ref and increments `reinforcement_count`, and no code path
-  satisfies a goal without an evidence ref; a satisfied goal enters `Cooldown`, is
-  suppressed from selection for the cooldown span, then becomes selectable again, and
-  an unproductive goal retires; a blocked goal keeps `Blocked` status and stays visible
-  in the selection output; the same event sequence yields identical `VolitionState`
-  snapshots and identical selection output (replay determinism).
-- **Verify (human):** read the per-turn salience and lifecycle trace and judge whether
-  rising/falling salience, cooldown suppression, and persistent blocked-goal visibility
-  feel useful and grounded rather than noisy or nagging — automated tests cannot judge
-  "annoying."
-- **Default-exercises-new-path:** the scripted experiment drives activation, progress,
-  satisfaction, blocking, decay, cooldown, and retirement in one standard run, and the
-  decay/cooldown/retirement thresholds default to values that run crosses.
-
-**Open questions to resolve while expanding (leanings noted; confirm before/while
-building, per `Agents.md`):**
-
-- *Evidence strength* (carried from the cross-cutting list): is any structured
-  `evidence_ref` enough to record progress, and is a deterministic match of the goal's
-  satisfaction condition enough to mark `Satisfied`? Leaning: yes for this slice —
-  structured evidence auto-records and a deterministic matcher (no model judgment)
-  marks satisfaction; host review of satisfaction is deferred to the
-  reflection-acceptance slice.
-- *Salience representation:* integer points vs float `[0, 1]`. Leaning: integer points,
-  to keep decay and replay exact.
-- *Decay shape:* linear per-tick decrement vs multiplicative. Leaning: linear,
-  integer-friendly.
-- *Clock:* per-event tick vs per-input tick. Leaning: per processed event, monotonic,
-  no wall-clock.
-- *Blocked-goal visibility:* a visible omitted entry tagged blocked vs a dedicated
-  carried-tension list. Leaning: a visible omitted entry with a blocked reason, so it
-  stays inspectable without consuming response budget.
-- *AttentionState wiring:* the idea doc wants goal salience to feed the existing
-  `AttentionState`, not a parallel system. Leaning: keep salience inside
-  `VolitionState` and feed only selection ordering for now; defer `AttentionState`
-  wiring to the bounded-initiative slice so no behavioral coupling is added early.
-
-Runtime names follow stable behavior (`volition` events, salience, cooldown), never a
-phase number.
+- Full scope, inputs, and success/failure criteria live in
+  [`Experiment.VolitionSalienceAndSatisfaction.md`](../Experiments/Experiment.VolitionSalienceAndSatisfaction.md).
 
 ### Phase 5 — Arbitration and conflict resolution
 
-Resolve simultaneous initiative proposals under the deterministic arbitration order
-from the idea doc (safety/boundaries → user intent → task → coherence → continuity →
-experiment mode → curiosity → optional exploration).
+Add deterministic cross-goal arbitration as a pure, additive layer over Phase 4's
+salience-aware selection. When `select_goals_with_salience` returns multiple selected
+goals simultaneously, a new `arbitrate()` function picks the winning initiative and
+records every losing goal with a tier-based reason. Still no effect execution.
 
-- **Verify:** conflicts are ordered without bypassing project boundaries; the trace
-  records which goals lost and why; arbitration is replayable.
+The design decisions for this phase are captured in
+[`docs/Plans/Design.VolitionArbitration.md`](Design.VolitionArbitration.md).
+
+#### Data model changes
+
+- Add `arbitration_tier: u8` to `Tension`. Lower tier wins arbitration. The existing
+  `priority_bias` field and `TENSION_PRIORITY_NOTE` remain unchanged — arbitration tier
+  is a distinct concept from selection weight. Fixture mapping:
+
+  | Tension | `arbitration_tier` |
+  |---|---|
+  | `boundary-preservation` | 1 |
+  | `coherence-maintenance` | 4 |
+  | `continuity-preservation` | 5 |
+  | `research-curiosity` | 7 |
+
+  Tiers 2 (user intent), 3 (task completion), 6 (experiment mode), and 8 (optional
+  exploration) are not yet covered by any fixture tension. Document this as an explicit
+  extension point in a `Tension` doc comment and in the experiment spec. Future tensions
+  must be assigned their correct tier when added.
+
+- Add two new types:
+  - `ArbitrationLoser { selection: GoalSelection, effective_tier: u8,
+    effective_tension_id: String, effective_tension_title: String, reason: String }`
+    where the structured fields name the tension that placed this goal at its effective
+    tier, and `reason` is a rendered convenience string (e.g. "tier 7 lost to winner at
+    tier 1 (boundary-preservation)"). Tests must assert the structured fields.
+  - `ArbitrationResult { winner: GoalSelection, winner_effective_tier: u8,
+    winner_effective_tension_id: String, winner_effective_tension_title: String,
+    losers: Vec<ArbitrationLoser> }`
+
+#### Build
+
+A pure `arbitrate(selections: Vec<GoalSelection>, fixture: &VolitionFixture) -> Option<ArbitrationResult>`
+function. Returns `None` for empty input. A goal's effective tier equals the minimum
+`arbitration_tier` among its parent tensions (default `u8::MAX` if no tensions in the
+fixture). Winner = goal with the lowest effective tier. Tiebreaker within the same tier:
+higher `base_priority` wins; still tied: lower `goal_id` lexicographically. All existing
+selectors and reducers are untouched.
+
+#### Experiment
+
+Register a `volition-arbitration-conflict` experiment (spec:
+[`Experiment.VolitionArbitrationConflict.md`](../Experiments/Experiment.VolitionArbitrationConflict.md))
+with a scripted multi-turn sequence covering `no_selection`, `single_selection`, and
+`conflict_resolved` turns. For each turn, the experiment runner calls
+`select_goals_with_salience` → `arbitrate`, records the full `ArbitrationResult`
+alongside the selection result, a per-turn `arbitration_status`, and an explicit
+no-execution marker. The scripted sequence must include at least one conflict turn that
+produces a non-empty `losers` list.
+
+#### Verify (automated)
+
+- Single selection passes through as winner with an empty losers list.
+- Two goals at different tiers → lower tier wins.
+- Two goals at the same tier → higher `base_priority` wins; still tied → lower `goal_id`
+  wins.
+- A goal backed by multiple tensions uses the minimum tier (best wins).
+- Multiple parent tensions at the same minimum tier → lexicographic `tension_id` picks
+  the effective tension.
+- Structured provenance fields (`winner_effective_tension_id`, each loser's
+  `effective_tension_id`) are asserted directly; tests do not parse `reason`.
+- Losers are ordered: effective tier ascending, `base_priority` descending, `goal_id`
+  ascending.
+- `ArbitrationResult` is deterministic: same input produces identical output across runs.
+- No effect is executed.
+
+#### Verify (human)
+
+Read the per-turn arbitration trace and confirm the winning goal's dominance is legible —
+the trace should answer "why did X lose to Y?" without external explanation. Confirm that
+boundary-preservation goals consistently outrank curiosity and continuity goals when they
+conflict.
+
+- Full scope and success/failure criteria live in
+  [`Experiment.VolitionArbitrationConflict.md`](../Experiments/Experiment.VolitionArbitrationConflict.md).
 
 ### Phase 6 — Reflection-generated goal candidates
 
@@ -278,8 +266,9 @@ expanded, not silently resolved:
   *(Now expanded with proposed leanings in the Phase 4 detail above — plus salience
   representation, decay shape, the logical clock, blocked-goal visibility, and
   AttentionState wiring. Confirm these before building.)*
-- **Phase 5:** Should arbitration ever be probabilistic, and only behind an explicit
-  experiment mode?
+- **Phase 5:** Probabilistic arbitration is deferred — Phase 5 is deterministic only.
+  If introduced later it must be gated behind an explicit experiment mode flag and
+  recorded in traces.
 - **Phase 6:** Who may create a durable goal? (Leaning: host, user, or policy
   acceptance required; the simulation may propose but not silently promote.)
 - **Cross-cutting:** Should goals be live state, memory records, or both? Which fields

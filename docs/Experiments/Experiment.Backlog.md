@@ -51,7 +51,8 @@ Later
 | `Experiment.ProjectDocLiveRegressionAudit` | High | Proposed | Can live project-doc tool turns preserve prompt-prefix continuity and retrieve expected docs? |
 | `Experiment.VolitionGoalFixture` | Medium | Completed | Can a static tension/goal fixture deterministically select input-relevant goals and propose candidate initiatives without executing any effect? |
 | `Experiment.VolitionTraceBackedInitiative` | Medium | Completed | Can pre-initiative traces explain goal → delta → candidate initiatives → proposed bounded effect before any behavior changes? |
-| `Experiment.VolitionSalienceAndSatisfaction` | Medium | Planned | Can a pure, replayable volition state raise/decay salience and satisfy, block, cool down, and retire goals from evidence without executing any effect? |
+| `Experiment.VolitionSalienceAndSatisfaction` | Medium | Running | Can a pure, replayable volition state raise/decay salience and satisfy, block, cool down, and retire goals from evidence without executing any effect? |
+| `Experiment.VolitionArbitrationConflict` | Medium | Planned | Can a pure arbitrate() function resolve cross-goal conflict by tension tier, record structured provenance for every loser, and produce deterministic replayable output without executing any effect? |
 | `Experiment.StreamingTranscriptionMVP` | Medium | Completed | Can live speech be represented as observable partial and final transcript events? |
 | `Experiment.AudioLoopMVP` | Medium | Superseded | Can a minimal audio loop create a stronger sense of presence than text-only interaction? |
 | `Experiment.ToolAsPerceptionCalculator` | Medium | Completed | How should a simple read-only computational tool be represented as perception? |
@@ -351,6 +352,69 @@ Possible success criteria:
 - The trace connects goal, delta, proposed effect, and losing candidates.
 - The direct-task baseline records no selected goal, no delta, and no candidate.
 - No initiative effect is emitted or executed.
+
+### Experiment.VolitionSalienceAndSatisfaction
+
+**Priority:** Medium
+**Status:** Running
+
+Extends the stateless fixture and trace slices by adding the first durable-within-a-run
+volition state. A pure `VolitionState` updated via a `VolitionEvent` reducer tracks
+per-goal salience, lifecycle status, cooldown, and evidence-backed progress across a
+scripted multi-turn sequence.
+
+Code is implemented; run
+`cargo run -p qsf_app -- experiment volition-salience-and-satisfaction` to produce
+artifacts. Results and interpretation are pending a run.
+
+Related documents:
+
+```text
+Plans/Plan.VolitionGoalSystem.md
+Plans/Idea.VolitionGoalSystem.md
+Experiments/Experiment.VolitionGoalFixture.md
+Experiments/Experiment.VolitionTraceBackedInitiative.md
+Experiments/Experiment.VolitionSalienceAndSatisfaction.md
+DecisionLog.md  (2026-05-15 "Volition is an explicit research surface")
+```
+
+Possible success criteria:
+
+- Salience rises on activation and evidence-backed progress, decays per tick.
+- Goals satisfy and enter cooldown only when evidence refs are provided.
+- Blocked goals stay visible with a distinct blocked reason.
+- Replay produces identical per-turn state snapshots.
+- No effect is executed.
+
+### Experiment.VolitionArbitrationConflict
+
+**Priority:** Medium
+**Status:** Planned
+
+Adds deterministic cross-goal arbitration as a pure additive layer over the
+salience-aware selector. A new `arbitrate()` function resolves conflicts by tension
+tier, records every losing goal with structured tension provenance, and labels each
+turn with an explicit `arbitration_status`.
+
+Related documents:
+
+```text
+Plans/Plan.VolitionGoalSystem.md
+Plans/Design.VolitionArbitration.md
+Plans/Idea.VolitionGoalSystem.md
+Experiments/Experiment.VolitionSalienceAndSatisfaction.md
+Experiments/Experiment.VolitionArbitrationConflict.md
+DecisionLog.md  (2026-06-26 "Arbitration tier is separate from priority bias")
+```
+
+Possible success criteria:
+
+- `arbitration_status` is recorded on every turn: `no_selection`, `single_selection`,
+  and `conflict_resolved` each appear at least once.
+- Conflict turns produce non-empty `losers` with structured tension provenance.
+- Loser ordering is deterministic.
+- Replay produces identical output.
+- No effect is executed.
 
 ### Experiment.StreamingTranscriptionMVP
 

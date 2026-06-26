@@ -2,7 +2,12 @@
 
 ## Status
 
-Candidate
+Candidate design — **not yet an implementation plan.** Before implementation begins,
+create a `Plan.Chronoception.md` (or a dedicated phase in an existing plan) that
+includes: a clock-read inventory classifying each existing direct clock read as
+cognition-perceived time, artifact/event timestamping, latency measurement, or realtime
+transport diagnostics; an experiment scaffold for temporal frame and gap behavior; and
+the decision-log, architecture, and experiment updates required by the project workflow.
 
 > Working module name: `chronoception` (perception of time, parallel to the
 > project's "tools as perception" framing). Plain alternative: `temporal`. The

@@ -1330,3 +1330,23 @@ logical change, the project-document status model treats archived documents as
 historical context only, and project-document introspection no longer advertises a
 live `Diary` document kind.
 reverses: 2026-05-09 - Diary and decision-log document contracts
+
+## 2026-06-26 - Tension arbitration tier is separate from selection weight
+Decision: `Tension` exposes two distinct ordinal fields: `priority_bias`
+(`TensionPriority` — selection-weight provenance only, never drives arbitration) and
+`arbitration_tier: u8` (lower value wins cross-goal conflict resolution). The existing
+`TENSION_PRIORITY_NOTE` remains accurate and unchanged. Probabilistic arbitration is
+out of scope by default; if introduced, it must be gated behind an explicit experiment
+mode flag and recorded in traces.
+Context: Cross-goal arbitration (Phase 5 of the volition plan) required a deterministic
+conflict order. Using `priority_bias` for arbitration would have conflated "general
+tension importance" with "conflict precedence," made the idea doc's 8-tier order
+ambiguous across five priority levels, and silently broken the Phase 3
+provenance-only invariant.
+Consequences: Every new tension must declare both fields explicitly. `priority_bias`
+must not be promoted to an arbitration driver. The idea doc's 8-tier order maps to
+`arbitration_tier` values; tiers 2 (user intent), 3 (task completion), 6 (experiment
+mode), and 8 (optional exploration) are not yet covered by any fixture tension and will
+be assigned when new tensions are added.
+Refs: docs/Plans/Idea.VolitionGoalSystem.md, docs/Plans/Plan.VolitionGoalSystem.md,
+docs/Plans/Design.VolitionArbitration.md
