@@ -21,7 +21,9 @@ validation scaffold is
 **Phase 6 (reflection-generated goal candidates) is complete**; its design is captured
 in this document and its validation scaffold is
 [`Experiment.VolitionReflectionGoalCandidates.md`](../Experiments/Experiment.VolitionReflectionGoalCandidates.md).
-Phases 7–8 remain sketched at a high level until they are ready.
+Phase 7 is expanded and its validation scaffold
+([`Experiment.VolitionBoundedInitiativeExecution.md`](../Experiments/Experiment.VolitionBoundedInitiativeExecution.md))
+is planned. Phase 8 remains sketched at a high level.
 
 > Companion to the idea note
 > [`Idea.VolitionGoalSystem.md`](Idea.VolitionGoalSystem.md), which is authoritative
@@ -76,7 +78,7 @@ influencing behavior.
 | 4 | Event-driven salience, satisfaction, blocking, cooldown — **complete** | Yes | Yes | `Experiment.VolitionSalienceAndSatisfaction` |
 | 5 | Arbitration and multi-goal conflict resolution — **complete** | Yes | Yes | `Experiment.VolitionArbitrationConflict` |
 | 6 | Reflection-generated goal candidates (proposed, not auto-accepted) — **complete** | Yes | Yes | `Experiment.VolitionReflectionGoalCandidates` |
-| 7 | Bounded internal initiative execution | Yes | Yes | future |
+| 7 | Bounded internal initiative execution — selector wiring + `InitiativeExecuted` | Yes | Yes | `Experiment.VolitionBoundedInitiativeExecution` |
 | 8 | Optional inspectable mode/bias state | Yes | Yes | future |
 
 ## Phase Details
@@ -169,185 +171,181 @@ Validation scaffold: [`Experiment.VolitionArbitrationConflict.md`](../Experiment
 
 ### Phase 6 — Reflection-generated goal candidates (complete)
 
-Added a pure, model-free proposer that maps scripted open questions to
-`ProposedGoalCandidate` values by keyword-matching against tension ids and summaries.
-Proposals stay in `VolitionState::pending_candidates` until an explicit accept or reject
-event moves them; nothing is silently promoted. Accepted candidates land in
-`VolitionState::accepted_candidates`, distinct from fixture-seeded goals and not wired
-into any selector in this phase.
+Added `propose_goal_candidates`, a pure, model-free function that maps open questions
+to `ProposedGoalCandidate` values by keyword-matching against tension ids and
+summaries. `ProposedGoalCandidate` enforces non-empty `proposal_evidence` via
+`try_new` (and through a custom `Deserialize` impl so the invariant holds through
+serde). Three new `VolitionEvent` variants (`GoalCandidateAdded`,
+`GoalCandidateAccepted`, `GoalCandidateRejected`) manage the candidate lifecycle;
+the reducer keeps candidates in two separate, clearly-named collections —
+`VolitionState::pending_candidates` and `VolitionState::accepted_candidates` — both
+distinct from the fixture-seeded `goals` map. Accepted candidates store a full `Goal`
+data record keyed by goal id; their dynamic state (`GoalDynamicState`) and selector
+wiring are deferred to Phase 7. A `volition-reflection-goal-candidates` experiment
+replays a scripted 4-turn sequence (propose → accept → reject → inert) and writes
+per-turn snapshots with `executed_effects = 0` on every turn. All prior tests pass;
+new unit tests cover the full candidate lifecycle. Validation scaffold:
+[`Experiment.VolitionReflectionGoalCandidates.md`](../Experiments/Experiment.VolitionReflectionGoalCandidates.md).
 
-#### Open questions to resolve before building
+### Phase 7 — Bounded internal initiative execution
 
-1. **Where do proposed goals live in `VolitionState`?** Leaning: a separate
-   `pending_candidates` collection distinct from the `goals` map, so fixture-seeded
-   goals and proposed candidates never share the same map. On acceptance the candidate
-   moves into a new `accepted_candidates` map keyed by goal id, providing a clear
-   boundary between the two sources.
-2. **Should accepted candidates feed into the selector in this phase?** Leaning: no —
-   Phase 6 tracks accepted candidates in state but does not wire them into
-   `select_goals_with_salience`. Wiring is deferred to Phase 7, which introduces
-   bounded initiative execution that needs the selector to see accepted candidates.
-3. **What is the minimal evidence ref for a proposal?** Leaning: a non-empty
-   `EvidenceRef` naming the source document or open question that motivated the
-   candidate (e.g. `"open-question: Is continuity preserved across sessions?"`). The
-   same structural rule as progress and satisfaction evidence from Phase 4.
-4. **Should there be a cap on `pending_candidates` length?** Leaning: no hard cap in
-   Phase 6; the experiment scripts a small fixed number (≤5) so overflow is not
-   exercised. Add a cap in a later phase if the experiment reveals accumulation risks.
+Two sub-slices in sequence:
+
+1. **Selector wiring** — wire accepted candidates into `select_goals_with_salience`
+   so they compete alongside fixture goals in selection and arbitration.
+2. **Initiative execution** — translate the arbitration winner into a bounded
+   `InitiativeOutput`, apply it as a `VolitionEvent::InitiativeExecuted`, and trace
+   the full chain: goal → delta → arbitration → execution → output.
+
+No write-capable external action is added. All execution output is a purely structural
+record describing what a runtime system *would* do. `executed_effects = 0` on every
+experiment turn; `InitiativeExecuted` records the internal output only.
+
+#### Open question to resolve before building
+
+**How should accepted candidates get `activation_keywords` and enter the selector?**
+
+*Context:* `ProposedGoalCandidate::into_goal()` currently sets
+`activation_keywords: vec![]`. Without keywords the selector's keyword-match gate
+rejects them immediately, so selector wiring requires extending the candidate type.
+
+**Option A — Derive keywords at proposal time from matched tension id parts
+(recommended).** `propose_goal_candidates` splits each matched tension id on `-` and
+uses the parts as activation keywords (e.g. `continuity-preservation` →
+`["continuity", "preservation"]`). `ProposedGoalCandidate` gains an
+`activation_keywords: Vec<String>` field; `into_goal()` passes the keywords through.
+The selector loop gains a second pass over `state.accepted_candidates` after
+`fixture.goals`, reusing `state.goals` for dynamic state with an initial
+`GoalDynamicState` entry inserted by the `GoalCandidateAccepted` reducer branch.
+Deterministic and pure; no API change to events.
+
+**Option B — Supply keywords at acceptance time.** `GoalCandidateAccepted` carries
+`activation_keywords: Vec<String>`. The caller specifies which keywords activate the
+accepted goal. Flexible but requires callers to know activation terms that are already
+implicit in the matched tensions.
+
+**Option C — Skip keyword matching for accepted candidates.** The selector normalizes
+the accepted goal's `title` and `summary` and matches against those directly.
+No event or type changes needed, but creates inconsistent matching behaviour between
+fixture goals (explicit keywords) and accepted goals (content-based).
+
+The plan proceeds with **Option A**. Verify this choice with the user before building.
 
 #### Data model additions
 
-- Add `ProposedGoalCandidate` with private fields and a `try_new(...)` constructor:
+- `ProposedGoalCandidate` gains `activation_keywords: Vec<String>` (set by
+  `propose_goal_candidates` from matched tension id parts; passed through `try_new`
+  and `into_goal`).
+- `GoalCandidateAccepted` reducer branch inserts `GoalDynamicState::initial()` into
+  `state.goals` for the accepted goal id, so the accepted goal receives salience,
+  decay, and cooldown management immediately on acceptance using the same reducer
+  branches as fixture goals.
+- `select_goals_with_salience` gains a second goal source: after iterating
+  `fixture.goals` it iterates `state.accepted_candidates.values()`, using
+  `state.goals` for dynamic state lookup (identical logic). Tier and priority
+  resolution uses the shared fixture tensions.
+- New `InitiativeOutput` enum (pure, serializable, one variant per `AllowedEffect`):
 
   ```rust
-  pub struct ProposedGoalCandidate { /* private fields */ }
-
-  impl ProposedGoalCandidate {
-      pub fn try_new(
-          id: String,
-          title: String,
-          summary: String,
-          tension_ids: Vec<String>,
-          scope: GoalScope,
-          base_priority: u8,
-          allowed_effects: Vec<AllowedEffect>,
-          satisfaction_condition_summary: String,
-          proposal_evidence: Vec<EvidenceRef>, // must be non-empty
-          source_description: String,
-      ) -> Result<Self, &'static str>
+  pub enum InitiativeOutput {
+      ReflectionRequested { proposed_question: String },
+      ContextRetrievalRequested { query_terms: Vec<String> },
+      ExperimentProposed { hypothesis: String, scope: GoalScope },
+      OpenThreadSurfaced { thread_summary: String },
   }
   ```
 
-  `try_new` returns `Err` if `proposal_evidence` is empty; the error is
-  structural rather than convention — a candidate with no evidence refs cannot
-  be constructed at all.
+- `GoalDynamicState` gains `last_initiative_output: Option<InitiativeOutput>`.
 
-- Extend `VolitionState` with two new collections:
-  - `pending_candidates: Vec<ProposedGoalCandidate>` — awaiting review; presence
-    in this collection is the "pending review" state (no separate status field)
-  - `accepted_candidates: BTreeMap<String, Goal>` — accepted data records keyed
-    by goal id; not yet wired into any selector. Lifecycle state
-    (`GoalDynamicState`: salience, cooldown, blocking, satisfaction) is deferred
-    to Phase 7 when selector integration is designed.
-
-#### New VolitionEvent variants
+#### New VolitionEvent variant
 
 ```rust
-GoalCandidateAdded {
-    candidate: ProposedGoalCandidate,
-    tick: u64,
-},
-GoalCandidateAccepted {
+InitiativeExecuted {
     goal_id: String,
-    acceptance_evidence: EvidenceRef,
-    tick: u64,
-},
-GoalCandidateRejected {
-    goal_id: String,
-    reason: String,
+    effect: AllowedEffect,
+    output: InitiativeOutput,
+    rationale: String,
     tick: u64,
 },
 ```
 
-The reducer handles each:
-- `GoalCandidateAdded`: appends to `pending_candidates`.
-- `GoalCandidateAccepted`: requires a non-empty `acceptance_evidence`; moves the
-  candidate from `pending_candidates` into `accepted_candidates` (with status
-  `Accepted`), recording the evidence ref in the candidate's initial `evidence_refs`.
-  If no candidate with the given `goal_id` exists in pending, the event is a no-op
-  (reducer remains pure; no panic).
-- `GoalCandidateRejected`: removes the candidate from `pending_candidates`. The
-  rejection reason is recorded in the event log. No durable state for rejected
-  candidates is needed in Phase 6; the event log is the audit trail.
-
-Existing event semantics and selector behavior remain unchanged; Phase 6 adds
-candidate-specific event variants and reducer branches only.
+Reducer: sets the goal's status to `Active`, records `last_activated_tick`, stores
+`output` in `GoalDynamicState::last_initiative_output`. Does not panic on unknown
+goal id (same no-op pattern as other goal lifecycle events).
 
 #### New pure function
 
 ```rust
-pub struct GoalCandidateProposalResult {
-    pub candidates: Vec<ProposedGoalCandidate>,
-    pub unmatched_questions: Vec<String>,
-}
-
-pub fn propose_goal_candidates(
-    open_questions: &[String],
-    fixture: &VolitionFixture,
-) -> GoalCandidateProposalResult
+pub fn execute_initiative(
+    initiative: &InitiativeProposal,
+    goal: &Goal,
+) -> InitiativeOutput
 ```
 
-Deterministic, pure, no model call. For each open question string, attempts to match
-keywords against fixture tension summaries and ids to assign `tension_ids`. Each
-question that matches at least one tension becomes a `ProposedGoalCandidate` in
-`candidates`, with `proposal_evidence` containing an `EvidenceRef` naming the source
-question (trimmed, non-empty). Questions that match no tension are collected in
-`unmatched_questions` so callers can inspect what was dropped without inferring it
-from input/output count differences.
+Deterministic, no model call. Maps `AllowedEffect` → `InitiativeOutput` using goal
+`summary`, `title`, and `initiative.matched_terms`:
+- `Reflect` → `ReflectionRequested { proposed_question }`
+- `RetrieveContext` → `ContextRetrievalRequested { query_terms: matched_terms }`
+- `ProposeExperiment` → `ExperimentProposed { hypothesis, scope: goal.scope }`
+- `SurfaceOpenThread` → `OpenThreadSurfaced { thread_summary: goal.summary }`
 
 #### Experiment
 
-Register a `volition-reflection-goal-candidates` experiment (spec:
-`Experiment.VolitionReflectionGoalCandidates.md`) with a scripted sequence:
+Register a `volition-bounded-initiative-execution` experiment (spec:
+`Experiment.VolitionBoundedInitiativeExecution.md`) with a scripted sequence:
 
-1. **Propose turn** — call `propose_goal_candidates` with 3–4 scripted open questions
-   drawn from different tension categories (e.g. one coherence question, one continuity
-   question, one curiosity question, one that matches no tension). Apply resulting
-   `GoalCandidateAdded` events. Verify all matched candidates are present in
-   `pending_candidates`; verify the unmatched question appears in
-   `GoalCandidateProposalResult.unmatched_questions` and produces no candidate.
-2. **Accept turn** — apply `GoalCandidateAccepted` for one candidate with an
-   `EvidenceRef`. Verify it moves to `accepted_candidates` and is absent from
-   `pending_candidates`.
-3. **Reject turn** — apply `GoalCandidateRejected` for one candidate with a reason.
-   Verify it is removed from `pending_candidates`.
-4. **Inert turn** — apply no review events. Verify the remaining candidate stays in
-   `pending_candidates` unchanged.
+1. **Proposal turn** — `propose_goal_candidates` on one matched question; apply
+   `GoalCandidateAdded`. Verify candidate carries non-empty `activation_keywords`
+   derived from its matched tension id parts.
+2. **Accept turn** — apply `GoalCandidateAccepted`. Verify:
+   - A `GoalDynamicState` entry now exists in `state.goals` for the accepted goal id.
+   - `select_goals_with_salience` returns the accepted goal when input matches its
+     derived keywords (selector wiring verified here).
+3. **Arbitration turn** — input that matches both one fixture goal and the accepted
+   goal. Run `select_goals_with_salience` + `arbitrate`. Verify tier ordering is
+   respected; the accepted goal's effective tier is derived from its `tension_ids`
+   in the shared fixture.
+4. **Execution turn** — call `execute_initiative` on the arbitration winner; apply
+   `InitiativeExecuted`. Verify:
+   - `GoalDynamicState::last_initiative_output` is set with the correct variant.
+   - The event records the output, rationale, and tick.
+   - `executed_effects = 0` (no external side effect); `InitiativeExecuted` records
+     the structural output only.
+5. **Outcome turn** — apply `GoalProgressObserved` or `GoalSatisfied`. Verify goal
+   lifecycle advances correctly and the evidence ref is preserved.
 
-Each turn records: input, events applied, `pending_candidates` snapshot,
-`accepted_candidates` snapshot, and an explicit no-execution marker. Replay must
-produce identical output.
+Each turn records: input, events applied, `select_goals_with_salience` output,
+arbitration result (turns 3–5), `InitiativeExecuted` output (turn 4), and
+`GoalDynamicState` snapshot. Replay must produce identical output.
 
 #### Verify (automated)
 
-- `ProposedGoalCandidate` cannot be constructed with an empty `proposal_evidence` list.
-- `GoalCandidateAdded` appends to `pending_candidates`; does not auto-accept.
-- `GoalCandidateAccepted` without a prior `GoalCandidateAdded` for the same id is a
-  no-op (reducer does not panic).
-- `GoalCandidateAccepted` with a valid `EvidenceRef` moves the candidate to
-  `accepted_candidates`.
-- `GoalCandidateRejected` removes the candidate from `pending_candidates`.
-- A remaining (neither accepted nor rejected) candidate stays in `pending_candidates`
-  across ticks.
-- `accepted_candidates` is keyed by goal id; goals in it are distinct from
-  fixture-seeded goals in `VolitionState.goals`.
-- `propose_goal_candidates` is deterministic: same input produces identical output.
-- Existing reducer branches and selector outputs are unchanged; all prior event-handling unit tests still pass.
-- No effect is executed; `accepted_candidates` map is not fed into any selector in this
-  phase.
-- Replay produces identical state and event logs.
+- Accepted candidate appears in `select_goals_with_salience` output after acceptance
+  when input matches its derived activation keywords.
+- Accepted candidate competes in arbitration alongside fixture goals; tier ordering
+  is respected using the shared fixture tensions.
+- `execute_initiative` is deterministic: same input → same `InitiativeOutput`.
+- `InitiativeExecuted` stores the output in `GoalDynamicState::last_initiative_output`.
+- The accepted goal's salience, cooldown, and lifecycle are managed by the same
+  reducer branches as fixture goals (no parallel code path).
+- All prior tests pass; existing selector and reducer behaviour is unchanged.
 - `cargo test` and `cargo clippy --all-targets -- -D warnings` pass.
 
 #### Verify (human)
 
-Read the per-turn candidate snapshot and confirm:
-- Proposed candidates are clearly distinct from fixture-seeded accepted goals.
-- The accept/reject trace answers "why was this accepted or rejected?" from the
-  evidence ref and reason fields alone.
-- Nothing in the output implies a candidate was active or influenced behavior before
-  acceptance.
+- Read the selection output and confirm the accepted candidate is visually distinct
+  from fixture goals (source is identifiable from `source_reference` and
+  `evidence_refs`, not from position alone).
+- The `InitiativeOutput` for each `AllowedEffect` variant reads as a plausible
+  internal action — a reflection question, a retrieval query, an experiment
+  hypothesis, or a thread summary.
+- The trace chain — goal → tension provenance → delta → arbitration →
+  `execute_initiative` output — answers "why did this initiative execute?" without
+  requiring external context.
+- Nothing in the output implies a real external write-capable action occurred.
 
-- Full scope and success/failure criteria live in
-  `Experiment.VolitionReflectionGoalCandidates.md` (to be created when Phase 6 build
-  begins).
-
-### Phase 7 — Bounded internal initiative execution
-
-Allow active goals to cause bounded *internal* effects (bring back an unresolved
-thread, ask a self-directed research question, propose an experiment).
-
-- **Verify:** internal initiatives occur and are traced; no write-capable external
-  action occurs without explicit workflow approval.
+Full scope and success/failure criteria live in
+[`Experiment.VolitionBoundedInitiativeExecution.md`](../Experiments/Experiment.VolitionBoundedInitiativeExecution.md).
 
 ### Phase 8 — Optional mode/bias experiments
 
@@ -375,9 +373,12 @@ expanded, not silently resolved:
   separate collections, distinct from fixture-seeded `goals`. (2) Selector wiring is
   deferred to Phase 7. (3) `EvidenceRef` newtype enforces non-empty evidence for
   proposals. (4) No hard cap in Phase 6; the experiment scripts ≤4 questions.
-- **Phase 7:** How should accepted candidates from Phase 6 wire into the selector and
-  initiative pipeline? Should they merge into the fixture-backed `goals` map or remain
-  in a separate `accepted_candidates` collection?
+- **Phase 7:** *(Decision made for this plan; confirm with user before building.)*
+  Accepted candidates wire into `select_goals_with_salience` via Option A: keywords
+  derived from matched tension id parts at proposal time; `GoalDynamicState` entry
+  inserted into `state.goals` at acceptance time; selector gains a second pass over
+  `state.accepted_candidates` using the same dynamic state map. See Phase 7 section
+  for full rationale and alternatives.
 - **Cross-cutting:** Should goals be live state, memory records, or both? Which fields
   belong only in live state vs. durable memory? (Leaning: both, carefully — live state
   for runtime reducer behavior, memory records for cross-session continuity. Confirm
@@ -389,10 +390,10 @@ Per [`ProjectWorkflow.md`](../ProjectFrame/ProjectWorkflow.md):
 
 - **This plan** as phases start, complete, or change shape.
 - **Per-phase experiment specs** under `docs/Experiments/` (validation scaffolds);
-  fill in their Results/Interpretation after each run. Phase 6 requires creating
-  `Experiment.VolitionReflectionGoalCandidates.md` before implementation begins.
+  fill in their Results/Interpretation after each run. Phase 7's validation scaffold
+  (`Experiment.VolitionBoundedInitiativeExecution.md`) is already created.
 - **`Experiment.Backlog.md`** when a future phase's experiment is promoted from idea
-  to planned. Update Phase 6's entry from Planned → Running → Completed as the phase
+  to planned. Update Phase 7's entry from Planned → Running → Completed as the phase
   progresses.
 - **Architecture docs** (e.g.
   [`Architecture.RuntimeLoop.md`](../Architecture/Architecture.RuntimeLoop.md), or a

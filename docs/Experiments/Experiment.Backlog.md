@@ -53,7 +53,8 @@ Later
 | `Experiment.VolitionTraceBackedInitiative` | Medium | Completed | Can pre-initiative traces explain goal → delta → candidate initiatives → proposed bounded effect before any behavior changes? |
 | `Experiment.VolitionSalienceAndSatisfaction` | Medium | Completed | Can a pure, replayable volition state raise/decay salience and satisfy, block, cool down, and retire goals from evidence without executing any effect? |
 | `Experiment.VolitionArbitrationConflict` | Medium | Completed | Can a pure arbitrate() function resolve cross-goal conflict by tension tier, record structured provenance for every loser, and produce deterministic replayable output without executing any effect? |
-| `Experiment.VolitionReflectionGoalCandidates` | Medium | Planned | Can a pure, model-free proposer map scripted open questions to goal candidates with evidence refs, and can accept/reject events move candidates through a durable pending-review state without influencing any selector? |
+| `Experiment.VolitionReflectionGoalCandidates` | Medium | Running | Can a pure, model-free proposer map scripted open questions to goal candidates with evidence refs, and can accept/reject events move candidates through a durable pending-review state without influencing any selector? |
+| `Experiment.VolitionBoundedInitiativeExecution` | Medium | Planned | Can accepted candidates wire into the selector via tension-derived keywords and, once selected, translate the arbitration winner into a bounded InitiativeOutput without a model call or external action? |
 | `Experiment.StreamingTranscriptionMVP` | Medium | Completed | Can live speech be represented as observable partial and final transcript events? |
 | `Experiment.AudioLoopMVP` | Medium | Superseded | Can a minimal audio loop create a stronger sense of presence than text-only interaction? |
 | `Experiment.ToolAsPerceptionCalculator` | Medium | Completed | How should a simple read-only computational tool be represented as perception? |
@@ -416,7 +417,7 @@ Possible success criteria:
 ### Experiment.VolitionReflectionGoalCandidates
 
 **Priority:** Medium
-**Status:** Planned
+**Status:** Running
 
 Let a reflection/sleep step propose goal candidates with evidence references. Proposals
 stay in pending review until an explicit accept or reject event moves them; nothing is
@@ -443,6 +444,40 @@ Possible success criteria:
 - `accepted_candidates` is distinct from fixture-seeded `goals`; no accepted candidate influences any selector in this phase.
 - Replay produces identical state and event logs.
 - No effect is executed.
+
+### Experiment.VolitionBoundedInitiativeExecution
+
+**Priority:** Medium
+**Status:** Planned
+
+Wire accepted goal candidates into `select_goals_with_salience` via activation keywords
+derived from matched tension id parts, then translate the arbitration winner into a
+bounded `InitiativeOutput` — a purely structural record — via a new
+`execute_initiative` pure function and `VolitionEvent::InitiativeExecuted`. The chain
+from proposal to execution is traced and replayable. No write-capable external action;
+`executed_effects = 0` on every turn.
+
+Related documents:
+
+```text
+Plans/Plan.VolitionGoalSystem.md
+Plans/Idea.VolitionGoalSystem.md
+Experiments/Experiment.VolitionReflectionGoalCandidates.md
+Experiments/Experiment.VolitionArbitrationConflict.md
+DecisionLog.md  (2026-05-15 "Volition is an explicit research surface")
+```
+
+Possible success criteria:
+
+- Accepted candidate's `activation_keywords` are non-empty and derived from matched tension id parts.
+- Accepted candidate appears in `select_goals_with_salience` output when input matches derived keywords.
+- Accepted candidate competes in `arbitrate` alongside fixture goals; tier ordering is respected.
+- `execute_initiative` is deterministic: same input → same `InitiativeOutput`.
+- `InitiativeExecuted` stores output in `GoalDynamicState::last_initiative_output`.
+- The accepted goal's lifecycle (salience, cooldown, retirement) uses the same reducer branches as fixture goals.
+- All prior tests pass; existing selector and reducer behaviour is unchanged.
+- Replay produces identical state and event logs.
+- No effect is executed (`executed_effects = 0`).
 
 ### Experiment.StreamingTranscriptionMVP
 
