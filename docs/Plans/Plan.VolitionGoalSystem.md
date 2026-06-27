@@ -21,9 +21,11 @@ validation scaffold is
 **Phase 6 (reflection-generated goal candidates) is complete**; its design is captured
 in this document and its validation scaffold is
 [`Experiment.VolitionReflectionGoalCandidates.md`](../Experiments/Experiment.VolitionReflectionGoalCandidates.md).
-Phase 7 is expanded and its validation scaffold
-([`Experiment.VolitionBoundedInitiativeExecution.md`](../Experiments/Experiment.VolitionBoundedInitiativeExecution.md))
-is planned. Phase 8 remains sketched at a high level.
+**Phase 7 (bounded internal initiative execution) is complete**; its validation scaffold
+is
+[`Experiment.VolitionBoundedInitiativeExecution.md`](../Experiments/Experiment.VolitionBoundedInitiativeExecution.md)
+and its status is Running (automated tests pass; awaiting human review).
+Phase 8 remains sketched at a high level.
 
 > Companion to the idea note
 > [`Idea.VolitionGoalSystem.md`](Idea.VolitionGoalSystem.md), which is authoritative
@@ -78,7 +80,7 @@ influencing behavior.
 | 4 | Event-driven salience, satisfaction, blocking, cooldown — **complete** | Yes | Yes | `Experiment.VolitionSalienceAndSatisfaction` |
 | 5 | Arbitration and multi-goal conflict resolution — **complete** | Yes | Yes | `Experiment.VolitionArbitrationConflict` |
 | 6 | Reflection-generated goal candidates (proposed, not auto-accepted) — **complete** | Yes | Yes | `Experiment.VolitionReflectionGoalCandidates` |
-| 7 | Bounded internal initiative execution — selector wiring + `InitiativeExecuted` | Yes | Yes | `Experiment.VolitionBoundedInitiativeExecution` |
+| 7 | Bounded internal initiative execution — selector wiring + `InitiativeExecuted` — **complete** | Yes | Yes | `Experiment.VolitionBoundedInitiativeExecution` |
 | 8 | Optional inspectable mode/bias state | Yes | Yes | future |
 
 ## Phase Details

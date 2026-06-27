@@ -20,8 +20,9 @@ outside the static fixture: a pure `propose_goal_candidates` function maps scrip
 questions to `ProposedGoalCandidate` values by matching question terms against tension
 ids and summaries. Proposed candidates stay in `VolitionState::pending_candidates` until
 an explicit accept or reject event moves them. Accepted candidates land in
-`VolitionState::accepted_candidates` (a separate map from fixture-seeded goals) and are
-not wired into any selector in this phase.
+`VolitionState::accepted_candidates` (static `Goal` data) and, via `GoalCandidateAccepted`,
+also receive a `GoalDynamicState` entry in `VolitionState::goals` for selector and lifecycle
+wiring — validated in `Experiment.VolitionBoundedInitiativeExecution`.
 
 The scripted sequence covers four turns:
 
@@ -49,8 +50,8 @@ evidence that:
 - Accepted candidates are recorded separately from fixture goals, establishing a clear
   source-of-truth boundary;
 - Replay produces identical state and event logs (determinism);
-- No accepted candidate is wired into `select_goals_with_salience` before selector
-  integration for accepted candidates.
+- Accepted candidates are recorded separately from fixture goals, establishing a clear
+  source-of-truth boundary for goal data vs. dynamic state.
 
 ## Related Documents
 
@@ -73,7 +74,7 @@ requiring a model call or auto-accepting any candidate.
 ## What This Experiment Does NOT Measure
 
 - Model-generated question quality (this phase uses scripted questions only).
-- Whether accepted candidates improve selector output (wiring is deferred to selector integration for accepted candidates).
+- Whether accepted candidates improve selector output (wiring via activation_keywords was validated in `Experiment.VolitionBoundedInitiativeExecution`).
 - Whether the keyword matching is precise enough for production use (it is a starting
   point; richer matching is a future phase decision).
 
@@ -122,8 +123,8 @@ no-match case:
 - [x] `propose_goal_candidates` is deterministic: same input produces identical output.
 - [x] Existing reducer branches and selector outputs are unchanged; all prior
   event-handling unit tests still pass.
-- [x] No effect is executed; `accepted_candidates` map is not fed into any selector in
-  this phase.
+- [x] No effect is executed; accepted candidates' selector wiring was validated in the
+  next experiment (`Experiment.VolitionBoundedInitiativeExecution`).
 - [x] Replay produces identical state and event logs.
 - [x] `cargo test` and `cargo clippy --all-targets -- -D warnings` pass.
 
@@ -152,10 +153,8 @@ _To be filled in after the first human review run._
 
 ## Follow-Up Questions
 
-- **Selector integration**: How should `accepted_candidates` wire into
-  `select_goals_with_salience` — merged into fixture goals or as a parallel selector
-  layer?
-- Should accepted candidates inherit `activation_keywords` from their matched tensions
-  rather than defaulting to empty?
-- Should a cap on `pending_candidates` length be introduced once the experiment reveals
-  accumulation risks?
+- **Selector integration**: Resolved in `Experiment.VolitionBoundedInitiativeExecution` —
+  accepted candidates are merged into the same selector layer as fixture goals, keyed by
+  `activation_keywords` derived from tension id parts.
+- Should a cap on `pending_candidates` length be introduced once evidence accumulates
+  about accumulation risks in longer runs?

@@ -115,6 +115,26 @@ pub enum AllowedEffect {
     SurfaceOpenThread,
 }
 
+/// The structural output of a bounded internal initiative. Pure and serializable — one variant
+/// per `AllowedEffect`. Records what the runtime *would* do; no external write-capable action.
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case", tag = "kind")]
+pub enum InitiativeOutput {
+    ReflectionRequested {
+        proposed_question: String,
+    },
+    ContextRetrievalRequested {
+        query_terms: Vec<String>,
+    },
+    ExperimentProposed {
+        hypothesis: String,
+        scope: GoalScope,
+    },
+    OpenThreadSurfaced {
+        thread_summary: String,
+    },
+}
+
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 pub struct InitiativeProposal {
     pub goal_id: String,
@@ -392,6 +412,10 @@ impl fmt::Display for EvidenceRefError {
 /// A goal candidate proposed by a reflection step. Stays in `VolitionState::pending_candidates`
 /// until explicitly accepted or rejected. Cannot be constructed with an empty
 /// `proposal_evidence` — use `try_new`.
+///
+/// `activation_keywords` are derived at proposal time from the matched tension id parts
+/// (e.g. `continuity-preservation` → `["continuity", "preservation"]`) so the accepted goal
+/// can compete in `select_goals_with_salience` without requiring callers to supply keywords.
 #[derive(Clone, Debug, PartialEq, Serialize)]
 pub struct ProposedGoalCandidate {
     id: String,
@@ -404,6 +428,7 @@ pub struct ProposedGoalCandidate {
     satisfaction_condition_summary: String,
     proposal_evidence: Vec<EvidenceRef>,
     source_description: String,
+    activation_keywords: Vec<String>,
 }
 
 impl ProposedGoalCandidate {
@@ -419,6 +444,7 @@ impl ProposedGoalCandidate {
         satisfaction_condition_summary: String,
         proposal_evidence: Vec<EvidenceRef>,
         source_description: String,
+        activation_keywords: Vec<String>,
     ) -> Result<Self, &'static str> {
         if proposal_evidence.is_empty() {
             return Err("proposal_evidence must not be empty");
@@ -434,6 +460,7 @@ impl ProposedGoalCandidate {
             satisfaction_condition_summary,
             proposal_evidence,
             source_description,
+            activation_keywords,
         })
     }
 
@@ -453,6 +480,10 @@ impl ProposedGoalCandidate {
         &self.title
     }
 
+    pub fn activation_keywords(&self) -> &[String] {
+        &self.activation_keywords
+    }
+
     fn into_goal(self, acceptance_evidence: EvidenceRef) -> Goal {
         let mut evidence_refs: Vec<String> = self
             .proposal_evidence
@@ -468,7 +499,7 @@ impl ProposedGoalCandidate {
             status: GoalStatus::Accepted,
             scope: self.scope,
             base_priority: self.base_priority,
-            activation_keywords: vec![],
+            activation_keywords: self.activation_keywords,
             allowed_effects: self.allowed_effects,
             satisfaction_condition_summary: self.satisfaction_condition_summary,
             evidence_refs,
@@ -492,6 +523,8 @@ struct ProposedGoalCandidateRaw {
     satisfaction_condition_summary: String,
     proposal_evidence: Vec<EvidenceRef>,
     source_description: String,
+    #[serde(default)]
+    activation_keywords: Vec<String>,
 }
 
 impl<'de> Deserialize<'de> for ProposedGoalCandidate {
@@ -511,6 +544,7 @@ impl<'de> Deserialize<'de> for ProposedGoalCandidate {
             raw.satisfaction_condition_summary,
             raw.proposal_evidence,
             raw.source_description,
+            raw.activation_keywords,
         )
         .map_err(serde::de::Error::custom)
     }
@@ -536,6 +570,8 @@ pub struct GoalDynamicState {
     pub last_satisfied_tick: Option<u64>,
     /// Tick at which cooldown ends and the goal returns to Accepted.
     pub cooldown_until_tick: Option<u64>,
+    /// The most recent initiative output for this goal, set by `InitiativeExecuted`.
+    pub last_initiative_output: Option<InitiativeOutput>,
 }
 
 impl GoalDynamicState {
@@ -548,6 +584,7 @@ impl GoalDynamicState {
             last_activated_tick: None,
             last_satisfied_tick: None,
             cooldown_until_tick: None,
+            last_initiative_output: None,
         }
     }
 }
@@ -557,12 +594,13 @@ impl GoalDynamicState {
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 pub struct VolitionState {
     pub tick: u64,
-    /// Keyed by goal id. Fixture-seeded goals only.
+    /// Keyed by goal id. Holds dynamic state for fixture-seeded goals and accepted candidates
+    /// (wired into the selector and lifecycle reducer after `GoalCandidateAccepted`).
     pub goals: BTreeMap<String, GoalDynamicState>,
     /// Proposed goal candidates awaiting explicit accept or reject.
     pub pending_candidates: Vec<ProposedGoalCandidate>,
-    /// Accepted goal data records keyed by goal id. Distinct from `goals`; not wired into
-    /// any selector in Phase 6.
+    /// Accepted goal data records keyed by goal id. Distinct from `goals`; holds the static
+    /// `Goal` struct (title, tension_ids, activation_keywords, etc.) for accepted candidates.
     pub accepted_candidates: BTreeMap<String, Goal>,
 }
 
@@ -661,6 +699,15 @@ pub enum VolitionEvent {
         reason: String,
         tick: u64,
     },
+    /// Records a bounded internal initiative output. Sets the goal to Active and stores
+    /// the output in `GoalDynamicState::last_initiative_output`. Executes no external effect.
+    InitiativeExecuted {
+        goal_id: String,
+        effect: AllowedEffect,
+        output: InitiativeOutput,
+        rationale: String,
+        tick: u64,
+    },
 }
 
 /// Pure reducer: applies one event to state and returns the next state.
@@ -738,11 +785,30 @@ pub fn apply(mut state: VolitionState, event: VolitionEvent) -> VolitionState {
             {
                 let candidate = state.pending_candidates.remove(pos);
                 let goal = candidate.into_goal(acceptance_evidence);
+                // Insert initial dynamic state so the accepted goal participates in
+                // select_goals_with_salience with the same salience/cooldown paths as
+                // fixture goals.
+                state
+                    .goals
+                    .entry(goal_id.clone())
+                    .or_insert_with(GoalDynamicState::initial);
                 state.accepted_candidates.insert(goal_id, goal);
             }
         }
         VolitionEvent::GoalCandidateRejected { goal_id, .. } => {
             state.pending_candidates.retain(|c| c.id() != goal_id);
+        }
+        VolitionEvent::InitiativeExecuted {
+            goal_id,
+            output,
+            tick,
+            ..
+        } => {
+            if let Some(dynamic) = state.goals.get_mut(&goal_id) {
+                dynamic.status = GoalStatus::Active;
+                dynamic.last_activated_tick = Some(tick);
+                dynamic.last_initiative_output = Some(output);
+            }
         }
     }
     state
@@ -760,7 +826,8 @@ fn event_tick(event: &VolitionEvent) -> u64 {
         | VolitionEvent::TickAdvanced { tick }
         | VolitionEvent::GoalCandidateAdded { tick, .. }
         | VolitionEvent::GoalCandidateAccepted { tick, .. }
-        | VolitionEvent::GoalCandidateRejected { tick, .. } => *tick,
+        | VolitionEvent::GoalCandidateRejected { tick, .. }
+        | VolitionEvent::InitiativeExecuted { tick, .. } => *tick,
     }
 }
 
@@ -1101,6 +1168,72 @@ pub fn select_goals_with_salience(
         let matched_terms = matched_keywords(goal, &input_terms);
 
         // Blocked goals stay visible but are not selected.
+        if matches!(dynamic_status, GoalStatus::Blocked) {
+            visible_blocked.push(OmittedGoal {
+                goal: goal.clone(),
+                relevance_score: 0.0,
+                matched_terms,
+                reason: "goal status is blocked (visible unresolved tension)".to_string(),
+            });
+            continue;
+        }
+
+        if matched_terms.is_empty() {
+            omitted.push(OmittedGoal {
+                goal: goal.clone(),
+                relevance_score: 0.0,
+                matched_terms,
+                reason: "no activation keywords matched".to_string(),
+            });
+            continue;
+        }
+
+        let salience = state
+            .goals
+            .get(&goal.id)
+            .map(|dynamic| dynamic.salience)
+            .unwrap_or(0);
+        let relevance_score =
+            compute_relevance_with_salience(goal, fixture, &matched_terms, salience);
+        let fragment = build_fragment(goal, relevance_score, &matched_terms);
+        evaluated_fragments.push(GoalEvaluation {
+            goal: goal.clone(),
+            matched_terms,
+            relevance_score,
+            fragment,
+        });
+    }
+
+    // Second pass: accepted candidates use the same logic as fixture goals.
+    for goal in state.accepted_candidates.values() {
+        let dynamic_status = state
+            .goals
+            .get(&goal.id)
+            .map(|dynamic| dynamic.status)
+            .unwrap_or(goal.status);
+
+        if matches!(dynamic_status, GoalStatus::Cooldown) {
+            suppressed_cooldown.push(OmittedGoal {
+                goal: goal.clone(),
+                relevance_score: 0.0,
+                matched_terms: Vec::new(),
+                reason: format!("goal status is {dynamic_status} (cooldown suppressed)"),
+            });
+            continue;
+        }
+
+        if matches!(dynamic_status, GoalStatus::Proposed | GoalStatus::Retired) {
+            omitted.push(OmittedGoal {
+                goal: goal.clone(),
+                relevance_score: 0.0,
+                matched_terms: Vec::new(),
+                reason: format!("goal status is {dynamic_status}"),
+            });
+            continue;
+        }
+
+        let matched_terms = matched_keywords(goal, &input_terms);
+
         if matches!(dynamic_status, GoalStatus::Blocked) {
             visible_blocked.push(OmittedGoal {
                 goal: goal.clone(),
@@ -1491,6 +1624,15 @@ pub fn propose_goal_candidates(
             .expect("trimmed question is non-empty; construction cannot fail");
         let id = question_to_slug(trimmed);
 
+        // Derive activation keywords from matched tension id parts so the accepted
+        // goal can compete in select_goals_with_salience without extra caller input.
+        let activation_keywords: Vec<String> = matched_tension_ids
+            .iter()
+            .flat_map(|tension_id| tension_id.split('-').map(str::to_lowercase))
+            .collect::<std::collections::BTreeSet<_>>()
+            .into_iter()
+            .collect();
+
         let candidate = ProposedGoalCandidate::try_new(
             id,
             trimmed.to_string(),
@@ -1502,6 +1644,7 @@ pub fn propose_goal_candidates(
             format!("The question '{trimmed}' is resolved or addressed."),
             vec![evidence],
             format!("open-question: {trimmed}"),
+            activation_keywords,
         )
         .expect("evidence is non-empty; construction cannot fail");
 
@@ -1550,6 +1693,30 @@ fn question_to_slug(question: &str) -> String {
         }
     }
     format!("proposed-{}", result.trim_matches('-'))
+}
+
+/// Map an `InitiativeProposal` to an `InitiativeOutput`. Pure and deterministic — no model
+/// call. Maps `AllowedEffect` to the corresponding output variant using goal fields and
+/// `initiative.matched_terms`.
+pub fn execute_initiative(initiative: &InitiativeProposal, goal: &Goal) -> InitiativeOutput {
+    match initiative.effect {
+        AllowedEffect::Reflect => InitiativeOutput::ReflectionRequested {
+            proposed_question: format!("Open question for goal '{}': {}", goal.title, goal.summary),
+        },
+        AllowedEffect::RetrieveContext => InitiativeOutput::ContextRetrievalRequested {
+            query_terms: initiative.matched_terms.clone(),
+        },
+        AllowedEffect::ProposeExperiment => InitiativeOutput::ExperimentProposed {
+            hypothesis: format!(
+                "Experiment hypothesis for '{}': {}",
+                goal.title, goal.summary
+            ),
+            scope: goal.scope,
+        },
+        AllowedEffect::SurfaceOpenThread => InitiativeOutput::OpenThreadSurfaced {
+            thread_summary: goal.summary.clone(),
+        },
+    }
 }
 
 impl fmt::Display for TensionPriority {
@@ -2692,6 +2859,7 @@ mod tests {
             "Satisfied when resolved.".to_string(),
             vec![evidence],
             format!("source: {id}"),
+            vec![],
         )
         .unwrap()
     }
@@ -2709,6 +2877,7 @@ mod tests {
             "Satisfied when done.".to_string(),
             vec![],
             "open-question: test".to_string(),
+            vec![],
         );
         assert!(result.is_err());
     }
@@ -2727,6 +2896,7 @@ mod tests {
             "Satisfied when done.".to_string(),
             vec![evidence],
             "open-question: test question".to_string(),
+            vec![],
         );
         assert!(result.is_ok());
     }
@@ -2859,7 +3029,10 @@ mod tests {
     }
 
     #[test]
-    fn accepted_candidates_are_distinct_from_fixture_goals() {
+    fn accepted_candidate_goal_data_in_accepted_candidates_dynamic_state_in_goals() {
+        // Goal data (the Goal struct) lives in accepted_candidates.
+        // Dynamic state (GoalDynamicState) lives in state.goals — same map as fixture
+        // goals — so the accepted candidate participates in selector and lifecycle events.
         let fixture = static_fixture();
         let state = VolitionState::from_fixture(&fixture);
         let candidate = make_candidate("new-cand");
@@ -2879,10 +3052,17 @@ mod tests {
         );
 
         assert!(
-            !state.goals.contains_key("new-cand"),
-            "accepted candidate must not appear in fixture goals map"
+            state.accepted_candidates.contains_key("new-cand"),
+            "goal data must be in accepted_candidates"
         );
-        assert!(state.accepted_candidates.contains_key("new-cand"));
+        assert!(
+            state.goals.contains_key("new-cand"),
+            "dynamic state must be in state.goals for selector and lifecycle wiring"
+        );
+        assert!(
+            !fixture.goals.iter().any(|g| g.id == "new-cand"),
+            "accepted candidate must not be in the static fixture"
+        );
     }
 
     // ── propose_goal_candidates ──────────────────────────────────────────────────
@@ -2937,7 +3117,9 @@ mod tests {
     }
 
     #[test]
-    fn accepted_candidates_not_wired_into_selector() {
+    fn accepted_candidate_with_no_keywords_does_not_appear_in_selector() {
+        // Phase 7: accepted candidates are wired into the selector, but a candidate
+        // with empty tension_ids derives no activation_keywords and never matches.
         let fixture = static_fixture();
         let state = VolitionState::from_fixture(&fixture);
         let candidate = make_candidate("cand-selector");
@@ -2964,7 +3146,7 @@ mod tests {
         );
         assert!(
             result.selected.iter().all(|s| s.goal.id != "cand-selector"),
-            "accepted candidate must not appear in selector output"
+            "candidate with no activation keywords must not appear in selector output"
         );
     }
 
@@ -2980,12 +3162,347 @@ mod tests {
             "allowed_effects": [],
             "satisfaction_condition_summary": "Resolved.",
             "proposal_evidence": [],
-            "source_description": "test"
+            "source_description": "test",
+            "activation_keywords": []
         });
         let result = serde_json::from_value::<ProposedGoalCandidate>(json);
         assert!(
             result.is_err(),
             "deserializing empty proposal_evidence must fail"
         );
+    }
+
+    // ── Phase 7: Selector wiring ──────────────────────────────────────────────
+
+    #[test]
+    fn propose_goal_candidates_derives_activation_keywords_from_tension_id_parts() {
+        let fixture = static_fixture();
+        // continuity-preservation → ["continuity", "preservation"]
+        let result = propose_goal_candidates(
+            &["Is continuity preserved across sessions?".to_string()],
+            &fixture,
+        );
+        assert_eq!(result.candidates.len(), 1);
+        let keywords = result.candidates[0].activation_keywords();
+        assert!(
+            keywords.contains(&"continuity".to_string()),
+            "expected 'continuity' in keywords, got: {keywords:?}"
+        );
+        assert!(
+            keywords.contains(&"preservation".to_string()),
+            "expected 'preservation' in keywords, got: {keywords:?}"
+        );
+    }
+
+    #[test]
+    fn accepted_candidate_gets_goal_dynamic_state_on_acceptance() {
+        let fixture = static_fixture();
+        let state = VolitionState::from_fixture(&fixture);
+        let questions = vec!["Is continuity preserved across sessions?".to_string()];
+        let proposal = propose_goal_candidates(&questions, &fixture);
+        let candidate = &proposal.candidates[0];
+        let candidate_id = candidate.id().to_string();
+
+        let state = apply(
+            state,
+            VolitionEvent::GoalCandidateAdded {
+                candidate: candidate.clone(),
+                tick: 1,
+            },
+        );
+        let evidence = EvidenceRef::try_new("trace: continuity accepted").unwrap();
+        let state = apply(
+            state,
+            VolitionEvent::GoalCandidateAccepted {
+                goal_id: candidate_id.clone(),
+                acceptance_evidence: evidence,
+                tick: 2,
+            },
+        );
+
+        assert!(
+            state.goals.contains_key(&candidate_id),
+            "accepted candidate must have a GoalDynamicState entry in state.goals"
+        );
+        let dynamic = state.goals.get(&candidate_id).unwrap();
+        assert_eq!(dynamic.status, GoalStatus::Accepted);
+        assert_eq!(dynamic.salience, 0);
+    }
+
+    #[test]
+    fn accepted_candidate_with_derived_keywords_appears_in_selector() {
+        let fixture = static_fixture();
+        let state = VolitionState::from_fixture(&fixture);
+        let questions = vec!["Is continuity preserved across sessions?".to_string()];
+        let proposal = propose_goal_candidates(&questions, &fixture);
+        let candidate = &proposal.candidates[0];
+        let candidate_id = candidate.id().to_string();
+
+        let state = apply(
+            state,
+            VolitionEvent::GoalCandidateAdded {
+                candidate: candidate.clone(),
+                tick: 1,
+            },
+        );
+        let evidence = EvidenceRef::try_new("trace: accepted for selector wiring test").unwrap();
+        let state = apply(
+            state,
+            VolitionEvent::GoalCandidateAccepted {
+                goal_id: candidate_id.clone(),
+                acceptance_evidence: evidence,
+                tick: 2,
+            },
+        );
+
+        // "continuity" matches keywords derived from "continuity-preservation"
+        let result = super::select_goals_with_salience(
+            "Is continuity still preserved?",
+            &fixture,
+            &state,
+            ContextBudget::new(4, 200),
+        );
+
+        assert!(
+            result.selected.iter().any(|s| s.goal.id == candidate_id),
+            "accepted candidate must appear in selector output when input matches its derived keywords"
+        );
+    }
+
+    #[test]
+    fn accepted_candidate_uses_same_dynamic_state_path_as_fixture_goals() {
+        let fixture = static_fixture();
+        let state = VolitionState::from_fixture(&fixture);
+        let questions = vec!["Is continuity preserved across sessions?".to_string()];
+        let proposal = propose_goal_candidates(&questions, &fixture);
+        let candidate = &proposal.candidates[0];
+        let candidate_id = candidate.id().to_string();
+
+        let state = apply(
+            state,
+            VolitionEvent::GoalCandidateAdded {
+                candidate: candidate.clone(),
+                tick: 1,
+            },
+        );
+        let evidence = EvidenceRef::try_new("trace: accepted").unwrap();
+        let state = apply(
+            state,
+            VolitionEvent::GoalCandidateAccepted {
+                goal_id: candidate_id.clone(),
+                acceptance_evidence: evidence,
+                tick: 2,
+            },
+        );
+        // Apply an activation event — same reducer branch as fixture goals.
+        let state = apply(
+            state,
+            VolitionEvent::GoalActivated {
+                goal_id: candidate_id.clone(),
+                tick: 3,
+            },
+        );
+
+        let dynamic = state.goals.get(&candidate_id).unwrap();
+        assert_eq!(dynamic.status, GoalStatus::Active);
+        assert_eq!(dynamic.salience, SALIENCE_ACTIVATION_BONUS);
+    }
+
+    // ── Phase 7: Initiative execution ─────────────────────────────────────────
+
+    use super::{InitiativeOutput, execute_initiative};
+
+    #[test]
+    fn execute_initiative_reflect_returns_reflection_requested() {
+        let fixture = static_fixture();
+        let goal = fixture
+            .goals
+            .iter()
+            .find(|g| g.id == "clarify-weak-evidence-topic")
+            .unwrap();
+        let initiative = InitiativeProposal {
+            goal_id: goal.id.clone(),
+            goal_title: goal.title.clone(),
+            effect: AllowedEffect::Reflect,
+            rationale: "test".to_string(),
+            matched_terms: vec!["memory".to_string()],
+            scope: goal.scope,
+        };
+        let output = execute_initiative(&initiative, goal);
+        assert!(
+            matches!(output, InitiativeOutput::ReflectionRequested { .. }),
+            "Reflect effect must produce ReflectionRequested"
+        );
+    }
+
+    #[test]
+    fn execute_initiative_retrieve_context_returns_context_retrieval_requested() {
+        let fixture = static_fixture();
+        let goal = fixture
+            .goals
+            .iter()
+            .find(|g| g.id == "resurface-open-thread")
+            .unwrap();
+        let initiative = InitiativeProposal {
+            goal_id: goal.id.clone(),
+            goal_title: goal.title.clone(),
+            effect: AllowedEffect::RetrieveContext,
+            rationale: "test".to_string(),
+            matched_terms: vec!["continuity".to_string(), "thread".to_string()],
+            scope: goal.scope,
+        };
+        let output = execute_initiative(&initiative, goal);
+        match output {
+            InitiativeOutput::ContextRetrievalRequested { query_terms } => {
+                assert_eq!(
+                    query_terms,
+                    vec!["continuity".to_string(), "thread".to_string()]
+                );
+            }
+            other => panic!("expected ContextRetrievalRequested, got: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn execute_initiative_propose_experiment_returns_experiment_proposed() {
+        let fixture = static_fixture();
+        let goal = fixture
+            .goals
+            .iter()
+            .find(|g| g.id == "propose-followup-experiment")
+            .unwrap();
+        let initiative = InitiativeProposal {
+            goal_id: goal.id.clone(),
+            goal_title: goal.title.clone(),
+            effect: AllowedEffect::ProposeExperiment,
+            rationale: "test".to_string(),
+            matched_terms: vec!["experiment".to_string()],
+            scope: goal.scope,
+        };
+        let output = execute_initiative(&initiative, goal);
+        assert!(
+            matches!(output, InitiativeOutput::ExperimentProposed { .. }),
+            "ProposeExperiment effect must produce ExperimentProposed"
+        );
+    }
+
+    #[test]
+    fn execute_initiative_surface_thread_returns_open_thread_surfaced() {
+        let fixture = static_fixture();
+        let goal = fixture
+            .goals
+            .iter()
+            .find(|g| g.id == "resurface-open-thread")
+            .unwrap();
+        let initiative = InitiativeProposal {
+            goal_id: goal.id.clone(),
+            goal_title: goal.title.clone(),
+            effect: AllowedEffect::SurfaceOpenThread,
+            rationale: "test".to_string(),
+            matched_terms: vec!["thread".to_string()],
+            scope: goal.scope,
+        };
+        let output = execute_initiative(&initiative, goal);
+        assert!(
+            matches!(output, InitiativeOutput::OpenThreadSurfaced { .. }),
+            "SurfaceOpenThread effect must produce OpenThreadSurfaced"
+        );
+    }
+
+    #[test]
+    fn execute_initiative_is_deterministic() {
+        let fixture = static_fixture();
+        let goal = fixture
+            .goals
+            .iter()
+            .find(|g| g.id == "clarify-weak-evidence-topic")
+            .unwrap();
+        let initiative = InitiativeProposal {
+            goal_id: goal.id.clone(),
+            goal_title: goal.title.clone(),
+            effect: AllowedEffect::Reflect,
+            rationale: "test".to_string(),
+            matched_terms: vec!["memory".to_string()],
+            scope: goal.scope,
+        };
+        assert_eq!(
+            execute_initiative(&initiative, goal),
+            execute_initiative(&initiative, goal)
+        );
+    }
+
+    #[test]
+    fn initiative_executed_sets_goal_active_and_records_tick() {
+        let fixture = static_fixture();
+        let state = VolitionState::from_fixture(&fixture);
+        let goal_id = "clarify-weak-evidence-topic";
+        let output = InitiativeOutput::ReflectionRequested {
+            proposed_question: "What is unclear about voice memory?".to_string(),
+        };
+
+        let state = apply(
+            state,
+            VolitionEvent::InitiativeExecuted {
+                goal_id: goal_id.to_string(),
+                effect: AllowedEffect::Reflect,
+                output,
+                rationale: "test rationale".to_string(),
+                tick: 3,
+            },
+        );
+
+        let dynamic = state.goal(goal_id).unwrap();
+        assert_eq!(dynamic.status, GoalStatus::Active);
+        assert_eq!(dynamic.last_activated_tick, Some(3));
+        assert!(dynamic.last_initiative_output.is_some());
+    }
+
+    #[test]
+    fn initiative_executed_stores_output_in_dynamic_state() {
+        let fixture = static_fixture();
+        let state = VolitionState::from_fixture(&fixture);
+        let goal_id = "clarify-weak-evidence-topic";
+        let expected_output = InitiativeOutput::ReflectionRequested {
+            proposed_question: "What is unclear about voice memory?".to_string(),
+        };
+
+        let state = apply(
+            state,
+            VolitionEvent::InitiativeExecuted {
+                goal_id: goal_id.to_string(),
+                effect: AllowedEffect::Reflect,
+                output: expected_output.clone(),
+                rationale: "test".to_string(),
+                tick: 1,
+            },
+        );
+
+        assert_eq!(
+            state.goal(goal_id).unwrap().last_initiative_output.as_ref(),
+            Some(&expected_output)
+        );
+    }
+
+    #[test]
+    fn initiative_executed_unknown_goal_id_is_noop_on_goals() {
+        let fixture = static_fixture();
+        let state = VolitionState::from_fixture(&fixture);
+        let goals_before = state.goals.clone();
+        let output = InitiativeOutput::ReflectionRequested {
+            proposed_question: "Unused".to_string(),
+        };
+
+        let state_after = apply(
+            state,
+            VolitionEvent::InitiativeExecuted {
+                goal_id: "nonexistent-goal".to_string(),
+                effect: AllowedEffect::Reflect,
+                output,
+                rationale: "test".to_string(),
+                tick: 1,
+            },
+        );
+
+        assert_eq!(state_after.goals, goals_before);
     }
 }

@@ -33,8 +33,8 @@ impl Experiment for VolitionReflectionGoalCandidatesExperiment {
 
     fn description(&self) -> &'static str {
         "Replay a scripted propose/accept/reject/inert sequence to exercise reflection-generated \
-         goal candidates — no effect is executed and accepted candidates are not wired into any \
-         selector"
+         goal candidates — no effect is executed; validated pending/accepted storage before \
+         selector wiring was introduced in the next experiment"
     }
 
     fn run(&self, context: &mut RunContext) -> anyhow::Result<ExperimentOutcome> {
@@ -245,7 +245,7 @@ impl Experiment for VolitionReflectionGoalCandidatesExperiment {
                     .to_string(),
                 "GoalCandidateRejected removes the candidate from pending_candidates (no durable rejected state).".to_string(),
                 "Remaining candidate stays in pending_candidates unchanged across the inert turn.".to_string(),
-                "accepted_candidates is not wired into select_goals_with_salience — selector integration is deferred.".to_string(),
+                "accepted_candidates held pending/accepted storage in this phase; selector wiring via activation_keywords was validated in VolitionBoundedInitiativeExecution.".to_string(),
                 "executed_effects=0 on every turn (explicit no-execution marker).".to_string(),
             ],
             failure_modes: vec![
@@ -391,7 +391,8 @@ fn write_reflection_report(
     md.push_str("# Volition Reflection-Generated Goal Candidates\n\n");
     md.push_str(
         "Scripted 4-turn sequence: propose → accept → reject → inert. \
-        No effect was executed and accepted candidates are not wired into any selector.\n\n",
+        No effect was executed. This phase validated pending/accepted storage; \
+        selector wiring was introduced in VolitionBoundedInitiativeExecution.\n\n",
     );
 
     md.push_str("## Fixture Tensions\n\n");
@@ -464,9 +465,9 @@ fn write_reflection_report(
 
     md.push_str("\n## Notes\n\n");
     md.push_str("- `propose_goal_candidates` is pure and deterministic: same questions + same fixture → identical output.\n");
-    md.push_str("- `accepted_candidates` is keyed by goal id and is separate from `VolitionState::goals` (fixture-seeded goals).\n");
+    md.push_str("- `accepted_candidates` is keyed by goal id and holds the static `Goal` struct; `VolitionState::goals` holds dynamic state for both fixture goals and (after `GoalCandidateAccepted`) accepted candidates.\n");
     md.push_str(
-        "- Wiring accepted candidates into `select_goals_with_salience` is deferred to selector integration for accepted candidates.\n",
+        "- Selector wiring via activation_keywords derived from tension id parts was validated in `VolitionBoundedInitiativeExecution`.\n",
     );
 
     fs::write(
@@ -550,15 +551,15 @@ mod tests {
 
         assert!(
             state.accepted_candidates.contains_key(&accept_id),
-            "accepted candidate must be in accepted_candidates"
+            "goal data must be in accepted_candidates"
         );
         assert!(
             !state.pending_candidates.iter().any(|c| c.id() == accept_id),
             "accepted candidate must not remain in pending_candidates"
         );
         assert!(
-            !state.goals.contains_key(&accept_id),
-            "accepted candidate must not appear in fixture goals map"
+            state.goals.contains_key(&accept_id),
+            "dynamic state must be in state.goals for selector and lifecycle wiring"
         );
     }
 

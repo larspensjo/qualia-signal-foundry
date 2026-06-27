@@ -6,10 +6,9 @@
 
 ## Status
 
-Planned. Automated success criteria and scripted sequence are defined below. The
-phase sequencing lives in [Plan.VolitionGoalSystem.md](../Plans/Plan.VolitionGoalSystem.md).
-The rationale and terminology live in
-[Idea.VolitionGoalSystem.md](../Plans/Idea.VolitionGoalSystem.md).
+Running — automated tests pass; awaiting human review run. The phase sequencing lives in
+[Plan.VolitionGoalSystem.md](../Plans/Plan.VolitionGoalSystem.md). The rationale and
+terminology live in [Idea.VolitionGoalSystem.md](../Plans/Idea.VolitionGoalSystem.md).
 
 ## Summary
 
@@ -149,30 +148,31 @@ Turn 3 arbitration input is chosen to match both the accepted goal (via `continu
 
 ### Automated (all must pass before the experiment is considered complete)
 
-- [ ] Accepted candidate's `activation_keywords` are non-empty and derived from its
+- [x] Accepted candidate's `activation_keywords` are non-empty and derived from its
   matched tension id parts.
-- [ ] `GoalCandidateAccepted` reducer inserts a `GoalDynamicState` entry into
+- [x] `GoalCandidateAccepted` reducer inserts a `GoalDynamicState` entry into
   `state.goals` for the accepted goal id.
-- [ ] Accepted candidate appears in `select_goals_with_salience` output when the input
+- [x] Accepted candidate appears in `select_goals_with_salience` output when the input
   matches its derived keywords.
-- [ ] Accepted candidate does NOT appear in `select_goals_with_salience` output when no
+- [x] Accepted candidate does NOT appear in `select_goals_with_salience` output when no
   input keyword matches (same gate as fixture goals).
-- [ ] Accepted candidate competes in `arbitrate` alongside fixture goals; tier ordering
+- [x] Accepted candidate competes in `arbitrate` alongside fixture goals; tier ordering
   is determined by the shared fixture tensions.
-- [ ] `execute_initiative` is deterministic: same `InitiativeProposal` + `Goal` →
+- [x] `execute_initiative` is deterministic: same `InitiativeProposal` + `Goal` →
   identical `InitiativeOutput`.
-- [ ] Each `AllowedEffect` variant maps to the correct `InitiativeOutput` variant
+- [x] Each `AllowedEffect` variant maps to the correct `InitiativeOutput` variant
   (covered by direct unit tests on `execute_initiative`; the scripted sequence
   exercises the arbitration winner's path only).
-- [ ] `InitiativeExecuted` stores the output in `GoalDynamicState::last_initiative_output`.
-- [ ] `InitiativeExecuted` sets the goal's status to `Active` and records
+- [x] `InitiativeExecuted` stores the output in `GoalDynamicState::last_initiative_output`.
+- [x] `InitiativeExecuted` sets the goal's status to `Active` and records
   `last_activated_tick`.
-- [ ] The accepted goal's salience, cooldown, and lifecycle transitions are managed by
+- [x] The accepted goal's salience, cooldown, and lifecycle transitions are managed by
   the same reducer branches as fixture goals (no parallel code path).
-- [ ] All prior tests pass; existing selector and reducer behaviour is unchanged.
-- [ ] `cargo test` and `cargo clippy --all-targets -- -D warnings` pass.
-- [ ] `executed_effects = 0` on every experiment turn.
-- [ ] Replay produces identical state and event logs.
+- [x] All prior tests pass; existing selector and reducer behaviour is unchanged.
+- [x] `cargo test` and `cargo clippy --all-targets -- -D warnings` pass.
+- [x] `executed_effects = 0` on every experiment turn.
+- [ ] Replay produces identical state and event logs. (verified structurally by determinism
+  tests; full replay trace comparison deferred to human review run)
 
 ### Human (requires running the experiment and reading the report)
 

@@ -18,6 +18,7 @@ mod tool_as_perception_calculator;
 mod transcript_format;
 mod voice_loop;
 mod volition_arbitration_conflict;
+mod volition_bounded_initiative_execution;
 mod volition_goal_fixture;
 mod volition_reflection_goal_candidates;
 mod volition_salience_and_satisfaction;

@@ -53,8 +53,8 @@ Later
 | `Experiment.VolitionTraceBackedInitiative` | Medium | Completed | Can pre-initiative traces explain goal → delta → candidate initiatives → proposed bounded effect before any behavior changes? |
 | `Experiment.VolitionSalienceAndSatisfaction` | Medium | Completed | Can a pure, replayable volition state raise/decay salience and satisfy, block, cool down, and retire goals from evidence without executing any effect? |
 | `Experiment.VolitionArbitrationConflict` | Medium | Completed | Can a pure arbitrate() function resolve cross-goal conflict by tension tier, record structured provenance for every loser, and produce deterministic replayable output without executing any effect? |
-| `Experiment.VolitionReflectionGoalCandidates` | Medium | Running | Can a pure, model-free proposer map scripted open questions to goal candidates with evidence refs, and can accept/reject events move candidates through a durable pending-review state without influencing any selector? |
-| `Experiment.VolitionBoundedInitiativeExecution` | Medium | Planned | Can accepted candidates wire into the selector via tension-derived keywords and, once selected, translate the arbitration winner into a bounded InitiativeOutput without a model call or external action? |
+| `Experiment.VolitionReflectionGoalCandidates` | Medium | Completed | Can a pure, model-free proposer map scripted open questions to goal candidates with evidence refs, and can accept/reject events move candidates through a durable pending-review state without influencing any selector? |
+| `Experiment.VolitionBoundedInitiativeExecution` | Medium | Running | Can accepted candidates wire into the selector via tension-derived keywords and, once selected, translate the arbitration winner into a bounded InitiativeOutput without a model call or external action? |
 | `Experiment.StreamingTranscriptionMVP` | Medium | Completed | Can live speech be represented as observable partial and final transcript events? |
 | `Experiment.AudioLoopMVP` | Medium | Superseded | Can a minimal audio loop create a stronger sense of presence than text-only interaction? |
 | `Experiment.ToolAsPerceptionCalculator` | Medium | Completed | How should a simple read-only computational tool be represented as perception? |
@@ -417,7 +417,7 @@ Possible success criteria:
 ### Experiment.VolitionReflectionGoalCandidates
 
 **Priority:** Medium
-**Status:** Running
+**Status:** Completed
 
 Let a reflection/sleep step propose goal candidates with evidence references. Proposals
 stay in pending review until an explicit accept or reject event moves them; nothing is
@@ -448,7 +448,7 @@ Possible success criteria:
 ### Experiment.VolitionBoundedInitiativeExecution
 
 **Priority:** Medium
-**Status:** Planned
+**Status:** Running
 
 Wire accepted goal candidates into `select_goals_with_salience` via activation keywords
 derived from matched tension id parts, then translate the arbitration winner into a

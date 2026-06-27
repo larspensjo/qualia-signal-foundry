@@ -28,6 +28,7 @@ use super::text_owned_voice_loop::TextOwnedVoiceLoopExperiment;
 use super::tool_as_perception_calculator::ToolAsPerceptionCalculatorExperiment;
 use super::voice_loop::{VOICE_LOOP_DESCRIPTION, VoiceLoopExperiment};
 use super::volition_arbitration_conflict::VolitionArbitrationConflictExperiment;
+use super::volition_bounded_initiative_execution::VolitionBoundedInitiativeExecutionExperiment;
 use super::volition_goal_fixture::VolitionGoalFixtureExperiment;
 use super::volition_reflection_goal_candidates::VolitionReflectionGoalCandidatesExperiment;
 use super::volition_salience_and_satisfaction::VolitionSalienceAndSatisfactionExperiment;
@@ -56,6 +57,7 @@ pub enum ExperimentName {
     VolitionSalienceAndSatisfaction,
     VolitionArbitrationConflict,
     VolitionReflectionGoalCandidates,
+    VolitionBoundedInitiativeExecution,
 }
 
 impl ExperimentName {
@@ -81,6 +83,7 @@ impl ExperimentName {
             Self::VolitionSalienceAndSatisfaction => "volition-salience-and-satisfaction",
             Self::VolitionArbitrationConflict => "volition-arbitration-conflict",
             Self::VolitionReflectionGoalCandidates => "volition-reflection-goal-candidates",
+            Self::VolitionBoundedInitiativeExecution => "volition-bounded-initiative-execution",
         }
     }
 
@@ -140,7 +143,10 @@ impl ExperimentName {
                 "Replay a scripted multi-turn sequence exercising no_selection, single_selection, and conflict_resolved arbitration outcomes — no effect is executed"
             }
             Self::VolitionReflectionGoalCandidates => {
-                "Replay a scripted propose/accept/reject/inert sequence to exercise reflection-generated goal candidates — no effect is executed and accepted candidates are not wired into any selector"
+                "Replay a scripted propose/accept/reject/inert sequence to exercise reflection-generated goal candidates — no effect is executed; accepted candidates validated pending/accepted storage before selector wiring"
+            }
+            Self::VolitionBoundedInitiativeExecution => {
+                "Replay a 5-turn scripted sequence exercising accepted-candidate selector wiring, arbitration, and bounded initiative execution — executed_effects=0 on every turn"
             }
         }
     }
@@ -386,6 +392,9 @@ fn experiment_for(name: ExperimentName) -> Box<dyn Experiment> {
         }
         ExperimentName::VolitionReflectionGoalCandidates => {
             Box::new(VolitionReflectionGoalCandidatesExperiment)
+        }
+        ExperimentName::VolitionBoundedInitiativeExecution => {
+            Box::new(VolitionBoundedInitiativeExecutionExperiment)
         }
     }
 }
