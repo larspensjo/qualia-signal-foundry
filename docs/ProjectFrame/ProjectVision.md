@@ -12,6 +12,18 @@ human-like in some ways and deliberately non-human or super-human in others.
 
 The project is intentionally open-ended. Many core ideas are still speculative and should be explored through small prototypes, experiments, and documented decisions.
 
+## Final Project Target
+
+The final target for the whole project is a realtime voice-accessible simulation of
+consciousness-like behavior. The live spoken interface should eventually reach the
+major parts of the simulated mind: memory, perception tools, attention or salience,
+volition and goals, self-reflection, sleep-like consolidation, identity continuity,
+and observability.
+
+Offline experiments, command-line harnesses, reports, and inspection tools remain
+important research instruments, but they are scaffolding for a system whose primary
+experience is live realtime interaction with an inspectable simulated mind.
+
 ## Core Purpose
 
 The core purpose of this project is to build a platform for experimenting with simulated consciousness.

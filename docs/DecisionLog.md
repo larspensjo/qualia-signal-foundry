@@ -1368,3 +1368,49 @@ introduced.
 Refs: docs/Plans/Design.VolitionModeBias.md, docs/Plans/Plan.VolitionGoalSystem.md,
 docs/Experiments/Experiment.VolitionModeBias.md,
 crates/qsf_app/src/volition.rs
+
+## 2026-06-27 - Realtime voice is the target surface for the consciousness simulation
+Decision: The project's final target is a realtime voice-accessible simulation of
+consciousness-like behavior. Offline experiments, reports, launchers, and inspection
+tools are research scaffolding for that target, not competing end states.
+Context: The volition work currently runs through `qsf_app` experiments, while the
+first-class live surface is `qsf.ps1 realtime`. The project framing needed to make
+explicit that volition, memory, perception tools, self-reflection, consolidation, and
+observability should eventually be reachable from the live realtime voice surface.
+Consequences: Plans that mature core simulated-mind subsystems should identify how
+they become available to realtime voice without bypassing trust boundaries or
+inspectability. Experiment-only access is acceptable for early validation but is not
+the final integration shape.
+Refs: docs/ProjectFrame/ProjectVision.md,
+docs/Plans/Plan.RealtimeVolitionIntegration.md
+
+## 2026-06-27 - Realtime volition extraction keeps context assembly outside `qsf_volition`
+Decision: The `qsf_volition` crate contains pure volition domain state, reducers,
+context-neutral selection/arbitration records, fixtures, and bounded initiative output.
+Context-attached selection results, experiment reports, and realtime context packets
+stay in caller adapters such as `qsf_app` or `qsf_realtime_server`; context assembly
+stays in the shared `qsf_context` crate. `qsf_volition` must not depend on `qsf_app`.
+Context: The current `qsf_app` volition selector carries `ContextFragment`,
+`ContextBudget`, and `ContextAssembly` through `GoalSelection` and
+`GoalSelectionResult`. Moving that surface wholesale would either create a bad
+`qsf_volition -> qsf_app` dependency or blur the extraction boundary needed by the
+realtime server.
+Consequences: The extraction starts from the pure reusable core. Realtime can depend on
+`qsf_volition` without importing experiment/report code, while each caller chooses how
+to turn selected goals into context fragments or reports.
+Refs: docs/Plans/Plan.RealtimeVolitionIntegration.md,
+docs/Plans/Review.RealtimeVolitionIntegration.md
+
+## 2026-06-27 - Realtime volition retrieval initiatives are memory-injection hints
+Decision: In realtime volition, `ContextRetrievalRequested` is an internal hint to the
+next sideband memory/context injection pass. It contributes query terms to existing
+retrieval/context assembly; it does not directly invoke `search_memory` or any other
+tool and does not execute an external effect.
+Context: Bounded initiative output must remain internal unless a later plan explicitly
+expands the realtime permission model. Treating retrieval requests as immediate tool
+calls would make a supposedly internal initiative cross into external effect execution.
+Consequences: Realtime bounded-initiative traces must record the hint terms, whether the
+next memory-injection pass consumed them, and `external_effect_executed: false`.
+External tool execution from volition initiative remains out of scope.
+Refs: docs/Plans/Plan.RealtimeVolitionIntegration.md,
+docs/Plans/Review.RealtimeVolitionIntegration.md
