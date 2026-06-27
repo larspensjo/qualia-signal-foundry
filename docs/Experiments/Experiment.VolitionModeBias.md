@@ -6,7 +6,7 @@
 
 ## Status
 
-Planned. The phase sequencing lives in
+Running (automated tests pass; awaiting human review). The phase sequencing lives in
 [Plan.VolitionGoalSystem.md](../Plans/Plan.VolitionGoalSystem.md); the design decisions live in
 [Design.VolitionModeBias.md](../Plans/Design.VolitionModeBias.md); the rationale and terminology
 live in [Idea.VolitionGoalSystem.md](../Plans/Idea.VolitionGoalSystem.md).

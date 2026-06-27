@@ -25,10 +25,10 @@ in this document and its validation scaffold is
 is
 [`Experiment.VolitionBoundedInitiativeExecution.md`](../Experiments/Experiment.VolitionBoundedInitiativeExecution.md)
 and its status is Running (automated tests pass; awaiting human review).
-**Phase 8 (optional inspectable mode/bias state) is planned and expanded**; its design is
-captured in [`Design.VolitionModeBias.md`](Design.VolitionModeBias.md) and its validation
-scaffold is
-[`Experiment.VolitionModeBias.md`](../Experiments/Experiment.VolitionModeBias.md).
+**Phase 8 (optional inspectable mode/bias state) is complete**; its design is captured in
+[`Design.VolitionModeBias.md`](Design.VolitionModeBias.md) and its validation scaffold is
+[`Experiment.VolitionModeBias.md`](../Experiments/Experiment.VolitionModeBias.md) with
+status Running (automated tests pass; awaiting human review).
 
 > Companion to the idea note
 > [`Idea.VolitionGoalSystem.md`](Idea.VolitionGoalSystem.md), which is authoritative
@@ -84,7 +84,7 @@ influencing behavior.
 | 5 | Arbitration and multi-goal conflict resolution — **complete** | Yes | Yes | `Experiment.VolitionArbitrationConflict` |
 | 6 | Reflection-generated goal candidates (proposed, not auto-accepted) — **complete** | Yes | Yes | `Experiment.VolitionReflectionGoalCandidates` |
 | 7 | Bounded internal initiative execution — selector wiring + `InitiativeExecuted` — **complete** | Yes | Yes | `Experiment.VolitionBoundedInitiativeExecution` |
-| 8 | Optional inspectable mode/bias state (arbitration bias) — **planned** | Yes | Yes | `Experiment.VolitionModeBias` |
+| 8 | Optional inspectable mode/bias state (arbitration bias) — **complete** | Yes | Yes | `Experiment.VolitionModeBias` |
 
 ## Phase Details
 
@@ -220,7 +220,7 @@ accept → arbitrate → execute → outcome sequence and traces the full chain 
 human review). Validation scaffold:
 [`Experiment.VolitionBoundedInitiativeExecution.md`](../Experiments/Experiment.VolitionBoundedInitiativeExecution.md).
 
-### Phase 8 — Optional inspectable mode/bias state (planned)
+### Phase 8 — Optional inspectable mode/bias state (complete)
 
 Introduce an inspectable **mode**: a named, declared bias over arbitration ordering that can
 deterministically shift which goal wins a conflict — *without* being able to override the

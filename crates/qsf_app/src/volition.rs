@@ -272,58 +272,123 @@ pub struct ArbitrationResult {
     pub losers: Vec<ArbitrationLoser>,
 }
 
+/// Tiers 1..=PROTECTED_TIER_FLOOR are immune to mode bias.
+pub const PROTECTED_TIER_FLOOR: u8 = 3;
+
+/// An inspectable arbitration bias. Its meaning is its declared `bias_vector()`; the
+/// label is only a handle. Default = Neutral (zero bias).
+#[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Mode {
+    #[default]
+    Neutral,
+    Focused,
+    Exploratory,
+}
+
+impl Mode {
+    /// Declared bias over tension ids. Negative promotes (lower tier), positive demotes.
+    /// Source of truth for the bias; empty for Neutral.
+    pub fn bias_vector(self) -> BTreeMap<String, i8> {
+        match self {
+            Self::Neutral => BTreeMap::new(),
+            Self::Focused => {
+                let mut map = BTreeMap::new();
+                map.insert("research-curiosity".to_string(), 3i8);
+                map.insert("continuity-preservation".to_string(), -1i8);
+                map
+            }
+            Self::Exploratory => {
+                let mut map = BTreeMap::new();
+                map.insert("research-curiosity".to_string(), -2i8);
+                map.insert("continuity-preservation".to_string(), 1i8);
+                map
+            }
+        }
+    }
+}
+
+impl fmt::Display for Mode {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str(match self {
+            Self::Neutral => "Neutral",
+            Self::Focused => "Focused",
+            Self::Exploratory => "Exploratory",
+        })
+    }
+}
+
+/// Per-goal record of how mode bias affected this goal's arbitration tier.
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+pub struct BiasOutcome {
+    /// Pre-bias effective tier (minimum arbitration_tier among parent tensions).
+    pub effective_tier: u8,
+    /// Applied bias delta (0 for protected goals, pre-clamp signed delta for band goals).
+    pub bias_applied: i8,
+    /// Post-bias tier; band goals clamped to >= PROTECTED_TIER_FLOOR + 1.
+    pub biased_tier: u8,
+    /// True when effective_tier <= PROTECTED_TIER_FLOOR; such goals receive zero bias.
+    pub protected: bool,
+}
+
+/// A goal selection that lost mode-aware cross-goal arbitration.
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+pub struct ModeArbitrationLoser {
+    pub selection: GoalSelection,
+    pub effective_tension_id: String,
+    pub effective_tension_title: String,
+    pub bias: BiasOutcome,
+    /// Rendered convenience string. Tests must assert structured fields, not this string.
+    pub reason: String,
+}
+
+/// The result of mode-aware cross-goal arbitration. Sort key: biased_tier asc,
+/// base_priority desc, goal_id asc. Floor goals always sort ahead of band goals.
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+pub struct ModeArbitrationResult {
+    pub mode: Mode,
+    pub winner: GoalSelection,
+    pub winner_effective_tension_id: String,
+    pub winner_effective_tension_title: String,
+    pub winner_bias: BiasOutcome,
+    pub losers: Vec<ModeArbitrationLoser>,
+}
+
 /// Resolve cross-goal conflict by tension tier. Returns `None` for empty input. For a
 /// single selection, the sole goal is the winner with an empty losers list. Pure and
 /// stateless — reads `fixture` only to resolve tensions for each goal.
+/// Delegates to `arbitrate_with_mode(.., Mode::Neutral)` — one sort implementation.
 pub fn arbitrate(
     selections: Vec<GoalSelection>,
     fixture: &VolitionFixture,
 ) -> Option<ArbitrationResult> {
-    if selections.is_empty() {
-        return None;
-    }
-
-    let mut with_tiers: Vec<(GoalSelection, u8, String, String)> = selections
-        .into_iter()
-        .map(|selection| {
-            let (tier, tension_id, tension_title) =
-                effective_tension_for_goal(&selection.goal, fixture);
-            (selection, tier, tension_id, tension_title)
-        })
-        .collect();
-
-    // Sort: effective tier ascending, base_priority descending, goal_id ascending.
-    with_tiers.sort_by(|a, b| {
-        a.1.cmp(&b.1)
-            .then(b.0.goal.base_priority.cmp(&a.0.goal.base_priority))
-            .then(a.0.goal.id.cmp(&b.0.goal.id))
-    });
-
-    let (winner_sel, winner_tier, winner_tension_id, winner_tension_title) = with_tiers.remove(0);
-
-    let losers = with_tiers
-        .into_iter()
-        .map(|(sel, tier, tension_id, tension_title)| {
-            let reason = format!(
-                "tier {} lost to winner at tier {} ({})",
-                tier, winner_tier, winner_tension_id
-            );
-            ArbitrationLoser {
-                selection: sel,
-                effective_tier: tier,
-                effective_tension_id: tension_id,
-                effective_tension_title: tension_title,
-                reason,
-            }
-        })
-        .collect();
-
-    Some(ArbitrationResult {
-        winner: winner_sel,
-        winner_effective_tier: winner_tier,
-        winner_effective_tension_id: winner_tension_id,
-        winner_effective_tension_title: winner_tension_title,
-        losers,
+    arbitrate_with_mode(selections, fixture, Mode::Neutral).map(|mode_result| {
+        let winner_tier = mode_result.winner_bias.effective_tier;
+        let winner_tension_id = mode_result.winner_effective_tension_id.clone();
+        let losers = mode_result
+            .losers
+            .into_iter()
+            .map(|l| {
+                let reason = format!(
+                    "tier {} lost to winner at tier {} ({})",
+                    l.bias.effective_tier, winner_tier, winner_tension_id
+                );
+                ArbitrationLoser {
+                    selection: l.selection,
+                    effective_tier: l.bias.effective_tier,
+                    effective_tension_id: l.effective_tension_id,
+                    effective_tension_title: l.effective_tension_title,
+                    reason,
+                }
+            })
+            .collect();
+        ArbitrationResult {
+            winner: mode_result.winner,
+            winner_effective_tier: winner_tier,
+            winner_effective_tension_id: mode_result.winner_effective_tension_id,
+            winner_effective_tension_title: mode_result.winner_effective_tension_title,
+            losers,
+        }
     })
 }
 
@@ -361,6 +426,96 @@ fn effective_tension_for_goal(goal: &Goal, fixture: &VolitionFixture) -> (u8, St
         .unwrap();
 
     (min_tier, effective.id.clone(), effective.title.clone())
+}
+
+/// Compute the `BiasOutcome` for one goal given its effective tier and the active bias vector.
+fn compute_bias_outcome(
+    effective_tier: u8,
+    tension_id: &str,
+    bias_vector: &BTreeMap<String, i8>,
+) -> BiasOutcome {
+    if effective_tier <= PROTECTED_TIER_FLOOR {
+        BiasOutcome {
+            effective_tier,
+            bias_applied: 0,
+            biased_tier: effective_tier,
+            protected: true,
+        }
+    } else {
+        let bias_applied = bias_vector.get(tension_id).copied().unwrap_or(0);
+        let raw = effective_tier as i16 + bias_applied as i16;
+        let biased_tier = raw.clamp(PROTECTED_TIER_FLOOR as i16 + 1, u8::MAX as i16) as u8;
+        BiasOutcome {
+            effective_tier,
+            bias_applied,
+            biased_tier,
+            protected: false,
+        }
+    }
+}
+
+/// Mode-aware cross-goal arbitration. Sort key: `(biased_tier asc, base_priority desc,
+/// goal_id asc)`. Band goals are clamped so `biased_tier >= PROTECTED_TIER_FLOOR + 1`,
+/// ensuring floor goals always sort ahead. Returns `None` for empty input.
+/// `arbitrate` delegates here with `Mode::Neutral`, producing identical results.
+pub fn arbitrate_with_mode(
+    selections: Vec<GoalSelection>,
+    fixture: &VolitionFixture,
+    mode: Mode,
+) -> Option<ModeArbitrationResult> {
+    if selections.is_empty() {
+        return None;
+    }
+
+    let bias_vector = mode.bias_vector();
+
+    let mut with_bias: Vec<(GoalSelection, String, String, BiasOutcome)> = selections
+        .into_iter()
+        .map(|selection| {
+            let (effective_tier, tension_id, tension_title) =
+                effective_tension_for_goal(&selection.goal, fixture);
+            let bias = compute_bias_outcome(effective_tier, &tension_id, &bias_vector);
+            (selection, tension_id, tension_title, bias)
+        })
+        .collect();
+
+    // Sort: biased_tier ascending, base_priority descending, goal_id ascending.
+    with_bias.sort_by(|a, b| {
+        a.3.biased_tier
+            .cmp(&b.3.biased_tier)
+            .then(b.0.goal.base_priority.cmp(&a.0.goal.base_priority))
+            .then(a.0.goal.id.cmp(&b.0.goal.id))
+    });
+
+    let (winner_sel, winner_tension_id, winner_tension_title, winner_bias) = with_bias.remove(0);
+
+    let winner_biased_tier = winner_bias.biased_tier;
+    let winner_tid = winner_tension_id.clone();
+    let losers = with_bias
+        .into_iter()
+        .map(|(sel, tension_id, tension_title, bias)| {
+            let reason = format!(
+                "biased tier {} (effective {}) lost to winner at biased tier {} ({})",
+                bias.biased_tier, bias.effective_tier, winner_biased_tier, winner_tid
+            );
+            ModeArbitrationLoser {
+                selection: sel,
+                effective_tension_id: tension_id,
+                effective_tension_title: tension_title,
+                bias,
+                reason,
+            }
+        })
+        .collect();
+
+    Some(ModeArbitrationResult {
+        mode,
+        winner: winner_sel,
+        winner_effective_tension_id: winner_tension_id,
+        winner_effective_tension_title: winner_tension_title,
+        winner_bias,
+        losers,
+    })
 }
 
 /// A non-empty, non-whitespace reference to an observable artifact or trace that
@@ -602,6 +757,9 @@ pub struct VolitionState {
     /// Accepted goal data records keyed by goal id. Distinct from `goals`; holds the static
     /// `Goal` struct (title, tension_ids, activation_keywords, etc.) for accepted candidates.
     pub accepted_candidates: BTreeMap<String, Goal>,
+    /// Active arbitration bias mode. Changed via `ModeChanged` event; default `Neutral`.
+    #[serde(default)]
+    pub mode: Mode,
 }
 
 impl VolitionState {
@@ -618,6 +776,7 @@ impl VolitionState {
             goals,
             pending_candidates: Vec::new(),
             accepted_candidates: BTreeMap::new(),
+            mode: Mode::Neutral,
         }
     }
 
@@ -706,6 +865,11 @@ pub enum VolitionEvent {
         effect: AllowedEffect,
         output: InitiativeOutput,
         rationale: String,
+        tick: u64,
+    },
+    /// Sets the active arbitration bias mode via the pure reducer. Replayable and traceable.
+    ModeChanged {
+        mode: Mode,
         tick: u64,
     },
 }
@@ -810,6 +974,9 @@ pub fn apply(mut state: VolitionState, event: VolitionEvent) -> VolitionState {
                 dynamic.last_initiative_output = Some(output);
             }
         }
+        VolitionEvent::ModeChanged { mode, .. } => {
+            state.mode = mode;
+        }
     }
     state
 }
@@ -827,7 +994,8 @@ fn event_tick(event: &VolitionEvent) -> u64 {
         | VolitionEvent::GoalCandidateAdded { tick, .. }
         | VolitionEvent::GoalCandidateAccepted { tick, .. }
         | VolitionEvent::GoalCandidateRejected { tick, .. }
-        | VolitionEvent::InitiativeExecuted { tick, .. } => *tick,
+        | VolitionEvent::InitiativeExecuted { tick, .. }
+        | VolitionEvent::ModeChanged { tick, .. } => *tick,
     }
 }
 
@@ -3504,5 +3672,257 @@ mod tests {
         );
 
         assert_eq!(state_after.goals, goals_before);
+    }
+
+    // ── Phase 8: Mode and arbitrate_with_mode ─────────────────────────────────
+
+    use super::{BiasOutcome, Mode, PROTECTED_TIER_FLOOR, arbitrate_with_mode};
+
+    #[test]
+    fn mode_neutral_bias_vector_is_empty() {
+        assert!(Mode::Neutral.bias_vector().is_empty());
+    }
+
+    #[test]
+    fn mode_focused_bias_vector_matches_spec() {
+        let vec = Mode::Focused.bias_vector();
+        assert_eq!(vec.get("research-curiosity"), Some(&3i8));
+        assert_eq!(vec.get("continuity-preservation"), Some(&-1i8));
+        assert_eq!(vec.len(), 2);
+    }
+
+    #[test]
+    fn mode_exploratory_bias_vector_matches_spec() {
+        let vec = Mode::Exploratory.bias_vector();
+        assert_eq!(vec.get("research-curiosity"), Some(&-2i8));
+        assert_eq!(vec.get("continuity-preservation"), Some(&1i8));
+        assert_eq!(vec.len(), 2);
+    }
+
+    #[test]
+    fn arbitrate_with_mode_neutral_matches_arbitrate() {
+        let fixture = static_fixture();
+        let state = VolitionState::from_fixture(&fixture);
+        // Band-only conflict: resurface-open-thread (tier 5) vs clarify-weak-evidence-topic (tier 7)
+        let input = "The open thread about voice memory evidence is unresolved.";
+        let sel =
+            super::select_goals_with_salience(input, &fixture, &state, ContextBudget::new(4, 100));
+        assert_eq!(sel.selected.len(), 2, "expected 2 band-only selections");
+
+        let arb = arbitrate(sel.selected.clone(), &fixture).unwrap();
+        let mode_arb = arbitrate_with_mode(sel.selected, &fixture, Mode::Neutral).unwrap();
+
+        assert_eq!(arb.winner.goal.id, mode_arb.winner.goal.id);
+        assert_eq!(
+            arb.winner_effective_tier,
+            mode_arb.winner_bias.effective_tier
+        );
+        assert_eq!(
+            arb.winner_effective_tension_id,
+            mode_arb.winner_effective_tension_id
+        );
+        assert_eq!(arb.losers.len(), mode_arb.losers.len());
+        for (al, ml) in arb.losers.iter().zip(mode_arb.losers.iter()) {
+            assert_eq!(al.selection.goal.id, ml.selection.goal.id);
+            assert_eq!(al.effective_tier, ml.bias.effective_tier);
+        }
+    }
+
+    #[test]
+    fn arbitrate_with_mode_exploratory_flips_band_winner() {
+        let fixture = static_fixture();
+        let state = VolitionState::from_fixture(&fixture);
+        let input = "The open thread about voice memory evidence is unresolved.";
+        let sel =
+            super::select_goals_with_salience(input, &fixture, &state, ContextBudget::new(4, 100));
+
+        let neutral = arbitrate_with_mode(sel.selected.clone(), &fixture, Mode::Neutral).unwrap();
+        let exploratory = arbitrate_with_mode(sel.selected, &fixture, Mode::Exploratory).unwrap();
+
+        // Under Neutral: continuity (tier 5) beats curiosity (tier 7)
+        assert_eq!(neutral.winner.goal.id, "resurface-open-thread");
+        // Under Exploratory: curiosity biased to 5, continuity biased to 6 → curiosity wins
+        assert_eq!(exploratory.winner.goal.id, "clarify-weak-evidence-topic");
+        assert_ne!(neutral.winner.goal.id, exploratory.winner.goal.id);
+    }
+
+    #[test]
+    fn arbitrate_with_mode_floor_goal_wins_under_biasing_mode() {
+        let fixture = static_fixture();
+        let state = VolitionState::from_fixture(&fixture);
+        // Floor input: avoid-overstating-impl-status (tier 1) + two band goals
+        let input =
+            "Is the voice memory work complete, or is the evidence thread still unresolved?";
+        let sel =
+            super::select_goals_with_salience(input, &fixture, &state, ContextBudget::new(4, 100));
+        assert!(
+            sel.selected
+                .iter()
+                .any(|s| s.goal.id == "avoid-overstating-impl-status"),
+            "floor goal must be selected"
+        );
+
+        let neutral = arbitrate_with_mode(sel.selected.clone(), &fixture, Mode::Neutral).unwrap();
+        let exploratory = arbitrate_with_mode(sel.selected, &fixture, Mode::Exploratory).unwrap();
+
+        // Floor goal wins under both modes
+        assert_eq!(neutral.winner.goal.id, "avoid-overstating-impl-status");
+        assert_eq!(exploratory.winner.goal.id, "avoid-overstating-impl-status");
+        assert!(
+            exploratory.winner_bias.protected,
+            "floor goal must be marked protected"
+        );
+    }
+
+    #[test]
+    fn arbitrate_with_mode_focused_keeps_continuity_winner() {
+        let fixture = static_fixture();
+        let state = VolitionState::from_fixture(&fixture);
+        let input = "The open thread about voice memory evidence is unresolved.";
+        let sel =
+            super::select_goals_with_salience(input, &fixture, &state, ContextBudget::new(4, 100));
+
+        let focused = arbitrate_with_mode(sel.selected.clone(), &fixture, Mode::Focused).unwrap();
+
+        // Under Focused: continuity biased to 4, curiosity biased to 10 → continuity wins
+        assert_eq!(focused.winner.goal.id, "resurface-open-thread");
+
+        // Curiosity (clarify-weak-evidence-topic) should be demoted
+        let curiosity_loser = focused
+            .losers
+            .iter()
+            .find(|l| l.selection.goal.id == "clarify-weak-evidence-topic")
+            .expect("curiosity goal must be a loser under Focused");
+        assert!(
+            curiosity_loser.bias.bias_applied > 0,
+            "curiosity bias_applied must be positive (demotion) under Focused"
+        );
+        assert!(
+            curiosity_loser.bias.biased_tier > curiosity_loser.bias.effective_tier,
+            "curiosity biased_tier must exceed effective_tier under Focused"
+        );
+    }
+
+    #[test]
+    fn mode_changed_event_updates_state_mode() {
+        let fixture = static_fixture();
+        let state = VolitionState::from_fixture(&fixture);
+        assert_eq!(state.mode, Mode::Neutral, "initial mode must be Neutral");
+
+        let state = apply(
+            state,
+            VolitionEvent::ModeChanged {
+                mode: Mode::Exploratory,
+                tick: 1,
+            },
+        );
+        assert_eq!(state.mode, Mode::Exploratory);
+
+        let state = apply(
+            state,
+            VolitionEvent::ModeChanged {
+                mode: Mode::Focused,
+                tick: 2,
+            },
+        );
+        assert_eq!(state.mode, Mode::Focused);
+
+        let state = apply(
+            state,
+            VolitionEvent::ModeChanged {
+                mode: Mode::Neutral,
+                tick: 3,
+            },
+        );
+        assert_eq!(state.mode, Mode::Neutral);
+    }
+
+    #[test]
+    fn mode_changed_replay_reproduces_mode() {
+        let fixture = static_fixture();
+        let apply_seq = || {
+            let s = VolitionState::from_fixture(&fixture);
+            let s = apply(
+                s,
+                VolitionEvent::ModeChanged {
+                    mode: Mode::Exploratory,
+                    tick: 1,
+                },
+            );
+            apply(
+                s,
+                VolitionEvent::ModeChanged {
+                    mode: Mode::Focused,
+                    tick: 2,
+                },
+            )
+        };
+        assert_eq!(apply_seq().mode, apply_seq().mode);
+    }
+
+    #[test]
+    fn band_goal_biased_tier_never_enters_floor() {
+        // Verify the clamp arithmetic: a large negative bias on a band goal cannot produce
+        // a biased_tier below PROTECTED_TIER_FLOOR + 1.
+        let effective_tier: u8 = 5;
+        let bias_applied: i8 = i8::MIN; // -128, extreme promotion attempt
+        let raw = effective_tier as i16 + bias_applied as i16; // 5 - 128 = -123
+        let biased_tier = raw.clamp(PROTECTED_TIER_FLOOR as i16 + 1, u8::MAX as i16) as u8;
+        assert_eq!(biased_tier, PROTECTED_TIER_FLOOR + 1);
+
+        // Confirm the BiasOutcome constructed from this arithmetic is correct.
+        let outcome = BiasOutcome {
+            effective_tier,
+            bias_applied,
+            biased_tier,
+            protected: false,
+        };
+        assert_eq!(outcome.biased_tier, PROTECTED_TIER_FLOOR + 1);
+        assert!(!outcome.protected);
+    }
+
+    #[test]
+    fn bias_arithmetic_u8_max_stays_at_max_under_positive_demotion() {
+        // A goal with no fixture tension gets effective_tier = u8::MAX.
+        // A large positive demotion must not wrap or panic; it should stay at u8::MAX.
+        let fixture = VolitionFixture {
+            tensions: vec![],
+            goals: vec![],
+        };
+        let sel = make_goal_for_arbitration("no-tension-goal", vec![], 80);
+        let result = arbitrate_with_mode(vec![sel], &fixture, Mode::Focused).unwrap();
+        assert_eq!(result.winner_bias.effective_tier, u8::MAX);
+        assert_eq!(result.winner_bias.biased_tier, u8::MAX);
+    }
+
+    #[test]
+    fn arbitrate_with_mode_is_deterministic() {
+        let fixture = static_fixture();
+        let state = VolitionState::from_fixture(&fixture);
+        let input = "The open thread about voice memory evidence is unresolved.";
+        let budget = ContextBudget::new(4, 100);
+
+        let run = || {
+            let sel = super::select_goals_with_salience(input, &fixture, &state, budget);
+            arbitrate_with_mode(sel.selected, &fixture, Mode::Exploratory)
+        };
+
+        let r1 = run().unwrap();
+        let r2 = run().unwrap();
+        assert_eq!(r1.winner.goal.id, r2.winner.goal.id);
+        assert_eq!(r1.winner_bias.biased_tier, r2.winner_bias.biased_tier);
+    }
+
+    #[test]
+    fn mode_field_serde_default_is_neutral() {
+        // Existing state serialized without `mode` field must deserialize as Neutral.
+        let json = serde_json::json!({
+            "tick": 0,
+            "goals": {},
+            "pending_candidates": [],
+            "accepted_candidates": {}
+        });
+        let state: VolitionState = serde_json::from_value(json).unwrap();
+        assert_eq!(state.mode, Mode::Neutral);
     }
 }

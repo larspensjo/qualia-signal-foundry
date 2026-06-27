@@ -1350,3 +1350,21 @@ mode), and 8 (optional exploration) are not yet covered by any fixture tension a
 be assigned when new tensions are added.
 Refs: docs/Plans/Idea.VolitionGoalSystem.md, docs/Plans/Plan.VolitionGoalSystem.md,
 docs/Plans/Design.VolitionArbitration.md
+
+## 2026-06-27 - Mode bias may reorder only within the biasable band; protected tiers are immune
+Decision: A `Mode`'s declared `bias_vector()` may shift arbitration ordering only within the
+biasable band (effective tier ≥ 4). Tiers 1–3 (safety/boundary, explicit user intent, current
+task completion) are immune: their `bias_applied` is always 0, and a biased band goal is clamped
+to `>= PROTECTED_TIER_FLOOR + 1` so it can never enter the floor. The mode is explicit,
+inspectable `VolitionState`, changed only by a `ModeChanged` event.
+Context: The mode/bias slice proved that an inspectable, event-sourced bias can deterministically
+flip the arbitration winner among band goals while being structurally unable to displace a
+protected-floor goal. The floor immunity holds by construction (clamp arithmetic, not runtime
+policy), making it verifiable without relying on mode-level access control.
+Consequences: Every new tension at tier ≤ 3 is automatically immune; future modes may add new
+tension keys to their bias vector but must not lower the floor constant. Probabilistic arbitration
+and salience/selection bias remain out of scope and require an explicit experiment gate if
+introduced.
+Refs: docs/Plans/Design.VolitionModeBias.md, docs/Plans/Plan.VolitionGoalSystem.md,
+docs/Experiments/Experiment.VolitionModeBias.md,
+crates/qsf_app/src/volition.rs

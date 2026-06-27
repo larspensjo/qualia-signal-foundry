@@ -30,6 +30,7 @@ use super::voice_loop::{VOICE_LOOP_DESCRIPTION, VoiceLoopExperiment};
 use super::volition_arbitration_conflict::VolitionArbitrationConflictExperiment;
 use super::volition_bounded_initiative_execution::VolitionBoundedInitiativeExecutionExperiment;
 use super::volition_goal_fixture::VolitionGoalFixtureExperiment;
+use super::volition_mode_bias::VolitionModeBiasExperiment;
 use super::volition_reflection_goal_candidates::VolitionReflectionGoalCandidatesExperiment;
 use super::volition_salience_and_satisfaction::VolitionSalienceAndSatisfactionExperiment;
 use super::volition_trace_backed_initiative::VolitionTraceBackedInitiativeExperiment;
@@ -58,6 +59,7 @@ pub enum ExperimentName {
     VolitionArbitrationConflict,
     VolitionReflectionGoalCandidates,
     VolitionBoundedInitiativeExecution,
+    VolitionModeBias,
 }
 
 impl ExperimentName {
@@ -84,6 +86,7 @@ impl ExperimentName {
             Self::VolitionArbitrationConflict => "volition-arbitration-conflict",
             Self::VolitionReflectionGoalCandidates => "volition-reflection-goal-candidates",
             Self::VolitionBoundedInitiativeExecution => "volition-bounded-initiative-execution",
+            Self::VolitionModeBias => "volition-mode-bias",
         }
     }
 
@@ -147,6 +150,9 @@ impl ExperimentName {
             }
             Self::VolitionBoundedInitiativeExecution => {
                 "Replay a 5-turn scripted sequence exercising accepted-candidate selector wiring, arbitration, and bounded initiative execution — executed_effects=0 on every turn"
+            }
+            Self::VolitionModeBias => {
+                "Replay 4 scripted turns exercising mode-aware arbitration: neutral baseline, Exploratory flips winner, floor immunity, Focused suppresses tangent — executed_effects=0 on every turn"
             }
         }
     }
@@ -396,6 +402,7 @@ fn experiment_for(name: ExperimentName) -> Box<dyn Experiment> {
         ExperimentName::VolitionBoundedInitiativeExecution => {
             Box::new(VolitionBoundedInitiativeExecutionExperiment)
         }
+        ExperimentName::VolitionModeBias => Box::new(VolitionModeBiasExperiment),
     }
 }
 
