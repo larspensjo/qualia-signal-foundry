@@ -14,6 +14,7 @@
 - When implementing a plan, surface its open questions or ambiguities before silently resolving them.
 - When adding a feature behind a config flag or threshold, the default values must exercise the new code path.
 - When creating a plan, check `docs/ProjectFrame/ProjectWorkflow.md` for what documents should be updated, and include that in the plan.
+- When a plan or experiment relies on traces to explain a behavioral chain, include a trace completeness contract per `docs/ProjectFrame/ProjectWorkflow.md`: required trace fields, artifact boundary, and artifact-parsing verification.
 - Plans are ephemeral documents, archived when implemented. Never refer to plan phase numbers from durable repository documents (experiment specs, architecture, the decision log, or code); name the behavior instead.
 
 ## Architecture

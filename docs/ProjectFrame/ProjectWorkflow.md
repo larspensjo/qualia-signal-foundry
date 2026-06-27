@@ -228,6 +228,48 @@ Keep experiments small.
 
 A good experiment should be able to produce useful results even if the idea fails.
 
+### Trace Completeness Contract
+
+When a plan or experiment claims that traces explain a behavioral chain, define the
+trace shape before implementation. This applies especially to experiments about
+inspectability, replayability, reducers/actions, selection, arbitration, effect
+boundaries, or "why did this happen?" explanations.
+
+The experiment spec should name the required fields at each relevant stage. For example:
+
+```text
+input
+events_applied
+selector_output
+omitted_or_suppressed_candidates
+arbitration_result
+bounded_or_external_output
+dynamic_state_snapshot
+artifact_or_report_reference
+```
+
+Also define the artifact boundary:
+
+```text
+events.jsonl:
+  Chronological facts that occurred.
+
+trace records:
+  Structured causal/reasoning chain needed for replay and review.
+
+human-readable report:
+  Summary and review checklist, derived from the structured artifacts.
+```
+
+Automated verification should parse generated artifacts and assert that required trace
+fields exist. For experiments that claim deterministic replay, tests should compare
+stable meaningful fields from the trace contract, not only run status, event counts, or
+free-form summary text.
+
+Do not mark automated trace criteria complete until the generated run artifacts satisfy
+the trace contract. Human-review criteria can remain unchecked until a reviewer reads the
+artifacts.
+
 ## Stage 6: Run and Observe
 
 During an experiment, capture what happened.

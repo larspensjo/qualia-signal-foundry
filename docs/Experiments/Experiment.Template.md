@@ -210,6 +210,48 @@ Examples:
 - memory updates
 - sleep-phase changes
 
+### Trace Completeness Contract
+
+Fill this in when the experiment depends on traces to explain a behavioral chain, such
+as selection, arbitration, reducer/action flow, effect boundaries, replay, or "why did
+this happen?" review. If it does not apply, write "Not applicable" and explain why.
+
+Required trace fields by stage:
+
+```text
+Stage / turn:
+  input:
+  events_applied:
+  selector_output:
+  omitted_or_suppressed_candidates:
+  arbitration_result:
+  bounded_or_external_output:
+  dynamic_state_snapshot:
+  artifact_or_report_reference:
+```
+
+Artifact boundary:
+
+```text
+events.jsonl:
+  Chronological facts that occurred.
+
+trace records:
+  Structured causal/reasoning chain needed for replay and review.
+
+human-readable report:
+  Summary and review checklist, derived from structured artifacts.
+```
+
+Automated verification:
+
+```text
+- Parse generated artifacts and assert required trace fields exist.
+- If replay determinism is claimed, compare stable meaningful trace fields.
+- Do not count status strings, event counts, or free-form report text as sufficient
+  evidence for trace completeness.
+```
+
 ## Risks and Confounders
 
 List anything that could distort the result.
@@ -235,6 +277,7 @@ Examples:
 - experiment notes
 - event log
 - trace file
+- trace schema/completeness check output
 - metrics table
 - memory graph snapshot
 - comparison summary
