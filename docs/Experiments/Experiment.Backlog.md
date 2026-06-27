@@ -55,6 +55,7 @@ Later
 | `Experiment.VolitionArbitrationConflict` | Medium | Completed | Can a pure arbitrate() function resolve cross-goal conflict by tension tier, record structured provenance for every loser, and produce deterministic replayable output without executing any effect? |
 | `Experiment.VolitionReflectionGoalCandidates` | Medium | Completed | Can a pure, model-free proposer map scripted open questions to goal candidates with evidence refs, and can accept/reject events move candidates through a durable pending-review state without influencing any selector? |
 | `Experiment.VolitionBoundedInitiativeExecution` | Medium | Running | Can accepted candidates wire into the selector via tension-derived keywords and, once selected, translate the arbitration winner into a bounded InitiativeOutput without a model call or external action? |
+| `Experiment.VolitionModeBias` | Medium | Planned | Can a declared, inspectable mode bias arbitration ordering within a biasable band to flip the winner deterministically, while a protected tier floor stays immune by construction and no effect executes? |
 | `Experiment.StreamingTranscriptionMVP` | Medium | Completed | Can live speech be represented as observable partial and final transcript events? |
 | `Experiment.AudioLoopMVP` | Medium | Superseded | Can a minimal audio loop create a stronger sense of presence than text-only interaction? |
 | `Experiment.ToolAsPerceptionCalculator` | Medium | Completed | How should a simple read-only computational tool be represented as perception? |
@@ -477,6 +478,42 @@ Possible success criteria:
 - The accepted goal's lifecycle (salience, cooldown, retirement) uses the same reducer branches as fixture goals.
 - All prior tests pass; existing selector and reducer behaviour is unchanged.
 - Replay produces identical state and event logs.
+- No effect is executed (`executed_effects = 0`).
+
+### Experiment.VolitionModeBias
+
+**Priority:** Medium
+**Status:** Planned
+
+Add an inspectable `Mode` — a named, declared bias over arbitration ordering — and show that it
+deterministically shifts which goal wins a conflict without being able to override the
+safety/boundary floor. Bias reorders goals only within a biasable band (effective tier ≥ 4); a
+protected floor (tiers 1–3) is immune, and a biased band goal is clamped so it can never enter the
+floor (safety invariant by construction). A mode's meaning is its declared bias vector, not a
+free-form label. Bias applies to arbitration only; salience/selection and proposal-threshold bias
+are follow-ups. Mode is event-driven `VolitionState` (`ModeChanged`); `arbitrate` delegates to a
+new `arbitrate_with_mode(.., Neutral)`. No model call; `executed_effects = 0`.
+
+Related documents:
+
+```text
+Plans/Plan.VolitionGoalSystem.md
+Plans/Design.VolitionModeBias.md
+Plans/Idea.VolitionGoalSystem.md
+Experiments/Experiment.VolitionArbitrationConflict.md
+Experiments/Experiment.VolitionBoundedInitiativeExecution.md
+DecisionLog.md  (2026-06-26 "Arbitration tier is separate from priority bias")
+```
+
+Possible success criteria:
+
+- `arbitrate_with_mode(.., Neutral)` matches `arbitrate` on the same selection.
+- A biasing mode flips the winner among band goals (`mode_changed_winner == true`).
+- A present tier-1 goal wins under every mode (floor immunity; `mode_changed_winner == false`).
+- No band goal's biased tier drops below `PROTECTED_TIER_FLOOR + 1`.
+- Bias is attributed to each goal's effective tension and recorded per goal.
+- `ModeChanged` updates `state.mode`; results are deterministic and replay-identical.
+- All prior tests pass; existing `arbitrate`/selector/reducer behaviour is unchanged.
 - No effect is executed (`executed_effects = 0`).
 
 ### Experiment.StreamingTranscriptionMVP

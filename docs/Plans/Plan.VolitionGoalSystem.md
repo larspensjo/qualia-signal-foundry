@@ -25,7 +25,10 @@ in this document and its validation scaffold is
 is
 [`Experiment.VolitionBoundedInitiativeExecution.md`](../Experiments/Experiment.VolitionBoundedInitiativeExecution.md)
 and its status is Running (automated tests pass; awaiting human review).
-Phase 8 remains sketched at a high level.
+**Phase 8 (optional inspectable mode/bias state) is planned and expanded**; its design is
+captured in [`Design.VolitionModeBias.md`](Design.VolitionModeBias.md) and its validation
+scaffold is
+[`Experiment.VolitionModeBias.md`](../Experiments/Experiment.VolitionModeBias.md).
 
 > Companion to the idea note
 > [`Idea.VolitionGoalSystem.md`](Idea.VolitionGoalSystem.md), which is authoritative
@@ -81,7 +84,7 @@ influencing behavior.
 | 5 | Arbitration and multi-goal conflict resolution — **complete** | Yes | Yes | `Experiment.VolitionArbitrationConflict` |
 | 6 | Reflection-generated goal candidates (proposed, not auto-accepted) — **complete** | Yes | Yes | `Experiment.VolitionReflectionGoalCandidates` |
 | 7 | Bounded internal initiative execution — selector wiring + `InitiativeExecuted` — **complete** | Yes | Yes | `Experiment.VolitionBoundedInitiativeExecution` |
-| 8 | Optional inspectable mode/bias state | Yes | Yes | future |
+| 8 | Optional inspectable mode/bias state (arbitration bias) — **planned** | Yes | Yes | `Experiment.VolitionModeBias` |
 
 ## Phase Details
 
@@ -189,172 +192,89 @@ per-turn snapshots with `executed_effects = 0` on every turn. All prior tests pa
 new unit tests cover the full candidate lifecycle. Validation scaffold:
 [`Experiment.VolitionReflectionGoalCandidates.md`](../Experiments/Experiment.VolitionReflectionGoalCandidates.md).
 
-### Phase 7 — Bounded internal initiative execution
+### Phase 7 — Bounded internal initiative execution (complete)
 
-Two sub-slices in sequence:
-
-1. **Selector wiring** — wire accepted candidates into `select_goals_with_salience`
-   so they compete alongside fixture goals in selection and arbitration.
-2. **Initiative execution** — translate the arbitration winner into a bounded
-   `InitiativeOutput`, apply it as a `VolitionEvent::InitiativeExecuted`, and trace
-   the full chain: goal → delta → arbitration → execution → output.
-
-No write-capable external action is added. All execution output is a purely structural
-record describing what a runtime system *would* do. `executed_effects = 0` on every
-experiment turn; `InitiativeExecuted` records the internal output only.
-
-#### Open question to resolve before building
-
-**How should accepted candidates get `activation_keywords` and enter the selector?**
-
-*Context:* `ProposedGoalCandidate::into_goal()` currently sets
-`activation_keywords: vec![]`. Without keywords the selector's keyword-match gate
-rejects them immediately, so selector wiring requires extending the candidate type.
-
-**Option A — Derive keywords at proposal time from matched tension id parts
-(recommended).** `propose_goal_candidates` splits each matched tension id on `-` and
-uses the parts as activation keywords (e.g. `continuity-preservation` →
-`["continuity", "preservation"]`). `ProposedGoalCandidate` gains an
-`activation_keywords: Vec<String>` field; `into_goal()` passes the keywords through.
-The selector loop gains a second pass over `state.accepted_candidates` after
-`fixture.goals`, reusing `state.goals` for dynamic state with an initial
-`GoalDynamicState` entry inserted by the `GoalCandidateAccepted` reducer branch.
-Deterministic and pure; no API change to events.
-
-**Option B — Supply keywords at acceptance time.** `GoalCandidateAccepted` carries
-`activation_keywords: Vec<String>`. The caller specifies which keywords activate the
-accepted goal. Flexible but requires callers to know activation terms that are already
-implicit in the matched tensions.
-
-**Option C — Skip keyword matching for accepted candidates.** The selector normalizes
-the accepted goal's `title` and `summary` and matches against those directly.
-No event or type changes needed, but creates inconsistent matching behaviour between
-fixture goals (explicit keywords) and accepted goals (content-based).
-
-The plan proceeds with **Option A**. Verify this choice with the user before building.
-
-#### Data model additions
-
-- `ProposedGoalCandidate` gains `activation_keywords: Vec<String>` (set by
-  `propose_goal_candidates` from matched tension id parts; passed through `try_new`
-  and `into_goal`).
-- `GoalCandidateAccepted` reducer branch inserts `GoalDynamicState::initial()` into
-  `state.goals` for the accepted goal id, so the accepted goal receives salience,
-  decay, and cooldown management immediately on acceptance using the same reducer
-  branches as fixture goals.
-- `select_goals_with_salience` gains a second goal source: after iterating
-  `fixture.goals` it iterates `state.accepted_candidates.values()`, using
-  `state.goals` for dynamic state lookup (identical logic). Tier and priority
-  resolution uses the shared fixture tensions.
-- New `InitiativeOutput` enum (pure, serializable, one variant per `AllowedEffect`):
-
-  ```rust
-  pub enum InitiativeOutput {
-      ReflectionRequested { proposed_question: String },
-      ContextRetrievalRequested { query_terms: Vec<String> },
-      ExperimentProposed { hypothesis: String, scope: GoalScope },
-      OpenThreadSurfaced { thread_summary: String },
-  }
-  ```
-
-- `GoalDynamicState` gains `last_initiative_output: Option<InitiativeOutput>`.
-
-#### New VolitionEvent variant
-
-```rust
-InitiativeExecuted {
-    goal_id: String,
-    effect: AllowedEffect,
-    output: InitiativeOutput,
-    rationale: String,
-    tick: u64,
-},
-```
-
-Reducer: sets the goal's status to `Active`, records `last_activated_tick`, stores
-`output` in `GoalDynamicState::last_initiative_output`. Does not panic on unknown
-goal id (same no-op pattern as other goal lifecycle events).
-
-#### New pure function
-
-```rust
-pub fn execute_initiative(
-    initiative: &InitiativeProposal,
-    goal: &Goal,
-) -> InitiativeOutput
-```
-
-Deterministic, no model call. Maps `AllowedEffect` → `InitiativeOutput` using goal
-`summary`, `title`, and `initiative.matched_terms`:
-- `Reflect` → `ReflectionRequested { proposed_question }`
-- `RetrieveContext` → `ContextRetrievalRequested { query_terms: matched_terms }`
-- `ProposeExperiment` → `ExperimentProposed { hypothesis, scope: goal.scope }`
-- `SurfaceOpenThread` → `OpenThreadSurfaced { thread_summary: goal.summary }`
-
-#### Experiment
-
-Register a `volition-bounded-initiative-execution` experiment (spec:
-`Experiment.VolitionBoundedInitiativeExecution.md`) with a scripted sequence:
-
-1. **Proposal turn** — `propose_goal_candidates` on one matched question; apply
-   `GoalCandidateAdded`. Verify candidate carries non-empty `activation_keywords`
-   derived from its matched tension id parts.
-2. **Accept turn** — apply `GoalCandidateAccepted`. Verify:
-   - A `GoalDynamicState` entry now exists in `state.goals` for the accepted goal id.
-   - `select_goals_with_salience` returns the accepted goal when input matches its
-     derived keywords (selector wiring verified here).
-3. **Arbitration turn** — input that matches both one fixture goal and the accepted
-   goal. Run `select_goals_with_salience` + `arbitrate`. Verify tier ordering is
-   respected; the accepted goal's effective tier is derived from its `tension_ids`
-   in the shared fixture.
-4. **Execution turn** — call `execute_initiative` on the arbitration winner; apply
-   `InitiativeExecuted`. Verify:
-   - `GoalDynamicState::last_initiative_output` is set with the correct variant.
-   - The event records the output, rationale, and tick.
-   - `executed_effects = 0` (no external side effect); `InitiativeExecuted` records
-     the structural output only.
-5. **Outcome turn** — apply `GoalProgressObserved` or `GoalSatisfied`. Verify goal
-   lifecycle advances correctly and the evidence ref is preserved.
-
-Each turn records: input, events applied, `select_goals_with_salience` output,
-arbitration result (turns 3–5), `InitiativeExecuted` output (turn 4), and
-`GoalDynamicState` snapshot. Replay must produce identical output.
-
-#### Verify (automated)
-
-- Accepted candidate appears in `select_goals_with_salience` output after acceptance
-  when input matches its derived activation keywords.
-- Accepted candidate competes in arbitration alongside fixture goals; tier ordering
-  is respected using the shared fixture tensions.
-- `execute_initiative` is deterministic: same input → same `InitiativeOutput`.
-- `InitiativeExecuted` stores the output in `GoalDynamicState::last_initiative_output`.
-- The accepted goal's salience, cooldown, and lifecycle are managed by the same
-  reducer branches as fixture goals (no parallel code path).
-- All prior tests pass; existing selector and reducer behaviour is unchanged.
-- `cargo test` and `cargo clippy --all-targets -- -D warnings` pass.
-
-#### Verify (human)
-
-- Read the selection output and confirm the accepted candidate is visually distinct
-  from fixture goals (source is identifiable from `source_reference` and
-  `evidence_refs`, not from position alone).
-- The `InitiativeOutput` for each `AllowedEffect` variant reads as a plausible
-  internal action — a reflection question, a retrieval query, an experiment
-  hypothesis, or a thread summary.
-- The trace chain — goal → tension provenance → delta → arbitration →
-  `execute_initiative` output — answers "why did this initiative execute?" without
-  requiring external context.
-- Nothing in the output implies a real external write-capable action occurred.
-
-Full scope and success/failure criteria live in
+Wired accepted goal candidates into selection and added bounded, side-effect-free
+initiative execution, in two additive sub-slices over Phase 6. **Selector wiring:**
+accepted candidates now compete alongside fixture goals in `select_goals_with_salience`
+and arbitration. Following **Option A**, `ProposedGoalCandidate` gained an
+`activation_keywords: Vec<String>` field that `propose_goal_candidates` derives from
+matched tension id parts (e.g. `continuity-preservation` → `["continuity",
+"preservation"]`, deduplicated) and passes through `try_new` and `into_goal`; the
+`GoalCandidateAccepted` reducer branch inserts an initial `GoalDynamicState` into
+`state.goals` so accepted goals receive salience, decay, and cooldown via the same
+reducer branches as fixture goals (no parallel code path), and the selector gains a
+second pass over `state.accepted_candidates` using the shared fixture tensions for tier
+and priority. **Initiative execution:** a pure, deterministic `execute_initiative(&
+InitiativeProposal, &Goal) -> InitiativeOutput` maps each `AllowedEffect` to one
+variant of a new serializable `InitiativeOutput` enum (`ReflectionRequested`,
+`ContextRetrievalRequested`, `ExperimentProposed`, `OpenThreadSurfaced`). A new
+`VolitionEvent::InitiativeExecuted { goal_id, effect, output, rationale, tick }`
+reducer sets the goal `Active`, records `last_activated_tick`, and stores the output in
+the new `GoalDynamicState::last_initiative_output`, no-op on unknown goal id. No
+write-capable external action was added: all output is a structural record of what a
+runtime *would* do, and `executed_effects = 0` on every experiment turn. The
+`volition-bounded-initiative-execution` experiment replays the scripted propose →
+accept → arbitrate → execute → outcome sequence and traces the full chain goal → delta
+→ arbitration → execution → output. Status: Running (automated tests pass; awaiting
+human review). Validation scaffold:
 [`Experiment.VolitionBoundedInitiativeExecution.md`](../Experiments/Experiment.VolitionBoundedInitiativeExecution.md).
 
-### Phase 8 — Optional mode/bias experiments
+### Phase 8 — Optional inspectable mode/bias state (planned)
 
-Introduce inspectable mode/bias state that shifts arbitration weights deterministically.
+Introduce an inspectable **mode**: a named, declared bias over arbitration ordering that can
+deterministically shift which goal wins a conflict — *without* being able to override the
+safety/boundary floor. A mode's meaning *is* its declared bias vector; the label ("Focused",
+"Exploratory") is only a handle, so no free-form mood drives behavior. This slice biases
+**arbitration only**; salience/selection scoring and proposal-threshold behavior are explicit
+follow-ups. Full design, rationale, and alternatives:
+[`Design.VolitionModeBias.md`](Design.VolitionModeBias.md).
 
-- **Verify:** mode is explicit, inspectable, and traceable; effects are deterministic;
-  no free-form mood labels drive the bias vector.
+**Build (pure, additive over the arbitration slice):**
+
+- A `Mode` enum (`Neutral`, `Focused`, `Exploratory`; `Default` = `Neutral`) with a declared
+  `bias_vector() -> BTreeMap<String, i8>` keyed by tension id (negative promotes, positive
+  demotes; empty for `Neutral`) — the source of truth for the bias.
+- `PROTECTED_TIER_FLOOR: u8 = 3`. A **protected floor** (effective tier 1–3: safety/boundary,
+  explicit user intent, task completion) is immune to bias; the **biasable band** (effective
+  tier ≥ 4) is reorderable. A band goal's biased tier is clamped to a lower bound of
+  `PROTECTED_TIER_FLOOR + 1`, so a band goal can **never enter the floor** — the safety invariant
+  holds by construction. The bias is added in a widened signed integer and then clamped, so the
+  `u8` tier and `i8` bias cannot overflow or wrap (a `u8::MAX` no-tension goal stays at `u8::MAX`).
+- A pure `arbitrate_with_mode(selections, fixture, mode) -> Option<ModeArbitrationResult>`
+  (sort key `(biased_tier asc, base_priority desc, goal_id asc)`); `arbitrate` is refactored to
+  delegate to `arbitrate_with_mode(.., Mode::Neutral)` and map the neutral result back into
+  `ArbitrationResult`, so there is one sort implementation and `arbitrate`'s
+  `Option<ArbitrationResult>` signature and behavior are unchanged. New `BiasOutcome`,
+  `ModeArbitrationLoser`, `ModeArbitrationResult` types
+  record each goal's pre-bias tier, the bias applied, the post-bias tier, and whether it was
+  protected.
+- `VolitionState` gains `#[serde(default)] mode: Mode` (default `Neutral`; `serde(default)` keeps
+  prior run artifacts deserializable); a new `VolitionEvent::ModeChanged { mode, tick }` sets it
+  via the pure reducer.
+- A registered `volition-mode-bias` experiment scripting the turns below.
+
+**Verify (automated):** `arbitrate_with_mode(.., Neutral)` matches `arbitrate`; a biasing mode
+flips the winner among band goals; a present tier-1 goal wins under every mode (floor immunity);
+no band goal's biased tier drops below `PROTECTED_TIER_FLOOR + 1`; bias is attributed to each
+goal's effective tension; results are deterministic and replayable; `executed_effects = 0` on
+every turn. The runner parses the generated trace records and asserts the flip/floor outcomes
+(trace contract in the experiment scaffold).
+
+**Verify (human test):** a researcher reads the per-turn traces and judges that the mode and its
+vector are legible, that the flip and non-flip outcomes are sensible consequences of the declared
+vectors (not arbitrary), that floor immunity is convincing, and that the label is clearly a handle
+over an explicit vector — no free-form mood doing hidden work.
+
+**Default-exercises-new-path:** runtime default mode is `Neutral`, but the experiment scripts a
+biasing mode by default, so `arbitrate_with_mode` runs on every experiment run.
+
+**Scripted turns:** (1) Neutral band-only conflict baseline; (2) same input under `Exploratory`
+(`ModeChanged`) → winner flips from the continuity goal to the curiosity goal; (3) conflict that
+also activates a tier-1 boundary goal under a biasing mode → winner stays the floor goal; (4)
+`Focused` → winner stays the continuity goal and the curiosity goal is demoted further. Full
+scope, inputs, and success/failure criteria live in
+[`Experiment.VolitionModeBias.md`](../Experiments/Experiment.VolitionModeBias.md).
 
 ## Open Questions To Resolve Before The Affected Phase
 
@@ -381,6 +301,16 @@ expanded, not silently resolved:
   inserted into `state.goals` at acceptance time; selector gains a second pass over
   `state.accepted_candidates` using the same dynamic state map. See Phase 7 section
   for full rationale and alternatives.
+- **Phase 8:** *(Decisions made with the user; see
+  [`Design.VolitionModeBias.md`](Design.VolitionModeBias.md).)* (1) A mode biases **arbitration
+  only** this slice; salience/selection and proposal-threshold bias are follow-ups. (2) Bias
+  reorders only within the **biasable band** (effective tier ≥ 4); the **protected floor** (tiers
+  1–3) is immune, and a band goal's biased tier is clamped away from the floor so the safety
+  invariant holds by construction. (3) Mode is event-driven `VolitionState` set by
+  `ModeChanged`; a mode's meaning is its declared bias vector (no free-form mood label). (4)
+  `arbitrate` delegates to `arbitrate_with_mode(.., Neutral)` (one sort implementation,
+  behavior-preserving). Open follow-ups: whether mode should also bias salience/selection and the
+  proposal threshold; how a mode is chosen outside a script; cross-session mode persistence.
 - **Cross-cutting:** Should goals be live state, memory records, or both? Which fields
   belong only in live state vs. durable memory? (Leaning: both, carefully — live state
   for runtime reducer behavior, memory records for cross-session continuity. Confirm
@@ -391,17 +321,23 @@ expanded, not silently resolved:
 Per [`ProjectWorkflow.md`](../ProjectFrame/ProjectWorkflow.md):
 
 - **This plan** as phases start, complete, or change shape.
+- **Per-phase `Design.*.md`** for a slice with non-trivial design decisions (Phase 5 has
+  [`Design.VolitionArbitration.md`](Design.VolitionArbitration.md); Phase 8 has
+  [`Design.VolitionModeBias.md`](Design.VolitionModeBias.md)).
 - **Per-phase experiment specs** under `docs/Experiments/` (validation scaffolds);
-  fill in their Results/Interpretation after each run. Phase 7's validation scaffold
-  (`Experiment.VolitionBoundedInitiativeExecution.md`) is already created.
+  fill in their Results/Interpretation after each run. Phase 7's scaffold
+  (`Experiment.VolitionBoundedInitiativeExecution.md`) and Phase 8's scaffold
+  (`Experiment.VolitionModeBias.md`) are already created.
 - **`Experiment.Backlog.md`** when a future phase's experiment is promoted from idea
-  to planned. Update Phase 7's entry from Planned → Running → Completed as the phase
+  to planned. Update each entry through Planned → Running → Completed as the phase
   progresses.
 - **Architecture docs** (e.g.
   [`Architecture.RuntimeLoop.md`](../Architecture/Architecture.RuntimeLoop.md), or a
   new volition architecture doc) only once a phase produces evidence worth promoting —
   via an *Implementation Status* section, not speculative description.
-- **`DecisionLog.md`** when a phase outcome is promoted into an accepted rule.
+- **`DecisionLog.md`** when a phase outcome is promoted into an accepted rule (for Phase 8,
+  the rule that mode bias may reorder only within the biasable band — protected tiers are
+  immune).
 
 This plan is ephemeral: when the volition system is built and reflected in architecture
 and the decision log, archive this plan rather than citing its phases from durable
