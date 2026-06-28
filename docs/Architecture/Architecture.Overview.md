@@ -60,6 +60,10 @@ focused architecture documents.
   and editing remain future work
 - Context assembly selects fragments under a budget but ranking is simple and
   role-specific assembly strategies are not yet differentiated
+- A volition / goal system exists as the extracted `qsf_volition` crate (fixtures,
+  pure lifecycle reducer, context-neutral selection/arbitration, mode bias, bounded
+  internal initiative), exercised through experiments; it is not yet wired into the
+  live loop ([Architecture.VolitionSystem.md](Architecture.VolitionSystem.md))
 - Sleep consolidation does not yet run explicit pruning/maintenance sweeps;
   retrieval-time decay exists, and sleep extracts open questions and candidate
   memories but semantic deduplication and contradiction handling remain shallow
@@ -67,7 +71,6 @@ focused architecture documents.
 **Not yet implemented:**
 
 - An attention or salience subsystem as a first-class signal
-- A volition or goal system
 - Self-reflection through project-document introspection
 - Identity / self-model state
 - A live activation dashboard or other inspection UI
@@ -468,6 +471,7 @@ Architecture documents:
 - `Architecture.SleepPhase.md`
 - `Architecture.ModelRoles.md`
 - `Architecture.StateAndObservability.md`
+- `Architecture.VolitionSystem.md`
 
 Research documents:
 
