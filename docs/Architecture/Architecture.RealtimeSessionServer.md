@@ -27,9 +27,10 @@ mode, not a one-off experiment server.
   completed exchanges into the shared continuity root, and treats the browser
   relay as diagnostic-only.
 - The realtime sideband declares a read-only realtime tool allow-list
-  (`search_memory`, `get_associations`, `inspect_session_state`), records
-  `ToolRequested` and `ToolResolved` events, executes tools outside the session
-  mutex, returns `function_call_output`, and re-issues `response.create`.
+  (`search_memory`, `get_associations`, `inspect_session_state`,
+  `inspect_volition_state`, `select_volition_goals`), records `ToolRequested`
+  and `ToolResolved` events, executes tools outside the session mutex, returns
+  `function_call_output`, and re-issues `response.create`.
 - Function-call-only and mixed `response.done` events do not finalize the
   exchange; finalization waits for the eventual spoken response. Tool-loop model
   usage is aggregated onto the trusted exchange, while each tool execution keeps
@@ -259,6 +260,35 @@ fixture — are permanently exempt from idle-lifecycle retirement. They remain `
 or `Active` regardless of session length, ensuring the safety guarantee that explicit
 user intent and current-task-completion dominate arbitration is preserved even in very
 long sessions.
+
+### Read-Only Volition Tools
+
+Two read-only tools expose per-session volition state to the live model without mutating
+it, implemented in `crates/qsf_realtime_server/src/realtime/volition_tools.rs` and
+registered in `default_tool_definitions()` and `built_in_tools()` in `tools.rs`:
+
+- **`inspect_volition_state`**: Returns a compact JSON summary of the current mode, tick,
+  goals grouped by status (active, accepted, blocked, cooldown, retired), candidate
+  counts, and last initiative output summaries. Returns `{"status":"unavailable"}` when
+  no volition snapshot is present.
+- **`select_volition_goals`**: Given a `query` string, calls `select_goals_ranked` and
+  `arbitrate_with_mode` from `qsf_volition` and returns ranked selected goals (capped at
+  6), omitted goals (capped at 8), suppressed-cooldown count, arbitration result, and a
+  SHA-256 hash of the volition snapshot. Returns `{"status":"no_match"}` when no goals
+  match the query terms.
+
+**Tool context extension**: When the sideband builds a `RealtimeToolContext` for a tool
+dispatch batch, it clones the current `VolitionRuntimeState` into a
+`VolitionStateSnapshot { state: VolitionState, fixture: VolitionFixture }` before any
+`await` point. The updated `RealtimeToolContext` carries three new fields:
+
+- `volition: Option<VolitionStateSnapshot>` — per-session snapshot cloned at dispatch time
+- `exchange_index: usize` — used in the `artifact_or_record_reference` field of persisted traces
+- `call_id: String` — the provider tool-call id for the specific tool being executed
+
+**Trace contract**: Both tools persist a JSON trace in `ToolExecutionRecord.result_summary`.
+Neither output ever contains `OPENAI_API_KEY` or raw fixture dumps. See
+`Architecture.StateAndObservability.md` for the full field list.
 
 ## Related Documents
 

@@ -64,6 +64,21 @@ candidate categories listed below still have no shared module.
   vectors behind serde defaults.
   ([qsf_session/src/exchange.rs](../../crates/qsf_session/src/exchange.rs),
   [qsf_session/src/state.rs](../../crates/qsf_session/src/state.rs))
+- Volition tool invocations (`inspect_volition_state`, `select_volition_goals`)
+  persist their traces as `ToolExecutionRecord.result_summary` JSON blobs. The
+  `select_volition_goals` trace includes: `qsf_session_id`, `tool_name`,
+  `volition_tick`, `mode`, `input_query`, `selected_goal_ids` (full uncapped set),
+  `omitted_goal_ids` (full uncapped set), `suppressed_cooldown_ids`,
+  `visible_blocked_ids`, `selected_truncated`, `omitted_truncated`,
+  `salience_snapshot`, `arbitration_result`, `volition_snapshot_hash`, and
+  `artifact_or_record_reference`. The `inspect_volition_state` trace carries
+  session id, tool name, tick, mode, per-status goal counts, and the same artifact
+  reference. The artifact reference uses the form
+  `exchange:<index>/tool_call:<id>`. Model-visible output is capped (max 6
+  selected, max 8 omitted for `select_volition_goals`) while the persisted trace
+  always records the full uncapped sets. Neither output ever contains
+  `OPENAI_API_KEY` or raw fixture dumps.
+  ([realtime/volition_tools.rs](../../crates/qsf_realtime_server/src/realtime/volition_tools.rs))
 
 **Partial:**
 
@@ -93,10 +108,10 @@ candidate categories listed below still have no shared module.
   memory-graph view, no cost dashboard)
 - `experiment_id` and `memory_update_id` correlation across runs
 
-Last reviewed: 2026-06-13 against explicit remember-this capture observability,
+Last reviewed: 2026-06-28 against explicit remember-this capture observability,
 retrieval skip reasons, the implemented sideband promotion path, the realtime
-diagnostic surface, realtime tool execution records, and the live-loop
-latency/interruption diagnostics.
+diagnostic surface, realtime tool execution records, the live-loop
+latency/interruption diagnostics, and volition tool trace persistence.
 
 ## Summary
 

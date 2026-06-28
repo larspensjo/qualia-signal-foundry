@@ -30,29 +30,46 @@ internal initiative output. Context assembly and report shapes live in caller ad
   `execute_initiative()` — structural records only; no external write-capable effect.
 - Goal-candidate proposal from open questions: `propose_goal_candidates()`,
   `ProposedGoalCandidate` (non-empty evidence invariant), and `EvidenceRef`.
+- Context-neutral goal-selection helpers in `qsf_volition::selection`:
+  `matched_keywords`, `compute_relevance`, `compute_relevance_with_salience`,
+  `initiative_for_goal`, `initiative_for_effect`, and `select_goals_ranked`.
+  Re-exported via `pub use selection::*` so both `qsf_app` and
+  `qsf_realtime_server` can call them without importing `qsf_app`. The
+  `RankedSelectionResult` type groups selected, omitted, suppressed-cooldown, and
+  visible-blocked goals without any context-assembly dependency.
+- State inspection in `qsf_volition::inspection`: `build_state_inspection` returns
+  a `VolitionStateInspection` grouping goals by status with id, title, salience,
+  cooldown tick, and last-activated tick, plus `InitiativeSummary` records for
+  recent initiative outputs. Consumed by `inspect_volition_state` in the realtime
+  server.
 
 **Not in this crate (by design):**
 
 - `ContextFragment`, `ContextBudget`, `ContextAssembly`, and context assembly itself —
   these stay in the shared `qsf_context` crate.
 - Context-attached selection results (`GoalSelectionResult`,
-  `SalienceGoalSelectionResult`), the salience-aware selector, pre-initiative trace
-  assembly, and experiment/report shapes — these stay in the `qsf_app` adapter
+  `SalienceGoalSelectionResult`), pre-initiative trace assembly, and
+  experiment/report shapes — these stay in the `qsf_app` adapter
   ([crates/qsf_app/src/volition.rs](../../crates/qsf_app/src/volition.rs)).
+  `qsf_app::volition` now calls `select_goals_ranked` from this crate and wraps
+  the result with context assembly.
 
 ## Crate Boundary And Dependency Direction
 
-`qsf_volition` depends only on `serde`. It does **not** depend on `qsf_context`,
-`qsf_app`, or any caller. This keeps arbitration a pure volition-domain operation: it
-sorts on tension tiers, base priority, and goal id, and is structurally incapable of
-reading context-assembly data.
+`qsf_volition` depends only on `serde` and `serde_json`. It does **not** depend on
+`qsf_context`, `qsf_app`, or any caller. This keeps selection and arbitration pure
+volition-domain operations: they sort on tension tiers, base priority, and goal id, and
+are structurally incapable of reading context-assembly data.
 
 Adapters depend on `qsf_volition`, never the reverse:
 
-- `qsf_app` re-exports the crate (`pub use qsf_volition::*`), then turns selected goals
-  into `ContextFragment`s, assembles context, and builds traces/reports.
-- The realtime server may depend on `qsf_volition` directly for read-only inspection and
-  context packets without importing `qsf_app` experiment/report code.
+- `qsf_app` re-exports the crate (`pub use qsf_volition::*`), calls
+  `select_goals_ranked` from `qsf_volition::selection`, then turns the ranked result
+  into `ContextFragment`s via `build_fragment`, assembles context, and builds
+  traces/reports.
+- `qsf_realtime_server` depends on `qsf_volition` directly and calls
+  `select_goals_ranked`, `build_state_inspection`, and `arbitrate_with_mode` from the
+  volition read-only tools without importing `qsf_app` experiment/report code.
 
 A `GoalSelection` is associated with its assembled `ContextFragment` by the adapter via
 the caller's result shape (which carries the full `ContextAssembly`), joinable by

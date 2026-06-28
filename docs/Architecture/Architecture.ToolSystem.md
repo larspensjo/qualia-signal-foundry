@@ -48,13 +48,22 @@ categories described below is still mostly aspirational.
   `project_doc_influence` enrichment pass available for post-hoc run analysis
   ([models/tool_dispatch.rs](../../crates/qsf_app/src/models/tool_dispatch.rs),
   [project_docs/](../../crates/qsf_app/src/project_docs/))
-- Realtime voice sideband declares and executes exactly three read-only
-  perception tools: `search_memory`, `get_associations`, and
-  `inspect_session_state`. The sideband records request and execution facts,
-  applies the read-only allow-list, sends `function_call_output`, and then
-  issues `response.create`.
+- Realtime voice sideband declares and executes five read-only perception tools:
+  `search_memory`, `get_associations`, `inspect_session_state`,
+  `inspect_volition_state`, and `select_volition_goals`. The sideband records
+  request and execution facts, applies the read-only allow-list, sends
+  `function_call_output`, and then issues `response.create`.
   ([realtime/tools.rs](../../crates/qsf_realtime_server/src/realtime/tools.rs),
+  [realtime/volition_tools.rs](../../crates/qsf_realtime_server/src/realtime/volition_tools.rs),
   [realtime/sideband.rs](../../crates/qsf_realtime_server/src/realtime/sideband.rs))
+- `inspect_volition_state` and `select_volition_goals` are read-only volition
+  tools that use a `VolitionStateSnapshot` cloned from the per-session
+  `VolitionRuntimeState` at dispatch time. They never mutate volition state.
+  `inspect_volition_state` returns mode, tick, and goals by status.
+  `select_volition_goals` takes a `query` string and returns ranked goals with
+  arbitration result, capping model-visible output at 6 selected and 8 omitted
+  goals while persisting full uncapped sets in `ToolExecutionRecord.result_summary`.
+  ([realtime/volition_tools.rs](../../crates/qsf_realtime_server/src/realtime/volition_tools.rs))
 - Fail-fast tool dispatch: any failure in a batch fails the whole batch
 
 **Partial:**
@@ -78,7 +87,7 @@ categories described below is still mostly aspirational.
 - Project introspection beyond the framed-self documentation slice: source
   inspection, run inspection, active-self inspection, and write-capable tools
 
-Last reviewed: 2026-06-10 against the realtime tool-loop implementation.
+Last reviewed: 2026-06-28 against the realtime volition read-only tools implementation.
 
 ## Summary
 
