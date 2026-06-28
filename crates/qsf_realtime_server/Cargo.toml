@@ -18,6 +18,7 @@ qsf_memory = { path = "../qsf_memory" }
 qsf_session = { path = "../qsf_session" }
 qsf_realtime_protocol = { path = "../qsf_realtime_protocol" }
 qsf_tools = { path = "../qsf_tools" }
+qsf_volition = { path = "../qsf_volition" }
 reqwest = { version = "0.12", default-features = false, features = ["json", "multipart", "rustls-tls"] }
 serde.workspace = true
 serde_json.workspace = true

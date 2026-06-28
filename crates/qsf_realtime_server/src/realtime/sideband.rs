@@ -457,6 +457,7 @@ async fn handle_provider_event(
                             &exchange,
                         )?;
                     }
+                    apply_trusted_transcript_to_volition(&mut guard, &transcript);
                 }
                 TranscriptDisposition::StartTurn => {
                     let exchange_index = ensure_authoritative_exchange(&mut guard);
@@ -483,6 +484,7 @@ async fn handle_provider_event(
                     runtime_state.active_exchange_index = Some(exchange_index);
                     runtime_state.pending_response_exchange = None;
                     runtime_state.turn_phase = TurnPhase::Idle;
+                    apply_trusted_transcript_to_volition(&mut guard, &transcript);
                 }
             }
             drop(guard);
@@ -1097,6 +1099,20 @@ fn record_interrupted_exchange_diagnostic(
         recorded_at: OffsetDateTime::now_utc(),
         exchange: exchange.clone(),
     })
+}
+
+/// Map a trusted user transcript to volition events and apply them to the session's
+/// in-memory volition state. Called once per trusted turn boundary (StartTurn or Interrupt
+/// disposition). Pure mapping — no external side effects, no diagnostics in Phase 2.
+fn apply_trusted_transcript_to_volition(guard: &mut SessionRuntime, transcript: &str) {
+    let new_tick = guard.volition.state.tick + 1;
+    let events = crate::realtime::volition::events_for_trusted_transcript(
+        transcript,
+        &guard.volition.state,
+        &guard.volition.fixture,
+        new_tick,
+    );
+    guard.volition.apply_events(events);
 }
 
 #[allow(clippy::too_many_arguments)]

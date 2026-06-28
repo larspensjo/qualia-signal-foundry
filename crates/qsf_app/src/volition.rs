@@ -860,7 +860,7 @@ mod tests {
                 tick: 1,
             },
         );
-        let events = tick_events(&state, 2);
+        let events = tick_events(&state, &fixture, 2);
 
         assert!(events.iter().any(|event| matches!(
             event,
@@ -874,7 +874,7 @@ mod tests {
         let state = VolitionState::from_fixture(&fixture);
         let goal_id = "clarify-weak-evidence-topic";
 
-        let events = tick_events(&state, RETIREMENT_INACTIVITY_TICKS);
+        let events = tick_events(&state, &fixture, RETIREMENT_INACTIVITY_TICKS);
 
         assert!(events.iter().any(|event| matches!(
             event,
@@ -905,7 +905,7 @@ mod tests {
             },
         );
 
-        let events = tick_events(&state, 2 + COOLDOWN_SPAN_TICKS);
+        let events = tick_events(&state, &fixture, 2 + COOLDOWN_SPAN_TICKS);
 
         assert!(events.iter().any(|event| matches!(
             event,

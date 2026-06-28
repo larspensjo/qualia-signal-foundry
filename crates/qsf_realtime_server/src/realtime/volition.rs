@@ -1,0 +1,343 @@
+use qsf_volition::{
+    GoalStatus, VolitionEvent, VolitionFixture, VolitionState, normalize_terms,
+    realtime_seed_fixture, tick_events,
+};
+
+/// Per-session in-memory volition state owned by the realtime server. Seeded from
+/// `realtime_seed_fixture()` on session creation; not persisted (Phase 2 is in-memory only).
+pub struct VolitionRuntimeState {
+    pub state: VolitionState,
+    pub fixture: VolitionFixture,
+}
+
+impl VolitionRuntimeState {
+    pub fn new() -> Self {
+        let fixture = realtime_seed_fixture();
+        let state = VolitionState::from_fixture(&fixture);
+        Self { state, fixture }
+    }
+
+    pub fn apply_events(&mut self, events: Vec<VolitionEvent>) {
+        for event in events {
+            self.state = qsf_volition::apply(self.state.clone(), event);
+        }
+    }
+}
+
+/// Map a trusted user transcript to candidate `VolitionEvent`s. Pure and side-effect-free.
+///
+/// Produces tick-lifecycle events (decay, cooldown-elapsed, retirement) for the new tick,
+/// then a `TickAdvanced` event, then `GoalActivated` for each fixture or accepted-candidate
+/// goal whose `activation_keywords` appear in the normalized transcript.
+pub fn events_for_trusted_transcript(
+    transcript: &str,
+    state: &VolitionState,
+    fixture: &VolitionFixture,
+    new_tick: u64,
+) -> Vec<VolitionEvent> {
+    let input_terms = normalize_terms(transcript);
+    let mut events = tick_events(state, fixture, new_tick);
+    events.push(VolitionEvent::TickAdvanced { tick: new_tick });
+
+    for goal in &fixture.goals {
+        let Some(dynamic) = state.goals.get(&goal.id) else {
+            continue;
+        };
+        if !matches!(dynamic.status, GoalStatus::Accepted | GoalStatus::Active) {
+            continue;
+        }
+        if goal
+            .activation_keywords
+            .iter()
+            .any(|kw| input_terms.contains(kw))
+        {
+            events.push(VolitionEvent::GoalActivated {
+                goal_id: goal.id.clone(),
+                tick: new_tick,
+            });
+        }
+    }
+
+    for (goal_id, goal) in &state.accepted_candidates {
+        let Some(dynamic) = state.goals.get(goal_id) else {
+            continue;
+        };
+        if !matches!(dynamic.status, GoalStatus::Accepted | GoalStatus::Active) {
+            continue;
+        }
+        if goal
+            .activation_keywords
+            .iter()
+            .any(|kw| input_terms.contains(kw))
+        {
+            events.push(VolitionEvent::GoalActivated {
+                goal_id: goal_id.clone(),
+                tick: new_tick,
+            });
+        }
+    }
+
+    events
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use qsf_volition::{GoalStatus, VolitionState, realtime_seed_fixture};
+
+    // ── VolitionRuntimeState ─────────────────────────────────────────────────
+
+    #[test]
+    fn new_runtime_state_is_seeded_from_realtime_fixture() {
+        let runtime = VolitionRuntimeState::new();
+        assert_eq!(runtime.state.tick, 0);
+        assert!(
+            runtime
+                .state
+                .goals
+                .contains_key("honor-explicit-user-request"),
+            "protected tier-2 goal must be present"
+        );
+        assert!(
+            runtime.state.goals.contains_key("complete-current-task"),
+            "protected tier-3 goal must be present"
+        );
+    }
+
+    #[test]
+    fn new_runtime_state_starts_with_all_goals_accepted() {
+        let runtime = VolitionRuntimeState::new();
+        for (goal_id, dynamic) in &runtime.state.goals {
+            assert_eq!(
+                dynamic.status,
+                GoalStatus::Accepted,
+                "goal '{goal_id}' must start as Accepted"
+            );
+        }
+    }
+
+    #[test]
+    fn two_independent_runtime_states_are_isolated() {
+        let mut a = VolitionRuntimeState::new();
+        let b = VolitionRuntimeState::new();
+        let transcript = "how can you help me";
+        let tick = a.state.tick + 1;
+        let events = events_for_trusted_transcript(transcript, &a.state, &a.fixture, tick);
+        a.apply_events(events);
+        assert_ne!(
+            a.state.tick, b.state.tick,
+            "mutating one runtime must not affect the other"
+        );
+    }
+
+    // ── events_for_trusted_transcript ────────────────────────────────────────
+
+    #[test]
+    fn matching_transcript_activates_goal_with_keyword() {
+        let fixture = realtime_seed_fixture();
+        let state = VolitionState::from_fixture(&fixture);
+        let transcript = "how can you help me with this";
+        let events = events_for_trusted_transcript(transcript, &state, &fixture, 1);
+        assert!(
+            events.iter().any(|e| matches!(
+                e,
+                VolitionEvent::GoalActivated { goal_id, .. } if goal_id == "honor-explicit-user-request"
+            )),
+            "transcript with 'how'/'can'/'help' must activate honor-explicit-user-request"
+        );
+    }
+
+    #[test]
+    fn non_matching_transcript_produces_no_activation_events() {
+        let fixture = realtime_seed_fixture();
+        let state = VolitionState::from_fixture(&fixture);
+        let transcript = "xyzzy frobnicator quux";
+        let events = events_for_trusted_transcript(transcript, &state, &fixture, 1);
+        assert!(
+            !events
+                .iter()
+                .any(|e| matches!(e, VolitionEvent::GoalActivated { .. })),
+            "transcript with no keyword matches must not produce GoalActivated events"
+        );
+    }
+
+    #[test]
+    fn events_for_trusted_transcript_always_includes_tick_advanced() {
+        let fixture = realtime_seed_fixture();
+        let state = VolitionState::from_fixture(&fixture);
+        let events = events_for_trusted_transcript("anything", &state, &fixture, 5);
+        assert!(
+            events
+                .iter()
+                .any(|e| matches!(e, VolitionEvent::TickAdvanced { tick: 5 })),
+            "TickAdvanced must always be produced"
+        );
+    }
+
+    #[test]
+    fn events_for_trusted_transcript_is_deterministic() {
+        let fixture = realtime_seed_fixture();
+        let state = VolitionState::from_fixture(&fixture);
+        let transcript = "can you help explain this task";
+        let first = events_for_trusted_transcript(transcript, &state, &fixture, 1);
+        let second = events_for_trusted_transcript(transcript, &state, &fixture, 1);
+        assert_eq!(
+            first, second,
+            "mapping must be deterministic for the same input"
+        );
+    }
+
+    #[test]
+    fn applying_transcript_events_advances_tick_and_activates_goals() {
+        let mut runtime = VolitionRuntimeState::new();
+        let transcript = "how can you help with this task";
+        let new_tick = runtime.state.tick + 1;
+        let events =
+            events_for_trusted_transcript(transcript, &runtime.state, &runtime.fixture, new_tick);
+        runtime.apply_events(events);
+        assert_eq!(runtime.state.tick, new_tick);
+        let honor_status = runtime
+            .state
+            .goals
+            .get("honor-explicit-user-request")
+            .map(|d| d.status);
+        assert_eq!(
+            honor_status,
+            Some(GoalStatus::Active),
+            "honor-explicit-user-request must be Active after matching transcript"
+        );
+    }
+
+    #[test]
+    fn cooldown_goal_is_not_activated_by_matching_transcript() {
+        use qsf_volition::{EvidenceRef, VolitionEvent, apply};
+
+        let fixture = realtime_seed_fixture();
+        let state = VolitionState::from_fixture(&fixture);
+        let evidence = EvidenceRef::try_new("test-evidence").unwrap();
+        let state = apply(
+            state,
+            VolitionEvent::GoalActivated {
+                goal_id: "honor-explicit-user-request".to_string(),
+                tick: 1,
+            },
+        );
+        let state = apply(
+            state,
+            VolitionEvent::GoalSatisfied {
+                goal_id: "honor-explicit-user-request".to_string(),
+                evidence,
+                tick: 2,
+            },
+        );
+        assert_eq!(
+            state
+                .goals
+                .get("honor-explicit-user-request")
+                .unwrap()
+                .status,
+            GoalStatus::Cooldown
+        );
+
+        let events = events_for_trusted_transcript("how can you help", &state, &fixture, 3);
+        assert!(
+            !events.iter().any(|e| matches!(
+                e,
+                VolitionEvent::GoalActivated { goal_id, .. } if goal_id == "honor-explicit-user-request"
+            )),
+            "cooldown goal must not be activated"
+        );
+    }
+
+    #[test]
+    fn events_for_trusted_transcript_mapping_overhead_is_under_10ms() {
+        use std::time::Instant;
+
+        let fixture = realtime_seed_fixture();
+        let state = VolitionState::from_fixture(&fixture);
+        let transcript = "how can you help me with this task";
+        let iterations = 200u64;
+
+        // Baseline: just normalize terms (the shared precondition for both paths).
+        let baseline_start = Instant::now();
+        for i in 1..=iterations {
+            let _ = qsf_volition::normalize_terms(transcript);
+            let _ = i; // suppress unused warning
+        }
+        let baseline_elapsed = baseline_start.elapsed();
+
+        // Full mapping path.
+        let mapping_start = Instant::now();
+        for i in 1..=iterations {
+            let _ = events_for_trusted_transcript(transcript, &state, &fixture, i);
+        }
+        let mapping_elapsed = mapping_start.elapsed();
+
+        let delta_ms = mapping_elapsed
+            .as_millis()
+            .saturating_sub(baseline_elapsed.as_millis());
+        assert!(
+            delta_ms < 10,
+            "volition mapping overhead must be under 10 ms over {iterations} iterations; \
+             baseline={baseline_elapsed:?} mapping={mapping_elapsed:?} delta={delta_ms}ms"
+        );
+    }
+
+    #[test]
+    fn protected_goals_survive_retirement_inactivity_threshold() {
+        use qsf_volition::{RETIREMENT_INACTIVITY_TICKS, apply};
+
+        let fixture = realtime_seed_fixture();
+        let mut state = VolitionState::from_fixture(&fixture);
+
+        // Apply RETIREMENT_INACTIVITY_TICKS + 1 non-matching transcripts — enough to retire
+        // any unprotected goal, but protected tier-2 and tier-3 goals must remain selectable.
+        let non_matching = "xyzzy frobnicator quux";
+        for i in 1..=(RETIREMENT_INACTIVITY_TICKS + 1) {
+            let events = events_for_trusted_transcript(non_matching, &state, &fixture, i);
+            for event in events {
+                state = apply(state, event);
+            }
+        }
+
+        let honor_status = state
+            .goals
+            .get("honor-explicit-user-request")
+            .map(|d| d.status);
+        assert_ne!(
+            honor_status,
+            Some(GoalStatus::Retired),
+            "protected tier-2 goal must not be retired after idle ticks"
+        );
+        assert!(
+            matches!(
+                honor_status,
+                Some(GoalStatus::Accepted | GoalStatus::Active)
+            ),
+            "protected tier-2 goal must remain Accepted or Active; got {honor_status:?}"
+        );
+
+        let task_status = state.goals.get("complete-current-task").map(|d| d.status);
+        assert_ne!(
+            task_status,
+            Some(GoalStatus::Retired),
+            "protected tier-3 goal must not be retired after idle ticks"
+        );
+        assert!(
+            matches!(task_status, Some(GoalStatus::Accepted | GoalStatus::Active)),
+            "protected tier-3 goal must remain Accepted or Active; got {task_status:?}"
+        );
+
+        // Verify they can still activate — the safety guarantee is intact.
+        let activating = "how can you help me with this task";
+        let activate_tick = state.tick + 1;
+        let events = events_for_trusted_transcript(activating, &state, &fixture, activate_tick);
+        assert!(
+            events.iter().any(|e| matches!(
+                e,
+                VolitionEvent::GoalActivated { goal_id, .. } if goal_id == "honor-explicit-user-request"
+            )),
+            "protected tier-2 goal must still activate from transcript evidence after idle period"
+        );
+    }
+}

@@ -2,7 +2,19 @@
 
 ## Status
 
-Planned integration plan. This plan connects the completed offline volition slices to
+In progress. Phases 1 and 2 are complete.
+
+- **Phase 1** (extract `qsf_volition`) — Complete. Pure volition domain extracted into
+  its own crate; `qsf_realtime_server` does not depend on `qsf_app`.
+- **Phase 2** (realtime-owned volition runtime state) — Complete. Each session holds
+  isolated in-memory `VolitionRuntimeState` seeded from `realtime_seed_fixture()`.
+  Protected-tier tensions (tier-2 explicit-user-intent, tier-3 current-task-completion)
+  are in the seed and win arbitration under all modes. The sideband maps trusted
+  transcripts to volition events and applies them on each turn boundary. No visible
+  behavior change. Validated by `Experiment.RealtimeVolitionStateSeed`.
+- **Phase 3** (read-only realtime volition tools) — Not started.
+
+This plan connects the completed offline volition slices to
 the first-class realtime voice surface (`scripts/qsf.ps1 realtime`) without weakening
 the realtime server's trust boundary or turning internal initiative into external
 agency.
@@ -105,15 +117,15 @@ bias.
 
 ## Phase Overview
 
-| Phase | Slice | Code? | Human test? | Validation scaffold |
-|---|---|---:|---:|---|
-| 1 | Extract pure volition domain into `qsf_volition` | Yes | No | `Experiment.RealtimeVolitionReadOnlyInspection` scaffold can reuse fixtures after extraction |
-| 2 | Add realtime-owned `VolitionRuntimeState` seeded per QSF session | Yes | Light | `Experiment.RealtimeVolitionStateSeed` |
-| 3 | Expose read-only realtime volition tools | Yes | Yes | `Experiment.RealtimeVolitionReadOnlyInspection` |
-| 4 | Inject selected volition context into live response creation | Yes | Yes | `Experiment.RealtimeVolitionContextInjection` |
-| 5 | Add trace-backed bounded initiative outputs to the live loop | Yes | Yes | `Experiment.RealtimeVolitionBoundedInitiative` |
-| 6 | Persist, inspect, and consolidate realtime volition state | Yes | Yes | `Experiment.RealtimeVolitionContinuity` |
-| 7 | Surface volition state in the realtime UI | Yes | Yes | `Experiment.RealtimeVolitionInspectionUi` |
+| Phase | Slice | Code? | Human test? | Status | Validation scaffold |
+|---|---|---:|---:|---:|---|
+| 1 | Extract pure volition domain into `qsf_volition` | Yes | No | Complete | `Experiment.RealtimeVolitionReadOnlyInspection` scaffold can reuse fixtures after extraction |
+| 2 | Add realtime-owned `VolitionRuntimeState` seeded per QSF session | Yes | Light | Complete | `Experiment.RealtimeVolitionStateSeed` |
+| 3 | Expose read-only realtime volition tools | Yes | Yes | Not started | `Experiment.RealtimeVolitionReadOnlyInspection` |
+| 4 | Inject selected volition context into live response creation | Yes | Yes | Not started | `Experiment.RealtimeVolitionContextInjection` |
+| 5 | Add trace-backed bounded initiative outputs to the live loop | Yes | Yes | Not started | `Experiment.RealtimeVolitionBoundedInitiative` |
+| 6 | Persist, inspect, and consolidate realtime volition state | Yes | Yes | Not started | `Experiment.RealtimeVolitionContinuity` |
+| 7 | Surface volition state in the realtime UI | Yes | Yes | Not started | `Experiment.RealtimeVolitionInspectionUi` |
 
 ## Phase Details
 

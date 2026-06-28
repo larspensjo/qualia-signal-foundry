@@ -401,6 +401,7 @@ pub struct SessionRuntime {
     pub non_promotable_exchange_indices: HashSet<usize>,
     pub degraded: bool,
     pub sideband: Option<crate::realtime::sideband::SidebandHandle>,
+    pub volition: crate::realtime::volition::VolitionRuntimeState,
     status_tx: watch::Sender<SidebandStatus>,
 }
 
@@ -432,6 +433,7 @@ impl SessionRuntime {
             non_promotable_exchange_indices: HashSet::new(),
             degraded: false,
             sideband: None,
+            volition: crate::realtime::volition::VolitionRuntimeState::new(),
             status_tx: watch::channel(SidebandStatus::default()).0,
         }
     }
@@ -535,5 +537,106 @@ mod tests {
         assert_ne!(first.qsf_session_id, second.qsf_session_id);
         Uuid::parse_str(&first.qsf_session_id).expect("first uuid");
         Uuid::parse_str(&second.qsf_session_id).expect("second uuid");
+    }
+
+    #[tokio::test]
+    async fn new_session_has_fixture_backed_volition_state() {
+        let tempdir = tempfile::tempdir().expect("tempdir");
+        let state = AppState::new(
+            "test-api-key",
+            "http://127.0.0.1:9999",
+            tempdir.path().to_path_buf(),
+            SessionIdMode::Default,
+        )
+        .expect("state");
+
+        let allocation = state.create_session().await.expect("session");
+        let session = state
+            .session_runtime(&allocation.qsf_session_id)
+            .await
+            .expect("session runtime");
+        let guard = session.lock().await;
+
+        assert_eq!(guard.volition.state.tick, 0);
+        assert!(
+            guard
+                .volition
+                .state
+                .goals
+                .contains_key("honor-explicit-user-request"),
+            "realtime seed must include tier-2 protected goal"
+        );
+        assert!(
+            guard
+                .volition
+                .state
+                .goals
+                .contains_key("complete-current-task"),
+            "realtime seed must include tier-3 protected goal"
+        );
+    }
+
+    #[tokio::test]
+    async fn random_sessions_get_isolated_volition_state() {
+        let tempdir = tempfile::tempdir().expect("tempdir");
+        let state = AppState::new(
+            "test-api-key",
+            "http://127.0.0.1:9999",
+            tempdir.path().to_path_buf(),
+            SessionIdMode::RandomUuid,
+        )
+        .expect("state");
+
+        let first_alloc = state.create_session().await.expect("first session");
+        let second_alloc = state.create_session().await.expect("second session");
+
+        let first = state
+            .session_runtime(&first_alloc.qsf_session_id)
+            .await
+            .expect("first runtime");
+        {
+            let mut guard = first.lock().await;
+            let new_tick = guard.volition.state.tick + 1;
+            let events = crate::realtime::volition::events_for_trusted_transcript(
+                "how can you help",
+                &guard.volition.state,
+                &guard.volition.fixture,
+                new_tick,
+            );
+            guard.volition.apply_events(events);
+        }
+
+        let second = state
+            .session_runtime(&second_alloc.qsf_session_id)
+            .await
+            .expect("second runtime");
+        let second_guard = second.lock().await;
+        assert_eq!(
+            second_guard.volition.state.tick, 0,
+            "mutating first session volition must not affect second session"
+        );
+    }
+
+    #[tokio::test]
+    async fn removed_session_cleans_up_volition_state() {
+        let tempdir = tempfile::tempdir().expect("tempdir");
+        let state = AppState::new(
+            "test-api-key",
+            "http://127.0.0.1:9999",
+            tempdir.path().to_path_buf(),
+            SessionIdMode::Default,
+        )
+        .expect("state");
+
+        state.create_session().await.expect("session");
+        let removed = state.remove_session(DEFAULT_QSF_SESSION_ID).await;
+        assert!(removed.is_some(), "remove_session must return the runtime");
+        assert!(
+            state
+                .session_runtime(DEFAULT_QSF_SESSION_ID)
+                .await
+                .is_none(),
+            "session must be gone after removal"
+        );
     }
 }

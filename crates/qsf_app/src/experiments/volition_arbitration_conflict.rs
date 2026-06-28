@@ -68,7 +68,7 @@ impl Experiment for VolitionArbitrationConflictExperiment {
             // TickAdvanced is always applied last so state.tick increases even
             // when no lifecycle events are emitted (e.g. all goals at zero salience).
             let new_tick = state.tick + 1;
-            for event in tick_events(&state, new_tick) {
+            for event in tick_events(&state, &fixture, new_tick) {
                 state = apply(state, event);
             }
             state = apply(state, VolitionEvent::TickAdvanced { tick: new_tick });
@@ -366,7 +366,7 @@ mod tests {
         let mut prev_tick = state.tick;
         for (turn_index, &input) in scripted_turns.iter().enumerate() {
             let new_tick = state.tick + 1;
-            for event in tick_events(&state, new_tick) {
+            for event in tick_events(&state, &fixture, new_tick) {
                 state = apply(state, event);
             }
             state = apply(state, VolitionEvent::TickAdvanced { tick: new_tick });

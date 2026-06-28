@@ -128,7 +128,7 @@ impl Experiment for VolitionSalienceAndSatisfactionExperiment {
 
             // Advance tick and apply any tick-driven events first.
             let new_tick = state.tick + 1;
-            let driven_events = tick_events(&state, new_tick);
+            let driven_events = tick_events(&state, &fixture, new_tick);
             for event in driven_events {
                 state = apply(state, event);
             }
@@ -234,7 +234,7 @@ impl Experiment for VolitionSalienceAndSatisfactionExperiment {
 
         // Advance ticks until retirement threshold to trigger retirement of inert goals.
         let retire_tick = RETIREMENT_INACTIVITY_TICKS + state.tick + 1;
-        let driven_events = tick_events(&state, retire_tick);
+        let driven_events = tick_events(&state, &fixture, retire_tick);
         let mut retirement_event_ids: Vec<String> = Vec::new();
         for event in &driven_events {
             if let VolitionEvent::GoalRetired { goal_id, .. } = event {
@@ -559,14 +559,14 @@ mod tests {
                 },
             ];
             for event in events {
-                let driven = tick_events(&state, state.tick + 1);
+                let driven = tick_events(&state, &fixture, state.tick + 1);
                 for e in driven {
                     state = apply(state, e);
                 }
                 state = apply(state, event);
             }
             let retire_tick = crate::volition::RETIREMENT_INACTIVITY_TICKS + state.tick + 1;
-            for e in tick_events(&state, retire_tick) {
+            for e in tick_events(&state, &fixture, retire_tick) {
                 state = apply(state, e);
             }
             serde_json::to_string(&state).unwrap()

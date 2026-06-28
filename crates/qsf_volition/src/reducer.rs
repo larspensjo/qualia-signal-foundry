@@ -2,8 +2,10 @@ use std::collections::BTreeMap;
 
 use serde::{Deserialize, Serialize};
 
+use crate::arbitration::PROTECTED_TIER_FLOOR;
 use crate::{
     AllowedEffect, EvidenceRef, Goal, GoalStatus, InitiativeOutput, Mode, ProposedGoalCandidate,
+    VolitionFixture,
 };
 
 /// Dynamic, per-goal state tracked within a run. Separate from the read-only fixture.
@@ -292,10 +294,31 @@ fn event_tick(event: &VolitionEvent) -> u64 {
     }
 }
 
+/// Returns the minimum arbitration tier across a goal's parent tensions in the fixture.
+/// Goals with no parent tensions in the fixture return `u8::MAX`.
+fn goal_effective_tier(goal_id: &str, fixture: &VolitionFixture) -> u8 {
+    let Some(goal) = fixture.goals.iter().find(|g| g.id == goal_id) else {
+        return u8::MAX;
+    };
+    goal.tension_ids
+        .iter()
+        .filter_map(|tid| fixture.tensions.iter().find(|t| t.id == *tid))
+        .map(|t| t.arbitration_tier)
+        .min()
+        .unwrap_or(u8::MAX)
+}
+
 /// Given the current state and the next tick, returns any tick-driven events that should
 /// be applied: decay for all active/accepted goals, cooldown-elapsed for goals whose
 /// cooldown has ended, retirement for goals that have been inactive too long.
-pub fn tick_events(state: &VolitionState, new_tick: u64) -> Vec<VolitionEvent> {
+///
+/// Goals whose effective arbitration tier in the fixture is `<= PROTECTED_TIER_FLOOR` are
+/// never retired by idle lifecycle — their safety guarantee must survive long sessions.
+pub fn tick_events(
+    state: &VolitionState,
+    fixture: &VolitionFixture,
+    new_tick: u64,
+) -> Vec<VolitionEvent> {
     let mut events = Vec::new();
     for (goal_id, dynamic) in &state.goals {
         match dynamic.status {
@@ -316,8 +339,10 @@ pub fn tick_events(state: &VolitionState, new_tick: u64) -> Vec<VolitionEvent> {
                         tick: new_tick,
                     });
                 }
+                let is_protected = goal_effective_tier(goal_id, fixture) <= PROTECTED_TIER_FLOOR;
                 let last_active = dynamic.last_activated_tick.unwrap_or(0);
-                if new_tick.saturating_sub(last_active) >= RETIREMENT_INACTIVITY_TICKS
+                if !is_protected
+                    && new_tick.saturating_sub(last_active) >= RETIREMENT_INACTIVITY_TICKS
                     && dynamic.reinforcement_count == 0
                     && dynamic.salience == 0
                 {
@@ -733,7 +758,7 @@ mod tests {
                 tick: 1,
             },
         );
-        let events = tick_events(&state, 2);
+        let events = tick_events(&state, &fixture, 2);
 
         assert!(events.iter().any(|event| matches!(
             event,
@@ -747,7 +772,7 @@ mod tests {
         let state = VolitionState::from_fixture(&fixture);
         let goal_id = "clarify-weak-evidence-topic";
 
-        let events = tick_events(&state, RETIREMENT_INACTIVITY_TICKS);
+        let events = tick_events(&state, &fixture, RETIREMENT_INACTIVITY_TICKS);
 
         assert!(events.iter().any(|event| matches!(
             event,
@@ -778,7 +803,7 @@ mod tests {
             },
         );
 
-        let events = tick_events(&state, 2 + COOLDOWN_SPAN_TICKS);
+        let events = tick_events(&state, &fixture, 2 + COOLDOWN_SPAN_TICKS);
 
         assert!(events.iter().any(|event| matches!(
             event,

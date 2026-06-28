@@ -1632,6 +1632,7 @@ dependencies = [
  "qsf_realtime_protocol",
  "qsf_session",
  "qsf_tools",
+ "qsf_volition",
  "reqwest 0.12.28",
  "serde",
  "serde_json",

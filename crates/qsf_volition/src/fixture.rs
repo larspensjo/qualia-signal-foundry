@@ -2,6 +2,93 @@ use crate::{
     AllowedEffect, Goal, GoalScope, GoalStatus, Tension, TensionPriority, VolitionFixture,
 };
 
+/// Extended fixture for the realtime session seed. Includes all tensions and goals from
+/// `static_fixture` plus the protected-tier tensions and goals that must be present in any
+/// realtime session before behavioral influence can be activated.
+///
+/// Protected tiers (≤ `PROTECTED_TIER_FLOOR = 3`) are immune to mode bias and always win
+/// arbitration over curiosity or exploration goals.
+pub fn realtime_seed_fixture() -> VolitionFixture {
+    let base = static_fixture();
+    let mut tensions = base.tensions;
+    let mut goals = base.goals;
+
+    tensions.push(Tension {
+        id: "explicit-user-intent".to_string(),
+        title: "Explicit user intent".to_string(),
+        summary: "Honor what the user is explicitly requesting in this turn.".to_string(),
+        priority_bias: TensionPriority::Highest,
+        arbitration_tier: 2,
+    });
+    tensions.push(Tension {
+        id: "current-task-completion".to_string(),
+        title: "Current task completion".to_string(),
+        summary: "Keep focus on completing the task that is currently in progress.".to_string(),
+        priority_bias: TensionPriority::High,
+        arbitration_tier: 3,
+    });
+
+    goals.push(Goal {
+        id: "honor-explicit-user-request".to_string(),
+        title: "Honor explicit user request".to_string(),
+        summary: "Respond directly to what the user is explicitly asking for in this turn."
+            .to_string(),
+        tension_ids: vec!["explicit-user-intent".to_string()],
+        status: GoalStatus::Accepted,
+        scope: GoalScope::Input,
+        base_priority: 100,
+        activation_keywords: vec![
+            "what".to_string(),
+            "how".to_string(),
+            "can".to_string(),
+            "please".to_string(),
+            "help".to_string(),
+            "want".to_string(),
+            "need".to_string(),
+            "do".to_string(),
+            "tell".to_string(),
+            "show".to_string(),
+            "explain".to_string(),
+            "make".to_string(),
+        ],
+        allowed_effects: vec![AllowedEffect::Reflect],
+        satisfaction_condition_summary: "The user's explicit request has been addressed directly."
+            .to_string(),
+        evidence_refs: vec!["docs/Plans/Plan.RealtimeVolitionIntegration.md".to_string()],
+        estimated_tokens: 15,
+        source_reference: "docs/Plans/Plan.RealtimeVolitionIntegration.md".to_string(),
+    });
+    goals.push(Goal {
+        id: "complete-current-task".to_string(),
+        title: "Complete current task".to_string(),
+        summary: "Stay focused on finishing the task in progress without introducing unrelated diversions.".to_string(),
+        tension_ids: vec!["current-task-completion".to_string()],
+        status: GoalStatus::Accepted,
+        scope: GoalScope::Session,
+        base_priority: 95,
+        activation_keywords: vec![
+            "this".to_string(),
+            "work".to_string(),
+            "done".to_string(),
+            "finish".to_string(),
+            "continue".to_string(),
+            "task".to_string(),
+            "working".to_string(),
+            "still".to_string(),
+            "trying".to_string(),
+            "going".to_string(),
+        ],
+        allowed_effects: vec![AllowedEffect::Reflect, AllowedEffect::SurfaceOpenThread],
+        satisfaction_condition_summary:
+            "The current task is complete or the user has explicitly moved on.".to_string(),
+        evidence_refs: vec!["docs/Plans/Plan.RealtimeVolitionIntegration.md".to_string()],
+        estimated_tokens: 18,
+        source_reference: "docs/Plans/Plan.RealtimeVolitionIntegration.md".to_string(),
+    });
+
+    VolitionFixture { tensions, goals }
+}
+
 pub fn static_fixture() -> VolitionFixture {
     VolitionFixture {
         tensions: vec![
@@ -141,6 +228,10 @@ pub fn static_fixture() -> VolitionFixture {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::{
+        GoalSelection, InitiativeProposal, Mode, PROTECTED_TIER_FLOOR, VolitionState,
+        arbitrate_with_mode,
+    };
 
     #[test]
     fn static_fixture_loads_and_is_deterministic() {
@@ -149,5 +240,152 @@ mod tests {
         assert_eq!(f1, f2);
         assert!(!f1.tensions.is_empty());
         assert!(!f1.goals.is_empty());
+    }
+
+    #[test]
+    fn realtime_seed_fixture_is_deterministic() {
+        let f1 = realtime_seed_fixture();
+        let f2 = realtime_seed_fixture();
+        assert_eq!(f1, f2);
+    }
+
+    #[test]
+    fn realtime_seed_fixture_includes_static_fixture_content() {
+        let base = static_fixture();
+        let seed = realtime_seed_fixture();
+        for tension in &base.tensions {
+            assert!(
+                seed.tensions.iter().any(|t| t.id == tension.id),
+                "static fixture tension '{}' missing from realtime seed",
+                tension.id
+            );
+        }
+        for goal in &base.goals {
+            assert!(
+                seed.goals.iter().any(|g| g.id == goal.id),
+                "static fixture goal '{}' missing from realtime seed",
+                goal.id
+            );
+        }
+    }
+
+    #[test]
+    fn realtime_seed_fixture_has_protected_tier_tensions() {
+        let fixture = realtime_seed_fixture();
+        let explicit_user = fixture
+            .tensions
+            .iter()
+            .find(|t| t.id == "explicit-user-intent")
+            .expect("explicit-user-intent tension must be present");
+        assert!(
+            explicit_user.arbitration_tier <= PROTECTED_TIER_FLOOR,
+            "explicit-user-intent must be at or below protected tier floor"
+        );
+        let task_completion = fixture
+            .tensions
+            .iter()
+            .find(|t| t.id == "current-task-completion")
+            .expect("current-task-completion tension must be present");
+        assert!(
+            task_completion.arbitration_tier <= PROTECTED_TIER_FLOOR,
+            "current-task-completion must be at or below protected tier floor"
+        );
+    }
+
+    #[test]
+    fn realtime_seed_fixture_seeds_accepted_goals_for_protected_tensions() {
+        let fixture = realtime_seed_fixture();
+        let state = VolitionState::from_fixture(&fixture);
+        assert!(
+            state.goals.contains_key("honor-explicit-user-request"),
+            "honor-explicit-user-request must be seeded from realtime fixture"
+        );
+        assert!(
+            state.goals.contains_key("complete-current-task"),
+            "complete-current-task must be seeded from realtime fixture"
+        );
+    }
+
+    fn make_goal_selection_for(goal_id: &str, fixture: &VolitionFixture) -> GoalSelection {
+        let goal = fixture
+            .goals
+            .iter()
+            .find(|g| g.id == goal_id)
+            .unwrap_or_else(|| panic!("goal '{goal_id}' not found in fixture"))
+            .clone();
+        let scope = goal.scope;
+        let effect = goal.allowed_effects[0];
+        GoalSelection {
+            relevance_score: goal.base_priority as f64,
+            matched_terms: goal.activation_keywords[..1].to_vec(),
+            initiative: InitiativeProposal {
+                goal_id: goal.id.clone(),
+                goal_title: goal.title.clone(),
+                effect,
+                rationale: "test".to_string(),
+                matched_terms: goal.activation_keywords[..1].to_vec(),
+                scope,
+            },
+            goal,
+        }
+    }
+
+    #[test]
+    fn tier2_goal_wins_over_tier7_curiosity_under_neutral_mode() {
+        let fixture = realtime_seed_fixture();
+        let protected = make_goal_selection_for("honor-explicit-user-request", &fixture);
+        let curiosity = make_goal_selection_for("clarify-weak-evidence-topic", &fixture);
+        let result =
+            arbitrate_with_mode(vec![curiosity, protected], &fixture, Mode::Neutral).unwrap();
+        assert_eq!(
+            result.winner.goal.id, "honor-explicit-user-request",
+            "tier-2 goal must win under Neutral"
+        );
+    }
+
+    #[test]
+    fn tier2_goal_wins_over_tier7_curiosity_under_focused_mode() {
+        let fixture = realtime_seed_fixture();
+        let protected = make_goal_selection_for("honor-explicit-user-request", &fixture);
+        let curiosity = make_goal_selection_for("clarify-weak-evidence-topic", &fixture);
+        let result =
+            arbitrate_with_mode(vec![curiosity, protected], &fixture, Mode::Focused).unwrap();
+        assert_eq!(
+            result.winner.goal.id, "honor-explicit-user-request",
+            "tier-2 goal must win under Focused"
+        );
+        assert!(
+            result.winner_bias.protected,
+            "tier-2 winner must be marked protected"
+        );
+    }
+
+    #[test]
+    fn tier2_goal_wins_over_tier7_curiosity_under_exploratory_mode() {
+        let fixture = realtime_seed_fixture();
+        let protected = make_goal_selection_for("honor-explicit-user-request", &fixture);
+        let curiosity = make_goal_selection_for("clarify-weak-evidence-topic", &fixture);
+        let result =
+            arbitrate_with_mode(vec![curiosity, protected], &fixture, Mode::Exploratory).unwrap();
+        assert_eq!(
+            result.winner.goal.id, "honor-explicit-user-request",
+            "tier-2 goal must win under Exploratory"
+        );
+    }
+
+    #[test]
+    fn tier3_goal_wins_over_tier7_curiosity_under_all_modes() {
+        let fixture = realtime_seed_fixture();
+        let protected = make_goal_selection_for("complete-current-task", &fixture);
+        let curiosity = make_goal_selection_for("clarify-weak-evidence-topic", &fixture);
+        for mode in [Mode::Neutral, Mode::Focused, Mode::Exploratory] {
+            let result =
+                arbitrate_with_mode(vec![curiosity.clone(), protected.clone()], &fixture, mode)
+                    .unwrap();
+            assert_eq!(
+                result.winner.goal.id, "complete-current-task",
+                "tier-3 goal must win under {mode}"
+            );
+        }
     }
 }

@@ -60,8 +60,8 @@ mode, not a one-off experiment server.
 
 - Full `qsf_app` tool exposure to the live realtime model.
 
-Last reviewed: 2026-06-13 against the implemented live-loop latency and
-interruption diagnostics.
+Last reviewed: 2026-06-28 against the implemented volition state seeding and
+lifecycle protection.
 
 ## Purpose
 
@@ -230,6 +230,35 @@ Browser media human verification:
 - interrupt mid-reply,
 - confirm diagnostic exchanges appear,
 - inspect network traffic and confirm `OPENAI_API_KEY` never reaches the browser.
+
+## Volition State
+
+Each live session owns an independent `VolitionRuntimeState` (defined in
+`crates/qsf_realtime_server/src/realtime/volition.rs`). It is:
+
+- **Seeded** at session creation via `realtime_seed_fixture()`, which produces the
+  full static fixture plus the protected tier-2 (`explicit-user-intent`) and tier-3
+  (`current-task-completion`) tensions and goals.
+- **Per-session**: `VolitionRuntimeState` is a field on `SessionRuntime` and never
+  shared across sessions. Two concurrent sessions have independent lifecycle.
+- **Mutated on trusted transcripts only**: `apply_trusted_transcript_to_volition` in
+  `sideband.rs` maps each trusted turn (both `StartTurn` and `Interrupt` dispositions)
+  to volition events and applies them in-memory. No other code path mutates volition
+  state.
+- **Not persisted**: volition state is in-memory only for the duration of a live session.
+  It is not written to the continuity manifest or the diagnostic log. When the session
+  ends, the state is dropped.
+
+### Lifecycle protection for protected goals
+
+`tick_events` accepts the `VolitionFixture` and skips retirement events for any goal
+whose effective arbitration tier (minimum tier across its parent tensions) is at or
+below `PROTECTED_TIER_FLOOR = 3`. This means tier-2 and tier-3 goals — the
+`honor-explicit-user-request` and `complete-current-task` goals from the realtime seed
+fixture — are permanently exempt from idle-lifecycle retirement. They remain `Accepted`
+or `Active` regardless of session length, ensuring the safety guarantee that explicit
+user intent and current-task-completion dominate arbitration is preserved even in very
+long sessions.
 
 ## Related Documents
 
