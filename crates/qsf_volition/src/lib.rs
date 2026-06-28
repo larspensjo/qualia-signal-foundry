@@ -28,3 +28,6 @@ pub use terms::*;
 
 mod selection;
 pub use selection::*;
+
+mod inspection;
+pub use inspection::*;
