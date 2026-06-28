@@ -16,6 +16,10 @@ use serde::Serialize;
 
 use crate::diagnostics::DiagnosticTrust;
 use crate::realtime::memory_store::load_session_memory_store;
+use crate::realtime::volition_tools::{
+    INSPECT_VOLITION_STATE_TOOL_NAME, InspectVolitionStateTool, SELECT_VOLITION_GOALS_TOOL_NAME,
+    SelectVolitionGoalsTool,
+};
 use crate::state::{AppState, SessionRuntime};
 
 pub const SEARCH_MEMORY_TOOL_NAME: &str = "search_memory";
@@ -144,6 +148,27 @@ pub fn default_tool_definitions() -> Vec<RealtimeToolDefinition> {
                 "additionalProperties": false
             }),
         ),
+        RealtimeToolDefinition::function(
+            INSPECT_VOLITION_STATE_TOOL_NAME,
+            "Inspect the current simulated volition state: mode, tick, goals by status, and last initiative summaries.",
+            serde_json::json!({
+                "type": "object",
+                "properties": {},
+                "additionalProperties": false
+            }),
+        ),
+        RealtimeToolDefinition::function(
+            SELECT_VOLITION_GOALS_TOOL_NAME,
+            "Given a query, return ranked active goals, omitted goals, and arbitration result without mutating state.",
+            serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "query": { "type": "string" }
+                },
+                "required": ["query"],
+                "additionalProperties": false
+            }),
+        ),
     ]
 }
 
@@ -212,6 +237,8 @@ fn built_in_tools() -> Vec<Box<dyn Tool>> {
         Box::new(SearchMemoryTool),
         Box::new(GetAssociationsTool),
         Box::new(InspectSessionStateTool),
+        Box::new(InspectVolitionStateTool),
+        Box::new(SelectVolitionGoalsTool),
     ]
 }
 
@@ -815,6 +842,60 @@ mod tests {
                 .contains("completed_exchange_count=1")
         );
         assert!(result.observation_summary.contains("active_present=true"));
+    }
+
+    #[test]
+    fn default_tool_definitions_include_volition_tools() {
+        let names: Vec<String> = default_tool_definitions()
+            .into_iter()
+            .map(|definition| definition.name)
+            .collect();
+
+        assert!(
+            names
+                .iter()
+                .any(|name| name == INSPECT_VOLITION_STATE_TOOL_NAME)
+        );
+        assert!(
+            names
+                .iter()
+                .any(|name| name == SELECT_VOLITION_GOALS_TOOL_NAME)
+        );
+    }
+
+    #[test]
+    fn permission_decision_allows_volition_tools_when_allow_listed() {
+        let allow_list = vec![
+            INSPECT_VOLITION_STATE_TOOL_NAME.to_string(),
+            SELECT_VOLITION_GOALS_TOOL_NAME.to_string(),
+        ];
+        let inspect_meta = metadata(
+            INSPECT_VOLITION_STATE_TOOL_NAME,
+            ToolCategory::ReadOnly,
+            ToolSideEffectLevel::ReadOnly,
+        );
+        let select_meta = metadata(
+            SELECT_VOLITION_GOALS_TOOL_NAME,
+            ToolCategory::ReadOnly,
+            ToolSideEffectLevel::ReadOnly,
+        );
+
+        assert_eq!(
+            tool_permission_decision(
+                INSPECT_VOLITION_STATE_TOOL_NAME,
+                &allow_list,
+                Some(&inspect_meta)
+            ),
+            ToolPermissionDecision::Allowed
+        );
+        assert_eq!(
+            tool_permission_decision(
+                SELECT_VOLITION_GOALS_TOOL_NAME,
+                &allow_list,
+                Some(&select_meta)
+            ),
+            ToolPermissionDecision::Allowed
+        );
     }
 
     #[test]
