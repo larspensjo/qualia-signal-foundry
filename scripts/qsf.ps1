@@ -974,33 +974,6 @@ function Test-RequiredSecret {
     }
 }
 
-function Start-BrowserWhenReady {
-    param(
-        [Parameter(Mandatory = $true)]
-        [int]$PortNumber,
-
-        [Parameter(Mandatory = $true)]
-        [string]$Url,
-
-        [int]$TimeoutSeconds = 20
-    )
-
-    $deadline = (Get-Date).AddSeconds($TimeoutSeconds)
-    while ((Get-Date) -lt $deadline) {
-        if (Test-PortOccupied -HostName "127.0.0.1" -PortNumber $PortNumber) {
-            break
-        }
-        Start-Sleep -Milliseconds 400
-    }
-
-    if (-not (Test-PortOccupied -HostName "127.0.0.1" -PortNumber $PortNumber)) {
-        Write-Host "UI dev server not reachable yet on port $PortNumber; opening browser anyway."
-    }
-
-    Write-Host "Opening browser: $Url"
-    Start-Process $Url
-}
-
 function Start-RealtimeServerProcess {
     $cargo = (Get-Command "cargo" -ErrorAction Stop).Source
     $arguments = @("run", "-p", "qsf_realtime_server")
@@ -1008,7 +981,9 @@ function Start-RealtimeServerProcess {
         $arguments += @("--", "--random-session-id")
     }
     Write-Host "Starting realtime server: $(Format-Command -Executable $cargo -Arguments $arguments)"
-    $serverProcess = Start-Process -FilePath $cargo -ArgumentList $arguments -WorkingDirectory $projectRoot -PassThru
+    # -NoNewWindow streams the server's cargo build and runtime logs into this console so
+    # startup failures stay visible; the monitor loop still supervises it as a child.
+    $serverProcess = Start-Process -FilePath $cargo -ArgumentList $arguments -WorkingDirectory $projectRoot -NoNewWindow -PassThru
     Write-Host "Realtime server PID: $($serverProcess.Id)"
     return $serverProcess
 }
@@ -1031,6 +1006,9 @@ function Start-RealtimeUiProcess {
         "--strictPort"
     )
     Write-Host "Starting Vite dev server: $(Format-Command -Executable $npm -Arguments $arguments)"
+    # Vite runs in its own window so its output does not interleave with the server logs
+    # streamed into this console. Ctrl+C here cannot reach that window, so the finally
+    # block force-kills the tree (taskkill /T) instead of relying on signal propagation.
     $uiProcess = Start-Process -FilePath $npm -ArgumentList $arguments -WorkingDirectory $realtimeUiDir -PassThru
     Write-Host "Vite dev server PID: $($uiProcess.Id)"
     return $uiProcess
@@ -1053,21 +1031,31 @@ function Invoke-Realtime {
 
     $serverProcess = $null
     $uiProcess = $null
+    $browserOpened = $false
     try {
         $serverProcess = Start-RealtimeServerProcess
         $uiProcess = Start-RealtimeUiProcess -PortNumber $uiPort
-        Start-BrowserWhenReady -PortNumber $uiPort -Url $uiUrl
 
+        # Supervise both children: report the first unexpected exit, open the browser only
+        # once both ports answer (so a failed server never yields a broken page), and let a
+        # Ctrl+C during Start-Sleep unwind into the finally block for deterministic cleanup.
         while ($true) {
             if ($serverProcess.HasExited) {
-                Write-Host "Realtime server exited with code $($serverProcess.ExitCode)."
+                Write-Host "Realtime server exited with code $($serverProcess.ExitCode) before shutdown was requested; see its log above."
                 $script:QsfExitCode = $serverProcess.ExitCode
                 break
             }
             if ($uiProcess.HasExited) {
-                Write-Host "Vite dev server exited with code $($uiProcess.ExitCode)."
+                Write-Host "Vite dev server exited with code $($uiProcess.ExitCode) before shutdown was requested."
                 $script:QsfExitCode = $uiProcess.ExitCode
                 break
+            }
+            if (-not $browserOpened -and
+                (Test-PortOccupied -HostName "127.0.0.1" -PortNumber $realtimeServerPort) -and
+                (Test-PortOccupied -HostName "127.0.0.1" -PortNumber $uiPort)) {
+                Write-Host "Both servers are up. Opening browser: $uiUrl"
+                Start-Process $uiUrl
+                $browserOpened = $true
             }
             Start-Sleep -Milliseconds 500
         }
