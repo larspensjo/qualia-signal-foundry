@@ -198,4 +198,45 @@ Parsing verification:
 
 ## Results
 
-Pending live validation.
+### Run 1 — 2026-06-28
+
+**Outcome: Tool not called — instructions gap identified**
+
+Two live sessions were run using the stable `default` QSF session id:
+
+- Session 1 (call `rtc_u0_DvnlZabnp5PraQn1IWNMC`): asked "What are you currently focused on?"
+- Session 2 (call `rtc_u2_DvnmZWPnGII3nTQ1N6q2M`): asked "What goals relate to helping me?"
+
+In both sessions, the sideband attached successfully, sent a `session.update` that included all
+five registered tools (`search_memory`, `get_associations`, `inspect_session_state`,
+`inspect_volition_state`, `select_volition_goals`), and issued `response.create` via the
+normal trusted turn path. Sideband latency observations were recorded.
+
+**The model did not call either volition tool.** The browser relay exchanges show
+`tool_requests: []` and `tool_executions: []`. The engine log shows no ToolLoop turn phase for
+either session. The model answered both prompts from its general training context.
+
+**Root cause:** `DEFAULT_INSTRUCTIONS` in `crates/qsf_realtime_server/src/state.rs` contains
+only: `"Speak briefly. Keep the browser UI informed, keep secrets server-side, and preserve the
+QSF trust boundary."` — there is no guidance telling the model that volition tools exist, when
+to use them, or how to frame their output.
+
+**Infrastructure is correct:** Tool wiring is confirmed working — a June 2026 session log shows
+the sideband entering `ToolLoop` state when the user explicitly invoked a memory tool, confirming
+the tool execution path is functional. The volition tools are correctly registered and included
+in the session.update. The failure is a missing usage signal in the session instructions, not a
+code or wiring defect.
+
+**Required fix before re-running this experiment:**
+
+Update `DEFAULT_INSTRUCTIONS` (or introduce a per-session instructions field) to include
+guidance such as:
+
+> When asked about your current focus, goals, internal state, or what motivates your responses,
+> call `inspect_volition_state` first. When asked which goals relate to a specific topic or how
+> you can help with something, call `select_volition_goals` with the relevant query. Frame any
+> result as simulated internal state — not a claim of real desire, consciousness, or subjective
+> experience.
+
+Once the instructions are updated, repeat the human test steps and check the engine log for
+ToolLoop state and the diagnostic records for non-empty `tool_requests` and `tool_executions`.
