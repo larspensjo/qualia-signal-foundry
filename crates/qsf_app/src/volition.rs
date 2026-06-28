@@ -37,74 +37,37 @@ pub fn select_goals(
     fixture: &VolitionFixture,
     budget: ContextBudget,
 ) -> GoalSelectionResult {
-    let input_terms = normalize_terms(input);
-    let mut evaluated_fragments = Vec::new();
-    let mut omitted = Vec::new();
+    let synthetic_state = VolitionState::from_fixture(fixture);
+    let ranked = select_goals_ranked(input, &synthetic_state, fixture);
 
-    for goal in &fixture.goals {
-        if goal.status != GoalStatus::Accepted {
-            omitted.push(OmittedGoal {
-                goal: goal.clone(),
-                relevance_score: 0.0,
-                matched_terms: Vec::new(),
-                reason: format!("goal status is {}", goal.status),
-            });
-            continue;
-        }
-
-        let matched_terms = app_matched_keywords(goal, &input_terms);
-        if matched_terms.is_empty() {
-            omitted.push(OmittedGoal {
-                goal: goal.clone(),
-                relevance_score: 0.0,
-                matched_terms,
-                reason: "no activation keywords matched".to_string(),
-            });
-            continue;
-        }
-
-        let relevance_score = app_compute_relevance(goal, fixture, &matched_terms);
-        let fragment = build_fragment(goal, relevance_score, &matched_terms);
-        evaluated_fragments.push(GoalEvaluation {
-            goal: goal.clone(),
-            matched_terms,
-            relevance_score,
-            fragment,
-        });
-    }
-
-    let assembly = assemble_context(
-        evaluated_fragments
-            .iter()
-            .map(|evaluation| evaluation.fragment.clone())
-            .collect(),
-        budget,
-    );
+    let fragments: Vec<ContextFragment> = ranked
+        .selected
+        .iter()
+        .map(|s| build_fragment(&s.goal, s.relevance_score, &s.matched_terms))
+        .collect();
+    let assembly = assemble_context(fragments, budget);
 
     let mut selected = Vec::new();
-    for selection in &assembly.selected {
-        let evaluation = evaluated_fragments
+    for sel in &assembly.selected {
+        let s = ranked
+            .selected
             .iter()
-            .find(|candidate| candidate.fragment.fragment_id == selection.fragment.fragment_id)
-            .expect("selected fragment must map back to an evaluated goal");
-
-        selected.push(GoalSelection {
-            goal: evaluation.goal.clone(),
-            relevance_score: evaluation.relevance_score,
-            matched_terms: evaluation.matched_terms.clone(),
-            initiative: app_initiative_for_goal(&evaluation.goal, &evaluation.matched_terms),
-        });
+            .find(|s| s.goal.id == sel.fragment.fragment_id)
+            .expect("selected fragment must map back to a ranked goal");
+        selected.push(s.clone());
     }
 
+    let mut omitted = ranked.omitted;
     for omission in &assembly.omitted {
-        if let Some(evaluation) = evaluated_fragments
+        if let Some(s) = ranked
+            .selected
             .iter()
-            .find(|candidate| candidate.fragment.fragment_id == omission.fragment.fragment_id)
+            .find(|s| s.goal.id == omission.fragment.fragment_id)
         {
             omitted.push(OmittedGoal {
-                goal: evaluation.goal.clone(),
-                relevance_score: evaluation.relevance_score,
-                matched_terms: evaluation.matched_terms.clone(),
+                goal: s.goal.clone(),
+                relevance_score: s.relevance_score,
+                matched_terms: s.matched_terms.clone(),
                 reason: omission.reason.clone(),
             });
         }
@@ -112,7 +75,7 @@ pub fn select_goals(
 
     GoalSelectionResult {
         input: input.to_string(),
-        input_terms,
+        input_terms: ranked.input_terms,
         budget,
         selected,
         omitted,
@@ -129,178 +92,36 @@ pub fn select_goals_with_salience(
     state: &VolitionState,
     budget: ContextBudget,
 ) -> SalienceGoalSelectionResult {
-    let input_terms = normalize_terms(input);
-    let mut evaluated_fragments: Vec<GoalEvaluation> = Vec::new();
-    let mut omitted = Vec::new();
-    let mut suppressed_cooldown = Vec::new();
-    let mut visible_blocked = Vec::new();
+    let ranked = select_goals_ranked(input, state, fixture);
 
-    for goal in &fixture.goals {
-        let dynamic_status = state
-            .goals
-            .get(&goal.id)
-            .map(|dynamic| dynamic.status)
-            .unwrap_or(goal.status);
-
-        // Suppress Cooldown goals entirely.
-        if matches!(dynamic_status, GoalStatus::Cooldown) {
-            suppressed_cooldown.push(OmittedGoal {
-                goal: goal.clone(),
-                relevance_score: 0.0,
-                matched_terms: Vec::new(),
-                reason: format!("goal status is {dynamic_status} (cooldown suppressed)"),
-            });
-            continue;
-        }
-
-        // Skip non-selectable statuses (Proposed, Retired).
-        if matches!(dynamic_status, GoalStatus::Proposed | GoalStatus::Retired) {
-            omitted.push(OmittedGoal {
-                goal: goal.clone(),
-                relevance_score: 0.0,
-                matched_terms: Vec::new(),
-                reason: format!("goal status is {dynamic_status}"),
-            });
-            continue;
-        }
-
-        let matched_terms = app_matched_keywords(goal, &input_terms);
-
-        // Blocked goals stay visible but are not selected.
-        if matches!(dynamic_status, GoalStatus::Blocked) {
-            visible_blocked.push(OmittedGoal {
-                goal: goal.clone(),
-                relevance_score: 0.0,
-                matched_terms,
-                reason: "goal status is blocked (visible unresolved tension)".to_string(),
-            });
-            continue;
-        }
-
-        if matched_terms.is_empty() {
-            omitted.push(OmittedGoal {
-                goal: goal.clone(),
-                relevance_score: 0.0,
-                matched_terms,
-                reason: "no activation keywords matched".to_string(),
-            });
-            continue;
-        }
-
-        let salience = state
-            .goals
-            .get(&goal.id)
-            .map(|dynamic| dynamic.salience)
-            .unwrap_or(0);
-        let relevance_score =
-            app_compute_relevance_with_salience(goal, fixture, &matched_terms, salience);
-        let fragment = build_fragment(goal, relevance_score, &matched_terms);
-        evaluated_fragments.push(GoalEvaluation {
-            goal: goal.clone(),
-            matched_terms,
-            relevance_score,
-            fragment,
-        });
-    }
-
-    // Second pass: accepted candidates use the same logic as fixture goals.
-    for goal in state.accepted_candidates.values() {
-        let dynamic_status = state
-            .goals
-            .get(&goal.id)
-            .map(|dynamic| dynamic.status)
-            .unwrap_or(goal.status);
-
-        if matches!(dynamic_status, GoalStatus::Cooldown) {
-            suppressed_cooldown.push(OmittedGoal {
-                goal: goal.clone(),
-                relevance_score: 0.0,
-                matched_terms: Vec::new(),
-                reason: format!("goal status is {dynamic_status} (cooldown suppressed)"),
-            });
-            continue;
-        }
-
-        if matches!(dynamic_status, GoalStatus::Proposed | GoalStatus::Retired) {
-            omitted.push(OmittedGoal {
-                goal: goal.clone(),
-                relevance_score: 0.0,
-                matched_terms: Vec::new(),
-                reason: format!("goal status is {dynamic_status}"),
-            });
-            continue;
-        }
-
-        let matched_terms = app_matched_keywords(goal, &input_terms);
-
-        if matches!(dynamic_status, GoalStatus::Blocked) {
-            visible_blocked.push(OmittedGoal {
-                goal: goal.clone(),
-                relevance_score: 0.0,
-                matched_terms,
-                reason: "goal status is blocked (visible unresolved tension)".to_string(),
-            });
-            continue;
-        }
-
-        if matched_terms.is_empty() {
-            omitted.push(OmittedGoal {
-                goal: goal.clone(),
-                relevance_score: 0.0,
-                matched_terms,
-                reason: "no activation keywords matched".to_string(),
-            });
-            continue;
-        }
-
-        let salience = state
-            .goals
-            .get(&goal.id)
-            .map(|dynamic| dynamic.salience)
-            .unwrap_or(0);
-        let relevance_score =
-            app_compute_relevance_with_salience(goal, fixture, &matched_terms, salience);
-        let fragment = build_fragment(goal, relevance_score, &matched_terms);
-        evaluated_fragments.push(GoalEvaluation {
-            goal: goal.clone(),
-            matched_terms,
-            relevance_score,
-            fragment,
-        });
-    }
-
-    let assembly = assemble_context(
-        evaluated_fragments
-            .iter()
-            .map(|evaluation| evaluation.fragment.clone())
-            .collect(),
-        budget,
-    );
+    let fragments: Vec<ContextFragment> = ranked
+        .selected
+        .iter()
+        .map(|s| build_fragment(&s.goal, s.relevance_score, &s.matched_terms))
+        .collect();
+    let assembly = assemble_context(fragments, budget);
 
     let mut selected = Vec::new();
-    for selection in &assembly.selected {
-        let evaluation = evaluated_fragments
+    for sel in &assembly.selected {
+        let s = ranked
+            .selected
             .iter()
-            .find(|candidate| candidate.fragment.fragment_id == selection.fragment.fragment_id)
-            .expect("selected fragment must map back to an evaluated goal");
-
-        selected.push(GoalSelection {
-            goal: evaluation.goal.clone(),
-            relevance_score: evaluation.relevance_score,
-            matched_terms: evaluation.matched_terms.clone(),
-            initiative: app_initiative_for_goal(&evaluation.goal, &evaluation.matched_terms),
-        });
+            .find(|s| s.goal.id == sel.fragment.fragment_id)
+            .expect("selected fragment must map back to a ranked goal");
+        selected.push(s.clone());
     }
 
+    let mut omitted = ranked.omitted;
     for omission in &assembly.omitted {
-        if let Some(evaluation) = evaluated_fragments
+        if let Some(s) = ranked
+            .selected
             .iter()
-            .find(|candidate| candidate.fragment.fragment_id == omission.fragment.fragment_id)
+            .find(|s| s.goal.id == omission.fragment.fragment_id)
         {
             omitted.push(OmittedGoal {
-                goal: evaluation.goal.clone(),
-                relevance_score: evaluation.relevance_score,
-                matched_terms: evaluation.matched_terms.clone(),
+                goal: s.goal.clone(),
+                relevance_score: s.relevance_score,
+                matched_terms: s.matched_terms.clone(),
                 reason: omission.reason.clone(),
             });
         }
@@ -308,12 +129,12 @@ pub fn select_goals_with_salience(
 
     SalienceGoalSelectionResult {
         input: input.to_string(),
-        input_terms,
+        input_terms: ranked.input_terms,
         budget,
         selected,
         omitted,
-        suppressed_cooldown,
-        visible_blocked,
+        suppressed_cooldown: ranked.suppressed_cooldown,
+        visible_blocked: ranked.visible_blocked,
         assembly,
     }
 }
@@ -401,12 +222,12 @@ fn tension_provenance(goal: &Goal, fixture: &VolitionFixture) -> Vec<TensionProv
 
 fn initiative_choice(goal: &Goal, matched_terms: &[String]) -> Option<InitiativeChoice> {
     let (chosen_effect, losing_effects) = goal.allowed_effects.split_first()?;
-    let proposed = app_initiative_for_effect(goal, *chosen_effect, matched_terms);
+    let proposed = initiative_for_effect(goal, *chosen_effect, matched_terms);
 
     let losing = losing_effects
         .iter()
         .map(|effect| LosingCandidate {
-            proposal: app_initiative_for_effect(goal, *effect, matched_terms),
+            proposal: initiative_for_effect(goal, *effect, matched_terms),
             reason: format!(
                 "not selected: goal '{}' orders '{}' after the chosen effect '{}' in allowed_effects precedence",
                 goal.id, effect, chosen_effect
@@ -435,36 +256,6 @@ fn no_delta_reason(result: &GoalSelectionResult) -> String {
     }
 }
 
-fn app_initiative_for_goal(goal: &Goal, matched_terms: &[String]) -> InitiativeProposal {
-    let effect = goal
-        .allowed_effects
-        .first()
-        .copied()
-        .unwrap_or(AllowedEffect::Reflect);
-
-    app_initiative_for_effect(goal, effect, matched_terms)
-}
-
-fn app_initiative_for_effect(
-    goal: &Goal,
-    effect: AllowedEffect,
-    matched_terms: &[String],
-) -> InitiativeProposal {
-    InitiativeProposal {
-        goal_id: goal.id.clone(),
-        goal_title: goal.title.clone(),
-        effect,
-        rationale: format!(
-            "goal {} matched [{}] under scope {}",
-            goal.id,
-            matched_terms.join(", "),
-            goal.scope
-        ),
-        matched_terms: matched_terms.to_vec(),
-        scope: goal.scope,
-    }
-}
-
 fn build_fragment(goal: &Goal, relevance_score: f64, matched_terms: &[String]) -> ContextFragment {
     let mut tags = goal.activation_keywords.clone();
     tags.extend(goal.tension_ids.iter().cloned());
@@ -485,55 +276,6 @@ fn build_fragment(goal: &Goal, relevance_score: f64, matched_terms: &[String]) -
             goal.scope
         ),
     }
-}
-
-fn app_compute_relevance_with_salience(
-    goal: &Goal,
-    fixture: &VolitionFixture,
-    matched_terms: &[String],
-    salience: i32,
-) -> f64 {
-    app_compute_relevance(goal, fixture, matched_terms) + salience as f64
-}
-
-fn app_compute_relevance(goal: &Goal, fixture: &VolitionFixture, matched_terms: &[String]) -> f64 {
-    let matched_bonus = matched_terms.len() as f64 * 100.0;
-    let base_priority = goal.base_priority as f64;
-    let tension_bonus = goal
-        .tension_ids
-        .iter()
-        .filter_map(|tension_id| {
-            fixture
-                .tensions
-                .iter()
-                .find(|tension| tension.id == *tension_id)
-        })
-        .map(|tension| tension.priority_bias.score_bonus())
-        .fold(0.0, f64::max);
-
-    matched_bonus + base_priority + tension_bonus
-}
-
-fn app_matched_keywords(goal: &Goal, input_terms: &[String]) -> Vec<String> {
-    let mut matched = Vec::new();
-
-    for keyword in &goal.activation_keywords {
-        if input_terms.iter().any(|term| term == keyword)
-            && !matched.iter().any(|term| term == keyword)
-        {
-            matched.push(keyword.clone());
-        }
-    }
-
-    matched
-}
-
-#[derive(Clone)]
-struct GoalEvaluation {
-    goal: Goal,
-    matched_terms: Vec<String>,
-    relevance_score: f64,
-    fragment: ContextFragment,
 }
 
 #[cfg(test)]
