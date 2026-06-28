@@ -11,6 +11,7 @@ use qsf_tools::{
     Tool, ToolContext, ToolDefinition, ToolMetadata, ToolRegistry, ToolRequest, ToolResult,
     ToolSideEffectLevel,
 };
+use qsf_volition::{VolitionFixture, VolitionState};
 use serde::Serialize;
 
 use crate::diagnostics::DiagnosticTrust;
@@ -60,11 +61,22 @@ impl ToolSessionSnapshot {
     }
 }
 
+#[allow(dead_code)]
+#[derive(Clone)]
+pub struct VolitionStateSnapshot {
+    pub state: VolitionState,
+    pub fixture: VolitionFixture,
+}
+
+#[allow(dead_code)]
 #[derive(Clone)]
 pub struct RealtimeToolContext {
     pub state: AppState,
     pub qsf_session_id: String,
     pub snapshot: ToolSessionSnapshot,
+    pub volition: Option<VolitionStateSnapshot>,
+    pub exchange_index: usize,
+    pub call_id: String,
 }
 
 impl ToolContext for RealtimeToolContext {
@@ -671,6 +683,9 @@ mod tests {
             state: state(tempdir),
             qsf_session_id: runtime.qsf_session_id.clone(),
             snapshot: ToolSessionSnapshot::from_runtime(runtime),
+            volition: None,
+            exchange_index: 0,
+            call_id: String::new(),
         }
     }
 

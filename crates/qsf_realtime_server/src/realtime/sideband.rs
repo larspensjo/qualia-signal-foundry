@@ -38,7 +38,8 @@ use crate::realtime::injection::{
 };
 use crate::realtime::memory_store::retrieve_session_memories;
 use crate::realtime::tools::{
-    self, RealtimeToolContext, ToolSessionSnapshot, tool_allow_list, tool_permission_decision,
+    self, RealtimeToolContext, ToolSessionSnapshot, VolitionStateSnapshot, tool_allow_list,
+    tool_permission_decision,
 };
 use crate::realtime::turn_integrity::{
     TranscriptDisposition, TurnPhase, classify_final_transcript,
@@ -1216,10 +1217,17 @@ async fn handle_response_done_event(
                 .get("event_id")
                 .and_then(serde_json::Value::as_str)
                 .map(str::to_string);
+            let volition_snapshot = VolitionStateSnapshot {
+                state: guard.volition.state.clone(),
+                fixture: guard.volition.fixture.clone(),
+            };
             let tool_context = RealtimeToolContext {
                 state: state.clone(),
                 qsf_session_id: qsf_session_id.to_string(),
                 snapshot,
+                volition: Some(volition_snapshot),
+                exchange_index,
+                call_id: String::new(),
             };
 
             apply_live_session_event(
@@ -1354,9 +1362,13 @@ async fn handle_response_done_event(
 
             let mut executed_resolutions = Vec::new();
             for pending in pending_executions {
+                let tool_context_for_call = RealtimeToolContext {
+                    call_id: pending.call_id.clone(),
+                    ..tool_context.clone()
+                };
                 executed_resolutions.push(execute_realtime_tool_call(
                     &registry,
-                    &tool_context,
+                    &tool_context_for_call,
                     exchange_index,
                     pending,
                     &response_model_use,
