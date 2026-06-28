@@ -52,7 +52,7 @@ pub fn select_goals(
             continue;
         }
 
-        let matched_terms = matched_keywords(goal, &input_terms);
+        let matched_terms = app_matched_keywords(goal, &input_terms);
         if matched_terms.is_empty() {
             omitted.push(OmittedGoal {
                 goal: goal.clone(),
@@ -63,7 +63,7 @@ pub fn select_goals(
             continue;
         }
 
-        let relevance_score = compute_relevance(goal, fixture, &matched_terms);
+        let relevance_score = app_compute_relevance(goal, fixture, &matched_terms);
         let fragment = build_fragment(goal, relevance_score, &matched_terms);
         evaluated_fragments.push(GoalEvaluation {
             goal: goal.clone(),
@@ -92,7 +92,7 @@ pub fn select_goals(
             goal: evaluation.goal.clone(),
             relevance_score: evaluation.relevance_score,
             matched_terms: evaluation.matched_terms.clone(),
-            initiative: initiative_for_goal(&evaluation.goal, &evaluation.matched_terms),
+            initiative: app_initiative_for_goal(&evaluation.goal, &evaluation.matched_terms),
         });
     }
 
@@ -164,7 +164,7 @@ pub fn select_goals_with_salience(
             continue;
         }
 
-        let matched_terms = matched_keywords(goal, &input_terms);
+        let matched_terms = app_matched_keywords(goal, &input_terms);
 
         // Blocked goals stay visible but are not selected.
         if matches!(dynamic_status, GoalStatus::Blocked) {
@@ -193,7 +193,7 @@ pub fn select_goals_with_salience(
             .map(|dynamic| dynamic.salience)
             .unwrap_or(0);
         let relevance_score =
-            compute_relevance_with_salience(goal, fixture, &matched_terms, salience);
+            app_compute_relevance_with_salience(goal, fixture, &matched_terms, salience);
         let fragment = build_fragment(goal, relevance_score, &matched_terms);
         evaluated_fragments.push(GoalEvaluation {
             goal: goal.clone(),
@@ -231,7 +231,7 @@ pub fn select_goals_with_salience(
             continue;
         }
 
-        let matched_terms = matched_keywords(goal, &input_terms);
+        let matched_terms = app_matched_keywords(goal, &input_terms);
 
         if matches!(dynamic_status, GoalStatus::Blocked) {
             visible_blocked.push(OmittedGoal {
@@ -259,7 +259,7 @@ pub fn select_goals_with_salience(
             .map(|dynamic| dynamic.salience)
             .unwrap_or(0);
         let relevance_score =
-            compute_relevance_with_salience(goal, fixture, &matched_terms, salience);
+            app_compute_relevance_with_salience(goal, fixture, &matched_terms, salience);
         let fragment = build_fragment(goal, relevance_score, &matched_terms);
         evaluated_fragments.push(GoalEvaluation {
             goal: goal.clone(),
@@ -288,7 +288,7 @@ pub fn select_goals_with_salience(
             goal: evaluation.goal.clone(),
             relevance_score: evaluation.relevance_score,
             matched_terms: evaluation.matched_terms.clone(),
-            initiative: initiative_for_goal(&evaluation.goal, &evaluation.matched_terms),
+            initiative: app_initiative_for_goal(&evaluation.goal, &evaluation.matched_terms),
         });
     }
 
@@ -401,12 +401,12 @@ fn tension_provenance(goal: &Goal, fixture: &VolitionFixture) -> Vec<TensionProv
 
 fn initiative_choice(goal: &Goal, matched_terms: &[String]) -> Option<InitiativeChoice> {
     let (chosen_effect, losing_effects) = goal.allowed_effects.split_first()?;
-    let proposed = initiative_for_effect(goal, *chosen_effect, matched_terms);
+    let proposed = app_initiative_for_effect(goal, *chosen_effect, matched_terms);
 
     let losing = losing_effects
         .iter()
         .map(|effect| LosingCandidate {
-            proposal: initiative_for_effect(goal, *effect, matched_terms),
+            proposal: app_initiative_for_effect(goal, *effect, matched_terms),
             reason: format!(
                 "not selected: goal '{}' orders '{}' after the chosen effect '{}' in allowed_effects precedence",
                 goal.id, effect, chosen_effect
@@ -435,17 +435,17 @@ fn no_delta_reason(result: &GoalSelectionResult) -> String {
     }
 }
 
-fn initiative_for_goal(goal: &Goal, matched_terms: &[String]) -> InitiativeProposal {
+fn app_initiative_for_goal(goal: &Goal, matched_terms: &[String]) -> InitiativeProposal {
     let effect = goal
         .allowed_effects
         .first()
         .copied()
         .unwrap_or(AllowedEffect::Reflect);
 
-    initiative_for_effect(goal, effect, matched_terms)
+    app_initiative_for_effect(goal, effect, matched_terms)
 }
 
-fn initiative_for_effect(
+fn app_initiative_for_effect(
     goal: &Goal,
     effect: AllowedEffect,
     matched_terms: &[String],
@@ -487,16 +487,16 @@ fn build_fragment(goal: &Goal, relevance_score: f64, matched_terms: &[String]) -
     }
 }
 
-fn compute_relevance_with_salience(
+fn app_compute_relevance_with_salience(
     goal: &Goal,
     fixture: &VolitionFixture,
     matched_terms: &[String],
     salience: i32,
 ) -> f64 {
-    compute_relevance(goal, fixture, matched_terms) + salience as f64
+    app_compute_relevance(goal, fixture, matched_terms) + salience as f64
 }
 
-fn compute_relevance(goal: &Goal, fixture: &VolitionFixture, matched_terms: &[String]) -> f64 {
+fn app_compute_relevance(goal: &Goal, fixture: &VolitionFixture, matched_terms: &[String]) -> f64 {
     let matched_bonus = matched_terms.len() as f64 * 100.0;
     let base_priority = goal.base_priority as f64;
     let tension_bonus = goal
@@ -514,7 +514,7 @@ fn compute_relevance(goal: &Goal, fixture: &VolitionFixture, matched_terms: &[St
     matched_bonus + base_priority + tension_bonus
 }
 
-fn matched_keywords(goal: &Goal, input_terms: &[String]) -> Vec<String> {
+fn app_matched_keywords(goal: &Goal, input_terms: &[String]) -> Vec<String> {
     let mut matched = Vec::new();
 
     for keyword in &goal.activation_keywords {
