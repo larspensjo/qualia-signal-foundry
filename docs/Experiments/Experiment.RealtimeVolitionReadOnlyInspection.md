@@ -240,3 +240,11 @@ guidance such as:
 
 Once the instructions are updated, repeat the human test steps and check the engine log for
 ToolLoop state and the diagnostic records for non-empty `tool_requests` and `tool_executions`.
+
+**Fix applied 2026-06-28:** `DEFAULT_INSTRUCTIONS` in
+`crates/qsf_realtime_server/src/state.rs` now tells the model that read-only volition
+tools exist, when to call `inspect_volition_state` and `select_volition_goals`, and to
+frame results as simulated internal state. The crate builds and passes clippy. **Run 2
+(live voice re-test) is pending** — it requires a human to speak the two prompts and
+confirm tool calls, grounded answers, simulated-state framing, and trace completeness
+per the contract above.

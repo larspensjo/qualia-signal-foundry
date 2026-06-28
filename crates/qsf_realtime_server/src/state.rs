@@ -16,7 +16,12 @@ use crate::diagnostics::{DiagnosticRecord, DiagnosticTrust, DiagnosticWriter};
 
 pub const DEFAULT_QSF_SESSION_ID: &str = "default";
 const DEFAULT_OPENAI_BASE_URL: &str = "https://api.openai.com";
-const DEFAULT_INSTRUCTIONS: &str = "Speak briefly. Keep the browser UI informed, keep secrets server-side, and preserve the QSF trust boundary.";
+const DEFAULT_INSTRUCTIONS: &str = "\
+Speak briefly. Keep the browser UI informed, keep secrets server-side, and preserve the QSF trust boundary. \
+You have read-only access to your simulated internal volition state through tools. \
+When asked about your current focus, goals, motivations, or internal state, call inspect_volition_state first. \
+When asked which goals relate to a specific topic or how you can help with something, call select_volition_goals with the relevant query. \
+Frame any volition tool result as simulated internal state — not a claim of real desire, consciousness, or subjective experience.";
 /// Input transcription model for realtime voice. Enabling it makes the provider
 /// emit `conversation.item.input_audio_transcription.completed`, which the
 /// sideband requires to retrieve memory and issue `response.create`.
