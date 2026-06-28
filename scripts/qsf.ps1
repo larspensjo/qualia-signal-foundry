@@ -31,9 +31,11 @@ $sampleStore = "crates/qsf_browser_server/tests/fixtures/small-store.json"
 $emptySessionMemoryFile = "docs/Experiments/Fixtures/session-memory.empty.json"
 $uiDir = Join-Path $projectRoot "crates/qsf_browser_server/ui"
 $realtimeUiDir = Join-Path $projectRoot "crates/qsf_realtime_server/ui"
-# These must match qsf_realtime_server's cli.rs DEFAULT_PORT and the Vite dev server
-# in crates/qsf_realtime_server/ui/vite.config.ts (whose /api proxy is pinned to 3940),
-# so the realtime command does not expose -Port/-BindHost overrides.
+# The realtime server port must match qsf_realtime_server's cli.rs DEFAULT_PORT and the
+# Vite dev server's /api proxy target in crates/qsf_realtime_server/ui/vite.config.ts
+# (pinned to 3940), so the realtime command does not expose -Port/-BindHost overrides.
+# The Vite UI port is only where the dev server listens; the realtime launcher resolves
+# the first free port at or above this preferred value and opens the browser there.
 $realtimeServerPort = 3940
 $realtimeUiPort = 5174
 $realtimeUiUrl = "http://localhost:$realtimeUiPort"
@@ -576,6 +578,40 @@ function Test-PortOccupied {
     }
 }
 
+function Test-PortAvailable {
+    param(
+        [Parameter(Mandatory = $true)]
+        [int]$PortNumber
+    )
+
+    $listener = [System.Net.Sockets.TcpListener]::new([System.Net.IPAddress]::Loopback, $PortNumber)
+    try {
+        $listener.Start()
+        return $true
+    }
+    catch {
+        return $false
+    }
+    finally {
+        $listener.Stop()
+    }
+}
+
+function Get-AvailablePort {
+    param(
+        [Parameter(Mandatory = $true)]
+        [int]$PreferredPort
+    )
+
+    for ($candidate = $PreferredPort; $candidate -le 65535; $candidate++) {
+        if (Test-PortAvailable -PortNumber $candidate) {
+            return $candidate
+        }
+    }
+
+    Write-Error "No available port was found starting at $PreferredPort."
+}
+
 function Add-DoctorCheck {
     param(
         [Parameter(Mandatory = $true)]
@@ -880,6 +916,33 @@ function Stop-SpawnedProcess {
     }
 }
 
+function Stop-ProcessTree {
+    param(
+        [object]$Process
+    )
+
+    # taskkill /T terminates the whole tree; a bare Stop-Process would leave npm's
+    # child node/Vite (or cargo's child server binary) running and holding the port.
+    if ($null -ne $Process -and -not $Process.HasExited) {
+        Write-Host "Stopping process tree PID $($Process.Id)"
+        & taskkill.exe /PID $Process.Id /T /F | Out-Null
+    }
+}
+
+function Get-NpmCommandPath {
+    $npmCmd = Get-Command "npm.cmd" -ErrorAction SilentlyContinue
+    if ($null -ne $npmCmd) {
+        return $npmCmd.Source
+    }
+
+    $npm = Get-Command "npm" -ErrorAction SilentlyContinue
+    if ($null -ne $npm) {
+        return $npm.Source
+    }
+
+    Write-Error "npm was not found on PATH."
+}
+
 function Invoke-Workbench {
     $storePath = Get-BrowserStoreArgument
     Test-BrowserStore -StorePath $storePath
@@ -938,29 +1001,81 @@ function Start-BrowserWhenReady {
     Start-Process $Url
 }
 
-function Invoke-RealtimeServer {
+function Start-RealtimeServerProcess {
+    $cargo = (Get-Command "cargo" -ErrorAction Stop).Source
     $arguments = @("run", "-p", "qsf_realtime_server")
     if ($RandomSessionId) {
         $arguments += @("--", "--random-session-id")
     }
-    Invoke-LoggedCommand -Executable "cargo" -Arguments $arguments
+    Write-Host "Starting realtime server: $(Format-Command -Executable $cargo -Arguments $arguments)"
+    $serverProcess = Start-Process -FilePath $cargo -ArgumentList $arguments -WorkingDirectory $projectRoot -PassThru
+    Write-Host "Realtime server PID: $($serverProcess.Id)"
+    return $serverProcess
+}
+
+function Start-RealtimeUiProcess {
+    param(
+        [Parameter(Mandatory = $true)]
+        [int]$PortNumber
+    )
+
+    $npm = Get-NpmCommandPath
+    # --strictPort makes Vite bind exactly the port we resolved as free, so the URL we
+    # open is guaranteed to match instead of Vite silently picking the next free port.
+    $arguments = @(
+        "run",
+        "dev",
+        "--",
+        "--port",
+        $PortNumber.ToString([System.Globalization.CultureInfo]::InvariantCulture),
+        "--strictPort"
+    )
+    Write-Host "Starting Vite dev server: $(Format-Command -Executable $npm -Arguments $arguments)"
+    $uiProcess = Start-Process -FilePath $npm -ArgumentList $arguments -WorkingDirectory $realtimeUiDir -PassThru
+    Write-Host "Vite dev server PID: $($uiProcess.Id)"
+    return $uiProcess
 }
 
 function Invoke-Realtime {
     Test-RequiredSecret -Name "OPENAI_API_KEY"
     Test-UiDependencies -Dir $realtimeUiDir
 
-    Write-Host "Realtime server API: http://127.0.0.1:$realtimeServerPort"
-    Write-Host "Realtime UI (open this in your browser): $realtimeUiUrl"
-    Write-Host "OPENAI_API_KEY: present in environment; value not shown"
+    $uiPort = Get-AvailablePort -PreferredPort $realtimeUiPort
+    $uiUrl = "http://localhost:$uiPort"
 
-    $uiProcess = Start-UiDevProcess -Target "realtime"
+    Write-Host "Realtime server API: http://127.0.0.1:$realtimeServerPort"
+    Write-Host "Realtime UI (open this in your browser): $uiUrl"
+    if ($uiPort -ne $realtimeUiPort) {
+        Write-Host "Preferred UI port $realtimeUiPort was busy; using $uiPort instead."
+    }
+    Write-Host "OPENAI_API_KEY: present in environment; value not shown"
+    Write-Host "Press Ctrl+C to stop both the realtime server and the Vite dev server."
+
+    $serverProcess = $null
+    $uiProcess = $null
     try {
-        Start-BrowserWhenReady -PortNumber $realtimeUiPort -Url $realtimeUiUrl
-        Invoke-RealtimeServer
+        $serverProcess = Start-RealtimeServerProcess
+        $uiProcess = Start-RealtimeUiProcess -PortNumber $uiPort
+        Start-BrowserWhenReady -PortNumber $uiPort -Url $uiUrl
+
+        while ($true) {
+            if ($serverProcess.HasExited) {
+                Write-Host "Realtime server exited with code $($serverProcess.ExitCode)."
+                $script:QsfExitCode = $serverProcess.ExitCode
+                break
+            }
+            if ($uiProcess.HasExited) {
+                Write-Host "Vite dev server exited with code $($uiProcess.ExitCode)."
+                $script:QsfExitCode = $uiProcess.ExitCode
+                break
+            }
+            Start-Sleep -Milliseconds 500
+        }
     }
     finally {
-        Stop-SpawnedProcess -Process $uiProcess
+        Write-Host "Stopping realtime processes..."
+        Stop-ProcessTree -Process $uiProcess
+        Stop-ProcessTree -Process $serverProcess
     }
 }
 

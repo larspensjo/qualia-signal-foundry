@@ -1414,3 +1414,20 @@ next memory-injection pass consumed them, and `external_effect_executed: false`.
 External tool execution from volition initiative remains out of scope.
 Refs: docs/Plans/Plan.RealtimeVolitionIntegration.md,
 docs/Plans/Review.RealtimeVolitionIntegration.md
+
+## 2026-06-28 - `realtime` supervises both processes and opens the browser
+Decision: `qsf.ps1 realtime` launches the realtime server and the Vite dev server as
+supervised child processes, opens the default browser at the resolved UI URL, and then
+blocks in a wait loop until Ctrl+C or until either child exits. On exit it terminates
+both process trees with `taskkill /T /F`. The Vite UI port is resolved as the first free
+port at or above the preferred `5174` and passed to Vite with `--strictPort`, so the
+opened URL always matches the bound port. The server port stays pinned to `3940`.
+Context: The earlier shape ran the server in the foreground and only closed the UI
+window, which left Vite's child `node` process holding the port after Ctrl+C and never
+auto-opened the browser. Running the server foreground also made Ctrl+C cleanup
+unreliable; a `Start-Sleep` wait loop runs the cleanup `finally` deterministically.
+Consequences: One command brings up the full live surface and one Ctrl+C tears it down
+with no orphaned port holders. The UI port may differ from `5174` when it is busy, so
+durable references should treat `5174` as the preferred port, not a guarantee. This
+refines the 2026-06-14 `realtime` launcher decision.
+Refs: scripts/qsf.ps1, crates/qsf_realtime_server/ui/vite.config.ts

@@ -128,4 +128,26 @@ Describe "qsf.ps1 realtime launcher" {
         $output | Should -BeNullOrEmpty
         ($output | Out-String) | Should -Not -Match "super-secret-value"
     }
+
+    It "resolves the preferred UI port when it is free" {
+        $listener = [System.Net.Sockets.TcpListener]::new([System.Net.IPAddress]::Loopback, 0)
+        $listener.Start()
+        $freePort = ([System.Net.IPEndPoint]$listener.LocalEndpoint).Port
+        $listener.Stop()
+
+        Get-AvailablePort -PreferredPort $freePort | Should -Be $freePort
+    }
+
+    It "skips an occupied UI port and resolves the next free one" {
+        $listener = [System.Net.Sockets.TcpListener]::new([System.Net.IPAddress]::Loopback, 0)
+        $listener.Start()
+        $occupiedPort = ([System.Net.IPEndPoint]$listener.LocalEndpoint).Port
+        try {
+            $resolved = Get-AvailablePort -PreferredPort $occupiedPort
+            $resolved | Should -BeGreaterThan $occupiedPort
+        }
+        finally {
+            $listener.Stop()
+        }
+    }
 }
