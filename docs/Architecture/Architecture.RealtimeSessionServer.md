@@ -42,6 +42,11 @@ mode, not a one-off experiment server.
   them, deduplicates provider `event_id`, maps them into `qsf_session` relay
   diagnostics only, and persists diagnostic-only exchanges with explicit
   trust/source markers.
+- `POST /api/realtime/text` accepts typed user turns for noisy environments once
+  the sideband is attached. The browser may start a receive-only WebRTC session
+  without microphone capture, then submit text; the sideband records the typed
+  turn as trusted input, adds a user conversation item, injects memory, and owns
+  `response.create` as in the voice path.
 - `POST /api/realtime/stop` invalidates the binding and finalizes any open
   diagnostic exchange.
 - `crates/qsf_realtime_server/ui/` is a dedicated Vite + TypeScript + Biome +
@@ -64,8 +69,7 @@ mode, not a one-off experiment server.
 
 - Full `qsf_app` tool exposure to the live realtime model.
 
-Last reviewed: 2026-06-28 against the implemented volition state seeding and
-lifecycle protection.
+Last reviewed: 2026-06-29 against the implemented trusted typed-turn path.
 
 ## Purpose
 
@@ -118,6 +122,10 @@ Browser <-> OpenAI
 Browser
   -> WS /api/realtime/events
      -> diagnostic provider events only (untrusted)
+
+Browser
+  -> POST /api/realtime/text
+     -> trusted typed turn queued into the authoritative sideband
 
 QSF server
   -> Authoritative sideband WebSocket with call_id
@@ -246,9 +254,9 @@ Each live session owns an independent `VolitionRuntimeState` (defined in
 - **Per-session**: `VolitionRuntimeState` is a field on `SessionRuntime` and never
   shared across sessions. Two concurrent sessions have independent lifecycle.
 - **Mutated on trusted transcripts only**: `apply_trusted_transcript_to_volition` in
-  `sideband.rs` maps each trusted turn (both `StartTurn` and `Interrupt` dispositions)
-  to volition events and applies them in-memory. No other code path mutates volition
-  state.
+  `sideband.rs` maps each trusted turn (spoken `StartTurn` / `Interrupt` dispositions
+  and accepted typed turns) to volition events and applies them in-memory. No other
+  code path mutates volition state.
 - **Not persisted**: volition state is in-memory only for the duration of a live session.
   It is not written to the continuity manifest or the diagnostic log. When the session
   ends, the state is dropped.

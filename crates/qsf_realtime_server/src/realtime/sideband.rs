@@ -9,12 +9,13 @@ use futures_util::{SinkExt, StreamExt};
 use qsf_context::ContextBudget;
 use qsf_memory::RetrievalStrategy;
 use qsf_realtime_protocol::{
-    ResponseDoneOutputKind, build_openai_realtime_conversation_session_update,
-    build_openai_realtime_function_call_output, build_openai_realtime_response_cancel,
-    build_openai_realtime_response_create, build_openai_realtime_response_create_with_tool_choice,
-    extract_response_text, parse_realtime_server_event, realtime_event_delta_text,
-    realtime_event_response_id, realtime_event_response_status, realtime_event_text,
-    realtime_event_transcript, realtime_event_type, realtime_response_done_output_kind,
+    ResponseDoneOutputKind, build_openai_realtime_conversation_item_create,
+    build_openai_realtime_conversation_session_update, build_openai_realtime_function_call_output,
+    build_openai_realtime_response_cancel, build_openai_realtime_response_create,
+    build_openai_realtime_response_create_with_tool_choice, extract_response_text,
+    parse_realtime_server_event, realtime_event_delta_text, realtime_event_response_id,
+    realtime_event_response_status, realtime_event_text, realtime_event_transcript,
+    realtime_event_type, realtime_response_done_output_kind,
 };
 use qsf_session::{
     ContentHash, ContinuityManifest, Exchange, ExchangeModelUse, ExchangeOutput, LiveSessionEvent,
@@ -54,23 +55,47 @@ const MAX_BACKOFF_MS: u64 = 2_000;
 #[derive(Debug)]
 pub struct SidebandHandle {
     stop_tx: watch::Sender<bool>,
+    command_tx: mpsc::UnboundedSender<SidebandCommand>,
     join_handle: tokio::task::JoinHandle<()>,
 }
 
 impl SidebandHandle {
     pub fn spawn(state: AppState, qsf_session_id: String, call_id: String) -> Self {
         let (stop_tx, stop_rx) = watch::channel(false);
-        let join_handle = tokio::spawn(run_sideband(state, qsf_session_id, call_id, stop_rx));
+        let (command_tx, command_rx) = mpsc::unbounded_channel();
+        let join_handle = tokio::spawn(run_sideband(
+            state,
+            qsf_session_id,
+            call_id,
+            stop_rx,
+            command_rx,
+        ));
         Self {
             stop_tx,
+            command_tx,
             join_handle,
         }
+    }
+
+    pub fn submit_text_turn(&self, text: String) -> anyhow::Result<()> {
+        let text = text.trim().to_string();
+        if text.is_empty() {
+            anyhow::bail!("text turn cannot be empty");
+        }
+        self.command_tx
+            .send(SidebandCommand::TextTurn { text })
+            .map_err(|_| anyhow::anyhow!("sideband command channel is closed"))
     }
 
     pub async fn stop(self) {
         let _ = self.stop_tx.send(true);
         let _ = self.join_handle.await;
     }
+}
+
+#[derive(Debug)]
+enum SidebandCommand {
+    TextTurn { text: String },
 }
 
 #[derive(Debug)]
@@ -129,6 +154,7 @@ async fn run_sideband(
     qsf_session_id: String,
     call_id: String,
     mut stop_rx: watch::Receiver<bool>,
+    mut command_rx: mpsc::UnboundedReceiver<SidebandCommand>,
 ) {
     let mut backoff = Duration::from_millis(INITIAL_BACKOFF_MS);
     loop {
@@ -136,7 +162,15 @@ async fn run_sideband(
             break;
         }
 
-        match connect_and_run_once(&state, &qsf_session_id, &call_id, &mut stop_rx).await {
+        match connect_and_run_once(
+            &state,
+            &qsf_session_id,
+            &call_id,
+            &mut stop_rx,
+            &mut command_rx,
+        )
+        .await
+        {
             Ok(SidebandExit::Stopped) => break,
             Ok(SidebandExit::Disconnected { reason }) => {
                 mark_session_degraded(&state, &qsf_session_id, &call_id, &reason).await;
@@ -169,6 +203,7 @@ async fn connect_and_run_once(
     qsf_session_id: &str,
     call_id: &str,
     stop_rx: &mut watch::Receiver<bool>,
+    command_rx: &mut mpsc::UnboundedReceiver<SidebandCommand>,
 ) -> anyhow::Result<SidebandExit> {
     let mut runtime_state = SidebandRuntimeState::default();
     // Build the request through `into_client_request` so tungstenite generates
@@ -244,6 +279,23 @@ async fn connect_and_run_once(
                 }
                 continue;
             }
+            command = command_rx.recv() => {
+                match command {
+                    Some(SidebandCommand::TextTurn { text }) => {
+                        handle_text_turn(
+                            state,
+                            qsf_session_id,
+                            call_id,
+                            &text,
+                            &mut runtime_state,
+                            &outbound_tx,
+                        )
+                        .await?;
+                    }
+                    None => {}
+                }
+                continue;
+            }
             message = stream.next() => message,
         };
         let Some(message) = message else {
@@ -292,6 +344,155 @@ async fn connect_and_run_once(
     drop(outbound_tx);
     let _ = writer.await;
     Ok(SidebandExit::Stopped)
+}
+
+async fn handle_text_turn(
+    state: &AppState,
+    qsf_session_id: &str,
+    call_id: &str,
+    text: &str,
+    runtime_state: &mut SidebandRuntimeState,
+    outbound_tx: &mpsc::UnboundedSender<Message>,
+) -> anyhow::Result<()> {
+    let transcript = text.trim();
+    if transcript.is_empty() {
+        return Ok(());
+    }
+
+    let session = state
+        .session_runtime(qsf_session_id)
+        .await
+        .ok_or_else(|| anyhow::anyhow!("unknown qsf_session_id `{qsf_session_id}`"))?;
+    let mut guard = session.lock().await;
+    let config = guard.config.clone();
+    let exchange_index = ensure_authoritative_exchange(&mut guard);
+    apply_live_session_event(
+        &mut guard.session_state,
+        LiveSessionEvent::AudioFinalTranscriptCommitted {
+            exchange_index,
+            utterance: qsf_session::UtteranceRecord {
+                utterance_id: format!("typed-{exchange_index}"),
+                revision_index: 0,
+                transcript: transcript.to_string(),
+                received_at: SystemTime::now(),
+                provider_id: Some(format!("{call_id}:typed")),
+                source_chunk_index: None,
+            },
+            final_transcript: transcript.to_string(),
+        },
+    );
+    runtime_state.final_transcript_received_at = Some(OffsetDateTime::now_utc());
+    runtime_state.active_exchange_index = Some(exchange_index);
+    runtime_state.pending_response_exchange = None;
+    runtime_state.turn_phase = TurnPhase::Idle;
+    apply_trusted_transcript_to_volition(&mut guard, transcript);
+    drop(guard);
+
+    let mut turn_request_values = Vec::new();
+    let user_item = build_openai_realtime_conversation_item_create("user", transcript);
+    turn_request_values.push(user_item.clone());
+    send_json(outbound_tx, user_item)?;
+
+    let retrieved_memories = match retrieve_session_memories(
+        state,
+        qsf_session_id,
+        transcript,
+        RetrievalStrategy::AssociationWeighted,
+        DEFAULT_INJECTION_FRAGMENT_LIMIT,
+    ) {
+        Ok(result) => result.selected,
+        Err(error) => {
+            log::warn!(
+                "memory retrieval failed for typed turn in session `{qsf_session_id}`: {error}"
+            );
+            Vec::new()
+        }
+    };
+
+    let tone = format!(
+        "voice={}, reasoning_effort={}",
+        config.voice, config.reasoning_effort
+    );
+    let request = MemoryInjectionRequest {
+        model: &config.model,
+        voice: &config.voice,
+        base_instructions: &config.instructions,
+        output_modalities: &config.output_modalities,
+        session_identity: qsf_session_id,
+        tone: &tone,
+        user_transcript: transcript,
+        retrieved_memories: &retrieved_memories,
+        budget: ContextBudget::new(
+            DEFAULT_INJECTION_FRAGMENT_LIMIT,
+            DEFAULT_INJECTION_TOKEN_LIMIT,
+        ),
+        pcm_rate_hz: DEFAULT_PCM_RATE_HZ,
+        input_transcription_model: config.input_transcription_model.as_deref(),
+    };
+    let packet = build_memory_injection_packet(&request);
+    let context_assembly = packet
+        .as_ref()
+        .map(|packet| packet.context_assembly.clone())
+        .unwrap_or_else(|| assemble_memory_context(&request));
+    let retrieved_memory_block = packet
+        .as_ref()
+        .map(|packet| packet.memory_block.clone())
+        .unwrap_or_default();
+
+    let mut guard = session.lock().await;
+    let diagnostics = guard.diagnostics.clone();
+    apply_live_session_event(
+        &mut guard.session_state,
+        LiveSessionEvent::MemoryContextRecorded {
+            exchange_index,
+            context_assembly,
+            retrieved_memory_block,
+            recalled_items: vec![],
+            live_capture: None,
+        },
+    );
+    runtime_state.memory_injected_at = Some(OffsetDateTime::now_utc());
+    let final_transcript_received_at = runtime_state.final_transcript_received_at;
+    let memory_injected_at = runtime_state.memory_injected_at;
+    record_latency_observation_if_ready(
+        runtime_state,
+        &diagnostics,
+        qsf_session_id,
+        "final_transcript_received_to_memory_injected",
+        final_transcript_received_at,
+        memory_injected_at,
+    )?;
+    drop(guard);
+
+    if let Some(packet) = packet {
+        turn_request_values.push(packet.session_update.clone());
+        turn_request_values.push(packet.conversation_item_create.clone());
+        send_json(outbound_tx, packet.session_update.clone())?;
+        send_json(outbound_tx, packet.conversation_item_create.clone())?;
+    }
+
+    let response_create = build_openai_realtime_response_create(
+        &config.voice,
+        &config.instructions,
+        DEFAULT_PCM_RATE_HZ,
+    );
+    turn_request_values.push(response_create.clone());
+    send_json(outbound_tx, response_create)?;
+    runtime_state.response_create_sent_at = Some(OffsetDateTime::now_utc());
+    let response_create_sent_at = runtime_state.response_create_sent_at;
+    record_latency_observation_if_ready(
+        runtime_state,
+        &diagnostics,
+        qsf_session_id,
+        "memory_injected_to_response_create_sent",
+        memory_injected_at,
+        response_create_sent_at,
+    )?;
+    runtime_state.current_request_hash = Some(hash_request_sequence(&turn_request_values));
+    runtime_state.current_message_count = turn_request_values.len();
+    runtime_state.pending_response_exchange = Some(exchange_index);
+    runtime_state.turn_phase = TurnPhase::AwaitingResponse;
+    Ok(())
 }
 
 async fn handle_provider_event(

@@ -17,6 +17,9 @@ import {
 interface UiRefs {
   startButton: HTMLButtonElement;
   stopButton: HTMLButtonElement;
+  textForm: HTMLFormElement;
+  textInput: HTMLTextAreaElement;
+  sendTextButton: HTMLButtonElement;
   sessionId: HTMLElement;
   connectionStatus: HTMLElement;
   runtimePhase: HTMLElement;
@@ -31,10 +34,19 @@ interface UiRefs {
 interface ActiveConversation {
   sessionId: string;
   peerConnection: RTCPeerConnection;
-  microphoneStream: MediaStream;
+  microphoneStream: MediaStream | null;
   relaySocket: WebSocket;
   dataChannel: RTCDataChannel;
   relayBuffer: string[];
+}
+
+interface ConversationStartOptions {
+  captureMicrophone: boolean;
+}
+
+interface TextTurnResponse {
+  qsf_session_id: string;
+  accepted: boolean;
 }
 
 const root = document.querySelector<HTMLElement>("#app");
@@ -69,6 +81,10 @@ root.innerHTML = `
     <section class="controls">
       <button data-role="start" type="button">Start conversation</button>
       <button data-role="stop" type="button" disabled>Stop</button>
+      <form data-role="text-form" class="text-turn-form">
+        <textarea data-role="text-input" rows="2" placeholder="Type a turn for noisy rooms"></textarea>
+        <button data-role="send-text" type="submit">Send text</button>
+      </form>
       <p data-role="error" class="error" hidden></p>
       <p data-role="warning" class="warning" role="status" hidden></p>
     </section>
@@ -111,19 +127,27 @@ root.innerHTML = `
 const refs = collectRefs(root);
 let state: ConversationState = INITIAL_STATE;
 let activeConversation: ActiveConversation | null = null;
+let textTurnPending = false;
 
 refs.startButton.addEventListener("click", () => {
-  void startConversation();
+  void startConversation({ captureMicrophone: true });
 });
 refs.stopButton.addEventListener("click", () => {
   void stopConversation();
 });
+refs.textForm.addEventListener("submit", (event) => {
+  event.preventDefault();
+  void submitTextTurn();
+});
+refs.textInput.addEventListener("input", () => {
+  render();
+});
 
 render();
 
-async function startConversation() {
+async function startConversation(options: ConversationStartOptions): Promise<boolean> {
   if (activeConversation) {
-    return;
+    return true;
   }
 
   dispatch({ type: "session_requested" });
@@ -166,19 +190,23 @@ async function startConversation() {
     });
 
     peerConnection = new RTCPeerConnection();
-    microphoneStream = await navigator.mediaDevices.getUserMedia({
-      audio: MICROPHONE_AUDIO_CONSTRAINTS,
-    });
-    for (const track of microphoneStream.getAudioTracks()) {
-      const settings = track.getSettings();
-      console.info("microphone capture settings", {
-        echoCancellation: settings.echoCancellation,
-        noiseSuppression: settings.noiseSuppression,
-        autoGainControl: settings.autoGainControl,
+    if (options.captureMicrophone) {
+      microphoneStream = await navigator.mediaDevices.getUserMedia({
+        audio: MICROPHONE_AUDIO_CONSTRAINTS,
       });
-    }
-    for (const track of microphoneStream.getTracks()) {
-      peerConnection.addTrack(track, microphoneStream);
+      for (const track of microphoneStream.getAudioTracks()) {
+        const settings = track.getSettings();
+        console.info("microphone capture settings", {
+          echoCancellation: settings.echoCancellation,
+          noiseSuppression: settings.noiseSuppression,
+          autoGainControl: settings.autoGainControl,
+        });
+      }
+      for (const track of microphoneStream.getTracks()) {
+        peerConnection.addTrack(track, microphoneStream);
+      }
+    } else {
+      peerConnection.addTransceiver("audio", { direction: "recvonly" });
     }
 
     dataChannel = peerConnection.createDataChannel("oai-events");
@@ -255,12 +283,59 @@ async function startConversation() {
       relayBuffer,
     };
     dispatch({ type: "connection_ready" });
+    return true;
   } catch (error) {
     await stopDetachedConversation(relaySocket, peerConnection, microphoneStream, dataChannel);
     dispatch({
       type: "connection_error",
       message: messageFromError(error),
     });
+    return false;
+  }
+}
+
+async function submitTextTurn() {
+  const text = refs.textInput.value.trim();
+  if (!text) {
+    return;
+  }
+
+  textTurnPending = true;
+  render();
+  try {
+    const started = await startConversation({ captureMicrophone: false });
+    if (!started || !activeConversation) {
+      return;
+    }
+    await waitForDataChannelOpen(activeConversation.dataChannel);
+    await postJson<TextTurnResponse>("/api/realtime/text", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        qsf_session_id: activeConversation.sessionId,
+        text,
+      }),
+    });
+    dispatch({
+      type: "provider_envelope",
+      envelope: {
+        qsf_session_id: activeConversation.sessionId,
+        event_id: `typed-turn-${Date.now()}`,
+        kind: "final_transcript",
+        transcript: text,
+      },
+    });
+    refs.textInput.value = "";
+  } catch (error) {
+    dispatch({
+      type: "connection_error",
+      message: messageFromError(error),
+    });
+  } finally {
+    textTurnPending = false;
+    render();
   }
 }
 
@@ -345,6 +420,7 @@ function render() {
     state.connection === "connecting_media" ||
     state.connection === "stopping";
   refs.stopButton.disabled = !activeConversation && state.connection !== "stopping";
+  refs.sendTextButton.disabled = !canSubmitTextTurn();
 
   refs.transcriptList.replaceChildren(
     ...state.transcript.map((entry) => {
@@ -360,6 +436,24 @@ function render() {
       return item;
     }),
   );
+}
+
+function canSubmitTextTurn(): boolean {
+  if (textTurnPending) {
+    return false;
+  }
+  if (!refs.textInput.value.trim()) {
+    return false;
+  }
+  if (
+    state.connection === "requesting_session" ||
+    state.connection === "connecting_media" ||
+    state.connection === "stopping" ||
+    state.connection === "error"
+  ) {
+    return false;
+  }
+  return state.connection === "idle" || (state.connection === "ready" && state.phase === "idle");
 }
 
 async function connectRelaySocket(sessionId: string): Promise<WebSocket> {
@@ -397,6 +491,39 @@ async function waitForIceGatheringComplete(peerConnection: RTCPeerConnection) {
   });
 }
 
+async function waitForDataChannelOpen(dataChannel: RTCDataChannel) {
+  if (dataChannel.readyState === "open") {
+    return;
+  }
+  await new Promise<void>((resolve, reject) => {
+    const timeout = window.setTimeout(() => {
+      cleanup();
+      reject(new Error("data channel did not open in time"));
+    }, 8000);
+    const cleanup = () => {
+      window.clearTimeout(timeout);
+      dataChannel.removeEventListener("open", handleOpen);
+      dataChannel.removeEventListener("error", handleError);
+      dataChannel.removeEventListener("close", handleClose);
+    };
+    const handleOpen = () => {
+      cleanup();
+      resolve();
+    };
+    const handleError = () => {
+      cleanup();
+      reject(new Error("data channel failed to open"));
+    };
+    const handleClose = () => {
+      cleanup();
+      reject(new Error("data channel closed before opening"));
+    };
+    dataChannel.addEventListener("open", handleOpen);
+    dataChannel.addEventListener("error", handleError);
+    dataChannel.addEventListener("close", handleClose);
+  });
+}
+
 function collectRefs(container: HTMLElement): UiRefs {
   const query = <T extends HTMLElement>(selector: string): T => {
     const element = container.querySelector<T>(selector);
@@ -409,6 +536,9 @@ function collectRefs(container: HTMLElement): UiRefs {
   return {
     startButton: query<HTMLButtonElement>('[data-role="start"]'),
     stopButton: query<HTMLButtonElement>('[data-role="stop"]'),
+    textForm: query<HTMLFormElement>('[data-role="text-form"]'),
+    textInput: query<HTMLTextAreaElement>('[data-role="text-input"]'),
+    sendTextButton: query<HTMLButtonElement>('[data-role="send-text"]'),
     sessionId: query<HTMLElement>('[data-role="session"]'),
     connectionStatus: query<HTMLElement>('[data-role="connection"]'),
     runtimePhase: query<HTMLElement>('[data-role="phase"]'),

@@ -31,6 +31,7 @@ pub fn router() -> Router<AppState> {
         .route("/api/realtime/session", post(create_session))
         .route("/api/realtime/sdp", post(exchange_sdp))
         .route("/api/realtime/events", get(events_socket))
+        .route("/api/realtime/text", post(submit_text_turn))
         .route("/api/realtime/stop", post(stop_session))
 }
 
@@ -144,9 +145,35 @@ async fn stop_session(State(state): State<AppState>, Json(request): Json<StopReq
     }
 }
 
+async fn submit_text_turn(
+    State(state): State<AppState>,
+    Json(request): Json<TextTurnRequest>,
+) -> Response {
+    match submit_text_turn_impl(&state, request).await {
+        Ok(response) => Json(response).into_response(),
+        Err(error) => (
+            StatusCode::BAD_REQUEST,
+            Json(ErrorResponse::from_error(error)),
+        )
+            .into_response(),
+    }
+}
+
 #[derive(Debug, Deserialize)]
 struct StopRequest {
     qsf_session_id: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct TextTurnRequest {
+    qsf_session_id: String,
+    text: String,
+}
+
+#[derive(Debug, Serialize)]
+struct TextTurnResponse {
+    qsf_session_id: String,
+    accepted: bool,
 }
 
 #[derive(Debug, Serialize)]
@@ -315,6 +342,30 @@ async fn stop_session_impl(
         qsf_session_id: stop_session_id,
         stopped: true,
         completed_exchanges: completed,
+    })
+}
+
+async fn submit_text_turn_impl(
+    state: &AppState,
+    request: TextTurnRequest,
+) -> anyhow::Result<TextTurnResponse> {
+    let text = request.text.trim().to_string();
+    if text.is_empty() {
+        anyhow::bail!("text turn cannot be empty");
+    }
+    let session = state
+        .session_runtime(&request.qsf_session_id)
+        .await
+        .ok_or_else(|| anyhow::anyhow!("unknown qsf_session_id `{}`", request.qsf_session_id))?;
+    let guard = session.lock().await;
+    let sideband = guard
+        .sideband
+        .as_ref()
+        .ok_or_else(|| anyhow::anyhow!("sideband is not attached yet"))?;
+    sideband.submit_text_turn(text)?;
+    Ok(TextTurnResponse {
+        qsf_session_id: request.qsf_session_id,
+        accepted: true,
     })
 }
 
@@ -947,6 +998,67 @@ mod tests {
         assert!(diagnostics.contains("\"kind\":\"call_bound\""));
         assert!(diagnostics.contains("\"kind\":\"no_secret_evidence\""));
         assert!(!diagnostics.contains("test-api-key"));
+    }
+
+    #[tokio::test]
+    async fn text_route_rejects_empty_or_unattached_turns() {
+        let tempdir = tempfile::tempdir().expect("tempdir");
+        let state = AppState::new(
+            "test-api-key",
+            "http://127.0.0.1:9999",
+            tempdir.path().to_path_buf(),
+            crate::state::SessionIdMode::Default,
+        )
+        .expect("state");
+        let allocation = state.create_session().await.expect("session");
+        let app = router().with_state(state.clone());
+
+        let empty_response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/api/realtime/text")
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(
+                        serde_json::to_vec(&json!({
+                            "qsf_session_id": allocation.qsf_session_id,
+                            "text": "   ",
+                        }))
+                        .expect("request json"),
+                    ))
+                    .expect("request"),
+            )
+            .await
+            .expect("response");
+        assert_eq!(empty_response.status(), axum::http::StatusCode::BAD_REQUEST);
+
+        let unattached_response = app
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/api/realtime/text")
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(
+                        serde_json::to_vec(&json!({
+                            "qsf_session_id": allocation.qsf_session_id,
+                            "text": "What are you currently focused on?",
+                        }))
+                        .expect("request json"),
+                    ))
+                    .expect("request"),
+            )
+            .await
+            .expect("response");
+        assert_eq!(
+            unattached_response.status(),
+            axum::http::StatusCode::BAD_REQUEST
+        );
+        let body = to_bytes(unattached_response.into_body(), usize::MAX)
+            .await
+            .expect("body");
+        let json: serde_json::Value = serde_json::from_slice(&body).expect("json");
+        assert_eq!(json["error"], "sideband is not attached yet");
     }
 
     #[tokio::test]

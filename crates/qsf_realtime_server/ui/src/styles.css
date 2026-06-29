@@ -170,6 +170,35 @@ button:disabled {
   margin: 1rem 0 1.25rem;
 }
 
+.text-turn-form {
+  display: grid;
+  grid-template-columns: minmax(18rem, 1fr) auto;
+  gap: 0.75rem;
+  flex: 1 1 32rem;
+  align-items: stretch;
+}
+
+.text-turn-form textarea {
+  min-height: 3.35rem;
+  max-height: 8rem;
+  resize: vertical;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 18px;
+  padding: 0.85rem 1rem;
+  color: var(--text);
+  background: rgba(7, 10, 20, 0.58);
+  outline: none;
+}
+
+.text-turn-form textarea:focus {
+  border-color: rgba(125, 211, 252, 0.65);
+  box-shadow: 0 0 0 3px rgba(125, 211, 252, 0.14);
+}
+
+.text-turn-form textarea::placeholder {
+  color: rgba(184, 191, 215, 0.74);
+}
+
 .controls .error {
   flex-basis: 100%;
   margin: 0.2rem 0 0;
@@ -325,9 +354,15 @@ button:disabled {
 }
 
 @media (max-width: 900px) {
+
   .grid,
   .hero-metrics {
     grid-template-columns: 1fr;
+  }
+
+  .text-turn-form {
+    grid-template-columns: 1fr;
+    flex-basis: 100%;
   }
 
   .shell {
