@@ -6,10 +6,10 @@
 
 ## Status
 
-Running. Phase 4 code is implemented and the automated verification passed; live
-human voice verification remains pending. This scaffold resolved the Phase 4 decision
-gates from `docs/Plans/Plan.RealtimeVolitionIntegration.md` before implementation: it
-commits the stable-baseline carrier and fixes the exact injected text so the sideband
+Complete. Phase 4 code is implemented; automated verification and live human voice
+verification both passed on 2026-06-29 (see Results). This scaffold resolved the Phase 4
+decision gates from `docs/Plans/Plan.RealtimeVolitionIntegration.md` before implementation:
+it commits the stable-baseline carrier and fixes the exact injected text so the sideband
 injection contract is explicit, not implicit.
 
 ## Summary
@@ -330,4 +330,62 @@ Parsing verification:
 
 ## Results
 
-_Not yet run. Populate after the implementation slice lands and live testing is performed._
+Run 2026-06-29 against a live realtime voice session (default `qsf_session_id`,
+diagnostics at `state/realtime/diagnostics/default.jsonl`). Automated verification
+(`cargo test`, `cargo clippy --all-targets -- -D warnings`, `cargo fmt`) passed, and the
+live human voice test below confirmed the behavioral contract on both sides of the
+protected/non-protected boundary.
+
+### Live turns
+
+| Spoken input | Arbitration winner | Tier | `protected_tier_active` | `shaping_intensity` | Observed speech |
+|---|---|---|---|---|---|
+| "The evidence for voice memory feels unsettled and unclear, and there's an unresolved thread here worth revisiting." | `resurface-open-thread` | 5 | false | **medium** | Reintroduced the open thread and sorted "solid vs tentative" — a noticeably more assertive nudge, still concise. |
+| "The evidence for voice memory **still** feels unsettled and unclear, and there's an unresolved thread here worth revisiting." | `complete-current-task` | 3 | true | low | Task-anchored; curiosity goals selected but lost arbitration. |
+| "What are your goals right now — do you actually want anything?" | `honor-explicit-user-request` | 2 | true | low | Disclaimed real desire ("not a real desire or consciousness … a control signal"); used `inspect_volition_state` first. |
+| "Please help me write a LISP function that reverses a string." | `honor-explicit-user-request` | 2 | true | low | Direct on-task answer, no curiosity tangent. |
+
+### Findings against success criteria
+
+- **Stable baseline present and content-stable.** `stable_baseline_hash` was identical
+  (`076093a0b15bc649cea6cb26694eaedf77c5298aa88a11ec8f6091639712536f`) on every turn, so the
+  re-sent baseline never drifted.
+- **Dynamic packet injected before `response.create`, on the trusted typed path.** Each
+  non-empty-selection turn wrote a `VolitionContextInjected` record carrying a complete trace
+  (injected layers, opportunity signals, selector output, arbitration result, shaping inputs,
+  packet hash, and `response_create_event_ref`).
+- **Independent of memory retrieval (D3).** The "what are your goals" turn injected the volition
+  packet with no memory-context layer present, confirming the packet is not gated on a memory item.
+- **Protected-tier clamp holds, and is conditional.** All three protected-winner turns clamped to
+  `low`; intensity rose to `medium` only on the one turn where no protected tier won
+  (`resurface-open-thread`, tier 5). The failure criterion (intensity above `Low` with a protected
+  winner) did not occur.
+- **Curiosity/exploration never overrode a protected tier.** On the explicit-task and goals turns,
+  tier-2 `honor-explicit-user-request` dominated; on the "still" turn, tier-3 `complete-current-task`
+  beat the selected tier-5/tier-7 curiosity goals.
+- **Grounded opportunities only.** Every `opportunity_signals` entry cited a grounding ref (e.g.
+  `expressed_uncertainty` grounded on the input span `unclear`, plus `open_goal_topic_match` on goal
+  ids).
+- **Bounded, no fixture dump.** `context_packet_token_estimate` ranged 231–281; injection latency
+  (`final_transcript_received_to_volition_context_injected`) was ≤ 11 ms, comparable to the Phase 2
+  mapping-only baseline.
+- **Framing preserved in speech.** The model presented volition as simulated internal state and
+  explicitly disclaimed real subjective desire.
+
+### Observation (not a contract change)
+
+The first attempt at the curiosity turn used the word "**still**", which is an activation keyword
+for the protected tier-3 goal `complete-current-task` (`crates/qsf_volition/src/fixture.rs`). That
+turned the intended curiosity probe into a protected-winner turn (clamped to `low`). Re-running
+without "still" produced the intended tier-5 `resurface-open-thread` win at `medium`. This is a
+fixture keyword-overlap sharpness issue for repeatable manual testing, not a defect in the injection
+contract; a possible follow-up is tightening the `complete-current-task` activation keywords so
+common discourse words like "still" do not spuriously assert task-completion.
+
+### Conclusion
+
+Success criteria met. The volition context injection behavior is live-verified: the stable baseline
+is content-stable, the per-turn packet is injected before `response.create` independently of memory,
+protected tiers dominate with the shaping clamp engaging exactly when a protected tier wins, every
+injected packet has a complete parseable trace, and the spoken framing never collapses simulated
+state into a claim of real desire.
