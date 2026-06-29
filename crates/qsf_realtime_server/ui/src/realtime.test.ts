@@ -72,6 +72,59 @@ describe("provider relay mapping", () => {
     });
   });
 
+  it("maps assistant output transcript completion to visible response text", () => {
+    const message = parseProviderDataChannelMessage(
+      JSON.stringify({
+        event_id: "evt_answer_done",
+        type: "response.output_audio_transcript.done",
+        response_id: "resp_1",
+        transcript: "I am checking the realtime loop.",
+      }),
+    );
+
+    expect(mapProviderMessageToRelayEnvelope("session_1", message)).toMatchObject({
+      qsf_session_id: "session_1",
+      event_id: "evt_answer_done",
+      kind: "response_completed",
+      response_id: "resp_1",
+      text: "I am checking the realtime loop.",
+    });
+  });
+
+  it("extracts assistant text from nested response output", () => {
+    const message = parseProviderDataChannelMessage(
+      JSON.stringify({
+        event_id: "evt_response_done",
+        type: "response.done",
+        response: {
+          id: "resp_1",
+          status: "completed",
+          output: [
+            {
+              type: "message",
+              role: "assistant",
+              content: [
+                {
+                  type: "audio",
+                  transcript: "Here is the answer.",
+                },
+              ],
+            },
+          ],
+        },
+      }),
+    );
+
+    expect(mapProviderMessageToRelayEnvelope("session_1", message)).toMatchObject({
+      qsf_session_id: "session_1",
+      event_id: "evt_response_done",
+      kind: "response_completed",
+      response_id: "resp_1",
+      status: "completed",
+      text: "Here is the answer.",
+    });
+  });
+
   it("ignores unsupported provider event types", () => {
     expect(providerTypeToRelayKind("unknown.type")).toBeNull();
     expect(
@@ -154,6 +207,69 @@ describe("conversation reducer", () => {
     expect(afterPlayback.phase).toBe("idle");
   });
 
+  it("accumulates assistant transcript deltas until response completion", () => {
+    const started = reduceConversationState(INITIAL_STATE, {
+      type: "provider_envelope",
+      envelope: {
+        qsf_session_id: "session_1",
+        event_id: "evt_response_started",
+        kind: "response_started",
+      },
+    });
+    const firstDelta = reduceConversationState(started, {
+      type: "provider_envelope",
+      envelope: {
+        qsf_session_id: "session_1",
+        event_id: "evt_answer_delta_1",
+        kind: "speech_playback_started",
+        text: "hi",
+      },
+    });
+    const secondDelta = reduceConversationState(firstDelta, {
+      type: "provider_envelope",
+      envelope: {
+        qsf_session_id: "session_1",
+        event_id: "evt_answer_delta_2",
+        kind: "speech_playback_started",
+        text: " there",
+      },
+    });
+    const completed = reduceConversationState(secondDelta, {
+      type: "provider_envelope",
+      envelope: {
+        qsf_session_id: "session_1",
+        event_id: "evt_answer_done",
+        kind: "response_completed",
+        status: "completed",
+      },
+    });
+
+    expect(completed.transcript).toEqual([{ role: "assistant", text: "hi there" }]);
+  });
+
+  it("does not duplicate adjacent assistant completion text", () => {
+    const firstCompletion = reduceConversationState(INITIAL_STATE, {
+      type: "provider_envelope",
+      envelope: {
+        qsf_session_id: "session_1",
+        event_id: "evt_answer_done",
+        kind: "response_completed",
+        text: "same answer",
+      },
+    });
+    const duplicateCompletion = reduceConversationState(firstCompletion, {
+      type: "provider_envelope",
+      envelope: {
+        qsf_session_id: "session_1",
+        event_id: "evt_response_done",
+        kind: "response_completed",
+        text: "same answer",
+      },
+    });
+
+    expect(duplicateCompletion.transcript).toEqual([{ role: "assistant", text: "same answer" }]);
+  });
+
   it("returns to idle when a response is cancelled", () => {
     const speaking = {
       ...INITIAL_STATE,
@@ -161,6 +277,30 @@ describe("conversation reducer", () => {
     };
 
     const cancelled = reduceConversationState(speaking, {
+      type: "provider_envelope",
+      envelope: {
+        qsf_session_id: "session_1",
+        event_id: "evt_cancelled",
+        kind: "response_completed",
+        status: "cancelled",
+      },
+    });
+
+    expect(cancelled.phase).toBe("idle");
+    expect(cancelled.transcript).toEqual([]);
+  });
+
+  it("drops accumulated assistant draft text when a response is cancelled", () => {
+    const withDraft = reduceConversationState(INITIAL_STATE, {
+      type: "provider_envelope",
+      envelope: {
+        qsf_session_id: "session_1",
+        event_id: "evt_answer_delta",
+        kind: "speech_playback_started",
+        text: "partial answer",
+      },
+    });
+    const cancelled = reduceConversationState(withDraft, {
       type: "provider_envelope",
       envelope: {
         qsf_session_id: "session_1",

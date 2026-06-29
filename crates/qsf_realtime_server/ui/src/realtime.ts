@@ -74,6 +74,7 @@ export interface ProviderDataChannelMessage {
   item_id?: string;
   previous_item_id?: string;
   response_id?: string;
+  delta?: string;
   transcript?: string;
   text?: string;
   status?: string;
@@ -92,6 +93,7 @@ export interface ConversationState {
   sessionId: string | null;
   transcript: TranscriptEntry[];
   liveTranscript: string;
+  responseDraft: string;
   lastEvent: string | null;
   error: string | null;
   warning: string | null;
@@ -153,6 +155,7 @@ export const INITIAL_STATE: ConversationState = {
   sessionId: null,
   transcript: [],
   liveTranscript: "",
+  responseDraft: "",
   lastEvent: null,
   error: null,
   warning: null,
@@ -216,6 +219,7 @@ export function reduceConversationState(
         phase: "idle",
         sessionId: null,
         liveTranscript: "",
+        responseDraft: "",
         lastEvent: "stopped",
         warning: null,
       };
@@ -257,6 +261,7 @@ function applyRelayEnvelope(state: ConversationState, envelope: RelayEnvelope): 
         ...base,
         phase: "listening",
         liveTranscript: "",
+        responseDraft: "",
       };
     case "partial_transcript":
       return {
@@ -279,13 +284,16 @@ function applyRelayEnvelope(state: ConversationState, envelope: RelayEnvelope): 
       return {
         ...base,
         phase: "thinking",
+        responseDraft: "",
       };
     case "response_completed": {
-      const text = envelope.text?.trim();
-      const phase = envelope.status && envelope.status !== "completed" ? "idle" : "speaking";
+      const completed = !envelope.status || envelope.status === "completed";
+      const text = (envelope.text ?? (completed ? state.responseDraft : "")).trim();
+      const phase = completed ? "speaking" : "idle";
       return {
         ...base,
         phase,
+        responseDraft: "",
         transcript: text
           ? appendTranscript(state.transcript, { role: "assistant", text })
           : state.transcript,
@@ -295,6 +303,7 @@ function applyRelayEnvelope(state: ConversationState, envelope: RelayEnvelope): 
       return {
         ...base,
         phase: "speaking",
+        responseDraft: state.responseDraft + (envelope.text ?? ""),
       };
     case "speech_playback_completed":
       return {
@@ -308,11 +317,16 @@ function applyRelayEnvelope(state: ConversationState, envelope: RelayEnvelope): 
         phase: "idle",
         sessionId: null,
         liveTranscript: "",
+        responseDraft: "",
       };
   }
 }
 
 function appendTranscript(entries: TranscriptEntry[], entry: TranscriptEntry): TranscriptEntry[] {
+  const lastEntry = entries.at(-1);
+  if (lastEntry?.role === entry.role && lastEntry.text === entry.text) {
+    return entries;
+  }
   return entries.concat(entry);
 }
 
@@ -363,11 +377,25 @@ export function mapProviderMessageToRelayEnvelope(
     previous_item_id: message.previous_item_id,
     response_id: message.response_id,
     transcript: message.transcript,
-    text: message.text,
+    text: relayTextFor(kind, message),
     status: message.status,
     audio_marker: message.audio_marker,
     payload: message.payload ?? message,
   };
+}
+
+function relayTextFor(
+  kind: RelayEventKind,
+  message: ProviderDataChannelMessage,
+): string | undefined {
+  switch (kind) {
+    case "response_completed":
+      return message.text ?? message.transcript;
+    case "speech_playback_started":
+      return message.delta ?? message.text;
+    default:
+      return undefined;
+  }
 }
 
 export function providerTypeToRelayKind(type: string): RelayEventKind | null {
@@ -382,9 +410,21 @@ export function providerTypeToRelayKind(type: string): RelayEventKind | null {
       return "response_started";
     case "response.done":
       return "response_completed";
+    case "response.audio_transcript.delta":
+    case "response.output_audio_transcript.delta":
+    case "response.text.delta":
+    case "response.output_text.delta":
+      return "speech_playback_started";
+    case "response.audio_transcript.done":
+    case "response.output_audio_transcript.done":
+    case "response.text.done":
+    case "response.output_text.done":
+      return "response_completed";
     case "response.audio.delta":
+    case "response.output_audio.delta":
       return "speech_playback_started";
     case "response.audio.done":
+    case "response.output_audio.done":
       return "speech_playback_completed";
     case "session.closed":
       return "session_stopped";
@@ -409,12 +449,43 @@ export function parseProviderDataChannelMessage(raw: string): ProviderDataChanne
     item_id: stringField(parsed.item_id),
     previous_item_id: stringField(parsed.previous_item_id),
     response_id: stringField(parsed.response_id) ?? nestedStringField(parsed, "response", "id"),
+    delta: stringField(parsed.delta),
     transcript: stringField(parsed.transcript),
-    text: stringField(parsed.text) ?? nestedStringField(parsed, "response", "text"),
+    text:
+      stringField(parsed.text) ??
+      nestedStringField(parsed, "response", "text") ??
+      responseOutputText(parsed),
     status: stringField(parsed.status) ?? nestedStringField(parsed, "response", "status"),
     audio_marker: stringField(parsed.audio_marker),
     payload: parsed.payload ?? parsed,
   };
+}
+
+function responseOutputText(value: Record<string, unknown>): string | undefined {
+  const response = value.response;
+  if (!isRecord(response)) {
+    return undefined;
+  }
+  const output = response.output;
+  if (!Array.isArray(output)) {
+    return undefined;
+  }
+
+  const parts = output.flatMap((item) => responseOutputTextParts(item));
+  return parts.length > 0 ? parts.join("\n") : undefined;
+}
+
+function responseOutputTextParts(value: unknown): string[] {
+  if (!isRecord(value)) {
+    return [];
+  }
+
+  const directText = stringField(value.text) ?? stringField(value.transcript);
+  const content = value.content;
+  const contentParts = Array.isArray(content)
+    ? content.flatMap((part) => responseOutputTextParts(part))
+    : [];
+  return directText ? [directText, ...contentParts] : contentParts;
 }
 
 function nestedStringField(

@@ -46,7 +46,10 @@ mode, not a one-off experiment server.
   diagnostic exchange.
 - `crates/qsf_realtime_server/ui/` is a dedicated Vite + TypeScript + Biome +
   Vitest browser preview surface with a minimal WebRTC client and relay-envelope
-  mapping tests.
+  mapping tests. The UI treats provider assistant transcript events
+  (`response.output_audio_transcript.*`, legacy `response.audio_transcript.*`,
+  and nested `response.done.response.output`) as assistant transcript text while
+  keeping the browser relay on the existing diagnostic envelope kinds.
 - The shared reducer overlap matrix now handles the browser-relay out-of-order and
   interruption cases inside `qsf_session`.
 
