@@ -8,6 +8,7 @@ use serde::{Deserialize, Serialize};
 use time::OffsetDateTime;
 
 use crate::realtime::turn_integrity::TurnPhase;
+use crate::realtime::volition_injection::VolitionContextInjectionTrace;
 use qsf_session::Exchange;
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -53,6 +54,12 @@ pub enum DiagnosticRecord {
         started_at: OffsetDateTime,
         finished_at: OffsetDateTime,
         latency_ms: i64,
+    },
+    VolitionContextInjected {
+        qsf_session_id: String,
+        exchange_index: usize,
+        recorded_at: OffsetDateTime,
+        trace: VolitionContextInjectionTrace,
     },
     DiagnosticExchangeRecorded {
         qsf_session_id: String,

@@ -190,6 +190,12 @@ Examples:
 
 These should be loaded sparingly and preferably through compact summaries or targeted context packs.
 
+For realtime sessions, the stable volition baseline is part of this always-present
+frame because it is rendered into the shared base instructions. The per-turn
+volition context packet is a separate task/context pack: it is injected after any
+retrieved memory item and before the initial `response.create`, and it remains
+bounded so it can shape framing without replacing the memory layer.
+
 ## Context Layers
 
 A useful candidate model is to divide context into layers.
@@ -206,6 +212,9 @@ Retrieved memory
 
 Task/context pack
   Optional focused information for a specific mode or experiment.
+
+  Realtime volition uses this layer for the bounded per-turn packet, while the
+  stable baseline stays in the always-present frame.
 
 Tool observations
   Recent external information obtained through controlled tools.

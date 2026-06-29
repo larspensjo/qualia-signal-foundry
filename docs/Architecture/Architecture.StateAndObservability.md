@@ -57,6 +57,10 @@ candidate categories listed below still have no shared module.
   relay diagnostics.
 - Live-loop latency diagnostics extend the realtime observability surface with
   observations and durable diagnostics for interrupted trusted exchanges.
+- Volition context injection now records `VolitionContextInjected` diagnostics
+  that carry the injection layers, stable baseline hash, grounded opportunity
+  signals, arbitration summary, shaping intensity, and the outbound request
+  reference for the trusted turn.
 - Realtime tool activity has two distinct records: `ToolRequestRecord` captures
   the provider request, and `ToolExecutionRecord` captures the permission
   decision, status, capped result summary, error, timing, per-response model

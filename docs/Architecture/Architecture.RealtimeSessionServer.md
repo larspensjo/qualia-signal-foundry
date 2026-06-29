@@ -26,6 +26,10 @@ mode, not a one-off experiment server.
   `call_id`, injects memory before `response.create`, promotes trusted
   completed exchanges into the shared continuity root, and treats the browser
   relay as diagnostic-only.
+- The same sideband now carries a stable volition baseline in the shared
+  session instructions and injects a bounded per-turn volition context packet
+  before the initial `response.create`, while recording a
+  `VolitionContextInjected` diagnostic trace for the trusted turn.
 - The realtime sideband declares a read-only realtime tool allow-list
   (`search_memory`, `get_associations`, `inspect_session_state`,
   `inspect_volition_state`, `select_volition_goals`), records `ToolRequested`

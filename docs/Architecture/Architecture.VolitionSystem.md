@@ -30,6 +30,15 @@ internal initiative output. Context assembly and report shapes live in caller ad
   `execute_initiative()` — structural records only; no external write-capable effect.
 - Goal-candidate proposal from open questions: `propose_goal_candidates()`,
   `ProposedGoalCandidate` (non-empty evidence invariant), and `EvidenceRef`.
+- Grounded-term and stance helpers in `qsf_volition::terms` and
+  `qsf_volition::stance`: `GroundedTerm`, `GroundingRef`, `grounded_terms_from_text()`,
+  `render_volition_stance()`, and the stable-baseline hashing helper used by the
+  realtime adapter. The realtime/project trust-boundary preamble is owned by the
+  `qsf_realtime_server` adapter, not by the pure volition crate.
+- Opportunity detection and shaping guidance in `qsf_volition::opportunity` and
+  `qsf_volition::shaping`: `detect_opportunities()`,
+  `OpportunitySignalKind`, `OpportunitySignal`, `ShapingIntensity`,
+  `ReceptivenessHint`, and `choose_shaping_intensity()`.
 - Context-neutral goal-selection helpers in `qsf_volition::selection`:
   `matched_keywords`, `compute_relevance`, `compute_relevance_with_salience`,
   `initiative_for_goal`, `initiative_for_effect`, and `select_goals_ranked`.
@@ -68,8 +77,9 @@ Adapters depend on `qsf_volition`, never the reverse:
   into `ContextFragment`s via `build_fragment`, assembles context, and builds
   traces/reports.
 - `qsf_realtime_server` depends on `qsf_volition` directly and calls
-  `select_goals_ranked`, `build_state_inspection`, and `arbitrate_with_mode` from the
-  volition read-only tools without importing `qsf_app` experiment/report code.
+  `select_goals_ranked`, `build_state_inspection`, `arbitrate_with_mode`,
+  `detect_opportunities`, and `choose_shaping_intensity` from the volition
+  adapters without importing `qsf_app` experiment/report code.
 
 A `GoalSelection` is associated with its assembled `ContextFragment` by the adapter via
 the caller's result shape (which carries the full `ContextAssembly`), joinable by

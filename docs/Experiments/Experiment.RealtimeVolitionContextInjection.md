@@ -6,10 +6,11 @@
 
 ## Status
 
-Planned. This scaffold resolves the Phase 4 decision gates from
-`docs/Plans/Plan.RealtimeVolitionIntegration.md` before implementation: it commits the
-stable-baseline carrier and fixes the exact injected text so the sideband injection
-contract is explicit, not implicit.
+Running. Phase 4 code is implemented and the automated verification passed; live
+human voice verification remains pending. This scaffold resolved the Phase 4 decision
+gates from `docs/Plans/Plan.RealtimeVolitionIntegration.md` before implementation: it
+commits the stable-baseline carrier and fixes the exact injected text so the sideband
+injection contract is explicit, not implicit.
 
 ## Summary
 
@@ -119,8 +120,9 @@ without exposing secrets or collapsing into a raw fixture dump.
 ## Injected Text Contract
 
 The exact rendered text below is the contract asserted by tests. `render_volition_stance`
-produces the stance body from the configured fixture; `build_stable_baseline_instructions`
-wraps it with the realtime/project trust-boundary preamble.
+in `qsf_volition` produces the context-neutral stance body from the configured fixture;
+the realtime adapter's `build_stable_baseline_instructions` wraps it with the
+realtime/project trust-boundary preamble.
 
 ### Stable baseline (asserted verbatim)
 
@@ -205,6 +207,14 @@ When the arbitration winner is protected (`effective_tier <= PROTECTED_TIER_FLOO
    carry a fresh volition packet.
 8. Assert every `opportunity_signals` entry carries a non-empty grounding ref, and that
    `shaping_intensity` is at most `Low` whenever `protected_tier_active` is true.
+
+### Verification Result
+
+The code-level verification for this experiment passed with:
+
+- `cargo test`
+- `cargo clippy --all-targets -- -D warnings`
+- `cargo fmt`
 
 ### Human Test Steps
 

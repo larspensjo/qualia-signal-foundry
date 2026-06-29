@@ -24,6 +24,10 @@ use qsf_session::{
     persist_session_state, reduce_session_in_place,
 };
 use qsf_tools::ToolRequest;
+use qsf_volition::{
+    ReceptivenessHint, arbitrate_with_mode, choose_shaping_intensity, detect_opportunities,
+    grounded_terms_from_text, select_goals_ranked,
+};
 use sha2::Digest;
 use time::OffsetDateTime;
 use tokio::sync::{mpsc, watch};
@@ -44,6 +48,9 @@ use crate::realtime::tools::{
 };
 use crate::realtime::turn_integrity::{
     TranscriptDisposition, TurnPhase, classify_final_transcript,
+};
+use crate::realtime::volition_injection::{
+    build_volition_context_injection_trace, build_volition_turn_context_packet,
 };
 use crate::state::{AppState, SessionRuntime};
 
@@ -111,6 +118,7 @@ struct SidebandRuntimeState {
     turn_phase: TurnPhase,
     final_transcript_received_at: Option<OffsetDateTime>,
     memory_injected_at: Option<OffsetDateTime>,
+    volition_context_injected_at: Option<OffsetDateTime>,
     response_create_sent_at: Option<OffsetDateTime>,
     response_created_at: Option<OffsetDateTime>,
     first_audio_received_at: Option<OffsetDateTime>,
@@ -133,6 +141,7 @@ impl SidebandRuntimeState {
     fn clear_in_flight_response_state(&mut self) {
         self.final_transcript_received_at = None;
         self.memory_injected_at = None;
+        self.volition_context_injected_at = None;
         self.response_create_sent_at = None;
         self.response_created_at = None;
         self.first_audio_received_at = None;
@@ -385,114 +394,35 @@ async fn handle_text_turn(
     runtime_state.active_exchange_index = Some(exchange_index);
     runtime_state.pending_response_exchange = None;
     runtime_state.turn_phase = TurnPhase::Idle;
-    apply_trusted_transcript_to_volition(&mut guard, transcript);
+    let volition_tick_before = guard.volition.state.tick;
+    let events_applied = apply_trusted_transcript_to_volition(&mut guard, transcript);
+    let volition_snapshot = VolitionStateSnapshot {
+        state: guard.volition.state.clone(),
+        fixture: guard.volition.fixture.clone(),
+    };
     drop(guard);
-
-    let mut turn_request_values = Vec::new();
-    let user_item = build_openai_realtime_conversation_item_create("user", transcript);
-    turn_request_values.push(user_item.clone());
-    send_json(outbound_tx, user_item)?;
-
-    let retrieved_memories = match retrieve_session_memories(
+    let input_transcript_ref = format!(
+        "exchange:{exchange_index}/transcript:{}",
+        hash_text(transcript)
+    );
+    inject_trusted_turn_context_and_response(
         state,
+        session,
         qsf_session_id,
         transcript,
-        RetrievalStrategy::AssociationWeighted,
-        DEFAULT_INJECTION_FRAGMENT_LIMIT,
-    ) {
-        Ok(result) => result.selected,
-        Err(error) => {
-            log::warn!(
-                "memory retrieval failed for typed turn in session `{qsf_session_id}`: {error}"
-            );
-            Vec::new()
-        }
-    };
-
-    let tone = format!(
-        "voice={}, reasoning_effort={}",
-        config.voice, config.reasoning_effort
-    );
-    let request = MemoryInjectionRequest {
-        model: &config.model,
-        voice: &config.voice,
-        base_instructions: &config.instructions,
-        output_modalities: &config.output_modalities,
-        session_identity: qsf_session_id,
-        tone: &tone,
-        user_transcript: transcript,
-        retrieved_memories: &retrieved_memories,
-        budget: ContextBudget::new(
-            DEFAULT_INJECTION_FRAGMENT_LIMIT,
-            DEFAULT_INJECTION_TOKEN_LIMIT,
-        ),
-        pcm_rate_hz: DEFAULT_PCM_RATE_HZ,
-        input_transcription_model: config.input_transcription_model.as_deref(),
-    };
-    let packet = build_memory_injection_packet(&request);
-    let context_assembly = packet
-        .as_ref()
-        .map(|packet| packet.context_assembly.clone())
-        .unwrap_or_else(|| assemble_memory_context(&request));
-    let retrieved_memory_block = packet
-        .as_ref()
-        .map(|packet| packet.memory_block.clone())
-        .unwrap_or_default();
-
-    let mut guard = session.lock().await;
-    let diagnostics = guard.diagnostics.clone();
-    apply_live_session_event(
-        &mut guard.session_state,
-        LiveSessionEvent::MemoryContextRecorded {
-            exchange_index,
-            context_assembly,
-            retrieved_memory_block,
-            recalled_items: vec![],
-            live_capture: None,
-        },
-    );
-    runtime_state.memory_injected_at = Some(OffsetDateTime::now_utc());
-    let final_transcript_received_at = runtime_state.final_transcript_received_at;
-    let memory_injected_at = runtime_state.memory_injected_at;
-    record_latency_observation_if_ready(
+        &config,
         runtime_state,
-        &diagnostics,
-        qsf_session_id,
-        "final_transcript_received_to_memory_injected",
-        final_transcript_received_at,
-        memory_injected_at,
-    )?;
-    drop(guard);
-
-    if let Some(packet) = packet {
-        turn_request_values.push(packet.session_update.clone());
-        turn_request_values.push(packet.conversation_item_create.clone());
-        send_json(outbound_tx, packet.session_update.clone())?;
-        send_json(outbound_tx, packet.conversation_item_create.clone())?;
-    }
-
-    let response_create = build_openai_realtime_response_create(
-        &config.voice,
-        &config.instructions,
-        DEFAULT_PCM_RATE_HZ,
-    );
-    turn_request_values.push(response_create.clone());
-    send_json(outbound_tx, response_create)?;
-    runtime_state.response_create_sent_at = Some(OffsetDateTime::now_utc());
-    let response_create_sent_at = runtime_state.response_create_sent_at;
-    record_latency_observation_if_ready(
-        runtime_state,
-        &diagnostics,
-        qsf_session_id,
-        "memory_injected_to_response_create_sent",
-        memory_injected_at,
-        response_create_sent_at,
-    )?;
-    runtime_state.current_request_hash = Some(hash_request_sequence(&turn_request_values));
-    runtime_state.current_message_count = turn_request_values.len();
-    runtime_state.pending_response_exchange = Some(exchange_index);
-    runtime_state.turn_phase = TurnPhase::AwaitingResponse;
-    Ok(())
+        outbound_tx,
+        Some(build_openai_realtime_conversation_item_create(
+            "user", transcript,
+        )),
+        exchange_index,
+        &volition_snapshot,
+        events_applied,
+        volition_tick_before,
+        input_transcript_ref,
+    )
+    .await
 }
 
 async fn handle_provider_event(
@@ -553,6 +483,9 @@ async fn handle_provider_event(
                 );
                 return Ok(());
             }
+            let volition_tick_before;
+            let volition_events_applied;
+            let volition_snapshot;
             match classify_final_transcript(runtime_state.turn_phase, &transcript) {
                 TranscriptDisposition::IgnoreAsNoise => {
                     guard
@@ -659,7 +592,13 @@ async fn handle_provider_event(
                             &exchange,
                         )?;
                     }
-                    apply_trusted_transcript_to_volition(&mut guard, &transcript);
+                    volition_tick_before = guard.volition.state.tick;
+                    volition_events_applied =
+                        apply_trusted_transcript_to_volition(&mut guard, &transcript);
+                    volition_snapshot = VolitionStateSnapshot {
+                        state: guard.volition.state.clone(),
+                        fixture: guard.volition.fixture.clone(),
+                    };
                 }
                 TranscriptDisposition::StartTurn => {
                     let exchange_index = ensure_authoritative_exchange(&mut guard);
@@ -686,111 +625,37 @@ async fn handle_provider_event(
                     runtime_state.active_exchange_index = Some(exchange_index);
                     runtime_state.pending_response_exchange = None;
                     runtime_state.turn_phase = TurnPhase::Idle;
-                    apply_trusted_transcript_to_volition(&mut guard, &transcript);
+                    volition_tick_before = guard.volition.state.tick;
+                    volition_events_applied =
+                        apply_trusted_transcript_to_volition(&mut guard, &transcript);
+                    volition_snapshot = VolitionStateSnapshot {
+                        state: guard.volition.state.clone(),
+                        fixture: guard.volition.fixture.clone(),
+                    };
                 }
             }
             drop(guard);
-
-            let mut turn_request_values = Vec::new();
-            let retrieved_memories = match retrieve_session_memories(
+            let input_transcript_ref = format!(
+                "exchange:{}/transcript:{}",
+                runtime_state.active_exchange_index.unwrap_or_default(),
+                hash_text(&transcript)
+            );
+            inject_trusted_turn_context_and_response(
                 state,
+                session,
                 qsf_session_id,
                 &transcript,
-                RetrievalStrategy::AssociationWeighted,
-                DEFAULT_INJECTION_FRAGMENT_LIMIT,
-            ) {
-                Ok(result) => result.selected,
-                Err(error) => {
-                    log::warn!("memory retrieval failed for session `{qsf_session_id}`: {error}");
-                    Vec::new()
-                }
-            };
-
-            let tone = format!(
-                "voice={}, reasoning_effort={}",
-                config.voice, config.reasoning_effort
-            );
-            let request = MemoryInjectionRequest {
-                model: &config.model,
-                voice: &config.voice,
-                base_instructions: &config.instructions,
-                output_modalities: &config.output_modalities,
-                session_identity: qsf_session_id,
-                tone: &tone,
-                user_transcript: &transcript,
-                retrieved_memories: &retrieved_memories,
-                budget: ContextBudget::new(
-                    DEFAULT_INJECTION_FRAGMENT_LIMIT,
-                    DEFAULT_INJECTION_TOKEN_LIMIT,
-                ),
-                pcm_rate_hz: DEFAULT_PCM_RATE_HZ,
-                input_transcription_model: config.input_transcription_model.as_deref(),
-            };
-            let packet = build_memory_injection_packet(&request);
-            let context_assembly = packet
-                .as_ref()
-                .map(|packet| packet.context_assembly.clone())
-                .unwrap_or_else(|| assemble_memory_context(&request));
-            let retrieved_memory_block = packet
-                .as_ref()
-                .map(|packet| packet.memory_block.clone())
-                .unwrap_or_default();
-
-            let mut guard = session.lock().await;
-            let diagnostics = guard.diagnostics.clone();
-            if let Some(exchange_index) = runtime_state.active_exchange_index {
-                apply_live_session_event(
-                    &mut guard.session_state,
-                    LiveSessionEvent::MemoryContextRecorded {
-                        exchange_index,
-                        context_assembly,
-                        retrieved_memory_block,
-                        recalled_items: vec![],
-                        live_capture: None,
-                    },
-                );
-            }
-            runtime_state.memory_injected_at = Some(OffsetDateTime::now_utc());
-            let final_transcript_received_at = runtime_state.final_transcript_received_at;
-            let memory_injected_at = runtime_state.memory_injected_at;
-            record_latency_observation_if_ready(
+                &config,
                 runtime_state,
-                &diagnostics,
-                qsf_session_id,
-                "final_transcript_received_to_memory_injected",
-                final_transcript_received_at,
-                memory_injected_at,
-            )?;
-            drop(guard);
-
-            if let Some(packet) = packet {
-                turn_request_values.push(packet.session_update.clone());
-                turn_request_values.push(packet.conversation_item_create.clone());
-                send_json(outbound_tx, packet.session_update.clone())?;
-                send_json(outbound_tx, packet.conversation_item_create.clone())?;
-            }
-
-            let response_create = build_openai_realtime_response_create(
-                &config.voice,
-                &config.instructions,
-                DEFAULT_PCM_RATE_HZ,
-            );
-            turn_request_values.push(response_create.clone());
-            send_json(outbound_tx, response_create)?;
-            runtime_state.response_create_sent_at = Some(OffsetDateTime::now_utc());
-            let response_create_sent_at = runtime_state.response_create_sent_at;
-            record_latency_observation_if_ready(
-                runtime_state,
-                &diagnostics,
-                qsf_session_id,
-                "memory_injected_to_response_create_sent",
-                memory_injected_at,
-                response_create_sent_at,
-            )?;
-            runtime_state.current_request_hash = Some(hash_request_sequence(&turn_request_values));
-            runtime_state.current_message_count = turn_request_values.len();
-            runtime_state.pending_response_exchange = runtime_state.active_exchange_index;
-            runtime_state.turn_phase = TurnPhase::AwaitingResponse;
+                outbound_tx,
+                None,
+                runtime_state.active_exchange_index.unwrap_or_default(),
+                &volition_snapshot,
+                volition_events_applied,
+                volition_tick_before,
+                input_transcript_ref,
+            )
+            .await?;
         }
         "response.created" => {
             let response_id = realtime_event_response_id(event)
@@ -1216,6 +1081,16 @@ fn hash_request_sequence(values: &[serde_json::Value]) -> ContentHash {
     ContentHash(hasher.finalize().into())
 }
 
+fn hash_text(text: &str) -> String {
+    let mut hasher = sha2::Sha256::new();
+    hasher.update(text.as_bytes());
+    hasher
+        .finalize()
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect()
+}
+
 fn response_usage_input_tokens(event: &serde_json::Value) -> u32 {
     response_usage_number(event, &["input_tokens"]).unwrap_or(0) as u32
 }
@@ -1323,7 +1198,10 @@ fn record_interrupted_exchange_diagnostic(
 /// Map a trusted user transcript to volition events and apply them to the session's
 /// in-memory volition state. Called once per trusted turn boundary (StartTurn or Interrupt
 /// disposition). Pure mapping — no external side effects, no diagnostics in Phase 2.
-fn apply_trusted_transcript_to_volition(guard: &mut SessionRuntime, transcript: &str) {
+fn apply_trusted_transcript_to_volition(
+    guard: &mut SessionRuntime,
+    transcript: &str,
+) -> Vec<qsf_volition::VolitionEvent> {
     let new_tick = guard.volition.state.tick + 1;
     let events = crate::realtime::volition::events_for_trusted_transcript(
         transcript,
@@ -1331,7 +1209,234 @@ fn apply_trusted_transcript_to_volition(guard: &mut SessionRuntime, transcript: 
         &guard.volition.fixture,
         new_tick,
     );
-    guard.volition.apply_events(events);
+    guard.volition.apply_events(events.clone());
+    events
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn inject_trusted_turn_context_and_response(
+    state: &AppState,
+    session: Arc<tokio::sync::Mutex<SessionRuntime>>,
+    qsf_session_id: &str,
+    transcript: &str,
+    config: &crate::state::BrowserSessionConfig,
+    runtime_state: &mut SidebandRuntimeState,
+    outbound_tx: &mpsc::UnboundedSender<Message>,
+    leading_conversation_item_create: Option<serde_json::Value>,
+    exchange_index: usize,
+    volition_snapshot: &VolitionStateSnapshot,
+    events_applied: Vec<qsf_volition::VolitionEvent>,
+    volition_tick_before: u64,
+    input_transcript_ref: String,
+) -> anyhow::Result<()> {
+    let retrieved_memories = match retrieve_session_memories(
+        state,
+        qsf_session_id,
+        transcript,
+        RetrievalStrategy::AssociationWeighted,
+        DEFAULT_INJECTION_FRAGMENT_LIMIT,
+    ) {
+        Ok(result) => result.selected,
+        Err(error) => {
+            log::warn!(
+                "memory retrieval failed for trusted turn in session `{qsf_session_id}`: {error}"
+            );
+            Vec::new()
+        }
+    };
+
+    let tone = format!(
+        "voice={}, reasoning_effort={}",
+        config.voice, config.reasoning_effort
+    );
+    let request = MemoryInjectionRequest {
+        model: &config.model,
+        voice: &config.voice,
+        base_instructions: &config.instructions,
+        output_modalities: &config.output_modalities,
+        session_identity: qsf_session_id,
+        tone: &tone,
+        user_transcript: transcript,
+        retrieved_memories: &retrieved_memories,
+        budget: ContextBudget::new(
+            DEFAULT_INJECTION_FRAGMENT_LIMIT,
+            DEFAULT_INJECTION_TOKEN_LIMIT,
+        ),
+        pcm_rate_hz: DEFAULT_PCM_RATE_HZ,
+        input_transcription_model: config.input_transcription_model.as_deref(),
+    };
+    let memory_packet = build_memory_injection_packet(&request);
+    let context_assembly = memory_packet
+        .as_ref()
+        .map(|packet| packet.context_assembly.clone())
+        .unwrap_or_else(|| assemble_memory_context(&request));
+    let retrieved_memory_block = memory_packet
+        .as_ref()
+        .map(|packet| packet.memory_block.clone())
+        .unwrap_or_default();
+    let memory_session_update = memory_packet
+        .as_ref()
+        .map(|packet| packet.session_update.clone());
+    let memory_conversation_item_create = memory_packet
+        .as_ref()
+        .map(|packet| packet.conversation_item_create.clone());
+
+    let mut guard = session.lock().await;
+    let diagnostics = guard.diagnostics.clone();
+    apply_live_session_event(
+        &mut guard.session_state,
+        LiveSessionEvent::MemoryContextRecorded {
+            exchange_index,
+            context_assembly,
+            retrieved_memory_block,
+            recalled_items: vec![],
+            live_capture: None,
+        },
+    );
+    runtime_state.memory_injected_at = Some(OffsetDateTime::now_utc());
+    let final_transcript_received_at = runtime_state.final_transcript_received_at;
+    let memory_injected_at = runtime_state.memory_injected_at;
+    record_latency_observation_if_ready(
+        runtime_state,
+        &diagnostics,
+        qsf_session_id,
+        "final_transcript_received_to_memory_injected",
+        final_transcript_received_at,
+        memory_injected_at,
+    )?;
+    drop(guard);
+
+    let mut turn_request_values = Vec::new();
+    if let Some(conversation_item_create) = leading_conversation_item_create {
+        turn_request_values.push(conversation_item_create.clone());
+        send_json(outbound_tx, conversation_item_create)?;
+    }
+    if let Some(session_update) = memory_session_update {
+        turn_request_values.push(session_update.clone());
+        send_json(outbound_tx, session_update)?;
+    }
+    if let Some(conversation_item_create) = memory_conversation_item_create {
+        turn_request_values.push(conversation_item_create.clone());
+        send_json(outbound_tx, conversation_item_create)?;
+    }
+
+    let grounded_terms = grounded_terms_from_text(transcript);
+    let ranked = select_goals_ranked(
+        transcript,
+        &volition_snapshot.state,
+        &volition_snapshot.fixture,
+    );
+    let opportunities = detect_opportunities(
+        &grounded_terms,
+        &volition_snapshot.state,
+        &volition_snapshot.fixture,
+    );
+    let arbitration = arbitrate_with_mode(
+        ranked.selected.clone(),
+        &volition_snapshot.fixture,
+        volition_snapshot.state.mode,
+    );
+    let intensity = arbitration
+        .as_ref()
+        .map(|arbitration| {
+            choose_shaping_intensity(arbitration, &opportunities, ReceptivenessHint::Neutral)
+        })
+        .unwrap_or(qsf_volition::ShapingIntensity::None);
+    let volition_packet = build_volition_turn_context_packet(
+        volition_snapshot,
+        &ranked,
+        arbitration,
+        &opportunities,
+        intensity,
+        crate::realtime::volition_injection::stable_baseline_hash(&config.instructions),
+    );
+
+    if let Some(turn_packet) = &volition_packet {
+        turn_request_values.push(turn_packet.conversation_item_create.clone());
+        send_json(outbound_tx, turn_packet.conversation_item_create.clone())?;
+        runtime_state.volition_context_injected_at = Some(OffsetDateTime::now_utc());
+        let volition_context_injected_at = runtime_state.volition_context_injected_at;
+        record_latency_observation_if_ready(
+            runtime_state,
+            &diagnostics,
+            qsf_session_id,
+            "final_transcript_received_to_volition_context_injected",
+            runtime_state.final_transcript_received_at,
+            volition_context_injected_at,
+        )?;
+        let response_create = build_openai_realtime_response_create(
+            &config.voice,
+            &config.instructions,
+            DEFAULT_PCM_RATE_HZ,
+        );
+        turn_request_values.push(response_create.clone());
+        let request_hash = hash_request_sequence(&turn_request_values);
+        let mut trace = build_volition_context_injection_trace(
+            qsf_session_id,
+            exchange_index,
+            &input_transcript_ref,
+            volition_tick_before,
+            events_applied,
+            turn_packet,
+            &request_hash.to_string(),
+        );
+        if memory_packet.is_some() {
+            trace.injected_layers.insert(
+                1,
+                crate::realtime::volition_injection::VolitionInjectionLayer {
+                    name: "memory context".to_string(),
+                    carrier: "conversation.item.create".to_string(),
+                    injection_point: "after retrieval and before volition turn packet".to_string(),
+                },
+            );
+        }
+        diagnostics.write(&DiagnosticRecord::VolitionContextInjected {
+            qsf_session_id: qsf_session_id.to_string(),
+            exchange_index,
+            recorded_at: OffsetDateTime::now_utc(),
+            trace,
+        })?;
+        send_json(outbound_tx, response_create)?;
+        runtime_state.response_create_sent_at = Some(OffsetDateTime::now_utc());
+        let response_create_sent_at = runtime_state.response_create_sent_at;
+        record_latency_observation_if_ready(
+            runtime_state,
+            &diagnostics,
+            qsf_session_id,
+            "memory_injected_to_response_create_sent",
+            memory_injected_at,
+            response_create_sent_at,
+        )?;
+        runtime_state.current_request_hash = Some(request_hash);
+        runtime_state.current_message_count = turn_request_values.len();
+        runtime_state.pending_response_exchange = Some(exchange_index);
+        runtime_state.turn_phase = TurnPhase::AwaitingResponse;
+        return Ok(());
+    }
+
+    let response_create = build_openai_realtime_response_create(
+        &config.voice,
+        &config.instructions,
+        DEFAULT_PCM_RATE_HZ,
+    );
+    turn_request_values.push(response_create.clone());
+    let request_hash = hash_request_sequence(&turn_request_values);
+    send_json(outbound_tx, response_create)?;
+    runtime_state.response_create_sent_at = Some(OffsetDateTime::now_utc());
+    let response_create_sent_at = runtime_state.response_create_sent_at;
+    record_latency_observation_if_ready(
+        runtime_state,
+        &diagnostics,
+        qsf_session_id,
+        "memory_injected_to_response_create_sent",
+        memory_injected_at,
+        response_create_sent_at,
+    )?;
+    runtime_state.current_request_hash = Some(request_hash);
+    runtime_state.current_message_count = turn_request_values.len();
+    runtime_state.pending_response_exchange = Some(exchange_index);
+    runtime_state.turn_phase = TurnPhase::AwaitingResponse;
+    Ok(())
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -2132,6 +2237,13 @@ mod tests {
         .await
         .expect("transcript event");
 
+        let volition_packet = outbound_rx.recv().await.expect("volition packet");
+        assert!(
+            volition_packet
+                .to_text()
+                .expect("text")
+                .contains("Simulated volition context for this turn")
+        );
         let response_create = outbound_rx.recv().await.expect("response.create");
         assert!(
             response_create
@@ -2182,6 +2294,51 @@ mod tests {
                 DEFAULT_INJECTION_FRAGMENT_LIMIT,
                 DEFAULT_INJECTION_TOKEN_LIMIT
             )
+        );
+    }
+
+    #[tokio::test]
+    async fn typed_turn_emits_user_item_before_context_and_response_create() {
+        let tempdir = TempDir::new().expect("tempdir");
+        let state = state(&tempdir);
+        let allocation = state.create_session().await.expect("session");
+        let mut runtime_state = SidebandRuntimeState::default();
+        let (outbound_tx, mut outbound_rx) = mpsc::unbounded_channel();
+
+        handle_text_turn(
+            &state,
+            &allocation.qsf_session_id,
+            "call-typed",
+            "how can you help me with this task",
+            &mut runtime_state,
+            &outbound_tx,
+        )
+        .await
+        .expect("typed turn");
+
+        let user_item = outbound_rx.recv().await.expect("user item");
+        let user_payload: serde_json::Value =
+            serde_json::from_str(user_item.to_text().expect("text")).expect("json");
+        assert_eq!(user_payload["type"], "conversation.item.create");
+        assert_eq!(user_payload["item"]["role"], "user");
+        assert_eq!(
+            user_payload["item"]["content"][0]["text"],
+            "how can you help me with this task"
+        );
+
+        let volition_packet = outbound_rx.recv().await.expect("volition packet");
+        assert!(
+            volition_packet
+                .to_text()
+                .expect("text")
+                .contains("Simulated volition context for this turn")
+        );
+        let response_create = outbound_rx.recv().await.expect("response.create");
+        assert!(
+            response_create
+                .to_text()
+                .expect("text")
+                .contains("\"response.create\"")
         );
     }
 

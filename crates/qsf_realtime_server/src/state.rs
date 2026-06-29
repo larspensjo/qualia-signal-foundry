@@ -6,6 +6,7 @@ use anyhow::Context;
 use qsf_realtime_protocol::{OPENAI_REALTIME_WS_BASE_URL, RealtimeToolDefinition};
 use qsf_session::LiveSessionState;
 use qsf_session::{MemorySourceConfig, SessionConfig as QsfSessionConfig, SessionState};
+use qsf_volition::{Mode, realtime_seed_fixture};
 use serde::{Deserialize, Serialize};
 use time::OffsetDateTime;
 use tokio::sync::{Mutex, watch};
@@ -13,6 +14,7 @@ use uuid::Uuid;
 
 use crate::cli::Args;
 use crate::diagnostics::{DiagnosticRecord, DiagnosticTrust, DiagnosticWriter};
+use crate::realtime::volition_injection::build_stable_baseline_instructions;
 
 pub const DEFAULT_QSF_SESSION_ID: &str = "default";
 const DEFAULT_OPENAI_BASE_URL: &str = "https://api.openai.com";
@@ -303,7 +305,7 @@ impl Default for BrowserSessionConfig {
             voice: "marin".to_string(),
             reasoning_effort: "medium".to_string(),
             output_modalities: vec!["audio".to_string()],
-            instructions: DEFAULT_INSTRUCTIONS.to_string(),
+            instructions: default_instructions_with_volition_baseline(),
             input_transcription_model: Some(DEFAULT_INPUT_TRANSCRIPTION_MODEL.to_string()),
             tools: crate::realtime::tools::default_tool_definitions(),
             audio: BrowserSessionAudio {
@@ -320,6 +322,14 @@ impl Default for BrowserSessionConfig {
             },
         }
     }
+}
+
+fn default_instructions_with_volition_baseline() -> String {
+    format!(
+        "{base}\n\n{baseline}",
+        base = DEFAULT_INSTRUCTIONS.trim(),
+        baseline = build_stable_baseline_instructions(&realtime_seed_fixture(), Mode::Neutral),
+    )
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]

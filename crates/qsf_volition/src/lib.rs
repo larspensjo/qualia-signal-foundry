@@ -31,3 +31,12 @@ pub use selection::*;
 
 mod inspection;
 pub use inspection::*;
+
+mod opportunity;
+pub use opportunity::*;
+
+mod shaping;
+pub use shaping::*;
+
+mod stance;
+pub use stance::*;
