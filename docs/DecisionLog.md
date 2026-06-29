@@ -1431,3 +1431,30 @@ with no orphaned port holders. The UI port may differ from `5174` when it is bus
 durable references should treat `5174` as the preferred port, not a guarantee. This
 refines the 2026-06-14 `realtime` launcher decision.
 Refs: scripts/qsf.ps1, crates/qsf_realtime_server/ui/vite.config.ts
+
+## 2026-06-29 - Volition context injection carrier and grounding boundary
+Type: Decision
+Decision: Realtime volition context injection layers two carriers. The stable baseline
+(configured tensions, priors, arbitration stance, trust boundary, default mode) is rendered
+deterministically and carried in the shared base instructions sent with both the initial and
+every per-turn `session.update`, so its content is identical every turn (verified by a stable
+baseline hash) and is never carried as a separate replaceable conversation item. The per-turn
+dynamic packet is computed and injected independently of memory retrieval, after any memory
+item and before the initial `response.create`, and never on tool-loop continuation. Opportunity
+detection is rule-based over grounded input terms (normalized text plus original span) and goal
+ids; every signal cites a grounding ref, and `UnresolvedPriorTopic` is deferred until a
+continuity source exists. Injected volition context is simulated internal state and never claims
+real desire, consciousness, or subjective experience, and never authorizes external action.
+Context: The Phase 4 plan review stopped for manual feedback because the baseline carrier and
+the exact injected text were unresolved behavioral/safety decisions, and `session.update`
+replaces session config so a baseline placed only in the initial update would be silently
+overwritten. The exact rendered baseline and turn-packet text are fixed in
+`Experiment.RealtimeVolitionContextInjection` and asserted in tests.
+Consequences: There is one effective instruction-composition path across the initial and
+per-turn `session.update` and `response.create`, so the baseline cannot be dropped or
+overridden. The injection trace links to the existing per-turn request-sequence hash rather
+than a new client event id. Curiosity/exploration cannot override protected tiers, and shaping
+intensity is clamped to at most `Low` when a protected tier wins arbitration.
+Refs: docs/Plans/Plan.RealtimeVolitionIntegration.md,
+docs/Experiments/Experiment.RealtimeVolitionContextInjection.md,
+docs/Plans/Review.RealtimeVolitionIntegration.phase4.Plan.codex.json
