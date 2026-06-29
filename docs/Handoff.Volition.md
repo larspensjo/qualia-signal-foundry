@@ -30,6 +30,7 @@ stance already lives in the DecisionLog (2026-05-15, 2026-06-27).
 | [Plans/Design.VolitionBriefReconciliation.md](Plans/Design.VolitionBriefReconciliation.md) | New. The project-side reconciliation: terminology mapping, concept disposition (Built / Adopt / Defer), framing decisions D1–D4, realtime-roadmap impact. |
 | [Plans/Plan.RealtimeVolitionIntegration.md](Plans/Plan.RealtimeVolitionIntegration.md) | Context-injection phase hardened: added **opportunity detection** (brief §4.1) + a **shaping-intensity dial** (brief §14) with a protected-tier cap, plus verify steps, trace fields, and an Open-questions block. Later updated to mark read-only realtime tools complete. |
 | [Experiments/Experiment.RealtimeVolitionReadOnlyInspection.md](Experiments/Experiment.RealtimeVolitionReadOnlyInspection.md) | Marked complete. Latest trusted sideband diagnostics verify both read-only tools execute, the selector trace contract is complete, and spoken answers preserve simulated-state framing. |
+| [Glossary.md](Glossary.md) | New. Project-wide glossary with a volition section translating the external brief's vocabulary into project terms and marking whether concepts are built, designed next, or deferred. |
 | Temporary testing handoff | Retired and deleted. Durable evidence now lives in the experiment file and realtime plan. |
 
 ---
@@ -101,6 +102,7 @@ next integration step should not depend on the model choosing to call a tool.
 | Purpose | Path |
 |---|---|
 | Reconciliation (mapping, disposition, framing) | [docs/Plans/Design.VolitionBriefReconciliation.md](Plans/Design.VolitionBriefReconciliation.md) |
+| Project glossary | [docs/Glossary.md](Glossary.md) |
 | External brief (annotated, temporary) | [docs/volition_goal_system_design_brief.md](volition_goal_system_design_brief.md) |
 | Realtime plan (context-injection design) | [docs/Plans/Plan.RealtimeVolitionIntegration.md](Plans/Plan.RealtimeVolitionIntegration.md) |
 | Offline build plan (complete) | [docs/Plans/Plan.VolitionGoalSystem.md](Plans/Plan.VolitionGoalSystem.md) |

@@ -8,6 +8,7 @@ This is an extern document, feedback from outside of the project. It is meant to
 > volition system. The brief is temporary scratch input; once its ideas are merged into the
 > project documents it will be deleted. Full rationale and realtime-roadmap impact:
 > [Design.VolitionBriefReconciliation.md](Plans/Design.VolitionBriefReconciliation.md).
+> Vocabulary translation aid: [Glossary.md](Glossary.md).
 > Current system: [Architecture.VolitionSystem.md](Architecture/Architecture.VolitionSystem.md),
 > [Idea.VolitionGoalSystem.md](Plans/Idea.VolitionGoalSystem.md), and the
 > [qsf_volition](../crates/qsf_volition/src/lib.rs) crate.
