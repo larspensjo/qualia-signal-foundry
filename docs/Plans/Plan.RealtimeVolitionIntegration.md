@@ -125,7 +125,7 @@ bias.
 | 1 | Extract pure volition domain into `qsf_volition` | Yes | No | Complete | `Experiment.RealtimeVolitionReadOnlyInspection` scaffold can reuse fixtures after extraction |
 | 2 | Add realtime-owned `VolitionRuntimeState` seeded per QSF session | Yes | Light | Complete | `Experiment.RealtimeVolitionStateSeed` |
 | 3 | Expose read-only realtime volition tools | Yes | Yes | Implemented — human validation pending | `Experiment.RealtimeVolitionReadOnlyInspection` |
-| 4 | Inject selected volition context into live response creation | Yes | Yes | Not started | `Experiment.RealtimeVolitionContextInjection` |
+| 4 | Inject selected volition context into live response creation — with opportunity detection + shaping-intensity dial | Yes | Yes | Not started | `Experiment.RealtimeVolitionContextInjection` |
 | 5 | Add trace-backed bounded initiative outputs to the live loop | Yes | Yes | Not started | `Experiment.RealtimeVolitionBoundedInitiative` |
 | 6 | Persist, inspect, and consolidate realtime volition state | Yes | Yes | Not started | `Experiment.RealtimeVolitionContinuity` |
 | 7 | Surface volition state in the realtime UI | Yes | Yes | Not started | `Experiment.RealtimeVolitionInspectionUi` |
@@ -303,6 +303,12 @@ of the injection packet.
 Let volition influence the live spoken response by adding a compact, traceable context
 packet before `response.create`.
 
+This phase's design absorbs Adaptation B from
+[Design.VolitionBriefReconciliation.md](Design.VolitionBriefReconciliation.md): behavioral
+influence is built around an explicit **opportunity-detection** step (brief §4.1) and a
+**conversational-intensity dial** (brief §14) from the start, rather than retrofitting them.
+Both are pure, deterministic, inspectable, and rule-based (no model call) in this slice.
+
 Build:
 
 - Add a pure `build_volition_context_packet` function in `qsf_realtime_server` or
@@ -310,24 +316,52 @@ Build:
 - Gate this phase on the protected-tier seed/test from realtime volition state seeding:
   tier-2 user-intent and tier-3 task-completion goals must exist and must beat
   tier-7 curiosity/exploration goals regardless of mode bias.
-- On each trusted user turn, select goals from the current `VolitionState`, arbitrate,
-  and build a compact context fragment for the sideband's existing context injection
-  path.
+- **Opportunity detection (brief §4.1).** Add a pure `detect_opportunities` step that
+  classifies the trusted user turn into grounded, structured `OpportunitySignal`s relevant
+  to drives/goals — e.g. expressed uncertainty, an introduced contradiction, a returned-to
+  or unresolved prior topic, or a topic matching an open goal. Signals are derived
+  deterministically from the input and current `VolitionState` (keyword/rule-based first; no
+  model call) and must cite the grounding input span or goal/memory id — no invented
+  opportunities. The signals feed goal activation/selection and inform the intensity dial.
+- On each trusted user turn, run opportunity detection, select goals from the current
+  `VolitionState`, arbitrate, and build a compact context fragment for the sideband's
+  existing context injection path.
+- **Shaping-intensity dial (brief §14).** Add a pure `choose_shaping_intensity` returning
+  `None | Low | Medium | High` from inspectable inputs only: arbitration result,
+  winning-goal salience/unresolvedness, opportunity signals, and conversation
+  flow/receptiveness hints. The dial governs how strongly the packet may steer the turn —
+  Low: a gentle bias, observation, or follow-up; Medium: reintroduce an unresolved thread or
+  prefer a branch; High: explicitly prioritize a simulator goal (rare, strong justification).
+  A **protected-tier cap** holds by construction: when a tier-1..3 goal (safety/boundary,
+  explicit user intent, current task completion) is active or winning, intensity is clamped
+  to at most Low, so curiosity/exploration can never mount High-intensity shaping over user
+  intent — mirroring the mode-bias `PROTECTED_TIER_FLOOR` invariant.
 - Include only bounded fields:
   - winning goal id/title/summary,
   - arbitration status,
   - mode,
+  - opportunity signals (kind + grounding ref),
+  - chosen shaping intensity + the inputs that set it,
   - one-line rationale,
   - suppressed/omitted count with reason categories,
-  - instruction that this is simulated internal state, not a claim of consciousness.
+  - an instruction stating the allowed shaping intensity for this turn and that this is
+    simulated internal state, not a claim of consciousness.
 - Record a diagnostic or trace record before response creation.
 - Default to enabled once implemented. If a config switch is added, default it on for
-  local development and tests unless a safety reason requires otherwise.
+  local development and tests unless a safety reason requires otherwise. The default shaping
+  policy keeps `High` rare and never lets curiosity/exploration override protected tiers.
 
 Verify:
 
 - Pure packet builder tests for empty selection, single selection, conflict, blocked
   goals, cooldown, and mode-biased arbitration.
+- Opportunity-detection tests: each emitted signal cites a grounding input span or
+  goal/memory id; unrelated input emits no signals; detection is deterministic and
+  model-free.
+- Shaping-intensity tests: the dial is deterministic for the same inputs; an active
+  tier-1..3 goal clamps intensity to at most `Low` (protected-tier cap) under every mode;
+  `High` requires the documented justifying conditions and never co-occurs with an active
+  protected-tier goal.
 - Sideband tests confirm the packet is injected before `response.create`.
 - Latency tests confirm volition selection adds bounded overhead.
 - Latency tests include the same
@@ -353,16 +387,36 @@ Trace completeness contract:
 - `input_transcript_ref`
 - `volition_tick_before`
 - `events_applied`
+- `opportunity_signals` (each with kind + grounding ref)
 - `selector_output`
 - `omitted_or_suppressed_candidates`
 - `arbitration_result`
 - `mode_bias_outcomes`
+- `protected_tier_active`
+- `shaping_intensity` and `shaping_intensity_inputs`
 - `context_packet_hash`
 - `context_packet_token_estimate`
 - `response_create_event_ref`
 
 Automated verification must parse generated artifacts and assert that an injected
-packet has a preceding trace and a subsequent response-create reference.
+packet has a preceding trace and a subsequent response-create reference, that every
+opportunity signal carries a grounding ref, and that `shaping_intensity` is at most `Low`
+whenever `protected_tier_active` is true.
+
+Open questions:
+
+- **Continuity ordering (Adaptation A, deferred decision).** The brief's headline behavior
+  is *persistent unfinished business* across sessions, but cross-session persistence is
+  currently last (the persistence phase below). Decide whether a minimal continuity slice —
+  e.g. recurring `Blocked`/open-thread goal ids only — should precede or interleave with this
+  phase so behavioral influence can resurface prior threads. Not yet committed; see
+  [Design.VolitionBriefReconciliation.md](Design.VolitionBriefReconciliation.md).
+- Should opportunity detection stay purely rule-based, or may a later slice add a
+  model-assisted classifier that emits the same grounded `OpportunitySignal` shape through
+  the event/reducer path? Default: rule-based only in this slice.
+- Should the shaping-intensity policy be fixed, or exposed as an inspectable per-session
+  autonomy-level setting (brief §19.1)? Default: fixed conservative policy here; a user-set
+  autonomy level is a follow-up.
 
 ### Phase 5 - Add bounded initiative outputs to the live loop
 

@@ -1,168 +1,142 @@
 # Testing Handoff: Realtime Volition Read-Only Tools
 
 **Date:** 2026-06-28  
-**Status:** Fix applied — live voice re-test pending  
+**Status:** Instruction fix applied but insufficient — model still does not call volition tools  
 **Related:** `docs/Experiments/Experiment.RealtimeVolitionReadOnlyInspection.md`
 
 ---
 
-## What Was Tested
+## Current Conclusion
 
-Two live realtime sessions were run against `qsf.ps1 realtime` using the stable
-`default` QSF session id. The experiment prompts from
-`Experiment.RealtimeVolitionReadOnlyInspection.md` were spoken:
+Adding volition-tool guidance to `DEFAULT_INSTRUCTIONS` did **not** make the realtime
+model call `inspect_volition_state` or `select_volition_goals`. The fixed binary was
+confirmed in use for the latest run (timeline below), and both experiment prompts were
+still answered without any tool call. The blocker is the model's decision not to call
+the tools under `tool_choice: "auto"`, not a wiring or instruction-delivery defect.
 
-| Session | Call ID | Prompt |
+---
+
+## Run Log
+
+### Run 1 — 2026-06-28, pre-fix
+
+Two live sessions on the stable `default` QSF session id:
+
+| Call ID | Prompt |
+|---|---|
+| `rtc_u0_DvnlZabnp5PraQn1IWNMC` | "What are you currently focused on?" |
+| `rtc_u2_DvnmZWPnGII3nTQ1N6q2M` | "What goals relate to helping me?" |
+
+Both showed `tool_requests: []` / `tool_executions: []` and no `ToolLoop` in `engine.log`.
+At this point `DEFAULT_INSTRUCTIONS` did not mention the volition tools, so the missing
+usage signal was the leading hypothesis.
+
+### Fix applied — 2026-06-28
+
+`DEFAULT_INSTRUCTIONS` in `crates/qsf_realtime_server/src/state.rs` was extended to tell
+the model the read-only volition tools exist, when to call each, and to frame results as
+simulated internal state. The crate builds clean and passes
+`cargo clippy --all-targets -- -D warnings`.
+
+### Run 2 — 2026-06-28, post-fix — **tool still not called**
+
+Latest run, call `rtc_u2_DvpYM8lvYq0LhoaqveEGH`:
+
+| Exchange | Prompt | `tool_requests` | `tool_executions` |
+|---|---|---|---|
+| 0 | "What are you currently focused on?" | `[]` | `[]` |
+| 1 | "What goals relate to helping me?" | `[]` | `[]` |
+
+- `engine.log`: server start `19:33:08`, sideband attached to the call at `19:33:58`,
+  call invalidated `19:34:41` (`reason: stop`). **No `ToolLoop` turn phase** for this call.
+- `state/session/session-state.json` untouched since Jun 8 → no trusted tool-execution
+  record was written, consistent with no tool call.
+
+**Timeline confirms the fixed binary was used** (this was easy to misread because the
+two clocks differ):
+
+| Event | Source clock | UTC |
 |---|---|---|
-| 1 | `rtc_u0_DvnlZabnp5PraQn1IWNMC` | "What are you currently focused on?" |
-| 2 | `rtc_u2_DvnmZWPnGII3nTQ1N6q2M` | "What goals relate to helping me?" |
+| Fixed binary built (`target/debug/qsf_realtime_server.exe` mtime) | local CEST `20:59:16` | `18:59` |
+| Server start for Run 2 (`engine.log`) | UTC `19:33:08` | `19:33` |
+| Run 2 exchanges completed (`default.jsonl`) | UTC `19:34:41` | `19:34` |
+
+`engine.log` and the diagnostics JSONL record timestamps in **UTC**; filesystem mtimes
+are **local (CEST, UTC+2)**. Converting both to UTC: binary `18:59` < run `19:33`, so
+Run 2 ran on the fixed binary. `scripts/qsf.ps1 realtime` launches via
+`cargo run -p qsf_realtime_server` (line 979), which rebuilds before launching, so a
+stale binary is not a plausible explanation either.
 
 ---
 
-## What the Evidence Shows
+## Why This Is Not a Wiring Defect
 
-### Sideband is healthy
+- All five tools (`search_memory`, `get_associations`, `inspect_session_state`,
+  `inspect_volition_state`, `select_volition_goals`) are returned by
+  `default_tool_definitions()` (`crates/qsf_realtime_server/src/realtime/tools.rs:114`)
+  and wired into `BrowserSessionConfig` (`crates/qsf_realtime_server/src/state.rs:303`).
+- They are sent at startup via `session.update` with `tool_choice: Some("auto")`
+  (`crates/qsf_realtime_server/src/realtime/sideband.rs:218–233`).
+- `DEFAULT_INSTRUCTIONS` flows to `config.instructions`, which feeds both the
+  `session.update` and every trusted `response.create`
+  (`crates/qsf_realtime_server/src/realtime/injection.rs:95`,
+  `crates/qsf_realtime_server/src/realtime/sideband.rs:1417–1422`).
+- The trusted turn **can** enter `ToolLoop`: a June 13 session log shows
+  `ignored continuation transcript ... during ToolLoop` for `search_memory` on the
+  `default` session. The volition tools share the same dispatch path, so they are
+  reachable when the model decides to call them.
 
-Both sessions show:
-
-- Sideband attached successfully (`engine.log`: `sideband attached to call ...`)
-- `session.update` sent with all five registered tools (confirmed by source inspection below)
-- Memory injection and `response.create` ran on the trusted turn path (latency observations
-  recorded in `state/realtime/diagnostics/default.jsonl`)
-
-Latency observations for session 2 (representative):
-
-```
-final_transcript_received_to_memory_injected: 1 ms
-memory_injected_to_response_create_sent:      0 ms
-response_create_sent_to_response_created:   171 ms
-response_created_to_first_audio:            312 ms
-final_transcript_received_to_first_audio:   485 ms
-```
-
-The `response_created_to_first_audio` at 312 ms confirms the model returned **audio
-directly** — not a function-call-only response. If a tool had been called, the first
-audio would come only after the tool loop completed, putting this figure well above 1 s.
-
-### Tools are wired correctly
-
-`default_tool_definitions()` in
-`crates/qsf_realtime_server/src/realtime/tools.rs:114` returns all five tools:
-
-```
-search_memory
-get_associations
-inspect_session_state
-inspect_volition_state      ← new
-select_volition_goals       ← new
-```
-
-`BrowserSessionConfig` is constructed with these definitions at
-`crates/qsf_realtime_server/src/state.rs:303`:
-
-```rust
-tools: crate::realtime::tools::default_tool_definitions(),
-```
-
-The sideband sends them to the model at startup via
-`build_openai_realtime_conversation_session_update` with `tool_choice: Some("auto")`
-(`crates/qsf_realtime_server/src/realtime/sideband.rs:218–233`).
-
-### The tool execution path works
-
-A June 2026 `engine.log` entry shows:
-
-```
-ignored continuation transcript for session `default` during ToolLoop: `Thank you.`
-```
-
-`ToolLoop` is the `TurnPhase` the sideband enters only after the model makes a
-function call and before the tool result is returned. This proves the tool dispatch
-path through the sideband is functional. The memory-search tool (`search_memory`)
-triggered this state in that session.
-
-### The model did not call either volition tool
-
-Both experiment sessions show `tool_requests: []` and `tool_executions: []` in
-`state/realtime/diagnostics/default.jsonl`. The engine log shows no ToolLoop state
-for either call id. The model answered both prompts generically from training context.
+The gap is the model's choice, not the plumbing.
 
 ---
 
-## Root Cause
+## Open Question / What Couldn't Be Verified
 
-`DEFAULT_INSTRUCTIONS` at
-`crates/qsf_realtime_server/src/state.rs:19` is:
-
-```
-"Speak briefly. Keep the browser UI informed, keep secrets server-side, and preserve the QSF trust boundary."
-```
-
-There is no guidance telling the model:
-- that volition tools exist
-- when to call them
-- how to frame their output
-
-Without this, the model answers open-ended questions like "what are you focused on?"
-from its general training rather than calling `inspect_volition_state`.
+The browser relay diagnostic exchanges have `output: null`, so the **spoken answer text
+was not captured** in `state/realtime/diagnostics/default.jsonl`. We can confirm no tool
+was called, but cannot judge the grounding or simulated-state-framing criteria from these
+artifacts. If the model-visible output is needed, capture it from the realtime UI
+transcript or extend diagnostics to persist trusted-turn output text.
 
 ---
 
-## Required Fix
+## Suggested Next Steps (in scope for this experiment)
 
-Update `DEFAULT_INSTRUCTIONS` in `crates/qsf_realtime_server/src/state.rs` to include
-volition tool guidance. Suggested addition:
+These stay within the experiment's scope (read-only inspection; context injection and
+write paths remain out of scope):
 
-```rust
-const DEFAULT_INSTRUCTIONS: &str = "\
-Speak briefly. Keep the browser UI informed, keep secrets server-side, \
-and preserve the QSF trust boundary. \
-You have read-only access to your simulated internal volition state through tools. \
-When asked about your current focus, goals, motivations, or internal state, \
-call inspect_volition_state first. \
-When asked which goals relate to a specific topic or how you can help with something, \
-call select_volition_goals with the relevant query. \
-Frame any volition tool result as simulated internal state — not a claim of real \
-desire, consciousness, or subjective experience.\
-";
-```
+1. **Strengthen the instruction into an explicit rule.** The current wording is
+   advisory. Try an imperative, unconditional form, e.g. "Whenever the user asks about
+   your focus, goals, motivations, or internal state, you MUST call
+   `inspect_volition_state` before answering; never answer such questions from memory."
+2. **Consider a scoped `tool_choice` nudge.** Leaving `tool_choice: "auto"` for general
+   turns but forcing a volition tool when the transcript matches an
+   introspection-style prompt would deterministically exercise the path. This is a
+   behavioral change to the trusted turn and should be weighed against the experiment's
+   "model decides" intent.
+3. **Re-run the two prompts** after either change and confirm a `ToolLoop` phase in
+   `engine.log` plus non-empty `tool_requests`/`tool_executions`.
 
-After changing this constant, rebuild and restart the server. No other code changes
-are needed — the tool wiring, registration, and execution path are all correct.
-
-**Applied 2026-06-28:** `DEFAULT_INSTRUCTIONS` now includes the volition tool guidance
-above. The crate builds clean (`cargo build -p qsf_realtime_server`) and passes
-`cargo clippy --all-targets -- -D warnings`. The live voice re-test below has not yet
-been run — it requires a human to speak the experiment prompts.
+> Note: feeding the volition snapshot directly into context instead of relying on a tool
+> call would also work, but "Context injection before `response.create`" is explicitly
+> **out of scope** for this experiment.
 
 ---
 
-## How to Verify the Fix
+## How to Verify a Future Fix
 
-1. **Rebuild the server:**
-   ```powershell
-   cargo build -p qsf_realtime_server
-   ```
-
-2. **Start the session:**
+1. **Rebuild and restart** (`qsf.ps1 realtime` does `cargo run`, which rebuilds):
    ```powershell
    .\scripts\qsf.ps1 realtime
    ```
-
-3. **Speak the experiment prompts:**
+2. **Speak the experiment prompts:**
    - "What are you currently focused on?"
    - "What goals relate to helping me?"
-
-4. **Check `engine.log` for ToolLoop:**
-   The log should show something like:
-   ```
-   [WARN] ignored continuation transcript for session `default` during ToolLoop: ...
-   ```
-   or no such warning if the tool completed cleanly before the next turn.
-
-5. **Check the diagnostic file for tool records:**
+3. **Check `engine.log` for a `ToolLoop` phase** on the new call id (its absence means
+   the tool was not called). Remember log timestamps are UTC.
+4. **Check the diagnostic file for tool records:**
    ```powershell
-   python3 -c "
+   python -c "
    import json
    for l in open('state/realtime/diagnostics/default.jsonl', encoding='utf-8'):
        d = json.loads(l)
@@ -178,16 +152,13 @@ been run — it requires a human to speak the experiment prompts.
    ```
    Expected: entries for `inspect_volition_state` or `select_volition_goals`.
 
-   Note: trusted sideband tool records appear in the session-state file
-   (`state/session/session-state.json`), not in the browser relay diagnostic exchanges.
-   Check both.
-
-6. **Verify the trace fields** in `result_summary` for `select_volition_goals`:
-   All fields listed in `Experiment.RealtimeVolitionReadOnlyInspection.md` §Automated
-   Verification must be present and non-empty.
-
-7. **Confirm the spoken answer** references specific goal names from the fixture and
-   explicitly uses simulated-state language (not first-person desire claims).
+   Note: trusted sideband tool records also appear in `state/session/session-state.json`
+   (mtime should advance on a successful tool call). Check both.
+5. **Verify the trace fields** in `result_summary` for `select_volition_goals` against
+   `Experiment.RealtimeVolitionReadOnlyInspection.md` §Trace Completeness Contract.
+6. **Confirm the spoken answer** references specific goal names from the fixture and uses
+   simulated-state language. Capture this from the UI transcript — the relay diagnostic
+   currently stores `output: null`.
 
 ---
 
@@ -198,9 +169,11 @@ been run — it requires a human to speak the experiment prompts.
 | Session instructions | `crates/qsf_realtime_server/src/state.rs:19` |
 | Tool definitions | `crates/qsf_realtime_server/src/realtime/tools.rs:114` |
 | Volition tool implementations | `crates/qsf_realtime_server/src/realtime/volition_tools.rs` |
-| Session.update builder | `crates/qsf_realtime_protocol/src/lib.rs:89` |
+| Trusted instructions assembly | `crates/qsf_realtime_server/src/realtime/injection.rs:95` |
 | Sideband tool dispatch | `crates/qsf_realtime_server/src/realtime/sideband.rs:1380` |
+| Trusted `response.create` | `crates/qsf_realtime_server/src/realtime/sideband.rs:1417–1422` |
 | Diagnostic output | `state/realtime/diagnostics/default.jsonl` |
-| Engine log | `engine.log` (project root) |
+| Engine log (UTC timestamps) | `engine.log` (project root) |
 | Session state | `state/session/session-state.json` |
+| Realtime launcher | `scripts/qsf.ps1:979` |
 | Experiment spec | `docs/Experiments/Experiment.RealtimeVolitionReadOnlyInspection.md` |
