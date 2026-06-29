@@ -95,8 +95,8 @@ root.innerHTML = `
           <h2>Transcript</h2>
           <span class="status-pill">Live</span>
         </div>
-        <p data-role="live-transcript" class="live-transcript">Waiting for the first turn.</p>
-        <ol data-role="transcript" class="transcript"></ol>
+        <p data-role="live-transcript" class="live-transcript" aria-live="polite">Waiting for the first turn.</p>
+        <ol data-role="transcript" class="transcript" aria-label="Conversation transcript"></ol>
       </article>
 
       <aside class="panel details-panel">
@@ -436,6 +436,13 @@ function render() {
       return item;
     }),
   );
+  scrollTranscriptToLatest();
+}
+
+function scrollTranscriptToLatest() {
+  window.requestAnimationFrame(() => {
+    refs.transcriptList.scrollTop = refs.transcriptList.scrollHeight;
+  });
 }
 
 function canSubmitTextTurn(): boolean {
