@@ -2,7 +2,7 @@
 
 ## Status
 
-In progress. Phases 1 and 2 are complete. Phase 3 is implemented — human validation pending.
+In progress. Phases 1-3 are complete. Phase 4 is the next implementation slice.
 
 - **Phase 1** (extract `qsf_volition`) — Complete. Pure volition domain extracted into
   its own crate; `qsf_realtime_server` does not depend on `qsf_app`.
@@ -12,10 +12,12 @@ In progress. Phases 1 and 2 are complete. Phase 3 is implemented — human valid
   are in the seed and win arbitration under all modes. The sideband maps trusted
   transcripts to volition events and applies them on each turn boundary. No visible
   behavior change. Validated by `Experiment.RealtimeVolitionStateSeed`.
-- **Phase 3** (read-only realtime volition tools) — Implemented — human validation pending.
+- **Phase 3** (read-only realtime volition tools) — Complete. Live trusted sideband testing
+  verified both `inspect_volition_state` and `select_volition_goals`; diagnostics now record
+  trusted completed exchanges as `source: "sideband_trusted"`. The broad help-related selector
+  query still returns `no_match`, which is a selector-quality follow-up rather than a phase gate.
   `inspect_volition_state` and `select_volition_goals` are registered in the realtime
-  default tool list. Live test with `Experiment.RealtimeVolitionReadOnlyInspection`
-  required to mark complete.
+  default tool list. Validated by `Experiment.RealtimeVolitionReadOnlyInspection`.
 
 This plan connects the completed offline volition slices to
 the first-class realtime voice surface (`scripts/qsf.ps1 realtime`) without weakening
@@ -124,7 +126,7 @@ bias.
 |---|---|---:|---:|---:|---|
 | 1 | Extract pure volition domain into `qsf_volition` | Yes | No | Complete | `Experiment.RealtimeVolitionReadOnlyInspection` scaffold can reuse fixtures after extraction |
 | 2 | Add realtime-owned `VolitionRuntimeState` seeded per QSF session | Yes | Light | Complete | `Experiment.RealtimeVolitionStateSeed` |
-| 3 | Expose read-only realtime volition tools | Yes | Yes | Implemented — human validation pending | `Experiment.RealtimeVolitionReadOnlyInspection` |
+| 3 | Expose read-only realtime volition tools | Yes | Yes | Complete | `Experiment.RealtimeVolitionReadOnlyInspection` |
 | 4 | Inject selected volition context into live response creation — with opportunity detection + shaping-intensity dial | Yes | Yes | Not started | `Experiment.RealtimeVolitionContextInjection` |
 | 5 | Add trace-backed bounded initiative outputs to the live loop | Yes | Yes | Not started | `Experiment.RealtimeVolitionBoundedInitiative` |
 | 6 | Persist, inspect, and consolidate realtime volition state | Yes | Yes | Not started | `Experiment.RealtimeVolitionContinuity` |
@@ -266,6 +268,8 @@ Verify:
   diagnostic-only transcripts.
 - `select_volition_goals` is deterministic for the same state and query.
 - Tool execution records persist to trusted turns like the existing read-only tools.
+- Completed trusted sideband exchanges are recorded to diagnostics with
+  `source: "sideband_trusted"` and `trust: "trusted"`.
 
 Human test:
 
@@ -273,6 +277,16 @@ Human test:
   the model can call the volition inspection tool and speak a grounded answer.
 - Confirm the answer distinguishes "the system is simulating goals" from claiming real
   subjective desire.
+
+Human validation result:
+
+- `Experiment.RealtimeVolitionReadOnlyInspection` confirmed both read-only tools can be
+  called in a live trusted sideband turn.
+- `inspect_volition_state` produced a grounded current-focus answer.
+- `select_volition_goals` produced a complete trace and an omitted-goal grounding path, but
+  returned `status: no_match` for the broad help-related prompt. Treat non-empty selected
+  goals for that broad query as a future selector-quality refinement, not a prerequisite for
+  context injection.
 
 Trace completeness contract:
 
@@ -287,7 +301,7 @@ Trace completeness contract:
 - `omitted_goal_ids`
 - `salience_snapshot`
 - `arbitration_result` if requested
-- `state_snapshot_hash`
+- `volition_snapshot_hash`
 - `artifact_or_record_reference`
 
 Automated verification must parse the persisted tool execution result or diagnostic

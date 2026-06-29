@@ -1,7 +1,7 @@
 # Handoff: Volition Work — Resume Here
 
 **Date:** 2026-06-29
-**Status:** External brief reconciled into project docs; realtime integration in progress and blocked at read-only-tool validation. Doc-only changes today, **nothing committed** (on `main`).
+**Status:** Read-only realtime volition tools are validated enough for this slice; realtime integration should move to context injection next. Doc-only changes today, **nothing committed** (on `main`).
 **Read next:** the "Next steps" section below, then the linked docs.
 
 ---
@@ -28,7 +28,9 @@ stance already lives in the DecisionLog (2026-05-15, 2026-06-27).
 |---|---|
 | [volition_goal_system_design_brief.md](volition_goal_system_design_brief.md) | Added §0 "Project Reconciliation" (framing + full brief→project mapping table) and inline "Project note" callouts on §2/§3.1/§8. Temporary scratch doc — merge into real docs over time, then delete. |
 | [Plans/Design.VolitionBriefReconciliation.md](Plans/Design.VolitionBriefReconciliation.md) | New. The project-side reconciliation: terminology mapping, concept disposition (Built / Adopt / Defer), framing decisions D1–D4, realtime-roadmap impact. |
-| [Plans/Plan.RealtimeVolitionIntegration.md](Plans/Plan.RealtimeVolitionIntegration.md) | Context-injection phase hardened: added **opportunity detection** (brief §4.1) + a **shaping-intensity dial** (brief §14) with a protected-tier cap, plus verify steps, trace fields, and an Open-questions block. |
+| [Plans/Plan.RealtimeVolitionIntegration.md](Plans/Plan.RealtimeVolitionIntegration.md) | Context-injection phase hardened: added **opportunity detection** (brief §4.1) + a **shaping-intensity dial** (brief §14) with a protected-tier cap, plus verify steps, trace fields, and an Open-questions block. Later updated to mark read-only realtime tools complete. |
+| [Experiments/Experiment.RealtimeVolitionReadOnlyInspection.md](Experiments/Experiment.RealtimeVolitionReadOnlyInspection.md) | Marked complete. Latest trusted sideband diagnostics verify both read-only tools execute, the selector trace contract is complete, and spoken answers preserve simulated-state framing. |
+| Temporary testing handoff | Retired and deleted. Durable evidence now lives in the experiment file and realtime plan. |
 
 ---
 
@@ -38,7 +40,7 @@ stance already lives in the DecisionLog (2026-05-15, 2026-06-27).
 |---|---|
 | Extract `qsf_volition` crate | ✅ done |
 | Per-session `VolitionRuntimeState` (seeded; protected tiers) | ✅ done |
-| Read-only tools `inspect_volition_state` / `select_volition_goals` | ⚠️ implemented, **human validation BLOCKED** |
+| Read-only tools `inspect_volition_state` / `select_volition_goals` | ✅ implemented; human validation accepted for this slice |
 | Inject volition context before `response.create` (now w/ opportunity + intensity) | ⏳ not started; design hardened today |
 | Bounded initiative in live loop / persistence / UI | ⏳ not started |
 
@@ -46,47 +48,47 @@ Offline build ([Plan.VolitionGoalSystem.md](Plans/Plan.VolitionGoalSystem.md)): 
 
 ---
 
-## The Active Blocker
+## Current Conclusion
 
-[Testing.RealtimeVolitionTools.md](Testing.RealtimeVolitionTools.md): the realtime model
-**will not call the volition tools** under `tool_choice: "auto"`, even after the
-`DEFAULT_INSTRUCTIONS` fix. Confirmed it is the model's choice, not wiring.
+The read-only-tool validation gate is closed for now. The latest trusted sideband run
+shows successful calls to both `inspect_volition_state` and `select_volition_goals`.
+`source: "sideband_trusted"` diagnostics now contain the tool records directly, and the
+continuity state agrees with the diagnostics.
 
-**Key reframing for the decision below:** the testing handoff's own aside — "feeding the
-volition snapshot directly into context would also work" — *is* the context-injection phase,
-which **does not depend on the model deciding to call a tool**. So context injection sidesteps
-this blocker. Question to settle: is read-only tool-calling the right validation gate, or is
-ambient context injection the more robust path to "volition influences/explains behavior"?
+Important nuance: `select_volition_goals` still returned `status: no_match` for the broad
+"goals related to helping the user" query, with an empty `selected_goal_ids` list and a
+complete omitted-goal trace. Treat that as a selector-quality follow-up, not a blocker for
+tool reachability or trace observability.
+
+Strategic fork for now: context injection is the primary path for volition to influence the
+live loop. Read-only tools remain useful for explicit inspection and explanation, but the
+next integration step should not depend on the model choosing to call a tool.
 
 ---
 
 ## Next Steps (in priority order)
 
-1. **Decide the strategic fork.** Keep pushing read-only tool-calling, or treat context
-   injection as the real influence mechanism and let tools stay best-effort? This determines
-   whether step 2 is a hard gate or a nice-to-have.
-2. **Unblock read-only-tool validation** (if still gating) — from
-   [Testing.RealtimeVolitionTools.md](Testing.RealtimeVolitionTools.md):
-   either (a) imperative instruction ("you MUST call `inspect_volition_state` before answering
-   questions about focus/goals/state"), or (b) a scoped `tool_choice` nudge for
-   introspection-style prompts. Then re-run the two prompts and confirm a `ToolLoop` phase +
-   non-empty `tool_requests` / `tool_executions`. Side fix: diagnostics store `output: null`,
-   so capture spoken text from the UI or extend diagnostics.
-3. **Decide Adaptation A** (continuity ordering) — whether a minimal cross-session continuity
+1. **Expand context injection into implementation tasks.** Create the
+   `Experiment.RealtimeVolitionContextInjection` scaffold and break the plan into small,
+   testable slices: opportunity detection, selection/arbitration packet, shaping-intensity
+   dial, sideband injection, and diagnostics.
+2. **Decide Adaptation A** (continuity ordering) — whether a minimal cross-session continuity
    slice (recurring `Blocked` / open-thread goal ids) should jump ahead of the persistence
    phase. Recorded as a deferred open decision in the realtime plan's context-injection
    Open-questions block.
-4. **When building context injection** — expand it into a task-by-task plan and create the
-   `Experiment.RealtimeVolitionContextInjection` scaffold. The opportunity-detection +
-   shaping-intensity-dial design is already written into the plan.
-5. **Housekeeping** — commit today's doc changes (branch first; currently on `main`).
+3. **Keep selector quality separate.** If non-empty `selected_goal_ids` becomes important,
+   refine selector vocabulary, fixture goal terms, or prompt/query normalization in a focused
+   follow-up. Do not let that delay context injection.
+4. **Housekeeping** — commit today's doc changes (branch first; currently on `main`).
 
 ---
 
 ## Open Decisions Parked
 
-- **Strategic fork:** tool-calling vs. context injection as the primary influence path (step 1).
 - **Adaptation A:** pull cross-session continuity earlier vs. leave it in the persistence phase.
+- **Selector quality:** decide whether broad help-related prompts should select
+   `honor-explicit-user-request` / `complete-current-task`, or whether the current omitted-goal
+   trace is sufficient for explicit inspection.
 - **Emotion/personality slices, multi-turn Plans, conscious/subconscious, user-vs-simulator
   goals:** classified as new scope in
   [Design.VolitionBriefReconciliation.md](Plans/Design.VolitionBriefReconciliation.md) with
@@ -103,5 +105,5 @@ ambient context injection the more robust path to "volition influences/explains 
 | Realtime plan (context-injection design) | [docs/Plans/Plan.RealtimeVolitionIntegration.md](Plans/Plan.RealtimeVolitionIntegration.md) |
 | Offline build plan (complete) | [docs/Plans/Plan.VolitionGoalSystem.md](Plans/Plan.VolitionGoalSystem.md) |
 | Current architecture | [docs/Architecture/Architecture.VolitionSystem.md](Architecture/Architecture.VolitionSystem.md) |
-| Tool-calling blocker investigation | [docs/Testing.RealtimeVolitionTools.md](Testing.RealtimeVolitionTools.md) |
+| Read-only tool validation result | [docs/Experiments/Experiment.RealtimeVolitionReadOnlyInspection.md](Experiments/Experiment.RealtimeVolitionReadOnlyInspection.md) |
 | Crate | `crates/qsf_volition/src/lib.rs` |

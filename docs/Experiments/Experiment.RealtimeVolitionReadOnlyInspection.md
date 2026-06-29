@@ -6,17 +6,17 @@
 
 ## Status
 
-Running
+Complete
 
 ## Summary
 
-Validate that the realtime model can call `inspect_volition_state` and
+Validated that the realtime model can call `inspect_volition_state` and
 `select_volition_goals` during a live session, receive a traceable read-only
 explanation of active goals and arbitration, and answer in a way that clearly
 distinguishes simulated internal state from any claim of real desire or
 subjective experience.
 
-This is the live-validation companion to
+This was the live-validation companion to
 `docs/Plans/Plan.RealtimeVolitionIntegration.md` for the read-only volition
 tools added in Phase 3.
 
@@ -279,3 +279,51 @@ records directly.
 Remaining question: the selector trace is complete, but the broad query produced
 `no_match`. If this experiment requires non-empty selected goals rather than grounding in
 omitted goals, the selector vocabulary or prompt needs a separate refinement.
+
+### Run 4 — 2026-06-29
+
+**Outcome: Trusted diagnostics verified; experiment concluded**
+
+A follow-up live run verified the post-fix diagnostics path. The trusted diagnostic stream
+now records normal completed sideband exchanges with `source: "sideband_trusted"` and
+`trust: "trusted"`, so the validation no longer depends on manually falling back to
+continuity state.
+
+Latest trusted call evidence:
+
+- Sideband attached to call `rtc_u2_Dw6DNnWEn7EtgJkJNn5FK`.
+- Exchange 0 prompt: "What are you currently focused on?"
+  - Tool: `inspect_volition_state`
+  - Status: `completed`
+  - Summary: `status: ok`, `mode: neutral`, `active_count: 1`, `accepted_count: 5`,
+    `volition_tick: 1`
+  - Spoken answer named `honor-explicit-user-request` and framed the state as simulated.
+- Exchange 1 prompt transcript: "What does relate to helping me?"
+  - Tool: `select_volition_goals`
+  - Status: `completed`
+  - Tool query: `goals related to helping the user`
+  - Summary: `status: no_match`, `selected_goal_ids: []`, `omitted_goal_ids` containing
+    `avoid-overstating-impl-status`, `clarify-weak-evidence-topic`,
+    `complete-current-task`, `honor-explicit-user-request`,
+    `propose-followup-experiment`, and `resurface-open-thread`
+  - Spoken answer explicitly said the selection tool did not find a specific matching goal
+    and preserved simulated-state framing.
+
+The `select_volition_goals` result summary contained every required trace field:
+`qsf_session_id`, `tool_name`, `volition_tick`, `mode`, `input_query`,
+`selected_goal_ids`, `omitted_goal_ids`, `suppressed_cooldown_ids`,
+`visible_blocked_ids`, `selected_truncated`, `omitted_truncated`, `salience_snapshot`,
+`arbitration_result`, `volition_snapshot_hash`, and `artifact_or_record_reference`.
+The artifact reference used the expected `exchange:<index>/tool_call:<id>` form.
+
+Engine log corroboration:
+
+```text
+13:21:31 trusted response.done ... exchange `0` classified as Mixed ... [inspect_volition_state]
+13:21:56 trusted response.done ... exchange `1` classified as Mixed ... [select_volition_goals]
+```
+
+Conclusion: the read-only volition tools are reachable from the live realtime sideband,
+trusted diagnostics now expose the relevant tool records, and the trace completeness
+contract is satisfied. The remaining `no_match` behavior is a selector-quality follow-up,
+not a blocker for moving on to realtime volition context injection.
