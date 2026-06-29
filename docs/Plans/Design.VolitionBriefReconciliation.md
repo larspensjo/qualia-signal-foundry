@@ -166,6 +166,14 @@ Two adaptations the brief motivates:
   Before that phase is expanded into steps, fold in **opportunity detection** (§4.1) and a
   **conversational-intensity dial** (§14, low/medium/high shaping) so "how strongly may I
   shape this turn" is a first-class, traceable input — not a retrofit.
+- **Adaptation C — make injection layered by lifetime.** The brief separates personality,
+  drives, goals, intentions, and plans. Realtime context injection should preserve that
+  distinction instead of rendering one flat packet. The stable baseline/personality rendering
+  belongs in the initial session instructions and should be constant across sessions; dynamic
+  goals and intentions belong in the per-turn packet before the initial `response.create` for a
+  trusted user turn; multi-turn plans remain deferred until an explicit active-plan structure
+  exists. This does not contradict D3: the baseline is a prompt-facing rendering of configured
+  tensions, priors, mode, and project stance, not a new mutable personality object.
 
 These are refinements to the existing plan, not a redirection. No part of Phases 1–3 is
 unwound.
@@ -212,9 +220,10 @@ Per [ProjectWorkflow.md](../ProjectFrame/ProjectWorkflow.md):
   translation guidance for a document that will be deleted, and the durable evidence-based
   stance (D2) already lives in the decision log (2026-05-15, 2026-06-27).
 - **[Plan.RealtimeVolitionIntegration.md](Plan.RealtimeVolitionIntegration.md):** Adaptation
-  B (opportunity detection + shaping-intensity dial) is folded into the behavioral-influence
-  phase. *(Done.)* Adaptation A (continuity re-weighting) is recorded there as a deferred open
-  decision, not yet committed.
+  B (opportunity detection + shaping-intensity dial) and Adaptation C (layered injection by
+  lifetime, including stable baseline at session start) are folded into the
+  behavioral-influence phase. *(Done.)* Adaptation A (continuity re-weighting) is recorded
+  there as a deferred open decision, not yet committed.
 - **[Plan.VolitionGoalSystem.md](Plan.VolitionGoalSystem.md):** add new offline slices for
   multi-turn Plans and (if accepted) emotion-like signals when promoted from idea to planned.
 - **[Idea.VolitionGoalSystem.md](Idea.VolitionGoalSystem.md):** add a pointer to this

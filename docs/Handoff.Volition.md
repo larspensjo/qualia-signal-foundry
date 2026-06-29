@@ -27,10 +27,10 @@ stance already lives in the DecisionLog (2026-05-15, 2026-06-27).
 | Document | Change |
 |---|---|
 | [volition_goal_system_design_brief.md](volition_goal_system_design_brief.md) | Added §0 "Project Reconciliation" (framing + full brief→project mapping table) and inline "Project note" callouts on §2/§3.1/§8. Temporary scratch doc — merge into real docs over time, then delete. |
-| [Plans/Design.VolitionBriefReconciliation.md](Plans/Design.VolitionBriefReconciliation.md) | New. The project-side reconciliation: terminology mapping, concept disposition (Built / Adopt / Defer), framing decisions D1–D4, realtime-roadmap impact. |
-| [Plans/Plan.RealtimeVolitionIntegration.md](Plans/Plan.RealtimeVolitionIntegration.md) | Context-injection phase hardened: added **opportunity detection** (brief §4.1) + a **shaping-intensity dial** (brief §14) with a protected-tier cap, plus verify steps, trace fields, and an Open-questions block. Later updated to mark read-only realtime tools complete. |
+| [Plans/Design.VolitionBriefReconciliation.md](Plans/Design.VolitionBriefReconciliation.md) | New. The project-side reconciliation: terminology mapping, concept disposition (Built / Adopt / Defer), framing decisions D1–D4, realtime-roadmap impact. Later updated with Adaptation C: injection should be layered by lifetime. |
+| [Plans/Plan.RealtimeVolitionIntegration.md](Plans/Plan.RealtimeVolitionIntegration.md) | Context-injection phase hardened: added **opportunity detection** (brief §4.1) + a **shaping-intensity dial** (brief §14) with a protected-tier cap, plus verify steps, trace fields, and an Open-questions block. Later updated to mark read-only realtime tools complete, then clarified that Phase 4 should use a **layered injection stack**: stable baseline/personality at session start, dynamic goals/intentions per trusted turn. |
 | [Experiments/Experiment.RealtimeVolitionReadOnlyInspection.md](Experiments/Experiment.RealtimeVolitionReadOnlyInspection.md) | Marked complete. Latest trusted sideband diagnostics verify both read-only tools execute, the selector trace contract is complete, and spoken answers preserve simulated-state framing. |
-| [Glossary.md](Glossary.md) | New. Project-wide glossary with a volition section translating the external brief's vocabulary into project terms and marking whether concepts are built, designed next, or deferred. |
+| [Glossary.md](Glossary.md) | New. Project-wide glossary with a volition section translating the external brief's vocabulary into project terms and marking whether concepts are built, designed next, or deferred. Later clarified `StableBaselineLayer` and the dynamic `VolitionContextPacket`. |
 | Temporary testing handoff | Retired and deleted. Durable evidence now lives in the experiment file and realtime plan. |
 
 ---
@@ -42,7 +42,7 @@ stance already lives in the DecisionLog (2026-05-15, 2026-06-27).
 | Extract `qsf_volition` crate | ✅ done |
 | Per-session `VolitionRuntimeState` (seeded; protected tiers) | ✅ done |
 | Read-only tools `inspect_volition_state` / `select_volition_goals` | ✅ implemented; human validation accepted for this slice |
-| Inject volition context before `response.create` (now w/ opportunity + intensity) | ⏳ not started; design hardened today |
+| Layered context injection before live responses (baseline + dynamic goals/intentions) | ⏳ not started; design hardened today |
 | Bounded initiative in live loop / persistence / UI | ⏳ not started |
 
 Offline build ([Plan.VolitionGoalSystem.md](Plans/Plan.VolitionGoalSystem.md)): all slices complete.
@@ -65,14 +65,38 @@ Strategic fork for now: context injection is the primary path for volition to in
 live loop. Read-only tools remain useful for explicit inspection and explanation, but the
 next integration step should not depend on the model choosing to call a tool.
 
+Latest conclusion: context injection should not be treated as one flat "volition packet".
+There are multiple layers with different lifetimes:
+
+- **Stable baseline / personality rendering:** constant across sessions; injected once at
+   conversation start through the initial realtime `session.update` instructions before any
+   response. This is a rendering of the configured tension set, priors, project stance, and
+   default `Mode`; it is **not** a new mutable personality object.
+- **Drives / tensions:** stable or slow-changing; may be summarized with the baseline or
+   refreshed only when the configured state changes.
+- **Active goals:** session/turn-specific; selected and arbitrated after a trusted user turn
+   and injected before the initial `response.create` for that turn.
+- **Intentions / shaping intensity:** next-response or few-turn local steering; derived from
+   arbitration, opportunity signals, and the protected-tier cap, then injected with the dynamic
+   turn context.
+- **Plans:** deferred multi-turn layer; injected only when an active conversational plan exists.
+- **Memory / retrieved context:** already has a separate per-turn injection path and should
+   remain distinct from volition layers.
+
+The intended first implementation point is therefore: initial stable baseline in the sideband's
+first `session.update`, and dynamic goal/intention context after trusted transcript handling and
+before the first `response.create` for that user turn. Tool-loop continuations should not receive
+fresh volition packets unless a later slice explicitly adds that behavior.
+
 ---
 
 ## Next Steps (in priority order)
 
-1. **Expand context injection into implementation tasks.** Create the
+1. **Expand layered context injection into implementation tasks.** Create the
    `Experiment.RealtimeVolitionContextInjection` scaffold and break the plan into small,
-   testable slices: opportunity detection, selection/arbitration packet, shaping-intensity
-   dial, sideband injection, and diagnostics.
+   testable slices: stable baseline/personality rendering in initial session instructions,
+   opportunity detection, selection/arbitration turn packet, shaping-intensity dial,
+   sideband injection ordering, and diagnostics.
 2. **Decide Adaptation A** (continuity ordering) — whether a minimal cross-session continuity
    slice (recurring `Blocked` / open-thread goal ids) should jump ahead of the persistence
    phase. Recorded as a deferred open decision in the realtime plan's context-injection
@@ -94,6 +118,9 @@ next integration step should not depend on the model choosing to call a tool.
   goals:** classified as new scope in
   [Design.VolitionBriefReconciliation.md](Plans/Design.VolitionBriefReconciliation.md) with
   attachment points; none scheduled yet.
+- **Exact injected text:** not yet specified. The next scaffold should define the stable
+   baseline instruction text and the dynamic turn-context template explicitly, then test that
+   the rendered text is bounded and appears at the intended injection point.
 
 ---
 

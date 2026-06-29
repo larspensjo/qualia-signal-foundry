@@ -127,7 +127,7 @@ bias.
 | 1 | Extract pure volition domain into `qsf_volition` | Yes | No | Complete | `Experiment.RealtimeVolitionReadOnlyInspection` scaffold can reuse fixtures after extraction |
 | 2 | Add realtime-owned `VolitionRuntimeState` seeded per QSF session | Yes | Light | Complete | `Experiment.RealtimeVolitionStateSeed` |
 | 3 | Expose read-only realtime volition tools | Yes | Yes | Complete | `Experiment.RealtimeVolitionReadOnlyInspection` |
-| 4 | Inject selected volition context into live response creation — with opportunity detection + shaping-intensity dial | Yes | Yes | Not started | `Experiment.RealtimeVolitionContextInjection` |
+| 4 | Layered volition context injection — stable baseline plus dynamic goals/intentions with opportunity detection + shaping-intensity dial | Yes | Yes | Not started | `Experiment.RealtimeVolitionContextInjection` |
 | 5 | Add trace-backed bounded initiative outputs to the live loop | Yes | Yes | Not started | `Experiment.RealtimeVolitionBoundedInitiative` |
 | 6 | Persist, inspect, and consolidate realtime volition state | Yes | Yes | Not started | `Experiment.RealtimeVolitionContinuity` |
 | 7 | Surface volition state in the realtime UI | Yes | Yes | Not started | `Experiment.RealtimeVolitionInspectionUi` |
@@ -312,10 +312,30 @@ The `Experiment.RealtimeVolitionReadOnlyInspection` scaffold must record that
 is compact ambient framing. Verification should fail if the tool output is just a copy
 of the injection packet.
 
-### Phase 4 - Inject selected volition context into live response creation
+### Phase 4 - Layered volition context injection into live response creation
 
-Let volition influence the live spoken response by adding a compact, traceable context
-packet before `response.create`.
+Let volition influence the live spoken response by adding layered, traceable context before
+`response.create`. This phase is not one universal volition blob: each layer has a distinct
+lifetime, carrier, and injection point.
+
+Layer ordering for the first implementation:
+
+1. **Stable baseline / personality rendering** — constant across sessions and injected once in
+  the initial realtime `session.update` instructions before any response. In project terms this
+  is a compact rendering of the configured tension set, declared priors, arbitration stance,
+  project trust boundary, and default `Mode`; it is not a separate mutable personality object
+  and must not invent desires outside the configured volition state.
+2. **Stable drives / tensions summary** — optional compact companion to the baseline when it
+  helps explain the system's default orientation. It should be refreshed only when configured
+  drive/tension state changes, not every turn.
+3. **Per-turn active goals and intentions** — selected after a trusted user turn, opportunity
+  detection, and volition event mapping; injected before the initial `response.create` for that
+  turn.
+4. **Per-turn memory context** — remains a separate retrieval/context-management layer; Phase 4
+  may compose ordering with it, but should not merge memory retrieval and volition rendering into
+  one unstructured prompt.
+5. **Plans** — deferred multi-turn layer. Only inject plan context once a dedicated active-plan
+  representation exists.
 
 This phase's design absorbs Adaptation B from
 [Design.VolitionBriefReconciliation.md](Design.VolitionBriefReconciliation.md): behavioral
@@ -325,8 +345,14 @@ Both are pure, deterministic, inspectable, and rule-based (no model call) in thi
 
 Build:
 
-- Add a pure `build_volition_context_packet` function in `qsf_realtime_server` or
-  `qsf_volition` adapter code.
+- Add pure builders for the injection layers in `qsf_realtime_server` adapter code or, where
+  context-neutral enough, `qsf_volition`:
+  - `build_stable_baseline_instructions` (or equivalent) renders the constant session-start
+    baseline from configured volition/project stance.
+  - `build_volition_turn_context_packet` (or equivalent) renders the dynamic per-turn
+    goal/intention context.
+- Keep the stable baseline in the initial sideband `session.update` path. It should be sent
+  before any live response and should not be regenerated on every turn.
 - Gate this phase on the protected-tier seed/test from realtime volition state seeding:
   tier-2 user-intent and tier-3 task-completion goals must exist and must beat
   tier-7 curiosity/exploration goals regardless of mode bias.
@@ -338,8 +364,8 @@ Build:
   model call) and must cite the grounding input span or goal/memory id — no invented
   opportunities. The signals feed goal activation/selection and inform the intensity dial.
 - On each trusted user turn, run opportunity detection, select goals from the current
-  `VolitionState`, arbitrate, and build a compact context fragment for the sideband's
-  existing context injection path.
+  `VolitionState`, arbitrate, and build a compact dynamic context fragment for the sideband's
+  existing per-turn context injection path.
 - **Shaping-intensity dial (brief §14).** Add a pure `choose_shaping_intensity` returning
   `None | Low | Medium | High` from inspectable inputs only: arbitration result,
   winning-goal salience/unresolvedness, opportunity signals, and conversation
@@ -360,6 +386,9 @@ Build:
   - suppressed/omitted count with reason categories,
   - an instruction stating the allowed shaping intensity for this turn and that this is
     simulated internal state, not a claim of consciousness.
+- Inject the dynamic turn packet only before the initial `response.create` for the trusted user
+  turn. Tool-loop continuation `response.create` calls should not receive fresh volition packets
+  unless a later slice explicitly changes that contract.
 - Record a diagnostic or trace record before response creation.
 - Default to enabled once implemented. If a config switch is added, default it on for
   local development and tests unless a safety reason requires otherwise. The default shaping
@@ -367,7 +396,10 @@ Build:
 
 Verify:
 
-- Pure packet builder tests for empty selection, single selection, conflict, blocked
+- Stable baseline rendering tests: deterministic output for the same configured tension/mode
+  state; no session/user-turn-specific facts; no claim of real desire, consciousness, or
+  subjective experience; bounded length.
+- Pure turn-packet builder tests for empty selection, single selection, conflict, blocked
   goals, cooldown, and mode-biased arbitration.
 - Opportunity-detection tests: each emitted signal cites a grounding input span or
   goal/memory id; unrelated input emits no signals; detection is deterministic and
@@ -376,7 +408,10 @@ Verify:
   tier-1..3 goal clamps intensity to at most `Low` (protected-tier cap) under every mode;
   `High` requires the documented justifying conditions and never co-occurs with an active
   protected-tier goal.
-- Sideband tests confirm the packet is injected before `response.create`.
+- Sideband tests confirm the stable baseline is present in the initial `session.update` and the
+  dynamic turn packet is injected before the initial `response.create` for a trusted user turn.
+- Sideband tests confirm tool-loop continuation `response.create` calls do not accidentally
+  duplicate fresh volition turn packets.
 - Latency tests confirm volition selection adds bounded overhead.
 - Latency tests include the same
   `input_audio_transcription.completed` -> `response.create` boundary used by the
@@ -398,6 +433,8 @@ Trace completeness contract:
 
 - `qsf_session_id`
 - `exchange_index`
+- `injected_layers` with layer name, carrier, and injection point
+- `stable_baseline_hash`
 - `input_transcript_ref`
 - `volition_tick_before`
 - `events_applied`
@@ -413,9 +450,10 @@ Trace completeness contract:
 - `response_create_event_ref`
 
 Automated verification must parse generated artifacts and assert that an injected
-packet has a preceding trace and a subsequent response-create reference, that every
-opportunity signal carries a grounding ref, and that `shaping_intensity` is at most `Low`
-whenever `protected_tier_active` is true.
+packet has a preceding trace and a subsequent response-create reference, that the stable
+baseline layer was already present for the session, that every opportunity signal carries a
+grounding ref, and that `shaping_intensity` is at most `Low` whenever
+`protected_tier_active` is true.
 
 Open questions:
 
@@ -431,6 +469,9 @@ Open questions:
 - Should the shaping-intensity policy be fixed, or exposed as an inspectable per-session
   autonomy-level setting (brief §19.1)? Default: fixed conservative policy here; a user-set
   autonomy level is a follow-up.
+- What is the exact rendered baseline text and dynamic turn-packet text? This must be specified
+  in the experiment scaffold before implementation, then asserted in tests so the sideband
+  injection contract is not implicit.
 
 ### Phase 5 - Add bounded initiative outputs to the live loop
 
