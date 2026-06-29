@@ -877,6 +877,23 @@ async fn promote_completed_trusted_exchanges(
             continue;
         };
 
+        runtime
+            .diagnostics
+            .write(&DiagnosticRecord::DiagnosticExchangeRecorded {
+                qsf_session_id: runtime.qsf_session_id.clone(),
+                source: "sideband_trusted".to_string(),
+                trust: DiagnosticTrust::Trusted,
+                recorded_at: OffsetDateTime::now_utc(),
+                exchange: exchange.clone(),
+            })?;
+        log::info!(
+            "trusted exchange `{}` for session `{}` recorded to diagnostics with {} tool request(s) and {} tool execution(s)",
+            exchange.index,
+            runtime.qsf_session_id,
+            exchange.tool_requests.len(),
+            exchange.tool_executions.len()
+        );
+
         reduce_session_in_place(
             &mut runtime.session_state,
             SessionEvent::ExchangeRecorded {
@@ -1205,9 +1222,26 @@ async fn handle_response_done_event(
         .accumulated_output_tokens
         .saturating_add(response_model_use.output_tokens);
 
-    match realtime_response_done_output_kind(event) {
+    let output_kind = realtime_response_done_output_kind(event);
+    match output_kind {
         ResponseDoneOutputKind::FunctionCallOnly | ResponseDoneOutputKind::Mixed => {
             let function_calls = extract_response_function_call_attempts(event);
+            let function_call_names = function_calls
+                .iter()
+                .map(|call| call.name.as_str())
+                .collect::<Vec<_>>()
+                .join(", ");
+            log::info!(
+                "trusted response.done for session `{qsf_session_id}` exchange `{exchange_index}` classified as {:?} with {} function call attempt(s): [{}]",
+                output_kind,
+                function_calls.len(),
+                function_call_names
+            );
+            if function_calls.is_empty() {
+                log::warn!(
+                    "trusted response.done for session `{qsf_session_id}` exchange `{exchange_index}` entered tool handling but no function call attempts were extracted"
+                );
+            }
             let allow_list = tool_allow_list(&guard.config.tools);
             let registry = guard.tool_registry.clone();
             let snapshot = ToolSessionSnapshot::from_runtime(&guard);
@@ -3187,6 +3221,36 @@ mod tests {
         .expect("manifest");
         assert!(manifest.sleep_pending);
         assert_eq!(manifest.resume_mode, ResumeMode::AwakeContinuation);
+
+        let records = diagnostic_records(&state, &allocation.qsf_session_id).await;
+        let trusted_completion = records
+            .iter()
+            .find(|record| {
+                if let DiagnosticRecord::DiagnosticExchangeRecorded { source, trust, .. } = record {
+                    source == "sideband_trusted" && *trust == DiagnosticTrust::Trusted
+                } else {
+                    false
+                }
+            })
+            .expect("trusted completion diagnostic");
+        match trusted_completion {
+            DiagnosticRecord::DiagnosticExchangeRecorded {
+                exchange,
+                source,
+                trust,
+                ..
+            } => {
+                assert_eq!(source, "sideband_trusted");
+                assert_eq!(*trust, DiagnosticTrust::Trusted);
+                assert_eq!(exchange.index, 0);
+                assert_eq!(exchange.status, qsf_session::ExchangeStatus::Completed);
+                assert_eq!(
+                    exchange.output.as_ref().map(|output| output.text.as_str()),
+                    Some("hi")
+                );
+            }
+            _ => unreachable!(),
+        }
     }
 
     #[tokio::test]
@@ -3210,6 +3274,14 @@ mod tests {
                 .expect("promotion");
             assert!(guard.session_state.turns.is_empty());
         }
+
+        let records = diagnostic_records(&state, &allocation.qsf_session_id).await;
+        assert!(records.iter().all(|record| {
+            !matches!(
+                record,
+                DiagnosticRecord::DiagnosticExchangeRecorded { source, .. } if source == "sideband_trusted"
+            )
+        }));
     }
 
     #[tokio::test]

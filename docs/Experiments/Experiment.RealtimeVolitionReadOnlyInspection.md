@@ -244,7 +244,38 @@ ToolLoop state and the diagnostic records for non-empty `tool_requests` and `too
 **Fix applied 2026-06-28:** `DEFAULT_INSTRUCTIONS` in
 `crates/qsf_realtime_server/src/state.rs` now tells the model that read-only volition
 tools exist, when to call `inspect_volition_state` and `select_volition_goals`, and to
-frame results as simulated internal state. The crate builds and passes clippy. **Run 2
-(live voice re-test) is pending** — it requires a human to speak the two prompts and
-confirm tool calls, grounded answers, simulated-state framing, and trace completeness
-per the contract above.
+frame results as simulated internal state. The crate builds and passes clippy.
+
+### Run 2 — 2026-06-28
+
+**Outcome: Tool still not called after instruction fix**
+
+The fixed binary was confirmed in use, but the live voice re-test still produced no
+trusted tool records. The browser relay diagnostic exchanges showed empty tool arrays,
+and `engine.log` showed no ToolLoop phase for the call. At this point the likely blocker
+remained model choice under `tool_choice: "auto"`.
+
+### Run 3 — 2026-06-29
+
+**Outcome: Both read-only volition tools called successfully; diagnostic source corrected**
+
+The latest live run on call `rtc_u0_Dw5sJi3LJppjIYgcn7Tus` successfully called both
+read-only volition tools in the trusted sideband continuity state:
+
+- `inspect_volition_state` completed for "What are you currently focused on?" with
+  `status: ok`, `active_count: 2`, `accepted_count: 4`, and `volition_tick: 3`.
+- `select_volition_goals` completed for the help-related prompt with `status: no_match`,
+  `selected_goal_ids: []`, and a complete omitted-goal trace that included the expected
+  fixture goals.
+
+The spoken answers were stored in
+`state/realtime/continuity/default/session-state.json` and used simulated-state
+framing. The browser relay diagnostics still showed empty tool arrays because they are
+untrusted relay artifacts, not the trusted sideband exchange record. A follow-up
+observability fix records normal completed trusted sideband exchanges to diagnostics as
+`source: "sideband_trusted"` so future JSONL verification can inspect the trusted tool
+records directly.
+
+Remaining question: the selector trace is complete, but the broad query produced
+`no_match`. If this experiment requires non-empty selected goals rather than grounding in
+omitted goals, the selector vocabulary or prompt needs a separate refinement.

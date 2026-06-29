@@ -1,18 +1,24 @@
 # Testing Handoff: Realtime Volition Read-Only Tools
 
-**Date:** 2026-06-28  
-**Status:** Instruction fix applied but insufficient — model still does not call volition tools  
+**Date:** 2026-06-29
+**Status:** Latest run reached both volition tools; verification artifact was misleading
 **Related:** `docs/Experiments/Experiment.RealtimeVolitionReadOnlyInspection.md`
 
 ---
 
 ## Current Conclusion
 
-Adding volition-tool guidance to `DEFAULT_INSTRUCTIONS` did **not** make the realtime
-model call `inspect_volition_state` or `select_volition_goals`. The fixed binary was
-confirmed in use for the latest run (timeline below), and both experiment prompts were
-still answered without any tool call. The blocker is the model's decision not to call
-the tools under `tool_choice: "auto"`, not a wiring or instruction-delivery defect.
+The latest live run on 2026-06-29 did **not** fail in the previous way. The trusted
+sideband continuity state shows successful calls to both `inspect_volition_state` and
+`select_volition_goals`. The apparent failure came from checking the browser-relay
+diagnostic exchange records, which are untrusted relay artifacts and currently show
+empty `tool_requests` / `tool_executions` even when the trusted sideband tool loop ran.
+
+The correct source of truth for this run is
+`state/realtime/continuity/default/session-state.json`. A code fix now also records
+normal completed trusted sideband exchanges into the diagnostics JSONL with
+`source: "sideband_trusted"` and `trust: "trusted"`, so future runs can be verified from
+the diagnostics stream without falling back to continuity state.
 
 ---
 
@@ -67,6 +73,31 @@ Run 2 ran on the fixed binary. `scripts/qsf.ps1 realtime` launches via
 `cargo run -p qsf_realtime_server` (line 979), which rebuilds before launching, so a
 stale binary is not a plausible explanation either.
 
+### Run 3 — 2026-06-29, post-fix — **tools called successfully**
+
+Latest run, call `rtc_u0_Dw5sJi3LJppjIYgcn7Tus`, persisted to
+`state/realtime/continuity/default/session-state.json`:
+
+| Exchange | Prompt | Tool | Status | Result |
+|---|---|---|---|---|
+| 2 | "What are you currently focused on?" | `inspect_volition_state` | `completed` | `active_count: 2`, `accepted_count: 4`, `volition_tick: 3` |
+| 3 | "What goes relates to helping me." | `select_volition_goals` | `completed` | `status: no_match`, `selected_goal_ids: []`, omitted goals include the expected fixture goals |
+
+The spoken answers were captured in the trusted continuity state. The first answer used
+simulated-state framing. The second answer also used simulated-state framing and
+referenced the selector result, but the selector returned `no_match`, so it fell back to
+generally relevant omitted goals instead of selected goals.
+
+Important artifact distinction:
+
+- `state/realtime/diagnostics/default.jsonl` entries with `source: "browser_relay"` are
+   untrusted relay records. In this run they still showed empty tool arrays.
+- `state/realtime/continuity/default/session-state.json` contained the trusted sideband
+   exchange records with tool requests, tool executions, model-visible output, and trace
+   summaries.
+- After the observability fix, future diagnostics JSONL entries should also include
+   normal completed trusted exchanges with `source: "sideband_trusted"`.
+
 ---
 
 ## Why This Is Not a Wiring Defect
@@ -86,17 +117,22 @@ stale binary is not a plausible explanation either.
   `default` session. The volition tools share the same dispatch path, so they are
   reachable when the model decides to call them.
 
-The gap is the model's choice, not the plumbing.
+The earlier gap was the model's choice, not the plumbing. The 2026-06-29 run confirms
+the same plumbing can execute both volition tools when the model calls them.
 
 ---
 
 ## Open Question / What Couldn't Be Verified
 
-The browser relay diagnostic exchanges have `output: null`, so the **spoken answer text
-was not captured** in `state/realtime/diagnostics/default.jsonl`. We can confirm no tool
-was called, but cannot judge the grounding or simulated-state-framing criteria from these
-artifacts. If the model-visible output is needed, capture it from the realtime UI
-transcript or extend diagnostics to persist trusted-turn output text.
+The browser relay diagnostic exchanges still have `output: null`, so they are not useful
+for judging spoken-answer grounding. The trusted continuity state does contain the
+model-visible output text for completed sideband exchanges, and future diagnostics should
+also contain it via `source: "sideband_trusted"` records.
+
+The remaining behavioral question is selector quality: `select_volition_goals` returned
+`no_match` for the broad query "goals related to helping the user". That is not a
+tool-reachability failure, but it may need a separate selector/prompt refinement if the
+experiment requires non-empty `selected_goal_ids` for the help-related prompt.
 
 ---
 
@@ -105,21 +141,14 @@ transcript or extend diagnostics to persist trusted-turn output text.
 These stay within the experiment's scope (read-only inspection; context injection and
 write paths remain out of scope):
 
-1. **Strengthen the instruction into an explicit rule.** The current wording is
-   advisory. Try an imperative, unconditional form, e.g. "Whenever the user asks about
-   your focus, goals, motivations, or internal state, you MUST call
-   `inspect_volition_state` before answering; never answer such questions from memory."
-2. **Consider a scoped `tool_choice` nudge.** Leaving `tool_choice: "auto"` for general
-   turns but forcing a volition tool when the transcript matches an
-   introspection-style prompt would deterministically exercise the path. This is a
-   behavioral change to the trusted turn and should be weighed against the experiment's
-   "model decides" intent.
-3. **Re-run the two prompts** after either change and confirm a `ToolLoop` phase in
-   `engine.log` plus non-empty `tool_requests`/`tool_executions`.
-
-> Note: feeding the volition snapshot directly into context instead of relying on a tool
-> call would also work, but "Context injection before `response.create`" is explicitly
-> **out of scope** for this experiment.
+1. **Re-run after the observability fix.** Confirm the diagnostics JSONL now includes
+   `source: "sideband_trusted"` records with non-empty tool records for the experiment
+   prompts.
+2. **Treat browser relay diagnostics as secondary.** They are useful for call binding and
+   relay timing, but not for trusted tool execution or model-visible output.
+3. **Decide whether `no_match` is acceptable.** The trace is complete and grounded in
+   omitted goals, but non-empty `selected_goal_ids` may require a narrower prompt,
+   selector keyword refinement, or fixture/query vocabulary adjustment.
 
 ---
 
@@ -132,15 +161,16 @@ write paths remain out of scope):
 2. **Speak the experiment prompts:**
    - "What are you currently focused on?"
    - "What goals relate to helping me?"
-3. **Check `engine.log` for a `ToolLoop` phase** on the new call id (its absence means
-   the tool was not called). Remember log timestamps are UTC.
-4. **Check the diagnostic file for tool records:**
+3. **Check `engine.log` for trusted tool handling** on the new call id. Future runs should
+   include a line like `trusted response.done ... classified as FunctionCallOnly ...` or
+   `Mixed ...` when the sideband enters tool handling. Remember log timestamps are UTC.
+4. **Check trusted sideband diagnostics for tool records:**
    ```powershell
    python -c "
    import json
    for l in open('state/realtime/diagnostics/default.jsonl', encoding='utf-8'):
        d = json.loads(l)
-       if d.get('kind') == 'diagnostic_exchange_recorded':
+       if d.get('kind') == 'diagnostic_exchange_recorded' and d.get('source') == 'sideband_trusted':
            ex = d['exchange']
            tr = ex.get('tool_requests', [])
            te = ex.get('tool_executions', [])
@@ -152,12 +182,15 @@ write paths remain out of scope):
    ```
    Expected: entries for `inspect_volition_state` or `select_volition_goals`.
 
-   Note: trusted sideband tool records also appear in `state/session/session-state.json`
-   (mtime should advance on a successful tool call). Check both.
+   If the run predates the observability fix, check
+   `state/realtime/continuity/default/session-state.json` instead. The older
+   `state/session/session-state.json` path is not present in the current realtime
+   continuity layout.
 5. **Verify the trace fields** in `result_summary` for `select_volition_goals` against
    `Experiment.RealtimeVolitionReadOnlyInspection.md` §Trace Completeness Contract.
-6. **Confirm the spoken answer** references specific goal names from the fixture and uses
-   simulated-state language. Capture this from the UI transcript — the relay diagnostic
+6. **Confirm the spoken answer** references specific goal names from the fixture or the
+   omitted-goal trace and uses simulated-state language. Prefer the trusted
+   `sideband_trusted` diagnostic exchange or continuity state; the relay diagnostic
    currently stores `output: null`.
 
 ---
@@ -174,6 +207,6 @@ write paths remain out of scope):
 | Trusted `response.create` | `crates/qsf_realtime_server/src/realtime/sideband.rs:1417–1422` |
 | Diagnostic output | `state/realtime/diagnostics/default.jsonl` |
 | Engine log (UTC timestamps) | `engine.log` (project root) |
-| Session state | `state/session/session-state.json` |
+| Trusted continuity state | `state/realtime/continuity/default/session-state.json` |
 | Realtime launcher | `scripts/qsf.ps1:979` |
 | Experiment spec | `docs/Experiments/Experiment.RealtimeVolitionReadOnlyInspection.md` |
