@@ -14,6 +14,7 @@ use uuid::Uuid;
 
 use crate::cli::Args;
 use crate::diagnostics::{DiagnosticRecord, DiagnosticTrust, DiagnosticWriter};
+use crate::realtime::turn_context::TurnContextCapture;
 use crate::realtime::volition_injection::build_stable_baseline_instructions;
 
 pub const DEFAULT_QSF_SESSION_ID: &str = "default";
@@ -418,6 +419,7 @@ pub struct SessionRuntime {
     pub sideband: Option<crate::realtime::sideband::SidebandHandle>,
     pub volition: crate::realtime::volition::VolitionRuntimeState,
     status_tx: watch::Sender<SidebandStatus>,
+    turn_context_tx: watch::Sender<Option<TurnContextCapture>>,
 }
 
 impl SessionRuntime {
@@ -450,6 +452,7 @@ impl SessionRuntime {
             sideband: None,
             volition: crate::realtime::volition::VolitionRuntimeState::new(),
             status_tx: watch::channel(SidebandStatus::default()).0,
+            turn_context_tx: watch::channel(None).0,
         }
     }
 
@@ -458,6 +461,19 @@ impl SessionRuntime {
     /// the degraded state.
     pub fn subscribe_status(&self) -> watch::Receiver<SidebandStatus> {
         self.status_tx.subscribe()
+    }
+
+    /// Subscribe to turn-context captures. A late-joining subscriber immediately
+    /// observes the most recent capture stored in the channel, even if it was
+    /// published before this call (watch channel guarantee).
+    pub fn subscribe_turn_context(&self) -> watch::Receiver<Option<TurnContextCapture>> {
+        self.turn_context_tx.subscribe()
+    }
+
+    /// Return a clone of the turn-context sender so callers outside
+    /// `SessionRuntime` can publish captures without holding a `MutexGuard`.
+    pub fn turn_context_sender(&self) -> watch::Sender<Option<TurnContextCapture>> {
+        self.turn_context_tx.clone()
     }
 
     /// Record the current sideband health and notify any status subscribers.
@@ -653,5 +669,44 @@ mod tests {
                 .is_none(),
             "session must be gone after removal"
         );
+    }
+
+    #[test]
+    fn turn_context_watch_holds_value_for_late_subscriber() {
+        use crate::realtime::turn_context::build_turn_context_capture;
+
+        let tempdir = tempfile::tempdir().expect("tempdir");
+        let diagnostics =
+            DiagnosticWriter::create(tempdir.path().join("test.jsonl")).expect("diagnostics");
+        let runtime = SessionRuntime::new(
+            "test-session".to_string(),
+            BrowserSessionConfig::default(),
+            diagnostics,
+        );
+
+        let capture = build_turn_context_capture(
+            "test-session".to_string(),
+            0,
+            "hash-abc".to_string(),
+            vec![serde_json::json!({"role": "user", "content": "hello"})],
+        );
+
+        // Publish with no active receivers — the initial receiver was dropped at
+        // construction (only the Sender half is stored in SessionRuntime).
+        runtime
+            .turn_context_sender()
+            .send_replace(Some(capture.clone()));
+
+        // A late-joining subscriber must immediately see the stored capture.
+        let rx = runtime.subscribe_turn_context();
+        let received = rx.borrow().clone();
+        assert!(
+            received.is_some(),
+            "late subscriber must see stored capture"
+        );
+        let received = received.unwrap();
+        assert_eq!(received.request_hash, "hash-abc");
+        assert_eq!(received.qsf_session_id, "test-session");
+        assert_eq!(received.exchange_index, 0);
     }
 }

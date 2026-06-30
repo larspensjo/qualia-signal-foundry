@@ -393,6 +393,12 @@ For research and debugging, the system should be able to show:
 - what context pack was active
 - whether compression was applied
 
+The assembled per-turn context is now inspectable live in the realtime UI via the
+"Last turn context" collapsible panel, which shows the verbatim provider payload
+(the `turn_request_values` sequence) for the most recent trusted turn. This panel
+is driven by the live `turn_context` events-socket message carrying a
+`TurnContextCapture` and requires no page reload.
+
 Observability is not only a debugging feature. It is part of the research method.
 
 ## Risks and Failure Modes

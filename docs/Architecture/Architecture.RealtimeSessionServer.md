@@ -66,6 +66,14 @@ mode, not a one-off experiment server.
   keeping the browser relay on the existing diagnostic envelope kinds.
 - The shared reducer overlap matrix now handles the browser-relay out-of-order and
   interruption cases inside `qsf_session`.
+- `SessionRuntime` now has a **second per-session `watch` channel**
+  (`turn_context_tx: watch::Sender<Option<TurnContextCapture>>`) alongside the
+  existing sideband-status channel. Each completed trusted turn publishes a
+  `TurnContextCapture` (verbatim `turn_request_values` + `request_hash`) to all
+  connected browser sockets as a `kind: "turn_context"` events-socket message.
+  Late-joining sockets receive the stored latest value immediately (the same
+  `send_replace` / subscribe pattern used by the sideband-status channel). Access
+  via `subscribe_turn_context()` and `turn_context_sender()`.
 
 **Partial:**
 

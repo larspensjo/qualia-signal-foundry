@@ -17,6 +17,7 @@ use serde_json::Value;
 use time::OffsetDateTime;
 
 use crate::diagnostics::DiagnosticRecord;
+use crate::realtime::turn_context::TurnContextCapture;
 use crate::state::{AppState, CallBinding, SessionRuntime, SidebandStatus};
 use qsf_session::{
     Exchange, ExchangeOutput, LiveSessionEvent, LiveSessionState, PartialTranscript,
@@ -381,18 +382,30 @@ async fn handle_events_socket(
     // relayed envelope — so it cannot relay one session while reporting another
     // session's health.
     let mut status_rx: Option<watch::Receiver<SidebandStatus>> = None;
+    let mut turn_context_rx: Option<watch::Receiver<Option<TurnContextCapture>>> = None;
     let mut bound_session: Option<String> = session_hint;
     if let Some(id) = bound_session.clone() {
-        if let Some(rx) = subscribe_status(&state, &id).await {
-            let status = rx.borrow().clone();
+        if let Some((srx, tcrx)) = subscribe_session(&state, &id).await {
+            let status = srx.borrow().clone();
             push_status(&mut socket, &id, &status).await;
-            status_rx = Some(rx);
+            status_rx = Some(srx);
+            let initial_capture = tcrx.borrow().clone();
+            if let Some(capture) = initial_capture {
+                push_turn_context(&mut socket, &capture).await;
+            }
+            turn_context_rx = Some(tcrx);
         }
     }
 
     loop {
         let status_changed = async {
             match status_rx.as_mut() {
+                Some(rx) => rx.changed().await,
+                None => std::future::pending::<Result<(), watch::error::RecvError>>().await,
+            }
+        };
+        let turn_context_changed = async {
+            match turn_context_rx.as_mut() {
                 Some(rx) => rx.changed().await,
                 None => std::future::pending::<Result<(), watch::error::RecvError>>().await,
             }
@@ -412,6 +425,22 @@ async fn handle_events_socket(
                     }
                     // Sender dropped (session removed): stop watching, keep relaying.
                     Err(_) => status_rx = None,
+                }
+            }
+            tc_result = turn_context_changed => {
+                match tc_result {
+                    Ok(()) => {
+                        let capture = turn_context_rx
+                            .as_ref()
+                            .expect("turn_context receiver present when change observed")
+                            .borrow()
+                            .clone();
+                        if let Some(capture) = capture {
+                            push_turn_context(&mut socket, &capture).await;
+                        }
+                    }
+                    // Sender dropped (session removed): stop watching, keep relaying.
+                    Err(_) => turn_context_rx = None,
                 }
             }
             incoming = socket.next() => {
@@ -475,10 +504,17 @@ async fn handle_events_socket(
                             .ok();
 
                         if status_rx.is_none() {
-                            if let Some(rx) = subscribe_status(&state, &qsf_session_id).await {
-                                let status = rx.borrow().clone();
+                            if let Some((srx, tcrx)) =
+                                subscribe_session(&state, &qsf_session_id).await
+                            {
+                                let status = srx.borrow().clone();
                                 push_status(&mut socket, &qsf_session_id, &status).await;
-                                status_rx = Some(rx);
+                                status_rx = Some(srx);
+                                let initial_capture = tcrx.borrow().clone();
+                                if let Some(capture) = initial_capture {
+                                    push_turn_context(&mut socket, &capture).await;
+                                }
+                                turn_context_rx = Some(tcrx);
                             }
                         }
                     }
@@ -491,13 +527,19 @@ async fn handle_events_socket(
     Ok(())
 }
 
-async fn subscribe_status(
+/// Perform a single session lookup and return both the sideband-status receiver
+/// and the turn-context receiver so callers never need two separate lookups for
+/// one logical subscription event.
+async fn subscribe_session(
     state: &AppState,
     qsf_session_id: &str,
-) -> Option<watch::Receiver<SidebandStatus>> {
+) -> Option<(
+    watch::Receiver<SidebandStatus>,
+    watch::Receiver<Option<TurnContextCapture>>,
+)> {
     let session = state.session_runtime(qsf_session_id).await?;
     let guard = session.lock().await;
-    Some(guard.subscribe_status())
+    Some((guard.subscribe_status(), guard.subscribe_turn_context()))
 }
 
 /// Push a sideband health update to the browser. The `kind` discriminator lets
@@ -521,6 +563,23 @@ struct SidebandStatusMessage {
     qsf_session_id: String,
     degraded: bool,
     detail: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+struct TurnContextMessage {
+    kind: &'static str,
+    #[serde(flatten)]
+    capture: TurnContextCapture,
+}
+
+async fn push_turn_context(socket: &mut WebSocket, capture: &TurnContextCapture) {
+    let message = TurnContextMessage {
+        kind: "turn_context",
+        capture: capture.clone(),
+    };
+    if let Ok(text) = serde_json::to_string(&message) {
+        socket.send(Message::Text(text.into())).await.ok();
+    }
 }
 
 #[derive(Debug, Serialize)]

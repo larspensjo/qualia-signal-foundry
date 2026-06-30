@@ -61,6 +61,16 @@ and ran the live human test.
 
 Offline build ([Plan.VolitionGoalSystem.md](Plans/Plan.VolitionGoalSystem.md)): all slices complete.
 
+> **Note — literal turn-context inspector (implemented):** The realtime UI now has
+> a **literal turn-context inspector** panel ("Last turn context") that shows the
+> raw per-turn provider payload (`TurnContextCapture.messages`, in send order) for
+> the most recent trusted turn. This is driven by the `turn_context` events-socket
+> message (`TurnContextCapture` with `request_hash` + `messages` fields) and is
+> **distinct from the still-pending volition inspection panel**, which would surface
+> structured volition data (mode, tick, active/winning goal, initiative trace links).
+> The turn-context inspector captures what the model received; the volition panel
+> would explain why.
+
 ---
 
 ## Human Test Result (2026-06-30)

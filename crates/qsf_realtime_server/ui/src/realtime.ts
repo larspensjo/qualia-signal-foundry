@@ -97,6 +97,7 @@ export interface ConversationState {
   lastEvent: string | null;
   error: string | null;
   warning: string | null;
+  latestTurnContext: TurnContextCapture | null;
 }
 
 export type ConversationAction =
@@ -107,7 +108,8 @@ export type ConversationAction =
   | { type: "connection_error"; message: string }
   | { type: "server_status"; sessionId: string; degraded: boolean; detail: string | null }
   | { type: "stop_requested" }
-  | { type: "stopped" };
+  | { type: "stopped" }
+  | { type: "turn_context_captured"; capture: TurnContextCapture };
 
 /// Server-originated status message pushed over the events socket, distinct
 /// from relay acks by its `kind` discriminator.
@@ -116,6 +118,16 @@ export interface SidebandStatusMessage {
   qsf_session_id: string;
   degraded: boolean;
   detail: string | null;
+}
+
+/// A snapshot of the messages sent to the provider at the start of a turn,
+/// pushed over the events socket with `kind: "turn_context"`.
+export interface TurnContextCapture {
+  qsfSessionId: string;
+  exchangeIndex: number;
+  capturedAt: string; // RFC 3339 string
+  requestHash: string;
+  messages: unknown[];
 }
 
 const DEFAULT_DEGRADED_WARNING =
@@ -159,6 +171,7 @@ export const INITIAL_STATE: ConversationState = {
   lastEvent: null,
   error: null,
   warning: null,
+  latestTurnContext: null,
 };
 
 export function reduceConversationState(
@@ -179,6 +192,7 @@ export function reduceConversationState(
         connection: "connecting_media",
         sessionId: action.sessionId,
         error: null,
+        latestTurnContext: null,
       };
     case "connection_ready":
       return {
@@ -223,6 +237,17 @@ export function reduceConversationState(
         lastEvent: "stopped",
         warning: null,
       };
+    case "turn_context_captured":
+      // Ignore captures for a session other than the active one: a queued
+      // message from a closed socket must not overwrite state after stop or
+      // during a newly allocated session.
+      if (action.capture.qsfSessionId !== state.sessionId) {
+        return state;
+      }
+      return {
+        ...state,
+        latestTurnContext: action.capture,
+      };
   }
 }
 
@@ -246,6 +271,45 @@ export function parseSidebandStatusMessage(raw: string): SidebandStatusMessage |
     qsf_session_id: parsed.qsf_session_id,
     degraded: parsed.degraded,
     detail: typeof parsed.detail === "string" ? parsed.detail : null,
+  };
+}
+
+/// Parse a server→browser events-socket message, returning a `TurnContextCapture`
+/// when the message has `kind: "turn_context"` and all required fields are
+/// present and correctly typed. Returns `null` for any other message.
+///
+/// Wire format uses snake_case field names (the Rust struct has no `rename_all`
+/// attribute); this function maps them to camelCase TypeScript properties.
+export function parseTurnContextMessage(raw: string): TurnContextCapture | null {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    return null;
+  }
+  if (!isRecord(parsed) || parsed.kind !== "turn_context") {
+    return null;
+  }
+  const qsfSessionId = parsed.qsf_session_id;
+  const exchangeIndex = parsed.exchange_index;
+  const capturedAt = parsed.captured_at;
+  const requestHash = parsed.request_hash;
+  const messages = parsed.messages;
+  if (
+    typeof qsfSessionId !== "string" ||
+    typeof exchangeIndex !== "number" ||
+    typeof capturedAt !== "string" ||
+    typeof requestHash !== "string" ||
+    !Array.isArray(messages)
+  ) {
+    return null;
+  }
+  return {
+    qsfSessionId,
+    exchangeIndex,
+    capturedAt,
+    requestHash,
+    messages,
   };
 }
 

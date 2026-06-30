@@ -7,6 +7,7 @@ import {
   mapProviderMessageToRelayEnvelope,
   parseProviderDataChannelMessage,
   parseSidebandStatusMessage,
+  parseTurnContextMessage,
   providerTypeToRelayKind,
   reduceConversationState,
 } from "./realtime";
@@ -377,6 +378,122 @@ describe("conversation reducer", () => {
       detail: "late degraded status",
     });
     expect(afterStop.warning).toBeNull();
+  });
+});
+
+describe("turn context reducer", () => {
+  const activeState = reduceConversationState(INITIAL_STATE, {
+    type: "session_allocated",
+    sessionId: "session_1",
+  });
+
+  const sampleCapture = {
+    qsfSessionId: "session_1",
+    exchangeIndex: 3,
+    capturedAt: "2026-06-30T12:00:00Z",
+    requestHash: "abc123",
+    messages: [{ role: "user", content: "hello" }],
+  };
+
+  it("sets latestTurnContext when capture matches the active session", () => {
+    const next = reduceConversationState(activeState, {
+      type: "turn_context_captured",
+      capture: sampleCapture,
+    });
+    expect(next.latestTurnContext).toEqual(sampleCapture);
+  });
+
+  it("ignores turn_context_captured for a different session", () => {
+    const mismatch = { ...sampleCapture, qsfSessionId: "session_other" };
+    const next = reduceConversationState(activeState, {
+      type: "turn_context_captured",
+      capture: mismatch,
+    });
+    expect(next).toBe(activeState);
+    expect(next.latestTurnContext).toBeNull();
+  });
+
+  it("preserves latestTurnContext on stopped so diagnostics remain visible", () => {
+    const withCapture = reduceConversationState(activeState, {
+      type: "turn_context_captured",
+      capture: sampleCapture,
+    });
+    expect(withCapture.latestTurnContext).not.toBeNull();
+
+    const stopped = reduceConversationState(withCapture, { type: "stopped" });
+    expect(stopped.latestTurnContext).toEqual(sampleCapture);
+  });
+
+  it("clears latestTurnContext on session_allocated", () => {
+    const withCapture = reduceConversationState(activeState, {
+      type: "turn_context_captured",
+      capture: sampleCapture,
+    });
+    expect(withCapture.latestTurnContext).not.toBeNull();
+
+    const reallocated = reduceConversationState(withCapture, {
+      type: "session_allocated",
+      sessionId: "session_2",
+    });
+    expect(reallocated.latestTurnContext).toBeNull();
+  });
+});
+
+describe("turn context message parsing", () => {
+  it("parses a valid wire message and maps snake_case to camelCase", () => {
+    const result = parseTurnContextMessage(
+      JSON.stringify({
+        kind: "turn_context",
+        qsf_session_id: "session_1",
+        exchange_index: 5,
+        captured_at: "2026-06-30T12:34:56Z",
+        request_hash: "deadbeef",
+        messages: [{ role: "user", content: "hi" }],
+      }),
+    );
+    expect(result).toEqual({
+      qsfSessionId: "session_1",
+      exchangeIndex: 5,
+      capturedAt: "2026-06-30T12:34:56Z",
+      requestHash: "deadbeef",
+      messages: [{ role: "user", content: "hi" }],
+    });
+    // capturedAt must remain a string, never a Date or number
+    expect(typeof result?.capturedAt).toBe("string");
+  });
+
+  it("returns null for malformed JSON", () => {
+    expect(parseTurnContextMessage("not json at all")).toBeNull();
+  });
+
+  it("returns null when kind is not turn_context", () => {
+    expect(
+      parseTurnContextMessage(
+        JSON.stringify({
+          kind: "sideband_status",
+          qsf_session_id: "session_1",
+          exchange_index: 1,
+          captured_at: "2026-06-30T00:00:00Z",
+          request_hash: "abc",
+          messages: [],
+        }),
+      ),
+    ).toBeNull();
+  });
+
+  it("returns null when a required field is missing", () => {
+    // Missing exchange_index
+    expect(
+      parseTurnContextMessage(
+        JSON.stringify({
+          kind: "turn_context",
+          qsf_session_id: "session_1",
+          captured_at: "2026-06-30T00:00:00Z",
+          request_hash: "abc",
+          messages: [],
+        }),
+      ),
+    ).toBeNull();
   });
 });
 

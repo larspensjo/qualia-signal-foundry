@@ -9,6 +9,7 @@ import {
   mapProviderMessageToRelayEnvelope,
   parseProviderDataChannelMessage,
   parseSidebandStatusMessage,
+  parseTurnContextMessage,
   reduceConversationState,
   type SdpExchangeResponse,
   type SessionAllocationResponse,
@@ -29,6 +30,7 @@ interface UiRefs {
   errorBanner: HTMLElement;
   warningBanner: HTMLElement;
   remoteAudio: HTMLAudioElement;
+  turnContextBody: HTMLElement;
 }
 
 interface ActiveConversation {
@@ -119,6 +121,10 @@ root.innerHTML = `
           </div>
         </dl>
         <audio data-role="remote-audio" autoplay playsinline></audio>
+        <details class="turn-context-details">
+          <summary>Last turn context</summary>
+          <div data-role="turn-context-body" class="turn-context-body"></div>
+        </details>
       </aside>
     </section>
   </main>
@@ -170,7 +176,8 @@ async function startConversation(options: ConversationStartOptions): Promise<boo
 
     relaySocket = await connectRelaySocket(allocation.qsf_session_id);
     relaySocket.addEventListener("message", (event) => {
-      const status = parseSidebandStatusMessage(String(event.data));
+      const raw = String(event.data);
+      const status = parseSidebandStatusMessage(raw);
       if (status !== null) {
         dispatch({
           type: "server_status",
@@ -178,6 +185,10 @@ async function startConversation(options: ConversationStartOptions): Promise<boo
           degraded: status.degraded,
           detail: status.detail,
         });
+      }
+      const turnCtx = parseTurnContextMessage(raw);
+      if (turnCtx !== null) {
+        dispatch({ type: "turn_context_captured", capture: turnCtx });
       }
     });
     relaySocket.addEventListener("close", () => {
@@ -437,6 +448,22 @@ function render() {
     }),
   );
   scrollTranscriptToLatest();
+
+  const ctx = state.latestTurnContext;
+  if (ctx === null) {
+    const p = document.createElement("p");
+    p.className = "turn-context-placeholder";
+    p.textContent = "No context captured yet";
+    refs.turnContextBody.replaceChildren(p);
+  } else {
+    const meta = document.createElement("p");
+    meta.className = "turn-context-meta";
+    meta.textContent = `Exchange: ${ctx.exchangeIndex}  Hash: ${ctx.requestHash}`;
+    const pre = document.createElement("pre");
+    pre.className = "turn-context-pre";
+    pre.textContent = JSON.stringify(ctx.messages, null, 2);
+    refs.turnContextBody.replaceChildren(meta, pre);
+  }
 }
 
 function scrollTranscriptToLatest() {
@@ -555,6 +582,7 @@ function collectRefs(container: HTMLElement): UiRefs {
     errorBanner: query<HTMLElement>('[data-role="error"]'),
     warningBanner: query<HTMLElement>('[data-role="warning"]'),
     remoteAudio: query<HTMLAudioElement>('[data-role="remote-audio"]'),
+    turnContextBody: query<HTMLElement>('[data-role="turn-context-body"]'),
   };
 }
 

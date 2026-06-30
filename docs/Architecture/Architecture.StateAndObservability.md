@@ -87,6 +87,16 @@ candidate categories listed below still have no shared module.
   always records the full uncapped sets. Neither output ever contains
   `OPENAI_API_KEY` or raw fixture dumps.
   ([realtime/volition_tools.rs](../../crates/qsf_realtime_server/src/realtime/volition_tools.rs))
+- **Live literal turn-context capture** is a new realtime observability surface.
+  Each completed trusted turn publishes a `TurnContextCapture` (verbatim
+  `turn_request_values` in send order + `request_hash`) to the browser via the
+  per-session events socket (`kind: "turn_context"` message). The realtime page
+  shows a "Last turn context" collapsible panel rendering the raw per-turn
+  provider payload. The `request_hash` field matches the existing
+  `VolitionContextInjected.response_create_event_ref` for the same turn, providing
+  a durable fidelity cross-check anchor. The capture is live-only and not persisted
+  to the diagnostics JSONL.
+  ([realtime/turn_context.rs](../../crates/qsf_realtime_server/src/realtime/turn_context.rs))
 
 **Partial:**
 
@@ -116,10 +126,11 @@ candidate categories listed below still have no shared module.
   memory-graph view, no cost dashboard)
 - `experiment_id` and `memory_update_id` correlation across runs
 
-Last reviewed: 2026-06-28 against explicit remember-this capture observability,
+Last reviewed: 2026-06-30 against explicit remember-this capture observability,
 retrieval skip reasons, the implemented sideband promotion path, the realtime
 diagnostic surface, realtime tool execution records, the live-loop
-latency/interruption diagnostics, and volition tool trace persistence.
+latency/interruption diagnostics, volition tool trace persistence, and the live
+literal turn-context capture surface.
 
 ## Summary
 

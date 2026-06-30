@@ -48,6 +48,7 @@ use crate::realtime::tools::{
     self, RealtimeToolContext, ToolSessionSnapshot, VolitionStateSnapshot, tool_allow_list,
     tool_permission_decision,
 };
+use crate::realtime::turn_context::{TurnContextCapture, build_turn_context_capture};
 use crate::realtime::turn_integrity::{
     TranscriptDisposition, TurnPhase, classify_final_transcript,
 };
@@ -1299,6 +1300,7 @@ async fn inject_trusted_turn_context_and_response(
 
     let mut guard = session.lock().await;
     let diagnostics = guard.diagnostics.clone();
+    let turn_context_tx = guard.turn_context_sender();
     apply_live_session_event(
         &mut guard.session_state,
         LiveSessionEvent::MemoryContextRecorded {
@@ -1507,22 +1509,18 @@ async fn inject_trusted_turn_context_and_response(
                 trace: initiative_trace,
             })?;
         }
-        send_json(outbound_tx, response_create)?;
-        runtime_state.response_create_sent_at = Some(OffsetDateTime::now_utc());
-        let response_create_sent_at = runtime_state.response_create_sent_at;
-        record_latency_observation_if_ready(
+        return send_response_create_and_capture(
+            outbound_tx,
+            response_create,
+            turn_request_values,
+            request_hash,
+            exchange_index,
             runtime_state,
             &diagnostics,
             qsf_session_id,
-            "memory_injected_to_response_create_sent",
             memory_injected_at,
-            response_create_sent_at,
-        )?;
-        runtime_state.current_request_hash = Some(request_hash);
-        runtime_state.current_message_count = turn_request_values.len();
-        runtime_state.pending_response_exchange = Some(exchange_index);
-        runtime_state.turn_phase = TurnPhase::AwaitingResponse;
-        return Ok(());
+            &turn_context_tx,
+        );
     }
 
     let response_create = build_openai_realtime_response_create(
@@ -1532,19 +1530,67 @@ async fn inject_trusted_turn_context_and_response(
     );
     turn_request_values.push(response_create.clone());
     let request_hash = hash_request_sequence(&turn_request_values);
+    send_response_create_and_capture(
+        outbound_tx,
+        response_create,
+        turn_request_values,
+        request_hash,
+        exchange_index,
+        runtime_state,
+        &diagnostics,
+        qsf_session_id,
+        memory_injected_at,
+        &turn_context_tx,
+    )
+}
+
+/// Send `response.create` and, on success, publish a [`TurnContextCapture`] to the
+/// session's turn-context watch channel.
+///
+/// Both the volition and no-volition branches of
+/// [`inject_trusted_turn_context_and_response`] call this helper so the publish
+/// is guaranteed to be consistent with the hash for every branch.
+///
+/// The `request_hash` must be pre-computed by the caller (the volition branch
+/// computes it early for its diagnostics traces).  This function never calls
+/// `hash_request_sequence` internally.
+///
+/// The publish happens **only** after `send_json` returns without error.  If
+/// `send_json` fails the `?` propagates and the watch channel is not updated.
+#[allow(clippy::too_many_arguments)]
+fn send_response_create_and_capture(
+    outbound_tx: &mpsc::UnboundedSender<Message>,
+    response_create: serde_json::Value,
+    turn_request_values: Vec<serde_json::Value>,
+    request_hash: ContentHash,
+    exchange_index: usize,
+    runtime_state: &mut SidebandRuntimeState,
+    diagnostics: &crate::diagnostics::DiagnosticWriter,
+    qsf_session_id: &str,
+    memory_injected_at: Option<OffsetDateTime>,
+    turn_context_tx: &watch::Sender<Option<TurnContextCapture>>,
+) -> anyhow::Result<()> {
     send_json(outbound_tx, response_create)?;
     runtime_state.response_create_sent_at = Some(OffsetDateTime::now_utc());
     let response_create_sent_at = runtime_state.response_create_sent_at;
     record_latency_observation_if_ready(
         runtime_state,
-        &diagnostics,
+        diagnostics,
         qsf_session_id,
         "memory_injected_to_response_create_sent",
         memory_injected_at,
         response_create_sent_at,
     )?;
+    let message_count = turn_request_values.len();
+    let capture = build_turn_context_capture(
+        qsf_session_id.to_string(),
+        exchange_index,
+        request_hash.to_string(),
+        turn_request_values,
+    );
+    turn_context_tx.send_replace(Some(capture));
     runtime_state.current_request_hash = Some(request_hash);
-    runtime_state.current_message_count = turn_request_values.len();
+    runtime_state.current_message_count = message_count;
     runtime_state.pending_response_exchange = Some(exchange_index);
     runtime_state.turn_phase = TurnPhase::AwaitingResponse;
     Ok(())
@@ -2364,6 +2410,119 @@ mod tests {
         let first = hash_request_sequence(&[serde_json::json!({"a": 1})]);
         let second = hash_request_sequence(&[serde_json::json!({"a": 1})]);
         assert_eq!(first, second);
+    }
+
+    /// Verifies the fidelity contract: the `request_hash` stored in the published
+    /// `TurnContextCapture` equals `hash_request_sequence(&turn_request_values)` for
+    /// the same turn values, and the `messages` field is the verbatim
+    /// `turn_request_values`.
+    #[test]
+    fn captured_request_hash_matches_hash_of_messages() {
+        use crate::realtime::turn_context::TurnContextCapture;
+        use tokio::sync::watch;
+
+        let turn_request_values = vec![
+            serde_json::json!({"type": "conversation.item.create", "item": {"role": "user"}}),
+            serde_json::json!({"type": "response.create"}),
+        ];
+        let expected_hash = hash_request_sequence(&turn_request_values);
+        let expected_hash_string = expected_hash.to_string();
+        let expected_messages = turn_request_values.clone();
+        let response_create = turn_request_values.last().expect("last item").clone();
+
+        let (outbound_tx, _outbound_rx) = mpsc::unbounded_channel::<Message>();
+        let (turn_context_tx, turn_context_rx) = watch::channel::<Option<TurnContextCapture>>(None);
+
+        let memory_injected_at = None;
+        let mut runtime_state = SidebandRuntimeState::default();
+
+        let tempdir = tempfile::TempDir::new().expect("tempdir");
+        let diagnostics =
+            crate::diagnostics::DiagnosticWriter::create(tempdir.path().join("fidelity.jsonl"))
+                .expect("diagnostics");
+
+        let result = send_response_create_and_capture(
+            &outbound_tx,
+            response_create,
+            turn_request_values,
+            expected_hash,
+            0,
+            &mut runtime_state,
+            &diagnostics,
+            "test-session",
+            memory_injected_at,
+            &turn_context_tx,
+        );
+
+        assert!(
+            result.is_ok(),
+            "send_response_create_and_capture must succeed when the outbound channel is open"
+        );
+        let capture = turn_context_rx
+            .borrow()
+            .clone()
+            .expect("turn_context must be published after successful send");
+        assert_eq!(
+            capture.request_hash, expected_hash_string,
+            "captured request_hash must equal hash_request_sequence of the captured messages"
+        );
+        assert_eq!(
+            capture.messages, expected_messages,
+            "captured messages must be the verbatim turn_request_values in send order"
+        );
+    }
+
+    /// Verifies the failure-path contract: if `outbound_tx` is closed before
+    /// `send_json` is called, `send_response_create_and_capture` returns an
+    /// error and the turn-context watch channel is NOT updated.
+    #[test]
+    fn failed_send_does_not_publish_turn_context_capture() {
+        use crate::realtime::turn_context::TurnContextCapture;
+        use time::OffsetDateTime;
+        use tokio::sync::watch;
+
+        let (outbound_tx, outbound_rx) = mpsc::unbounded_channel::<Message>();
+        // Drop the receiver so that every subsequent send will fail immediately.
+        drop(outbound_rx);
+
+        let (turn_context_tx, turn_context_rx) = watch::channel::<Option<TurnContextCapture>>(None);
+
+        let memory_injected_at = Some(OffsetDateTime::now_utc());
+        let mut runtime_state = SidebandRuntimeState {
+            memory_injected_at,
+            ..SidebandRuntimeState::default()
+        };
+
+        let tempdir = tempfile::TempDir::new().expect("tempdir");
+        let diagnostics =
+            crate::diagnostics::DiagnosticWriter::create(tempdir.path().join("test.jsonl"))
+                .expect("diagnostics");
+
+        let turn_request_values = vec![serde_json::json!({"type": "response.create"})];
+        let request_hash = hash_request_sequence(&turn_request_values);
+        let response_create = serde_json::json!({"type": "response.create"});
+
+        let result = send_response_create_and_capture(
+            &outbound_tx,
+            response_create,
+            turn_request_values,
+            request_hash,
+            0,
+            &mut runtime_state,
+            &diagnostics,
+            "test-session",
+            memory_injected_at,
+            &turn_context_tx,
+        );
+
+        assert!(
+            result.is_err(),
+            "send_response_create_and_capture must fail when the outbound channel is closed"
+        );
+        assert!(
+            turn_context_rx.borrow().is_none(),
+            "turn_context must not be published when send_json fails"
+        );
     }
 
     #[tokio::test]

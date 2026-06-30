@@ -9,7 +9,7 @@ project has agreed to do going forward.
 - Implementation summaries and bug-fix postmortems belong in commits, pull requests,
   reports, or the project document whose current content changed.
 - Reversals of prior decisions get their own entry referencing the original.
-- Keep entries concise and reference concrete artifacts.
+- Keep entries concise.
 - New entries go to the end of the file.
 
 ### When to add new entries
@@ -1348,8 +1348,6 @@ must not be promoted to an arbitration driver. The idea doc's 8-tier order maps 
 `arbitration_tier` values; tiers 2 (user intent), 3 (task completion), 6 (experiment
 mode), and 8 (optional exploration) are not yet covered by any fixture tension and will
 be assigned when new tensions are added.
-Refs: docs/Plans/Idea.VolitionGoalSystem.md, docs/Plans/Plan.VolitionGoalSystem.md,
-docs/Plans/Design.VolitionArbitration.md
 
 ## 2026-06-27 - Mode bias may reorder only within the biasable band; protected tiers are immune
 Decision: A `Mode`'s declared `bias_vector()` may shift arbitration ordering only within the
@@ -1365,9 +1363,6 @@ Consequences: Every new tension at tier ≤ 3 is automatically immune; future mo
 tension keys to their bias vector but must not lower the floor constant. Probabilistic arbitration
 and salience/selection bias remain out of scope and require an explicit experiment gate if
 introduced.
-Refs: docs/Plans/Design.VolitionModeBias.md, docs/Plans/Plan.VolitionGoalSystem.md,
-docs/Experiments/Experiment.VolitionModeBias.md,
-crates/qsf_app/src/volition.rs
 
 ## 2026-06-27 - Realtime voice is the target surface for the consciousness simulation
 Decision: The project's final target is a realtime voice-accessible simulation of
@@ -1381,8 +1376,6 @@ Consequences: Plans that mature core simulated-mind subsystems should identify h
 they become available to realtime voice without bypassing trust boundaries or
 inspectability. Experiment-only access is acceptable for early validation but is not
 the final integration shape.
-Refs: docs/ProjectFrame/ProjectVision.md,
-docs/Plans/Plan.RealtimeVolitionIntegration.md
 
 ## 2026-06-27 - Realtime volition extraction keeps context assembly outside `qsf_volition`
 Decision: The `qsf_volition` crate contains pure volition domain state, reducers,
@@ -1398,8 +1391,6 @@ realtime server.
 Consequences: The extraction starts from the pure reusable core. Realtime can depend on
 `qsf_volition` without importing experiment/report code, while each caller chooses how
 to turn selected goals into context fragments or reports.
-Refs: docs/Plans/Plan.RealtimeVolitionIntegration.md,
-docs/Plans/Review.RealtimeVolitionIntegration.md
 
 ## 2026-06-27 - Realtime volition retrieval initiatives are memory-injection hints
 Decision: In realtime volition, `ContextRetrievalRequested` is an internal hint to the
@@ -1412,8 +1403,6 @@ calls would make a supposedly internal initiative cross into external effect exe
 Consequences: Realtime bounded-initiative traces must record the hint terms, whether the
 next memory-injection pass consumed them, and `external_effect_executed: false`.
 External tool execution from volition initiative remains out of scope.
-Refs: docs/Plans/Plan.RealtimeVolitionIntegration.md,
-docs/Plans/Review.RealtimeVolitionIntegration.md
 
 ## 2026-06-28 - `realtime` supervises both processes and opens the browser
 Decision: `qsf.ps1 realtime` launches the realtime server and the Vite dev server as
@@ -1430,7 +1419,6 @@ Consequences: One command brings up the full live surface and one Ctrl+C tears i
 with no orphaned port holders. The UI port may differ from `5174` when it is busy, so
 durable references should treat `5174` as the preferred port, not a guarantee. This
 refines the 2026-06-14 `realtime` launcher decision.
-Refs: scripts/qsf.ps1, crates/qsf_realtime_server/ui/vite.config.ts
 
 ## 2026-06-29 - Volition context injection carrier and grounding boundary
 Type: Decision
@@ -1455,9 +1443,6 @@ per-turn `session.update` and `response.create`, so the baseline cannot be dropp
 overridden. The injection trace links to the existing per-turn request-sequence hash rather
 than a new client event id. Curiosity/exploration cannot override protected tiers, and shaping
 intensity is clamped to at most `Low` when a protected tier wins arbitration.
-Refs: docs/Plans/Plan.RealtimeVolitionIntegration.md,
-docs/Experiments/Experiment.RealtimeVolitionContextInjection.md,
-docs/Plans/Review.RealtimeVolitionIntegration.phase4.Plan.codex.json
 
 ## 2026-06-30 - Realtime bounded-initiative surfacing, anti-nag cadence, and trace granularity
 Type: Decision
@@ -1492,7 +1477,22 @@ record even when no line is spoken, and the trace verifies the state transition 
 event caused. A longer tick-based cooldown remains the documented upgrade path if live testing
 shows alternation still nags. Curiosity and exploration still cannot surface initiative while a
 protected goal wins arbitration.
-Refs: docs/Plans/Plan.RealtimeVolitionIntegration.md,
-docs/Plans/Review.RealtimeVolitionIntegration.phase5.Plan.codex.json,
-docs/ProjectFrame/ProjectVision.md,
-docs/DecisionLog.md#2026-06-29---volition-context-injection-carrier-and-grounding-boundary
+
+## 2026-06-30 - Realtime context inspection is live and value-faithful
+Type: Decision
+Decision: Realtime turn-context inspection exposes the latest trusted turn's provider
+payload as a live presentation surface, not as a persisted experiment artifact. The
+inspector captures the verbatim JSON value sequence sent for the initial context-injected
+request, publishes it over the per-session events socket as a `turn_context` message, and
+anchors fidelity with the same request hash used by the diagnostics trace. It excludes the
+connect-time session setup and tool-loop continuation requests unless a later decision
+expands the inspection boundary.
+Context: The realtime UI needed to answer "what did the model receive for this turn?"
+without asking researchers to reconstruct base instructions, memory context, and volition
+packets from hashes and summaries. This is an observability presentation mode over the live
+send path rather than a behavioral experiment, and persisting the full repeated payload every
+turn would bloat diagnostics without improving the immediate inspection workflow.
+Consequences: Realtime observability surfaces may use per-session `watch` channels and
+`kind`-discriminated events-socket messages for latest-only live presentation. Durable
+diagnostics continue to store compact hashes and structured traces; literal payload
+persistence, history, and pretty-printing require separate explicit follow-up work.
