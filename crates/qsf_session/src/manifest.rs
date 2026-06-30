@@ -20,6 +20,8 @@ pub struct ContinuityManifest {
     pub schema_version: u16,
     pub current_session_id: Option<String>,
     pub current_session_state_path: Option<PathBuf>,
+    #[serde(default)]
+    pub current_volition_snapshot_path: Option<PathBuf>,
     pub last_sleep_run_id: Option<String>,
     pub last_sleep_brief_path: Option<PathBuf>,
     pub last_sleep_consumed_session_id: Option<String>,
@@ -33,6 +35,7 @@ impl Default for ContinuityManifest {
             schema_version: CONTINUITY_MANIFEST_SCHEMA_VERSION,
             current_session_id: None,
             current_session_state_path: None,
+            current_volition_snapshot_path: None,
             last_sleep_run_id: None,
             last_sleep_brief_path: None,
             last_sleep_consumed_session_id: None,
@@ -132,6 +135,7 @@ mod tests {
             schema_version: CONTINUITY_MANIFEST_SCHEMA_VERSION,
             current_session_id: Some("s-1".to_string()),
             current_session_state_path: Some(PathBuf::from("session-state.json")),
+            current_volition_snapshot_path: Some(PathBuf::from("volition-state.json")),
             last_sleep_run_id: None,
             last_sleep_brief_path: None,
             last_sleep_consumed_session_id: None,
@@ -143,6 +147,20 @@ mod tests {
         let reloaded = ContinuityManifest::load_or_default(&path).unwrap();
 
         assert_eq!(reloaded, original);
+    }
+
+    #[test]
+    fn legacy_manifest_without_volition_snapshot_path_loads_with_none() {
+        let dir = TempDir::new().unwrap();
+        let path = dir.path().join("continuity-manifest.json");
+        std::fs::write(
+            &path,
+            r#"{"schema_version":1,"current_session_id":"s-1","current_session_state_path":"session-state.json","last_sleep_run_id":null,"last_sleep_brief_path":null,"last_sleep_consumed_session_id":null,"sleep_pending":true,"resume_mode":"awake_continuation"}"#,
+        )
+        .unwrap();
+
+        let reloaded = ContinuityManifest::load_or_default(&path).unwrap();
+        assert!(reloaded.current_volition_snapshot_path.is_none());
     }
 
     #[test]

@@ -105,6 +105,7 @@ mod tests {
             manifest: ContinuityManifest {
                 sleep_pending: pending,
                 last_sleep_run_id: last_sleep.map(str::to_string),
+                current_volition_snapshot_path: None,
                 ..ContinuityManifest::default()
             },
             previous_session: prev,
@@ -152,6 +153,7 @@ mod tests {
 
         ContinuityManifest {
             current_session_state_path: Some("session-state.json".into()),
+            current_volition_snapshot_path: None,
             ..ContinuityManifest::default()
         }
         .persist(dir.path().join("continuity-manifest.json"))

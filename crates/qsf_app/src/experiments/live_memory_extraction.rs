@@ -688,6 +688,7 @@ mod tests {
         ContinuityManifest {
             current_session_id: Some(previous.session_id.clone()),
             current_session_state_path: Some(PathBuf::from("session-state.json")),
+            current_volition_snapshot_path: None,
             sleep_pending: true,
             resume_mode: ResumeMode::AwakeContinuation,
             ..ContinuityManifest::default()

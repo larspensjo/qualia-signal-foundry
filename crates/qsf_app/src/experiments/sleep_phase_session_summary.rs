@@ -281,6 +281,36 @@ pub(crate) fn commit_cross_session_sleep(
     }
     .write()?;
 
+    // Run volition continuity consolidation if realtime continuity artifacts exist for this
+    // session. This is the primary consolidation path per plan Step 6h; writing the report
+    // here keeps it in the same proposer-commit flow rather than a parallel experiment path.
+    if let Some(report) =
+        super::volition_continuity::consolidate_session_volition(state_dir, &session.session_id)?
+    {
+        let report_json = serde_json::to_string_pretty(&report)
+            .context("failed to serialize volition continuity report")?;
+        let report_json_path = state_dir.join("volition-continuity-report.json");
+        let report_md_path = state_dir.join("volition-continuity-report.md");
+        fs::write(&report_json_path, report_json)
+            .context("failed to write volition continuity report json")?;
+        fs::write(
+            &report_md_path,
+            super::volition_continuity::render_markdown_report(&report),
+        )
+        .context("failed to write volition continuity report markdown")?;
+        outcome.observations.push(format!(
+            "Volition consolidation for session `{}` produced {} continuity item(s).",
+            session.session_id,
+            report.items.len()
+        ));
+        outcome
+            .extra_artifacts
+            .push(report_json_path.display().to_string());
+        outcome
+            .extra_artifacts
+            .push(report_md_path.display().to_string());
+    }
+
     outcome.observations.push(format!(
         "Cross-session sleep consumed session `{}` and promoted {} routine memories with {} new associations.",
         session.session_id, promoted_count, new_associations_count
@@ -856,6 +886,7 @@ mod tests {
         ContinuityManifest {
             current_session_id: Some(previous.session_id.clone()),
             current_session_state_path: Some(PathBuf::from("session-state.json")),
+            current_volition_snapshot_path: None,
             sleep_pending: true,
             resume_mode: ResumeMode::AwakeContinuation,
             ..ContinuityManifest::default()
@@ -915,6 +946,7 @@ mod tests {
         ContinuityManifest {
             current_session_id: Some(previous.session_id.clone()),
             current_session_state_path: Some(PathBuf::from("session-state.json")),
+            current_volition_snapshot_path: None,
             sleep_pending: true,
             resume_mode: ResumeMode::AwakeContinuation,
             ..ContinuityManifest::default()
@@ -989,6 +1021,7 @@ mod tests {
         ContinuityManifest {
             current_session_id: Some(previous.session_id.clone()),
             current_session_state_path: Some(PathBuf::from("session-state.json")),
+            current_volition_snapshot_path: None,
             sleep_pending: true,
             resume_mode: ResumeMode::AwakeContinuation,
             ..ContinuityManifest::default()
@@ -1029,6 +1062,7 @@ mod tests {
         ContinuityManifest {
             current_session_id: Some(previous.session_id.clone()),
             current_session_state_path: Some(PathBuf::from("session-state.json")),
+            current_volition_snapshot_path: None,
             sleep_pending: true,
             resume_mode: ResumeMode::AwakeContinuation,
             ..ContinuityManifest::default()

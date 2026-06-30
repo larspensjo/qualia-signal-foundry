@@ -134,8 +134,8 @@ None
 6. Assert the same goal surfaces on turns 1 and 3 but not on turn 2 when repeated on three
    consecutive trusted turns.
 7. Parse the diagnostics JSONL and verify every `RealtimeBoundedInitiative` record carries
-   `external_effect_executed = false`, a matching `response_create_event_ref`, and the
-   expected before/after state snapshots.
+   `external_effect_executed = false`, the surfaced/suppression fields, a matching
+   `response_create_event_ref`, and the expected before/after state snapshots.
 
 ### Verification Result
 
@@ -169,6 +169,9 @@ Required fields:
 - `allowed_effect`
 - `initiative_output`
 - `bounded_or_external_output` with `external_effect_executed: false`
+- `surfaced`
+- `suppression_reason` when a surfaced line is suppressed
+- `rendered_line_present`
 - `context_retrieval_hint_terms` when the output is `ContextRetrievalRequested`
 - `hint_consumed_by_next_memory_injection` on the consuming turn
 - `rationale`

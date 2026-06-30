@@ -55,6 +55,11 @@ candidate categories listed below still have no shared module.
 - `qsf_realtime_server` now also records trusted sideband exchange promotion into
   the shared continuity root, while keeping browser relay exchanges confined to
   relay diagnostics.
+- Continuity writes now include a versioned `VolitionContinuitySnapshot` in the
+  per-session continuity directory and a `VolitionContinuityNote` diagnostic when
+  reviewed-seed loading degrades. The continuity root layout is:
+  `continuity/<qsf_session_id>/{session-state.json,continuity-manifest.json,memory-store.json,volition-state.json,volition-seed.reviewed.json}` with
+  diagnostics in `diagnostics/<qsf_session_id>.jsonl`.
 - Live-loop latency diagnostics extend the realtime observability surface with
   observations and durable diagnostics for interrupted trusted exchanges.
 - Volition context injection now records `VolitionContextInjected` diagnostics
@@ -62,9 +67,9 @@ candidate categories listed below still have no shared module.
   signals, arbitration summary, shaping intensity, and the outbound request
   reference for the trusted turn.
 - Realtime bounded initiative now records `RealtimeBoundedInitiative`
-  diagnostics with the winning goal, initiative proposal/output, before/after
-  state inspection snapshots, next-turn hint consumption, and the shared
-  `response_create_event_ref` for the same turn.
+  diagnostics with the winning goal, initiative proposal/output, surfaced/
+  suppression metadata, before/after state inspection snapshots, next-turn hint
+  consumption, and the shared `response_create_event_ref` for the same turn.
 - Realtime tool activity has two distinct records: `ToolRequestRecord` captures
   the provider request, and `ToolExecutionRecord` captures the permission
   decision, status, capped result summary, error, timing, per-response model

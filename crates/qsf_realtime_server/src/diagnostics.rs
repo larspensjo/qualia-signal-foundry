@@ -68,6 +68,12 @@ pub enum DiagnosticRecord {
         recorded_at: OffsetDateTime,
         trace: RealtimeBoundedInitiativeTrace,
     },
+    VolitionContinuityNote {
+        qsf_session_id: String,
+        recorded_at: OffsetDateTime,
+        note: String,
+        artifact_reference: String,
+    },
     DiagnosticExchangeRecorded {
         qsf_session_id: String,
         source: String,

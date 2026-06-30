@@ -274,9 +274,32 @@ Each live session owns an independent `VolitionRuntimeState` (defined in
   `sideband.rs` maps each trusted turn (spoken `StartTurn` / `Interrupt` dispositions
   and accepted typed turns) to volition events and applies them in-memory. No other
   code path mutates volition state.
-- **Not persisted**: volition state is in-memory only for the duration of a live session.
-  It is not written to the continuity manifest or the diagnostic log. When the session
-  ends, the state is dropped.
+- **Persisted for continuity, not replay**: continuity promotion writes a versioned
+  `volition-state.json` snapshot plus a manifest pointer under the session continuity
+  root, but `create_session` never restores the raw snapshot verbatim. The next session
+  still seeds from `realtime_seed_fixture()` and applies only the explicit reviewed seed
+  artifact (`volition-seed.reviewed.json`) if one exists.
+- **Human-gated reviewed seed**: reviewed volition changes are accepted explicitly and
+  recorded with a human-promotion marker. Missing or corrupt reviewed seeds fall back to
+  the plain fixture seed and emit a `VolitionContinuityNote` diagnostic instead of
+  panicking.
+
+The per-session continuity root now holds:
+
+```text
+<state_dir>/continuity/<qsf_session_id>/
+  session-state.json
+  continuity-manifest.json
+  memory-store.json
+  volition-state.json
+  volition-seed.reviewed.json
+```
+
+and the diagnostics stream remains in:
+
+```text
+<state_dir>/diagnostics/<qsf_session_id>.jsonl
+```
 
 ### Lifecycle protection for protected goals
 

@@ -1989,6 +1989,7 @@ mod tests {
             schema_version: crate::session::manifest::CONTINUITY_MANIFEST_SCHEMA_VERSION,
             current_session_id: Some(previous.session_id.clone()),
             current_session_state_path: Some(PathBuf::from("session-state.json")),
+            current_volition_snapshot_path: None,
             last_sleep_run_id: Some("sleep-voice-1".to_string()),
             last_sleep_brief_path: Some(PathBuf::from("consolidated-brief.json")),
             last_sleep_consumed_session_id: Some(previous.session_id.clone()),

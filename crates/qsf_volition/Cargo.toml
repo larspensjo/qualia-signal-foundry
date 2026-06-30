@@ -7,6 +7,8 @@ authors.workspace = true
 rust-version.workspace = true
 
 [dependencies]
+anyhow.workspace = true
 serde.workspace = true
 serde_json.workspace = true
+tempfile = "3"
 sha2.workspace = true

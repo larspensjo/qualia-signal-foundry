@@ -12,6 +12,7 @@ use crate::reports::markdown_report::{ExperimentReport, write_report};
 use crate::runtime::run_context::RunContext;
 
 use super::accept_reviewed_memory::AcceptReviewedMemoryExperiment;
+use super::accept_reviewed_volition_seed::AcceptReviewedVolitionSeedExperiment;
 use super::audio_preparation_layer::AudioPreparationLayerExperiment;
 use super::live_memory_extraction::LiveMemoryExtractionExperiment;
 use super::memory_and_context::{
@@ -29,6 +30,7 @@ use super::tool_as_perception_calculator::ToolAsPerceptionCalculatorExperiment;
 use super::voice_loop::{VOICE_LOOP_DESCRIPTION, VoiceLoopExperiment};
 use super::volition_arbitration_conflict::VolitionArbitrationConflictExperiment;
 use super::volition_bounded_initiative_execution::VolitionBoundedInitiativeExecutionExperiment;
+use super::volition_continuity::VolitionContinuityExperiment;
 use super::volition_goal_fixture::VolitionGoalFixtureExperiment;
 use super::volition_mode_bias::VolitionModeBiasExperiment;
 use super::volition_reflection_goal_candidates::VolitionReflectionGoalCandidatesExperiment;
@@ -47,6 +49,7 @@ pub enum ExperimentName {
     RealtimeVoiceSession,
     LiveMemoryExtraction,
     AcceptReviewedMemory,
+    AcceptReviewedVolitionSeed,
     ReviewedMemoryDraft,
     SleepPhaseSessionSummary,
     StreamingTranscriptionMvp,
@@ -60,6 +63,7 @@ pub enum ExperimentName {
     VolitionReflectionGoalCandidates,
     VolitionBoundedInitiativeExecution,
     VolitionModeBias,
+    VolitionContinuity,
 }
 
 impl ExperimentName {
@@ -74,6 +78,7 @@ impl ExperimentName {
             Self::RealtimeVoiceSession => "realtime-voice-session",
             Self::LiveMemoryExtraction => "live-memory-extraction",
             Self::AcceptReviewedMemory => "accept-reviewed-memory",
+            Self::AcceptReviewedVolitionSeed => "accept-reviewed-volition-seed",
             Self::ReviewedMemoryDraft => "reviewed-memory-draft",
             Self::SleepPhaseSessionSummary => "sleep-phase-session-summary",
             Self::StreamingTranscriptionMvp => "streaming-transcription-mvp",
@@ -87,6 +92,7 @@ impl ExperimentName {
             Self::VolitionReflectionGoalCandidates => "volition-reflection-goal-candidates",
             Self::VolitionBoundedInitiativeExecution => "volition-bounded-initiative-execution",
             Self::VolitionModeBias => "volition-mode-bias",
+            Self::VolitionContinuity => "volition-continuity",
         }
     }
 
@@ -116,6 +122,9 @@ impl ExperimentName {
             }
             Self::AcceptReviewedMemory => {
                 "Accept a reviewed memory draft and write it as the durable reviewed voice-memory fixture"
+            }
+            Self::AcceptReviewedVolitionSeed => {
+                "Accept a reviewed volition seed draft and write it as the durable reviewed volition seed artifact"
             }
             Self::ReviewedMemoryDraft => {
                 "Convert provisional sleep memory candidates into a reviewable file-backed memory draft"
@@ -153,6 +162,9 @@ impl ExperimentName {
             }
             Self::VolitionModeBias => {
                 "Replay 4 scripted turns exercising mode-aware arbitration: neutral baseline, Exploratory flips winner, floor immunity, Focused suppresses tangent — executed_effects=0 on every turn"
+            }
+            Self::VolitionContinuity => {
+                "Read realtime volition continuity artifacts and consolidate them into reviewable report artifacts"
             }
         }
     }
@@ -378,6 +390,9 @@ fn experiment_for(name: ExperimentName) -> Box<dyn Experiment> {
         ExperimentName::RealtimeVoiceSession => Box::new(RealtimeVoiceSessionExperiment),
         ExperimentName::LiveMemoryExtraction => Box::new(LiveMemoryExtractionExperiment),
         ExperimentName::AcceptReviewedMemory => Box::new(AcceptReviewedMemoryExperiment),
+        ExperimentName::AcceptReviewedVolitionSeed => {
+            Box::new(AcceptReviewedVolitionSeedExperiment)
+        }
         ExperimentName::ReviewedMemoryDraft => Box::new(ReviewedMemoryDraftExperiment),
         ExperimentName::SleepPhaseSessionSummary => Box::new(SleepPhaseSessionSummaryExperiment),
         ExperimentName::StreamingTranscriptionMvp => Box::new(StreamingTranscriptionMvpExperiment),
@@ -403,6 +418,7 @@ fn experiment_for(name: ExperimentName) -> Box<dyn Experiment> {
             Box::new(VolitionBoundedInitiativeExecutionExperiment)
         }
         ExperimentName::VolitionModeBias => Box::new(VolitionModeBiasExperiment),
+        ExperimentName::VolitionContinuity => Box::new(VolitionContinuityExperiment),
     }
 }
 

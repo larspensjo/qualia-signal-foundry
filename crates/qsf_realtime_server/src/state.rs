@@ -171,6 +171,16 @@ impl AppState {
             .join("memory-store.json")
     }
 
+    pub fn continuity_volition_snapshot_path(&self, qsf_session_id: &str) -> PathBuf {
+        self.continuity_session_dir(qsf_session_id)
+            .join("volition-state.json")
+    }
+
+    pub fn continuity_reviewed_volition_seed_path(&self, qsf_session_id: &str) -> PathBuf {
+        self.continuity_session_dir(qsf_session_id)
+            .join("volition-seed.reviewed.json")
+    }
+
     pub fn openai_realtime_ws_url(&self, call_id: &str) -> String {
         format!(
             "{}?call_id={}",
@@ -204,7 +214,32 @@ impl AppState {
                 .to_string(),
         })?;
 
-        let runtime = SessionRuntime::new(qsf_session_id.clone(), config.clone(), diagnostics);
+        let mut runtime = SessionRuntime::new(qsf_session_id.clone(), config.clone(), diagnostics);
+        let reviewed_seed_path = self.continuity_reviewed_volition_seed_path(&qsf_session_id);
+        if let Some(reviewed_seed) =
+            crate::realtime::volition_continuity::load_reviewed_seed_or_note(
+                &qsf_session_id,
+                &reviewed_seed_path,
+                &runtime.diagnostics,
+            )
+        {
+            if let Err(error) = crate::realtime::volition_continuity::apply_reviewed_seed_to_runtime(
+                &mut runtime.volition,
+                &reviewed_seed,
+            ) {
+                runtime
+                    .diagnostics
+                    .write(&DiagnosticRecord::VolitionContinuityNote {
+                        qsf_session_id: qsf_session_id.clone(),
+                        recorded_at: OffsetDateTime::now_utc(),
+                        note: format!(
+                            "reviewed volition seed `{}` was rejected during seeding: {error}",
+                            reviewed_seed_path.display()
+                        ),
+                        artifact_reference: reviewed_seed_path.display().to_string(),
+                    })?;
+            }
+        }
         let mut sessions = self.inner.sessions.lock().await;
         if sessions.contains_key(&qsf_session_id) {
             anyhow::bail!("session `{qsf_session_id}` is already active");

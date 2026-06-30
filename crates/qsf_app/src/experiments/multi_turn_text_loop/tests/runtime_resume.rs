@@ -668,6 +668,7 @@ fn consolidated_brief_resume_starts_fresh_with_previous_session_id() {
     crate::session::manifest::ContinuityManifest {
         current_session_id: Some(previous.session_id.clone()),
         current_session_state_path: Some(PathBuf::from("session-state.json")),
+        current_volition_snapshot_path: None,
         last_sleep_run_id: Some("sleep-1".to_string()),
         last_sleep_brief_path: Some(PathBuf::from("consolidated-brief.json")),
         last_sleep_consumed_session_id: Some(previous.session_id.clone()),
@@ -769,6 +770,7 @@ fn legacy_text_loop_boot_writes_upgraded_state_into_shared_session_dir() {
     crate::session::manifest::ContinuityManifest {
         current_session_id: Some(previous.session_id.clone()),
         current_session_state_path: Some(PathBuf::from("session-state.json")),
+        current_volition_snapshot_path: None,
         sleep_pending: true,
         resume_mode: crate::session::manifest::ResumeMode::AwakeContinuation,
         ..crate::session::manifest::ContinuityManifest::default()

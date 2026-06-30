@@ -10,8 +10,10 @@ The volition domain is extracted into a standalone `qsf_volition` crate
 ([crates/qsf_volition/src/lib.rs](../../crates/qsf_volition/src/lib.rs)). It holds
 the pure, deterministic core: goal/tension fixtures, durable-within-a-run state, a pure
 reducer, context-neutral selection and arbitration records, mode-aware bias, and bounded
-internal initiative output. Context assembly and report shapes live in caller adapters
-(`qsf_app`, and—going forward—`qsf_realtime_server`), not in the crate.
+internal initiative output. Continuity snapshot and consolidation helpers also live in
+this crate so the realtime server and sleep pass can share a pure persistence and
+analysis model. Context assembly and report shapes live in caller adapters (`qsf_app`,
+and—going forward—`qsf_realtime_server`), not in the crate.
 
 **Implemented today:**
 
@@ -28,6 +30,10 @@ internal initiative output. Context assembly and report shapes live in caller ad
   that makes safety/boundary tiers immune to bias, and per-goal `BiasOutcome` records.
 - Bounded internal initiative: `InitiativeProposal`, `InitiativeOutput`, and
   `execute_initiative()` — structural records only; no external write-capable effect.
+- Continuity and consolidation helpers: `VolitionContinuitySnapshot`,
+  `ReviewedVolitionSeed`, `VolitionSuppressionReason`, `VolitionTurnOutcome`,
+  `persist_volition_continuity_snapshot()`, `load_reviewed_volition_seed()`,
+  `apply_reviewed_seed()`, and `build_volition_consolidation_report()`.
 - Goal-candidate proposal from open questions: `propose_goal_candidates()`,
   `ProposedGoalCandidate` (non-empty evidence invariant), and `EvidenceRef`.
 - Grounded-term and stance helpers in `qsf_volition::terms` and
@@ -69,10 +75,10 @@ internal initiative output. Context assembly and report shapes live in caller ad
 
 ## Crate Boundary And Dependency Direction
 
-`qsf_volition` depends only on `serde` and `serde_json`. It does **not** depend on
-`qsf_context`, `qsf_app`, or any caller. This keeps selection and arbitration pure
-volition-domain operations: they sort on tension tiers, base priority, and goal id, and
-are structurally incapable of reading context-assembly data.
+`qsf_volition` depends only on `serde`, `serde_json`, `anyhow`, and `tempfile`. It
+does **not** depend on `qsf_context`, `qsf_app`, or any caller. This keeps selection
+and arbitration pure volition-domain operations: they sort on tension tiers, base
+priority, and goal id, and are structurally incapable of reading context-assembly data.
 
 Adapters depend on `qsf_volition`, never the reverse:
 
@@ -84,6 +90,11 @@ Adapters depend on `qsf_volition`, never the reverse:
   `select_goals_ranked`, `build_state_inspection`, `arbitrate_with_mode`,
   `detect_opportunities`, and `choose_shaping_intensity` from the volition
   adapters without importing `qsf_app` experiment/report code.
+
+The pure reviewed-seed merge is intentionally conservative: fixture protected goals
+must remain present at their original tiers/effects, reviewed additions cannot overwrite
+fixture ids, reviewed goals cannot enter at or below the protected tier floor, and the
+merge order is deterministic because the reviewed seed is stored as a BTreeMap.
 
 A `GoalSelection` is associated with its assembled `ContextFragment` by the adapter via
 the caller's result shape (which carries the full `ContextAssembly`), joinable by

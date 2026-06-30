@@ -52,6 +52,7 @@ use crate::realtime::turn_context::{TurnContextCapture, build_turn_context_captu
 use crate::realtime::turn_integrity::{
     TranscriptDisposition, TurnPhase, classify_final_transcript,
 };
+use crate::realtime::volition_continuity::{build_volition_continuity_snapshot, persist_snapshot};
 use crate::realtime::volition_initiative::{
     build_realtime_bounded_initiative_trace, render_initiative_line,
 };
@@ -982,6 +983,15 @@ async fn promote_completed_trusted_exchanges(
 
         let continuity_dir = state.continuity_session_dir(&runtime.qsf_session_id);
         let state_path = persist_session_state(&runtime.session_state, &continuity_dir)?;
+        let snapshot = build_volition_continuity_snapshot(
+            &runtime.qsf_session_id,
+            &runtime.volition,
+            OffsetDateTime::now_utc(),
+        )?;
+        let snapshot_path = persist_snapshot(
+            &snapshot,
+            state.continuity_volition_snapshot_path(&runtime.qsf_session_id),
+        )?;
         let mut manifest = ContinuityManifest::load_or_default(
             state.continuity_manifest_path(&runtime.qsf_session_id),
         )?;
@@ -990,6 +1000,12 @@ async fn promote_completed_trusted_exchanges(
             state_path
                 .strip_prefix(&continuity_dir)
                 .unwrap_or(&state_path)
+                .to_path_buf(),
+        );
+        manifest.current_volition_snapshot_path = Some(
+            snapshot_path
+                .strip_prefix(&continuity_dir)
+                .unwrap_or(&snapshot_path)
                 .to_path_buf(),
         );
         manifest.sleep_pending = true;
@@ -1365,6 +1381,9 @@ async fn inject_trusted_turn_context_and_response(
     let mut initiative_state_snapshot_after = None;
     let mut initiative_output = None;
     let mut initiative_context_retrieval_hint_terms = None;
+    let mut surfaced = false;
+    let mut suppression_reason = None;
+    let mut rendered_line_present = false;
 
     if let Some(arbitration) = arbitration.as_ref() {
         let output = execute_initiative(&arbitration.winner.initiative, &arbitration.winner.goal);
@@ -1387,12 +1406,25 @@ async fn inject_trusted_turn_context_and_response(
         let repeated_goal = runtime_state.previous_turn_surfaced_goal_id.as_deref()
             == Some(arbitration.winner.goal.id.as_str());
         let renderable_line = render_initiative_line(&output, intensity);
-
-        let surfaced_line = if (protected_winner && !genuine_opportunity) || repeated_goal {
-            None
+        let suppression_reason_local = if matches!(intensity, qsf_volition::ShapingIntensity::None)
+        {
+            Some(qsf_volition::VolitionSuppressionReason::Intensity)
+        } else if protected_winner && !genuine_opportunity {
+            Some(qsf_volition::VolitionSuppressionReason::ProtectedNoOpportunity)
+        } else if repeated_goal {
+            Some(qsf_volition::VolitionSuppressionReason::AntiNagRepeat)
+        } else if renderable_line.is_none() {
+            Some(qsf_volition::VolitionSuppressionReason::NonRenderableOutput)
         } else {
-            renderable_line
+            None
         };
+        let surfaced_line = suppression_reason_local
+            .is_none()
+            .then_some(renderable_line)
+            .flatten();
+        surfaced = surfaced_line.is_some();
+        rendered_line_present = surfaced;
+        suppression_reason = suppression_reason_local;
 
         let mut guard = session.lock().await;
         let state_snapshot_before =
@@ -1465,6 +1497,9 @@ async fn inject_trusted_turn_context_and_response(
                 exchange_index,
                 winner,
                 output.clone(),
+                surfaced,
+                suppression_reason,
+                rendered_line_present,
                 initiative_state_snapshot_before
                     .clone()
                     .expect("initiative trace requires state snapshot before"),

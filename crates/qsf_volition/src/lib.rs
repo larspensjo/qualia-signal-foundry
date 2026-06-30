@@ -8,6 +8,12 @@ pub use arbitration::*;
 mod candidate;
 pub use candidate::*;
 
+mod continuity;
+pub use continuity::*;
+
+mod consolidation;
+pub use consolidation::*;
+
 mod evidence;
 pub use evidence::*;
 

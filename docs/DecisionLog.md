@@ -1496,3 +1496,20 @@ Consequences: Realtime observability surfaces may use per-session `watch` channe
 `kind`-discriminated events-socket messages for latest-only live presentation. Durable
 diagnostics continue to store compact hashes and structured traces; literal payload
 persistence, history, and pretty-printing require separate explicit follow-up work.
+
+## 2026-06-30 - Realtime volition continuity
+Type: Decision
+Decision: Realtime volition continuity is written for inspection but never blindly
+reloaded. New sessions seed from `realtime_seed_fixture()` plus an explicit reviewed
+seed artifact, and durable cross-session volition changes require a human-run reviewed
+acceptance step.
+Context: Phase 6 needed a durable boundary that preserves useful continuity without
+making live volition sticky or turning diagnostics into an automatic promotion path.
+Consequences: `volition-state.json` remains an inspectable continuity artifact, not the
+session seed of record. `volition-seed.reviewed.json` is the only durable seed consumed
+at session start, the sleep/consolidation pass can propose changes but not apply them,
+and reviewed-seed loading failures degrade to the plain fixture with a diagnostics note.
+Refs: docs/Plans/Design.RealtimeVolitionContinuity.md,
+docs/Experiments/Experiment.RealtimeVolitionContinuity.md,
+docs/Architecture/Architecture.RealtimeSessionServer.md,
+docs/Architecture/Architecture.VolitionSystem.md

@@ -60,7 +60,7 @@ Later
 | `Experiment.RealtimeVolitionReadOnlyInspection` | High | Completed | Can the realtime model call `inspect_volition_state` and `select_volition_goals` tools to explain active goals and arbitration results in a live voice session? |
 | `Experiment.RealtimeVolitionContextInjection` | High | Completed | Does injecting a compact, trace-backed volition context packet before `response.create` subtly steer responses toward active goals without displacing user intent? |
 | `Experiment.RealtimeVolitionBoundedInitiative` | High | Running | Can the live loop produce and explain bounded internal initiative outputs (reflection, context retrieval hints, open threads) without executing external effects? |
-| `Experiment.RealtimeVolitionContinuity` | Medium | Planned | Does realtime volition state persist usefully across sessions, and does cross-session consolidation surface recurring goals without making state sticky? |
+| `Experiment.RealtimeVolitionContinuity` | Medium | Running | Does realtime volition state persist usefully across sessions, and does cross-session consolidation surface recurring goals without making state sticky? |
 | `Experiment.RealtimeVolitionInspectionUi` | Medium | Planned | Does a lightweight volition panel in the realtime UI help explain behavior without interrupting the spoken interaction? |
 | `Experiment.StreamingTranscriptionMVP` | Medium | Completed | Can live speech be represented as observable partial and final transcript events? |
 | `Experiment.AudioLoopMVP` | Medium | Superseded | Can a minimal audio loop create a stronger sense of presence than text-only interaction? |

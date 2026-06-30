@@ -171,6 +171,7 @@ mod tests {
         .unwrap();
         ContinuityManifest {
             sleep_pending: true,
+            current_volition_snapshot_path: None,
             ..ContinuityManifest::default()
         }
         .persist(dir.path().join("continuity-manifest.json"))
