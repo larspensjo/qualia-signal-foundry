@@ -1,160 +1,153 @@
 # Handoff: Volition Work — Resume Here
 
-**Date:** 2026-06-30
-**Status:** Layered context injection is complete and live. **Realtime bounded initiative is
-implemented and was human-tested today** — the behavior matches the designed gate, but the test
-exposed diagnostics/observability gaps to close before the trace contract is self-verifying.
-Today's doc + decision-log changes are **uncommitted** (on `main`).
-**Read next:** "What changed today (2026-06-30)", then "Next steps".
+**Date:** 2026-06-30 (updated after Phase 7 complete)
+**Status:** All volition work is **complete**. Both Plan.VolitionGoalSystem.md (8 phases)
+and Plan.RealtimeVolitionIntegration.md (7 phases) are fully implemented and human-tested.
+Both plans are ready to delete. The next open track is personality / goal experimentation —
+adding new tensions and goals to the fixture to explore a different character shape.
 
 ---
 
 ## 30-Second Orientation
 
-The volition system is **not** greenfield. A pure `qsf_volition` crate plus a completed
-8-slice offline build exist ([Plan.VolitionGoalSystem.md](Plans/Plan.VolitionGoalSystem.md)),
-and the realtime integration ([Plan.RealtimeVolitionIntegration.md](Plans/Plan.RealtimeVolitionIntegration.md))
-is now most of the way through: read-only tools, layered context injection, and bounded internal
-initiative are all built. What remains is cross-session persistence and a UI inspection surface.
+The volition system is fully built and live:
 
-Framing (unchanged): **keep the project's vocabulary** (Tension / Goal / Initiative), **keep the
-evidence-based stance** (no free-form emotion or personality layer). "Personality" = the
-configured tension set + `Mode`; "emotion" = derived functional signals. The durable stance lives
-in the DecisionLog (2026-05-15, 2026-06-27); the temporary external brief is scratch.
+- **Pure domain crate** (`qsf_volition`): tensions, goals, salience, arbitration, mode bias,
+  bounded initiative, continuity snapshots, consolidation extraction.
+- **Realtime integration** (`qsf_realtime_server`): per-session `VolitionRuntimeState`, read-only
+  tools, layered context injection (stable baseline + per-turn dynamic packet), bounded initiative
+  on every trusted turn, cross-session continuity via reviewed-seed, and a live **volition state
+  UI panel** in the browser (Phase 7).
+- **Mode system**: `Neutral` / `Focused` / `Exploratory` bias arbitration within the biasable band
+  (tier ≥ 4). Protected tiers (≤ 3) are always immune.
+
+Framing (unchanged): keep the project's vocabulary (Tension / Goal / Initiative); keep the
+evidence-based stance. "Personality" = the configured tension set + Mode. "Emotion" = derived
+functional signals. The durable stance lives in DecisionLog (2026-05-15, 2026-06-27, 2026-06-30).
 
 ---
 
-## What Changed Today (2026-06-30, uncommitted on `main`)
+## What Is Complete
 
-Resolved the two blocking questions in the Phase 5 plan review
-([Review.RealtimeVolitionIntegration.phase5.Plan.codex.json](Plans/Review.RealtimeVolitionIntegration.phase5.Plan.codex.json))
-and ran the live human test.
+### Offline volition build (Plan.VolitionGoalSystem.md — all 8 phases)
 
-| Document / artifact | Change |
+| Phase | Slice | Status |
+|---|---|---|
+| 1 | Document the concept | ✅ done |
+| 2 | Static tension/goal fixture + selection | ✅ done |
+| 3 | Trace-backed initiative proposals | ✅ done |
+| 4 | Event-driven salience, satisfaction, blocking, cooldown | ✅ done |
+| 5 | Arbitration and conflict resolution | ✅ done |
+| 6 | Reflection-generated goal candidates | ✅ done |
+| 7 | Bounded internal initiative execution | ✅ done |
+| 8 | Inspectable mode/bias state | ✅ done |
+
+→ **Plan.VolitionGoalSystem.md can be deleted.**
+
+### Realtime volition integration (Plan.RealtimeVolitionIntegration.md — all 7 phases)
+
+| Phase | Slice | Status |
+|---|---|---|
+| 1 | Extract pure `qsf_volition` crate | ✅ done |
+| 2 | Per-session `VolitionRuntimeState` seeded per QSF session | ✅ done |
+| 3 | Read-only realtime volition tools | ✅ done |
+| 4 | Layered context injection (baseline + dynamic goals/intentions + shaping dial) | ✅ done |
+| 5 | Trace-backed bounded initiative in the live loop | ✅ done + human-tested |
+| 6 | Persist, inspect, and consolidate realtime volition state | ✅ done + human-tested |
+| 7 | Surface volition state in the realtime browser UI | ✅ done |
+
+→ **Plan.RealtimeVolitionIntegration.md can be deleted.**
+
+---
+
+## Current Realtime Integration State
+
+| Feature | State |
 |---|---|
-| [DecisionLog.md](DecisionLog.md) | New entry **2026-06-30 "Realtime bounded-initiative surfacing, anti-nag cadence, and trace granularity"** capturing the protected-winner surfacing gate, anti-nag alternation, compact-snapshot trace contract, and single-item carrier. |
-| [Plans/Plan.RealtimeVolitionIntegration.md](Plans/Plan.RealtimeVolitionIntegration.md) | Steps 5a–5g + Verify rewritten to the resolved decisions; the three open questions moved to a "Resolved decisions" block; corrected the false "shaping dial keeps protected turns quiet" claim. |
-| Live human test | Ran 10 phrases through the realtime UI (typed input). Verified against `state/realtime/diagnostics/default.jsonl` correlated with the Phase-4 `volition_context_injected` traces. |
-
-**The two decisions, in one line each:**
-- **Protected-winner surfacing:** a protected-tier winner surfaces a line only when the turn has a
-  *genuine* opportunity beyond the winner's own topic self-match (expressed uncertainty, introduced
-  contradiction, or another goal's topic match). Rationale grounded in `ProjectVision.md` (presence
-  over task completion), so full suppression on direct asks was rejected.
-- **Anti-nag:** consecutive-turn alternation via `previous_turn_surfaced_goal_id` (set on surfaced
-  turns, cleared otherwise). This replaced the proposed `last_initiative_goal_id`, which would have
-  suppressed a repeated winner forever.
+| `qsf_volition` pure crate | ✅ live |
+| Per-session `VolitionRuntimeState` (seeded; protected tiers) | ✅ live |
+| Read-only tools `inspect_volition_state` / `select_volition_goals` | ✅ live |
+| Layered context injection (stable baseline + per-turn dynamic packet) | ✅ live |
+| Bounded internal initiative with `surfaced` / `suppression_reason` trace | ✅ live |
+| Cross-session continuity via `volition-state.json` + reviewed seed | ✅ live |
+| **Volition state UI panel** (browser, live updates every trusted turn) | ✅ live (Phase 7) |
 
 ---
 
-## Realtime Integration — Phase Status
+## Active Plan: RealtimeVoiceConversation Phase 5
 
-| Slice | State |
-|---|---|
-| Extract `qsf_volition` crate | ✅ done |
-| Per-session `VolitionRuntimeState` (seeded; protected tiers) | ✅ done |
-| Read-only tools `inspect_volition_state` / `select_volition_goals` | ✅ done |
-| Layered context injection before live responses (baseline + dynamic goals/intentions) | ✅ done — `Experiment.RealtimeVolitionContextInjection` |
-| Bounded internal initiative in live loop | ✅ implemented + human-tested 2026-06-30 (observability gaps below) |
-| Persist / inspect / consolidate realtime volition state | ⏳ not started (the next phase) |
-| Surface volition state in the realtime UI | ⏳ not started |
+[Plan.RealtimeVoiceConversation.md](Plans/Plan.RealtimeVoiceConversation.md) Phase 5 — **live
+memory extraction + presence / interruption refinement** — is still the active large plan.
+Decisions D14–D19 are resolved. The steps are:
 
-Offline build ([Plan.VolitionGoalSystem.md](Plans/Plan.VolitionGoalSystem.md)): all slices complete.
+1. Pure extraction-input builder (`qsf_app`) — turns the promoted continuity root into a `SleepInputBundle`
+2. Wire the extraction pass — run the existing summarizer + proposers + review path over it
+3. Live-loop latency observability — extend `DiagnosticRecord::LatencyObservation` per stage
+4. Interruption observability (diagnostics-only, D18) — durable interruption diagnostic record
+5. Optional UI surface for latency/interruption
+6. Gates + docs
 
-> **Note — literal turn-context inspector (implemented):** The realtime UI now has
-> a **literal turn-context inspector** panel ("Last turn context") that shows the
-> raw per-turn provider payload (`TurnContextCapture.messages`, in send order) for
-> the most recent trusted turn. This is driven by the `turn_context` events-socket
-> message (`TurnContextCapture` with `request_hash` + `messages` fields) and is
-> **distinct from the still-pending volition inspection panel**, which would surface
-> structured volition data (mode, tick, active/winning goal, initiative trace links).
-> The turn-context inspector captures what the model received; the volition panel
-> would explain why.
+This is independent of the volition work and does not need to be done before personality experimentation.
 
 ---
 
-## Human Test Result (2026-06-30)
+## Next Exploration: Personality / Goal Experimentation
 
-All 10 turns matched the designed gate. Evidence is the bounded-initiative + context-injection
-records in `state/realtime/diagnostics/default.jsonl` (10 `realtime_bounded_initiative` records,
-in test order):
+The fixture in [crates/qsf_volition/src/fixture.rs](../crates/qsf_volition/src/fixture.rs) defines
+the tensions and goals that shape live behavior. Adding a new "personality" means adding tensions and
+goals with the character you want, at the right tier.
 
-- **Quiet on direct asks** ("How can you help…", "Please show me…"): winner
-  `honor-explicit-user-request`, only its own topic signal → suppressed. ✅
-- **Surfaces on genuine opportunity** ("I'm confused about…", "…done, but how is that consistent?"):
-  the contradiction case won via `avoid-overstating-impl-status` (tier 1) and the spoken reply was a
-  textbook avoid-overstating reflection. ✅
-- **Non-protected sweet spot** ("…evidence…unsettled", "Comparing two prototype fixtures…"):
-  `clarify-weak-evidence-topic` (reflection) and `propose-followup-experiment` (ExperimentProposed). ✅
-- **Context-retrieval** ("…revisit the unresolved thread about continuity"): `resurface-open-thread`
-  → `ContextRetrievalRequested`, hints `[continuity, thread, revisit, unresolved]` stashed, no spoken
-  line (hint-only). ✅
-- `external_effect_executed = false` on all 10 — safety boundary held. ✅
+### Current fixture summary
 
-**Gaps the test exposed (these are the next steps):**
+**Tensions (static_fixture):**
+| ID | Tier | Bias |
+|---|---|---|
+| `boundary-preservation` | 1 | Highest |
+| `coherence-maintenance` | 4 | High |
+| `continuity-preservation` | 5 | High |
+| `research-curiosity` | 7 | Medium |
 
-1. **Surfacing outcome is not persisted.** The trace records the gate *inputs* (winner, signals,
-   intensity, output) but not whether a line was actually surfaced or whether anti-nag fired. The
-   surfaced/suppressed result had to be *reconstructed*; the anti-nag suppression is only proven by
-   the unit test `repeated_surfaceable_winner_alternates… → [true,false,true]`, not by the artifact.
-2. **`exchange_index` is `0` on every volition trace** (Phase 4 and Phase 5), because the trusted
-   turn came through the typed box. The plan's "forward link by `exchange_index`" for hint
-   consumption is therefore not usable as-is.
-3. **Hint round-trip not completed live.** The retrieval hint was stashed on the last turn, so
-   `hint_consumed_by_next_memory_injection` stayed `false`; the stash is per-connection
-   (`SidebandRuntimeState`) and would be lost on reconnect (the known `phase5-sideband-stash-lifetime`
-   risk).
-4. **UI text duplication** (separate UI bug): each answer renders as a lead-in bubble + a detail
-   bubble, then a third bubble repeating both concatenated. Voice was not duplicated → it's a
-   realtime UI transcript reducer/selector issue, not sideband/volition.
+**Protected tensions (realtime_seed_fixture, tier ≤ 3):**
+| ID | Tier | Bias |
+|---|---|---|
+| `explicit-user-intent` | 2 | Highest |
+| `current-task-completion` | 3 | High |
 
----
+**Goals:** `clarify-weak-evidence-topic`, `avoid-overstating-impl-status`,
+`resurface-open-thread`, `propose-followup-experiment`, `honor-explicit-user-request`,
+`complete-current-task`.
 
-## Next Steps (in priority order)
+### How to add a new tension/goal
 
-1. **Add `surfaced: bool` + `suppression_reason` to `RealtimeBoundedInitiativeTrace`** so surfacing
-   and anti-nag are auditable from the artifact (closes gap #1). Update the experiment's
-   trace-completeness contract and parsing verification to assert on them.
-2. **Give each trusted turn a reliable unique key** (fix gap #2) so cross-turn correlation and the
-   hint-consumption forward link work; confirm whether real voice turns already differ from the
-   typed path before choosing the fix.
-3. **Re-run the hint round-trip as two consecutive same-session turns** to verify augmented retrieval
-   and `hint_consumed_by_next_memory_injection == true` (closes gap #3). Decide whether the stash
-   must survive sideband reconnect or stay documented best-effort.
-4. **Investigate the UI transcript duplication** (gap #4), independent of volition.
-5. **Verify/extend [Experiment.RealtimeVolitionBoundedInitiative.md](Experiments/Experiment.RealtimeVolitionBoundedInitiative.md)**
-   covers the resolved gate, the A/A/A alternation, the verbatim per-variant line text, and the new
-   `surfaced`/`suppression_reason` fields once added. Update the architecture docs listed in the
-   plan's "Documentation To Update" (VolitionSystem, ToolSystem, ContextManagement,
-   StateAndObservability) for the bounded-initiative behavior.
-6. **Housekeeping:** commit today's doc + decision-log changes (branch first; currently on `main`).
+**Immediate (current session only):** edit `static_fixture()` or `realtime_seed_fixture()` in
+[fixture.rs](../crates/qsf_volition/src/fixture.rs), add a `Tension` + `Goal`, rebuild, and
+run `qsf.ps1 realtime`. The volition UI panel will show it winning or losing arbitration live.
 
----
+Good tier placement for experimentation:
+- Tier 4–6: biasable band — mode bias can reorder these relative to each other
+- Tier 7+: lowest priority, easily outranked by curiosity (but still fires when nothing else matches)
+- Tier ≤ 3: protected floor — use only for genuine safety/user-intent constraints
 
-## Next Phase (after the steps above)
+**Cross-session persistence:** write a `volition-seed.reviewed.json` (the reviewed-seed format from
+`qsf_volition::continuity`) and run `accept-reviewed-volition-seed` to merge it into future sessions.
+New goals in the reviewed seed cannot be admitted at tier ≤ 3 (the `apply_reviewed_seed` invariant
+enforces this). The `volition-continuity` experiment runs the consolidation pass.
 
-**Persist, inspect, and consolidate realtime volition state.** Decide what survives across sessions
-(full `VolitionState` snapshot vs. compact derived memory vs. diagnostics-only + sleep/consolidation
-extraction), keep durable goal/candidate changes behind manual review, and degrade gracefully to the
-default fixture on corrupt/missing persistence. The gating open decision is **Adaptation A** — whether
-a minimal cross-session continuity slice (recurring `Blocked` / open-thread goal ids) jumps ahead of
-the full persistence work. After persistence, the final realtime slice is the **UI inspection panel**
-(mode, tick, active/winning goal, selected/suppressed goals, last bounded initiative, trace links).
+**Watched in the UI:** after `cargo build`, the volition panel shows mode, tick, winning goal,
+tier/protection status, shaping intensity, and initiative outcome live on every trusted turn —
+so you can see a new goal win or lose arbitration in real time without inspecting JSONL.
 
----
+### Ideas to try
 
-## Open Decisions Parked
-
-- **Adaptation A:** pull cross-session continuity earlier vs. leave it in the persistence phase.
-- **Initiative derivation:** stay rule-based (winner → `execute_initiative`) or add a later
-  model-assisted proposer emitting the same `InitiativeOutput` shape through the event path. Default:
-  rule-based only for now (the one remaining open question in the bounded-initiative plan).
-- **Selector quality:** whether broad help-related prompts should select
-  `honor-explicit-user-request` / `complete-current-task`, or whether the current omitted-goal trace
-  is sufficient for explicit inspection.
-- **Emotion/personality slices, multi-turn Plans, conscious/subconscious, user-vs-simulator goals:**
-  classified as new scope in
-  [Design.VolitionBriefReconciliation.md](Plans/Design.VolitionBriefReconciliation.md); none scheduled.
+- **Depth-seeking tension** (tier 5–6): fire when the conversation stays shallow across turns —
+  pressure toward longer explanations or example requests.
+- **Skepticism tension** (tier 4): activate when claims are made without evidence markers —
+  nudge toward "what's the evidence?" reflection.
+- **Acknowledgement tension** (tier 6): when the user signals effort or frustration, surface
+  a brief acknowledgement line before the answer.
+- **Mode exploration**: switch to `Exploratory` via `VolitionEvent::ModeChanged` at session start
+  and watch curiosity goals (`research-curiosity`, tier 7) now win over continuity goals (tier 5)
+  for `Exploratory`-boosted goals, while protected tiers stay immune.
 
 ---
 
@@ -162,16 +155,38 @@ the full persistence work. After persistence, the final realtime slice is the **
 
 | Purpose | Path |
 |---|---|
-| Phase 5 decisions (durable) | [docs/DecisionLog.md](DecisionLog.md) — 2026-06-30 entry |
-| Realtime plan (current) | [docs/Plans/Plan.RealtimeVolitionIntegration.md](Plans/Plan.RealtimeVolitionIntegration.md) |
-| Phase 5 review (blockers, now resolved) | [docs/Plans/Review.RealtimeVolitionIntegration.phase5.Plan.codex.json](Plans/Review.RealtimeVolitionIntegration.phase5.Plan.codex.json) |
-| Bounded-initiative experiment | [docs/Experiments/Experiment.RealtimeVolitionBoundedInitiative.md](Experiments/Experiment.RealtimeVolitionBoundedInitiative.md) |
-| Context-injection experiment (complete) | [docs/Experiments/Experiment.RealtimeVolitionContextInjection.md](Experiments/Experiment.RealtimeVolitionContextInjection.md) |
-| Initiative render + trace | `crates/qsf_realtime_server/src/realtime/volition_initiative.rs` |
-| Surfacing gate + anti-nag wiring | `crates/qsf_realtime_server/src/realtime/sideband.rs` (`has_genuine_opportunity_signal`, gate near the `RealtimeBoundedInitiative` write) |
-| Live diagnostics (per session id) | `state/realtime/diagnostics/<qsf_session_id>.jsonl` (default id: `default`) |
-| Reconciliation (mapping, disposition, framing) | [docs/Plans/Design.VolitionBriefReconciliation.md](Plans/Design.VolitionBriefReconciliation.md) |
-| Project glossary | [docs/Glossary.md](Glossary.md) |
-| Offline build plan (complete) | [docs/Plans/Plan.VolitionGoalSystem.md](Plans/Plan.VolitionGoalSystem.md) |
-| Current architecture | [docs/Architecture/Architecture.VolitionSystem.md](Architecture/Architecture.VolitionSystem.md) |
-| Crate | `crates/qsf_volition/src/lib.rs` |
+| Fixture (tensions + goals) | `crates/qsf_volition/src/fixture.rs` |
+| Model types (Tension, Goal, Mode, AllowedEffect, …) | `crates/qsf_volition/src/model.rs` |
+| Arbitration + mode bias | `crates/qsf_volition/src/arbitration.rs` |
+| Continuity / reviewed-seed | `crates/qsf_volition/src/continuity.rs` |
+| Realtime session volition state | `crates/qsf_realtime_server/src/realtime/volition.rs` |
+| Context injection builders | `crates/qsf_realtime_server/src/realtime/volition_injection.rs` |
+| Bounded initiative render + trace | `crates/qsf_realtime_server/src/realtime/volition_initiative.rs` |
+| UI volition panel | `crates/qsf_realtime_server/ui/src/realtime.ts` (`latestVolitionState`, `selectVolitionPanelModel`) |
+| Volition inspection capture | `crates/qsf_realtime_server/src/realtime/volition_inspection_capture.rs` |
+| Surfacing gate + anti-nag wiring | `crates/qsf_realtime_server/src/realtime/sideband.rs` |
+| Architecture (volition system) | `docs/Architecture/Architecture.VolitionSystem.md` |
+| Durable decisions | `docs/DecisionLog.md` (entries 2026-05-15, 2026-06-27, 2026-06-30) |
+| Active large plan | `docs/Plans/Plan.RealtimeVoiceConversation.md` Phase 5 |
+| Live diagnostics (per session) | `state/realtime/diagnostics/<qsf_session_id>.jsonl` (default: `default`) |
+| Reviewed-seed file | `state/realtime/continuity/<session>/volition-seed.reviewed.json` |
+
+---
+
+## Open Decisions Parked
+
+- **Adaptation A:** cross-session continuity continuity for recurring `Blocked` / open-thread goal ids —
+  was superseded by Phase 6's full snapshot+reviewed-seed mechanism. No remaining action needed unless
+  the reviewed-seed proves insufficient in practice.
+- **Initiative derivation:** stay rule-based (`execute_initiative`) or add a later model-assisted
+  proposer emitting the same `InitiativeOutput` shape. Default: rule-based only. Revisit if the
+  rule-based outputs feel mechanical after more personality experimentation.
+- **Selector quality:** broad help-related prompts may not activate `honor-explicit-user-request` /
+  `complete-current-task` because those goals require specific keyword matches. Revisit keyword lists
+  in the fixture if the protected-tier goals feel invisible in live sessions.
+- **Personality scope:** emotion/personality slices, multi-turn Plans, conscious/subconscious,
+  user-vs-simulator goals — classified as new scope in
+  [Design.VolitionBriefReconciliation.md](Plans/Design.VolitionBriefReconciliation.md); none scheduled.
+- **Phase 6 reconciliation item:** the reviewed-seed-only vs. snapshot-restore seeding divergence is
+  resolved as snapshot-restore (the implemented behavior); the UI panel must not claim "tick resets
+  each session" (it does not). No further action unless the behavior changes.
