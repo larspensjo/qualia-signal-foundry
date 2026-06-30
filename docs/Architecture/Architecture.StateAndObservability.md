@@ -61,6 +61,10 @@ candidate categories listed below still have no shared module.
   that carry the injection layers, stable baseline hash, grounded opportunity
   signals, arbitration summary, shaping intensity, and the outbound request
   reference for the trusted turn.
+- Realtime bounded initiative now records `RealtimeBoundedInitiative`
+  diagnostics with the winning goal, initiative proposal/output, before/after
+  state inspection snapshots, next-turn hint consumption, and the shared
+  `response_create_event_ref` for the same turn.
 - Realtime tool activity has two distinct records: `ToolRequestRecord` captures
   the provider request, and `ToolExecutionRecord` captures the permission
   decision, status, capped result summary, error, timing, per-response model

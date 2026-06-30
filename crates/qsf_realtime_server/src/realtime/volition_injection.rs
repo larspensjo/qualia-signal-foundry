@@ -73,6 +73,7 @@ pub struct VolitionTurnPacketSummary {
     pub protected_tier_active: bool,
     pub shaping_intensity: ShapingIntensity,
     pub shaping_intensity_inputs: ShapingIntensityInputs,
+    pub initiative_line: Option<String>,
     pub stable_baseline_hash: String,
     pub context_packet_hash: String,
     pub context_packet_token_estimate: usize,
@@ -119,6 +120,7 @@ pub fn build_volition_turn_context_packet(
     opportunities: &[OpportunitySignal],
     intensity: ShapingIntensity,
     stable_baseline_hash: String,
+    initiative_line: Option<&str>,
 ) -> Option<VolitionTurnPacket> {
     let arbitration = arbitration?;
     if ranked.selected.is_empty() {
@@ -131,6 +133,7 @@ pub fn build_volition_turn_context_packet(
         &arbitration,
         opportunities,
         intensity,
+        initiative_line,
         stable_baseline_hash,
     );
     let text = render_turn_packet_text(&summary);
@@ -180,6 +183,7 @@ fn build_turn_packet_summary(
     arbitration: &ModeArbitrationResult,
     opportunities: &[OpportunitySignal],
     intensity: ShapingIntensity,
+    initiative_line: Option<&str>,
     stable_baseline_hash: String,
 ) -> VolitionTurnPacketSummary {
     let selector_output = VolitionSelectorSummary {
@@ -245,6 +249,7 @@ fn build_turn_packet_summary(
         &arbitration_result,
         opportunities,
         intensity,
+        initiative_line,
         &shaping_intensity_inputs,
         omitted_or_suppressed_candidates.len(),
         &omitted_or_suppressed_candidates,
@@ -263,6 +268,7 @@ fn build_turn_packet_summary(
         protected_tier_active,
         shaping_intensity: intensity,
         shaping_intensity_inputs,
+        initiative_line: initiative_line.map(str::to_string),
         stable_baseline_hash,
         context_packet_hash,
         context_packet_token_estimate,
@@ -337,10 +343,12 @@ fn build_mode_bias_outcomes(arbitration: &ModeArbitrationResult) -> Vec<Volition
     outcomes
 }
 
+#[allow(clippy::too_many_arguments)]
 fn render_turn_packet_text_from_parts(
     arbitration: &VolitionArbitrationSummary,
     opportunities: &[OpportunitySignal],
     intensity: ShapingIntensity,
+    initiative_line: Option<&str>,
     inputs: &ShapingIntensityInputs,
     suppressed_or_omitted_count: usize,
     candidates: &[VolitionCandidateSummary],
@@ -369,9 +377,12 @@ fn render_turn_packet_text_from_parts(
     } else {
         "false"
     };
+    let initiative_section = initiative_line
+        .map(|line| format!("{line}\n"))
+        .unwrap_or_default();
 
     format!(
-        "Simulated volition context for this turn (internal state only; not a claim of real desire or consciousness).\nActive goal: {title} ({goal_id}) — {summary}\nArbitration: {arbitration_status}; mode {mode}; protected winner: {protected}.\nOpportunities: {opportunities}.\nShaping intensity: {intensity} (from {inputs}).\nOther candidates: {suppressed_or_omitted_count} not selected ({reason_categories}).\nRationale: {rationale}.\nGuidance: You may let this gently shape framing at the {intensity} level only. Do not state these goals as literal desires and do not take any external action.",
+        "Simulated volition context for this turn (internal state only; not a claim of real desire or consciousness).\nActive goal: {title} ({goal_id}) — {summary}\nArbitration: {arbitration_status}; mode {mode}; protected winner: {protected}.\nOpportunities: {opportunities}.\nShaping intensity: {intensity} (from {inputs}).\nOther candidates: {suppressed_or_omitted_count} not selected ({reason_categories}).\n{initiative_section}Rationale: {rationale}.\nGuidance: You may let this gently shape framing at the {intensity} level only. Do not state these goals as literal desires and do not take any external action.",
         title = arbitration.winner_goal_title,
         goal_id = arbitration.winner_goal_id,
         summary = arbitration.winner_goal_summary,
@@ -448,6 +459,7 @@ fn render_turn_packet_text(summary: &VolitionTurnPacketSummary) -> String {
         &summary.arbitration_result,
         &summary.opportunity_signals,
         summary.shaping_intensity,
+        summary.initiative_line.as_deref(),
         &summary.shaping_intensity_inputs,
         summary.omitted_or_suppressed_candidates.len(),
         &summary.omitted_or_suppressed_candidates,
@@ -506,6 +518,7 @@ mod tests {
                 &opportunities,
                 ShapingIntensity::None,
                 "stable-baseline-hash".to_string(),
+                None,
             )
             .is_none()
         );
@@ -532,10 +545,17 @@ mod tests {
             &opportunities,
             ShapingIntensity::Low,
             "stable-baseline-hash".to_string(),
+            Some("Bounded initiative: reflect on a thing. Keep it simulated and internal; do not take external action."),
         )
         .expect("packet");
         assert!(packet.text.contains("Active goal:"));
         assert!(packet.text.contains("Guidance:"));
+        assert!(packet.text.contains("Bounded initiative: reflect on a thing. Keep it simulated and internal; do not take external action.\nRationale:"));
+        assert!(
+            !packet
+                .text
+                .contains("Bounded initiative: Bounded initiative:")
+        );
         assert!(packet.summary.context_packet_hash.len() == 64);
         assert!(packet.summary.context_packet_token_estimate > 0);
     }

@@ -196,6 +196,11 @@ volition context packet is a separate task/context pack: it is injected after an
 retrieved memory item and before the initial `response.create`, and it remains
 bounded so it can shape framing without replacing the memory layer.
 
+Bounded realtime initiative also lives in this layer. When the arbitration winner
+requests context retrieval, the query terms are held as next-turn hints rather than
+surfaced immediately; when a bounded initiative line is surfaced, it rides inside
+the existing volition packet instead of becoming a separate context item.
+
 ## Context Layers
 
 A useful candidate model is to divide context into layers.

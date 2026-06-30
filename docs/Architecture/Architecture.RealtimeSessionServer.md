@@ -30,6 +30,11 @@ mode, not a one-off experiment server.
   session instructions and injects a bounded per-turn volition context packet
   before the initial `response.create`, while recording a
   `VolitionContextInjected` diagnostic trace for the trusted turn.
+- The same sideband now derives bounded internal initiative from the arbitration
+  winner, appends any surfaced initiative line to the existing volition packet,
+  stashes `ContextRetrievalRequested` hints for the next turn, and records a
+  `RealtimeBoundedInitiative` diagnostic trace alongside the context-injection
+  trace.
 - The realtime sideband declares a read-only realtime tool allow-list
   (`search_memory`, `get_associations`, `inspect_session_state`,
   `inspect_volition_state`, `select_volition_goals`), records `ToolRequested`

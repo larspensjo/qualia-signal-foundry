@@ -8,6 +8,7 @@ use serde::{Deserialize, Serialize};
 use time::OffsetDateTime;
 
 use crate::realtime::turn_integrity::TurnPhase;
+use crate::realtime::volition_initiative::RealtimeBoundedInitiativeTrace;
 use crate::realtime::volition_injection::VolitionContextInjectionTrace;
 use qsf_session::Exchange;
 
@@ -60,6 +61,12 @@ pub enum DiagnosticRecord {
         exchange_index: usize,
         recorded_at: OffsetDateTime,
         trace: VolitionContextInjectionTrace,
+    },
+    RealtimeBoundedInitiative {
+        qsf_session_id: String,
+        exchange_index: usize,
+        recorded_at: OffsetDateTime,
+        trace: RealtimeBoundedInitiativeTrace,
     },
     DiagnosticExchangeRecorded {
         qsf_session_id: String,

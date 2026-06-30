@@ -59,7 +59,7 @@ Later
 | `Experiment.RealtimeVolitionStateSeed` | High | Completed | Does each realtime session receive isolated fixture-backed volition state, do protected-tier goals win arbitration under all modes, and does the transcript mapping advance the tick without changing visible behavior? |
 | `Experiment.RealtimeVolitionReadOnlyInspection` | High | Completed | Can the realtime model call `inspect_volition_state` and `select_volition_goals` tools to explain active goals and arbitration results in a live voice session? |
 | `Experiment.RealtimeVolitionContextInjection` | High | Completed | Does injecting a compact, trace-backed volition context packet before `response.create` subtly steer responses toward active goals without displacing user intent? |
-| `Experiment.RealtimeVolitionBoundedInitiative` | High | Planned | Can the live loop produce and explain bounded internal initiative outputs (reflection, context retrieval hints, open threads) without executing external effects? |
+| `Experiment.RealtimeVolitionBoundedInitiative` | High | Running | Can the live loop produce and explain bounded internal initiative outputs (reflection, context retrieval hints, open threads) without executing external effects? |
 | `Experiment.RealtimeVolitionContinuity` | Medium | Planned | Does realtime volition state persist usefully across sessions, and does cross-session consolidation surface recurring goals without making state sticky? |
 | `Experiment.RealtimeVolitionInspectionUi` | Medium | Planned | Does a lightweight volition panel in the realtime UI help explain behavior without interrupting the spoken interaction? |
 | `Experiment.StreamingTranscriptionMVP` | Medium | Completed | Can live speech be represented as observable partial and final transcript events? |

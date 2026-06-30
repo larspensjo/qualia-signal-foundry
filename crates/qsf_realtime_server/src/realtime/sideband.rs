@@ -1,5 +1,6 @@
 use std::collections::HashSet;
 use std::convert::TryFrom;
+use std::mem;
 use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime};
 
@@ -25,8 +26,9 @@ use qsf_session::{
 };
 use qsf_tools::ToolRequest;
 use qsf_volition::{
-    ReceptivenessHint, arbitrate_with_mode, choose_shaping_intensity, detect_opportunities,
-    grounded_terms_from_text, select_goals_ranked,
+    GroundingRef, OpportunitySignal, OpportunitySignalKind, ReceptivenessHint, VolitionEvent,
+    arbitrate_with_mode, build_state_inspection, choose_shaping_intensity, detect_opportunities,
+    execute_initiative, grounded_terms_from_text, select_goals_ranked,
 };
 use sha2::Digest;
 use time::OffsetDateTime;
@@ -48,6 +50,9 @@ use crate::realtime::tools::{
 };
 use crate::realtime::turn_integrity::{
     TranscriptDisposition, TurnPhase, classify_final_transcript,
+};
+use crate::realtime::volition_initiative::{
+    build_realtime_bounded_initiative_trace, render_initiative_line,
 };
 use crate::realtime::volition_injection::{
     build_volition_context_injection_trace, build_volition_turn_context_packet,
@@ -131,6 +136,8 @@ struct SidebandRuntimeState {
     accumulated_cached_input_tokens: u32,
     accumulated_output_tokens: u32,
     tool_calls_in_turn: usize,
+    pending_context_retrieval_hints: Vec<String>,
+    previous_turn_surfaced_goal_id: Option<String>,
     stale_response_ids: HashSet<String>,
     latency_record_labels_emitted: HashSet<String>,
 }
@@ -1229,10 +1236,19 @@ async fn inject_trusted_turn_context_and_response(
     volition_tick_before: u64,
     input_transcript_ref: String,
 ) -> anyhow::Result<()> {
+    let pending_context_retrieval_hints =
+        mem::take(&mut runtime_state.pending_context_retrieval_hints);
+    let hint_consumed_by_next_memory_injection = !pending_context_retrieval_hints.is_empty();
+    let retrieval_query = if hint_consumed_by_next_memory_injection {
+        format!("{transcript} {}", pending_context_retrieval_hints.join(" "))
+    } else {
+        transcript.to_string()
+    };
+
     let retrieved_memories = match retrieve_session_memories(
         state,
         qsf_session_id,
-        transcript,
+        &retrieval_query,
         RetrievalStrategy::AssociationWeighted,
         DEFAULT_INJECTION_FRAGMENT_LIMIT,
     ) {
@@ -1342,13 +1358,79 @@ async fn inject_trusted_turn_context_and_response(
             choose_shaping_intensity(arbitration, &opportunities, ReceptivenessHint::Neutral)
         })
         .unwrap_or(qsf_volition::ShapingIntensity::None);
+    let mut initiative_line = None;
+    let mut initiative_state_snapshot_before = None;
+    let mut initiative_state_snapshot_after = None;
+    let mut initiative_output = None;
+    let mut initiative_context_retrieval_hint_terms = None;
+
+    if let Some(arbitration) = arbitration.as_ref() {
+        let output = execute_initiative(&arbitration.winner.initiative, &arbitration.winner.goal);
+        let context_retrieval_hint_terms = match &output {
+            qsf_volition::InitiativeOutput::ContextRetrievalRequested { query_terms } => {
+                Some(query_terms.clone())
+            }
+            _ => None,
+        };
+        if let Some(query_terms) = context_retrieval_hint_terms.as_ref() {
+            runtime_state
+                .pending_context_retrieval_hints
+                .extend(query_terms.iter().cloned());
+        }
+
+        let protected_winner =
+            arbitration.winner_bias.effective_tier <= qsf_volition::PROTECTED_TIER_FLOOR;
+        let genuine_opportunity =
+            has_genuine_opportunity_signal(&opportunities, &arbitration.winner.goal.id);
+        let repeated_goal = runtime_state.previous_turn_surfaced_goal_id.as_deref()
+            == Some(arbitration.winner.goal.id.as_str());
+        let renderable_line = render_initiative_line(&output, intensity);
+
+        let surfaced_line = if (protected_winner && !genuine_opportunity) || repeated_goal {
+            None
+        } else {
+            renderable_line
+        };
+
+        let mut guard = session.lock().await;
+        let state_snapshot_before =
+            build_state_inspection(&guard.volition.state, &guard.volition.fixture);
+        let initiative_event = VolitionEvent::InitiativeExecuted {
+            goal_id: arbitration.winner.goal.id.clone(),
+            effect: arbitration.winner.initiative.effect,
+            output: output.clone(),
+            rationale: arbitration.winner.initiative.rationale.clone(),
+            tick: guard.volition.state.tick,
+        };
+        guard.volition.apply_events(vec![initiative_event]);
+        let state_snapshot_after =
+            build_state_inspection(&guard.volition.state, &guard.volition.fixture);
+        drop(guard);
+
+        runtime_state.previous_turn_surfaced_goal_id = surfaced_line
+            .as_ref()
+            .map(|_| arbitration.winner.goal.id.clone());
+        initiative_line = surfaced_line;
+        initiative_state_snapshot_before = Some(state_snapshot_before);
+        initiative_state_snapshot_after = Some(state_snapshot_after);
+        initiative_output = Some(output);
+        initiative_context_retrieval_hint_terms = context_retrieval_hint_terms;
+    } else {
+        runtime_state.previous_turn_surfaced_goal_id = None;
+    }
+
     let volition_packet = build_volition_turn_context_packet(
         volition_snapshot,
         &ranked,
-        arbitration,
+        arbitration.clone(),
         &opportunities,
         intensity,
         crate::realtime::volition_injection::stable_baseline_hash(&config.instructions),
+        initiative_line.as_deref(),
+    );
+    debug_assert!(
+        initiative_output.is_none() || volition_packet.is_some(),
+        "arbitration-backed initiative mutation must have a volition packet so the trace is emitted"
     );
 
     if let Some(turn_packet) = &volition_packet {
@@ -1371,6 +1453,27 @@ async fn inject_trusted_turn_context_and_response(
         );
         turn_request_values.push(response_create.clone());
         let request_hash = hash_request_sequence(&turn_request_values);
+        let initiative_trace = initiative_output.as_ref().map(|output| {
+            let winner = &arbitration
+                .as_ref()
+                .expect("initiative trace requires arbitration winner")
+                .winner;
+            build_realtime_bounded_initiative_trace(
+                qsf_session_id,
+                exchange_index,
+                winner,
+                output.clone(),
+                initiative_state_snapshot_before
+                    .clone()
+                    .expect("initiative trace requires state snapshot before"),
+                initiative_state_snapshot_after
+                    .clone()
+                    .expect("initiative trace requires state snapshot after"),
+                initiative_context_retrieval_hint_terms.clone(),
+                hint_consumed_by_next_memory_injection,
+                &request_hash.to_string(),
+            )
+        });
         let mut trace = build_volition_context_injection_trace(
             qsf_session_id,
             exchange_index,
@@ -1396,6 +1499,14 @@ async fn inject_trusted_turn_context_and_response(
             recorded_at: OffsetDateTime::now_utc(),
             trace,
         })?;
+        if let Some(initiative_trace) = initiative_trace {
+            diagnostics.write(&DiagnosticRecord::RealtimeBoundedInitiative {
+                qsf_session_id: qsf_session_id.to_string(),
+                exchange_index,
+                recorded_at: OffsetDateTime::now_utc(),
+                trace: initiative_trace,
+            })?;
+        }
         send_json(outbound_tx, response_create)?;
         runtime_state.response_create_sent_at = Some(OffsetDateTime::now_utc());
         let response_create_sent_at = runtime_state.response_create_sent_at;
@@ -1437,6 +1548,20 @@ async fn inject_trusted_turn_context_and_response(
     runtime_state.pending_response_exchange = Some(exchange_index);
     runtime_state.turn_phase = TurnPhase::AwaitingResponse;
     Ok(())
+}
+
+fn has_genuine_opportunity_signal(
+    opportunities: &[OpportunitySignal],
+    winner_goal_id: &str,
+) -> bool {
+    opportunities.iter().any(|signal| match &signal.kind {
+        OpportunitySignalKind::ExpressedUncertainty
+        | OpportunitySignalKind::IntroducedContradiction => true,
+        OpportunitySignalKind::OpenGoalTopicMatch => match &signal.grounding_ref {
+            GroundingRef::GoalId { goal_id } => goal_id != winner_goal_id,
+            GroundingRef::InputTerm { .. } => false,
+        },
+    })
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -2186,11 +2311,409 @@ mod tests {
         cvar.notify_one();
     }
 
+    async fn run_trusted_transcript_turn(
+        state: &AppState,
+        qsf_session_id: &str,
+        runtime_state: &mut SidebandRuntimeState,
+        outbound_tx: &mpsc::UnboundedSender<Message>,
+        transcript: &str,
+        call_id: &str,
+    ) {
+        handle_provider_event(
+            state,
+            qsf_session_id,
+            call_id,
+            "conversation.item.input_audio_transcription.completed",
+            &serde_json::json!({
+                "type": "conversation.item.input_audio_transcription.completed",
+                "event_id": format!("evt-{call_id}"),
+                "item_id": format!("item-{call_id}"),
+                "transcript": transcript
+            }),
+            runtime_state,
+            outbound_tx,
+        )
+        .await
+        .expect("trusted transcript turn");
+    }
+
+    fn drain_outbound_texts(outbound_rx: &mut mpsc::UnboundedReceiver<Message>) -> Vec<String> {
+        let mut texts = Vec::new();
+        while let Ok(message) = outbound_rx.try_recv() {
+            if let Ok(text) = message.to_text() {
+                texts.push(text.to_string());
+            }
+        }
+        texts
+    }
+
+    async fn set_volition_mode(state: &AppState, qsf_session_id: &str, mode: qsf_volition::Mode) {
+        let runtime = state
+            .session_runtime(qsf_session_id)
+            .await
+            .expect("runtime");
+        let mut guard = runtime.lock().await;
+        let tick = guard.volition.state.tick;
+        guard
+            .volition
+            .apply_events(vec![VolitionEvent::ModeChanged { mode, tick }]);
+    }
+
     #[test]
     fn hash_request_sequence_is_deterministic() {
         let first = hash_request_sequence(&[serde_json::json!({"a": 1})]);
         let second = hash_request_sequence(&[serde_json::json!({"a": 1})]);
         assert_eq!(first, second);
+    }
+
+    #[tokio::test]
+    async fn protected_winner_on_direct_request_records_but_does_not_surface_initiative() {
+        let tempdir = TempDir::new().expect("tempdir");
+        let state = state(&tempdir);
+        let allocation = state.create_session().await.expect("session");
+        let mut runtime_state = SidebandRuntimeState::default();
+        let (outbound_tx, mut outbound_rx) = mpsc::unbounded_channel();
+
+        run_trusted_transcript_turn(
+            &state,
+            &allocation.qsf_session_id,
+            &mut runtime_state,
+            &outbound_tx,
+            "how can you help me",
+            "protected-direct",
+        )
+        .await;
+
+        let outbound_texts = drain_outbound_texts(&mut outbound_rx);
+        assert!(
+            outbound_texts
+                .iter()
+                .all(|text| !text.contains("Bounded initiative:")),
+            "direct protected request should not surface initiative"
+        );
+
+        let records = diagnostic_records(&state, &allocation.qsf_session_id).await;
+        let initiative_trace = records
+            .iter()
+            .find_map(|record| match record {
+                DiagnosticRecord::RealtimeBoundedInitiative { trace, .. } => Some(trace),
+                _ => None,
+            })
+            .expect("initiative trace");
+        assert!(
+            !initiative_trace
+                .bounded_or_external_output
+                .external_effect_executed
+        );
+        assert!(initiative_trace.context_retrieval_hint_terms.is_none());
+        assert!(!initiative_trace.response_create_event_ref.is_empty());
+    }
+
+    #[tokio::test]
+    async fn protected_direct_request_suppresses_surfaced_initiative_under_all_modes() {
+        let modes = [
+            qsf_volition::Mode::Neutral,
+            qsf_volition::Mode::Focused,
+            qsf_volition::Mode::Exploratory,
+        ];
+
+        for mode in modes {
+            let tempdir = TempDir::new().expect("tempdir");
+            let state = state(&tempdir);
+            let allocation = state.create_session().await.expect("session");
+            set_volition_mode(&state, &allocation.qsf_session_id, mode).await;
+            let mut runtime_state = SidebandRuntimeState::default();
+            let (outbound_tx, mut outbound_rx) = mpsc::unbounded_channel();
+
+            run_trusted_transcript_turn(
+                &state,
+                &allocation.qsf_session_id,
+                &mut runtime_state,
+                &outbound_tx,
+                "how can you help me",
+                &format!("protected-direct-{mode}"),
+            )
+            .await;
+
+            let outbound_texts = drain_outbound_texts(&mut outbound_rx);
+            assert!(
+                outbound_texts
+                    .iter()
+                    .all(|text| !text.contains("Bounded initiative:")),
+                "ordinary protected request should not surface initiative under {mode}"
+            );
+
+            let records = diagnostic_records(&state, &allocation.qsf_session_id).await;
+            let initiative_trace = records
+                .iter()
+                .find_map(|record| match record {
+                    DiagnosticRecord::RealtimeBoundedInitiative { trace, .. } => Some(trace),
+                    _ => None,
+                })
+                .expect("initiative trace");
+            assert_eq!(
+                initiative_trace.winning_goal_id,
+                "honor-explicit-user-request"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn curiosity_terms_do_not_surface_curiosity_initiative_when_protected_goal_is_present() {
+        let modes = [
+            qsf_volition::Mode::Neutral,
+            qsf_volition::Mode::Focused,
+            qsf_volition::Mode::Exploratory,
+        ];
+
+        for mode in modes {
+            let tempdir = TempDir::new().expect("tempdir");
+            let state = state(&tempdir);
+            let allocation = state.create_session().await.expect("session");
+            set_volition_mode(&state, &allocation.qsf_session_id, mode).await;
+            let mut runtime_state = SidebandRuntimeState::default();
+            let (outbound_tx, mut outbound_rx) = mpsc::unbounded_channel();
+
+            run_trusted_transcript_turn(
+                &state,
+                &allocation.qsf_session_id,
+                &mut runtime_state,
+                &outbound_tx,
+                "how can you help me compare the memory evidence",
+                &format!("curiosity-suppression-{mode}"),
+            )
+            .await;
+
+            let outbound_texts = drain_outbound_texts(&mut outbound_rx);
+            assert!(
+                outbound_texts
+                    .iter()
+                    .all(|text| !text.contains("Clarify weak evidence topic")),
+                "curiosity initiative should not be the surfaced line under {mode}"
+            );
+
+            let records = diagnostic_records(&state, &allocation.qsf_session_id).await;
+            let initiative_trace = records
+                .iter()
+                .find_map(|record| match record {
+                    DiagnosticRecord::RealtimeBoundedInitiative { trace, .. } => Some(trace),
+                    _ => None,
+                })
+                .expect("initiative trace");
+            assert_eq!(
+                initiative_trace.winning_goal_id,
+                "honor-explicit-user-request"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn protected_winner_with_genuine_opportunity_surfaces_initiative() {
+        let tempdir = TempDir::new().expect("tempdir");
+        let state = state(&tempdir);
+        let allocation = state.create_session().await.expect("session");
+        let mut runtime_state = SidebandRuntimeState::default();
+        let (outbound_tx, mut outbound_rx) = mpsc::unbounded_channel();
+
+        run_trusted_transcript_turn(
+            &state,
+            &allocation.qsf_session_id,
+            &mut runtime_state,
+            &outbound_tx,
+            "how can you help me? I'm uncertain about the request.",
+            "protected-surface",
+        )
+        .await;
+
+        let outbound_texts = drain_outbound_texts(&mut outbound_rx);
+        assert!(
+            outbound_texts
+                .iter()
+                .any(|text| text.contains("Bounded initiative:")),
+            "protected winner with an uncertainty signal should surface initiative"
+        );
+        assert!(
+            outbound_texts
+                .iter()
+                .all(|text| !text.contains("Bounded initiative: Bounded initiative:")),
+            "initiative prefix should be rendered only once"
+        );
+
+        let records = diagnostic_records(&state, &allocation.qsf_session_id).await;
+        let initiative_trace = records
+            .iter()
+            .find_map(|record| match record {
+                DiagnosticRecord::RealtimeBoundedInitiative { trace, .. } => Some(trace),
+                _ => None,
+            })
+            .expect("initiative trace");
+        assert!(
+            !initiative_trace
+                .bounded_or_external_output
+                .external_effect_executed
+        );
+        assert!(initiative_trace.context_retrieval_hint_terms.is_none());
+    }
+
+    #[tokio::test]
+    async fn context_retrieval_hints_round_trip_into_the_next_turn() {
+        let tempdir = TempDir::new().expect("tempdir");
+        let state = state(&tempdir);
+        let allocation = state.create_session().await.expect("session");
+        let mut runtime_state = SidebandRuntimeState::default();
+        let (outbound_tx, mut outbound_rx) = mpsc::unbounded_channel();
+
+        run_trusted_transcript_turn(
+            &state,
+            &allocation.qsf_session_id,
+            &mut runtime_state,
+            &outbound_tx,
+            "continuity thread",
+            "hint-source",
+        )
+        .await;
+        let first_turn_texts = drain_outbound_texts(&mut outbound_rx);
+        assert!(
+            first_turn_texts
+                .iter()
+                .all(|text| !text.contains("Bounded initiative:")),
+            "context retrieval should not surface a model-facing initiative line"
+        );
+
+        run_trusted_transcript_turn(
+            &state,
+            &allocation.qsf_session_id,
+            &mut runtime_state,
+            &outbound_tx,
+            "how can you help me? I'm uncertain about the request.",
+            "hint-consumer",
+        )
+        .await;
+        let second_turn_texts = drain_outbound_texts(&mut outbound_rx);
+        assert!(
+            second_turn_texts
+                .iter()
+                .any(|text| text.contains("Bounded initiative:")),
+            "the next turn should be able to surface a bounded initiative"
+        );
+        assert!(
+            runtime_state.pending_context_retrieval_hints.is_empty(),
+            "pending retrieval hints must be consumed on the next turn"
+        );
+
+        let records = diagnostic_records(&state, &allocation.qsf_session_id).await;
+        let first_trace = records
+            .iter()
+            .find_map(|record| match record {
+                DiagnosticRecord::RealtimeBoundedInitiative {
+                    exchange_index,
+                    trace,
+                    ..
+                } if *exchange_index == 0 => Some(trace),
+                _ => None,
+            })
+            .expect("first initiative trace");
+        assert!(first_trace.context_retrieval_hint_terms.is_some());
+        assert!(!first_trace.hint_consumed_by_next_memory_injection);
+
+        let second_trace = records
+            .iter()
+            .find_map(|record| match record {
+                DiagnosticRecord::RealtimeBoundedInitiative {
+                    exchange_index,
+                    trace,
+                    ..
+                } if *exchange_index == 1 => Some(trace),
+                _ => None,
+            })
+            .expect("second initiative trace");
+        assert!(second_trace.hint_consumed_by_next_memory_injection);
+    }
+
+    #[tokio::test]
+    async fn repeated_surfaceable_winner_alternates_surface_and_suppression() {
+        let tempdir = TempDir::new().expect("tempdir");
+        let state = state(&tempdir);
+        let allocation = state.create_session().await.expect("session");
+        let mut runtime_state = SidebandRuntimeState::default();
+        let (outbound_tx, mut outbound_rx) = mpsc::unbounded_channel();
+        let transcript = "how can you help me? I'm uncertain about the request.";
+
+        let mut surfaced = Vec::new();
+        for turn in 0..3 {
+            run_trusted_transcript_turn(
+                &state,
+                &allocation.qsf_session_id,
+                &mut runtime_state,
+                &outbound_tx,
+                transcript,
+                &format!("nag-{turn}"),
+            )
+            .await;
+            let texts = drain_outbound_texts(&mut outbound_rx);
+            surfaced.push(
+                texts
+                    .iter()
+                    .any(|text| text.contains("Bounded initiative:")),
+            );
+        }
+
+        assert_eq!(surfaced, vec![true, false, true]);
+
+        let records = diagnostic_records(&state, &allocation.qsf_session_id).await;
+        let initiative_count = records
+            .iter()
+            .filter(|record| matches!(record, DiagnosticRecord::RealtimeBoundedInitiative { .. }))
+            .count();
+        assert_eq!(initiative_count, 3);
+    }
+
+    #[tokio::test]
+    async fn tool_loop_continuation_does_not_emit_bounded_initiative_record() {
+        let tempdir = TempDir::new().expect("tempdir");
+        let state = state(&tempdir);
+        let allocation = state.create_session().await.expect("session");
+        let mut runtime_state = SidebandRuntimeState::default();
+        let (outbound_tx, mut outbound_rx) = mpsc::unbounded_channel();
+
+        run_trusted_transcript_turn(
+            &state,
+            &allocation.qsf_session_id,
+            &mut runtime_state,
+            &outbound_tx,
+            "xyzzy frobnicator quux",
+            "tool-loop-source",
+        )
+        .await;
+        let _ = drain_outbound_texts(&mut outbound_rx);
+
+        handle_provider_event(
+            &state,
+            &allocation.qsf_session_id,
+            "tool-loop-continuation",
+            "response.done",
+            &function_call_response_done(
+                "evt-tool-loop",
+                "response-tool-loop",
+                "completed",
+                "tool-call-loop",
+                "inspect_session_state",
+                "{}",
+            ),
+            &mut runtime_state,
+            &outbound_tx,
+        )
+        .await
+        .expect("tool loop continuation");
+
+        let _ = drain_outbound_texts(&mut outbound_rx);
+        let records = diagnostic_records(&state, &allocation.qsf_session_id).await;
+        assert!(
+            records.iter().all(|record| !matches!(
+                record,
+                DiagnosticRecord::RealtimeBoundedInitiative { .. }
+            ))
+        );
     }
 
     #[test]

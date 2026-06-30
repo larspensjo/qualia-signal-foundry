@@ -62,6 +62,10 @@ internal initiative output. Context assembly and report shapes live in caller ad
   ([crates/qsf_app/src/volition.rs](../../crates/qsf_app/src/volition.rs)).
   `qsf_app::volition` now calls `select_goals_ranked` from this crate and wraps
   the result with context assembly.
+- Realtime bounded-initiative surfacing and the realtime-specific initiative
+  trace live in `qsf_realtime_server` adapter code
+  ([crates/qsf_realtime_server/src/realtime/volition_initiative.rs](../../crates/qsf_realtime_server/src/realtime/volition_initiative.rs),
+  [crates/qsf_realtime_server/src/realtime/sideband.rs](../../crates/qsf_realtime_server/src/realtime/sideband.rs)).
 
 ## Crate Boundary And Dependency Direction
 
