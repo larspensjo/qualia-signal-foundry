@@ -28,11 +28,11 @@ The project already has a committed, partly-built volition system:
   trace-backed initiative, salience/satisfaction/blocking/cooldown, deterministic
   arbitration, reflection-generated goal candidates, bounded initiative execution, and
   mode/bias.
-- An in-flight realtime integration
-  ([Plan.RealtimeVolitionIntegration.md](Plan.RealtimeVolitionIntegration.md)): Phases 1–3
-  (crate extraction, per-session `VolitionRuntimeState`, read-only inspection tools) done;
-  behavioral influence, bounded initiative in the live loop, persistence, and UI not yet
-  started.
+- A now-complete realtime integration
+  ([Plan.RealtimeVolitionIntegration.md](Plan.RealtimeVolitionIntegration.md)): shipped and
+  human-tested end to end — crate extraction, per-session `VolitionRuntimeState`, read-only
+  inspection tools, layered context injection, bounded initiative in the live loop,
+  cross-session persistence/consolidation, and the browser volition UI panel.
 
 The brief overlaps heavily in substance but frames volition more anthropomorphically than
 the project does. The project committed on **2026-05-15** that volition is "an inspectable
@@ -120,8 +120,8 @@ later.
 | Plans (§3.5, §4.6) | multi-turn initiative sequence | **Defer** — new |
 | Notice opportunities (§4.1) | opportunity-detection step before selection | **Defer** — design into behavioral-influence phase |
 | Choose / maintain preferences (§4.2–4.3) | salience scoring + arbitration | Built |
-| Initiate topics / resist-redirect (§4.4–4.5) | bounded initiative + context injection in the live loop | **Defer** — realtime behavioral influence (not started) |
-| Unfinished business (§4.7) | `Blocked`/open-thread goals + cross-session persistence | Partially built; persistence **deferred** |
+| Initiate topics / resist-redirect (§4.4–4.5) | bounded initiative + context injection in the live loop | **Built** (realtime) |
+| Unfinished business (§4.7) | `Blocked`/open-thread goals + cross-session persistence | **Built** — cross-session persistence live |
 | Conscious vs subconscious (§6) | goal-visibility attribute (surfaced only on introspection) | **Defer** — new |
 | World model / desired state / delta (§7) | world-model→delta→initiative loop (Idea doc) | Built (compact form) |
 | Emotion as signal + visualization (§8) | derived functional signals (D4) + brain-state UI | **Defer** — new, gated |
@@ -130,38 +130,39 @@ later.
 | Conflict between goals (§11) | `arbitrate_with_mode` + tiers | Built |
 | User vs simulator vs shared goals (§12) | goal-provenance/ownership tag | **Defer** — new |
 | Introspection (§13) | `build_state_inspection` + read-only realtime tools | Built |
-| Conversational control policy (§14) | shaping-intensity dial on context injection | **Defer** — design into behavioral-influence phase |
-| Idle-time behavior (§15) | sleep/consolidation pass | Partially built (SleepPhase); volition re-ranking deferred |
+| Conversational control policy (§14) | shaping-intensity dial on context injection | **Built** — shaping-intensity dial live |
+| Idle-time behavior (§15) | sleep/consolidation pass | **Built** — SleepPhase + volition consolidation pass |
 | External actions (§17) | out of scope by committed boundary | Reject for now (matches NonGoals) |
 | Safety/control (§18) | `boundary-preservation` tension + protected tiers + read-only | Built |
 
 ## Impact on the Realtime Volition Integration
 
-**Verdict: continue it. The in-flight realtime work is the substrate the brief presupposes,
-not wasted effort.** The brief validates the trajectory and raises the stakes of finishing
-it: today the live system can *inspect* goals but cannot yet *act* on them, and everything
-that makes the brief compelling lives on the far side of the behavioral-influence phase.
+**Verdict: done. The realtime work is the substrate the brief presupposes, and it is now
+fully built and human-tested.** The brief validated the trajectory; the live system can now
+both *inspect* goals and *act* on them through context injection and bounded initiative — the
+behavioral-influence behavior the brief makes compelling is shipped.
 
 Phase-by-phase against the brief:
 
 - Per-session `VolitionRuntimeState` (done) — required by the brief's world-model/delta loop
   (§7).
-- Read-only inspection tools (done, human-validation pending) — exactly what §13 asks for.
-- Inject volition context into live response (not started) — **the brief's core thesis**
-  (§4, §5, §14); conversational shaping is impossible until this lands.
-- Bounded initiative in the live loop (not started) — needed for "initiate topics" (§4.4)
+- Read-only inspection tools (done) — exactly what §13 asks for.
+- Inject volition context into live response (done) — **the brief's core thesis**
+  (§4, §5, §14); layered injection (stable baseline + per-turn dynamic packet + shaping dial)
+  now shapes each trusted turn.
+- Bounded initiative in the live loop (done, human-tested) — delivers "initiate topics" (§4.4)
   and "unfinished business" (§4.7).
-- Persist/consolidate across sessions (not started) — needed for persistence (§10.5) and
-  idle-time (§15).
-- Volition UI (not started) — extends to emotional visualization (§8.2).
+- Persist/consolidate across sessions (done, human-tested) — delivers persistence (§10.5) and
+  idle-time consolidation (§15) via `volition-state.json` + reviewed seed.
+- Volition UI (done) — the browser volition panel; emotional visualization (§8.2) remains a
+  later extension once emotion-like signals exist.
 
-Two adaptations the brief motivates:
+Adaptations the brief motivated:
 
-- **Adaptation A — pull a minimal cross-session continuity slice earlier.** The brief's most
-  emphasized behavior is *persistent unfinished business* ("I remember what I wanted to
-  ask," §4.7/§9.2/§10.5). Per-session-only volition cannot produce it. Decide deliberately
-  whether a thin continuity slice should precede the later persistence phase rather than
-  defaulting to last.
+- **Adaptation A — cross-session continuity (shipped).** The brief's most emphasized behavior
+  is *persistent unfinished business* ("I remember what I wanted to ask," §4.7/§9.2/§10.5),
+  which per-session-only volition cannot produce. This shipped as full snapshot + reviewed-seed
+  continuity (`volition-state.json`), so volition state now carries across sessions.
 - **Adaptation B — design the behavioral-influence phase around the brief's control policy.**
   Before that phase is expanded into steps, fold in **opportunity detection** (§4.1) and a
   **conversational-intensity dial** (§14, low/medium/high shaping) so "how strongly may I
@@ -179,6 +180,11 @@ These are refinements to the existing plan, not a redirection. No part of Phases
 unwound.
 
 ## Where the Genuinely-New Concepts Attach
+
+> These four are now sequenced as phases in
+> [Plan.VolitionMotivationalTexture.md](Plan.VolitionMotivationalTexture.md) (provenance →
+> emotion signals → conscious/subconscious → multi-turn Plans). The attach notes below feed
+> that plan.
 
 - **Multi-turn Plans (§3.5):** a new offline slice in
   [Plan.VolitionGoalSystem.md](Plan.VolitionGoalSystem.md) — a `Plan` that sequences
@@ -222,8 +228,8 @@ Per [ProjectWorkflow.md](../ProjectFrame/ProjectWorkflow.md):
 - **[Plan.RealtimeVolitionIntegration.md](Plan.RealtimeVolitionIntegration.md):** Adaptation
   B (opportunity detection + shaping-intensity dial) and Adaptation C (layered injection by
   lifetime, including stable baseline at session start) are folded into the
-  behavioral-influence phase. *(Done.)* Adaptation A (continuity re-weighting) is recorded
-  there as a deferred open decision, not yet committed.
+  behavioral-influence phase. *(Done.)* Adaptation A (cross-session continuity) shipped as full
+  snapshot + reviewed-seed persistence (`volition-state.json`).
 - **[Plan.VolitionGoalSystem.md](Plan.VolitionGoalSystem.md):** add new offline slices for
   multi-turn Plans and (if accepted) emotion-like signals when promoted from idea to planned.
 - **[Idea.VolitionGoalSystem.md](Idea.VolitionGoalSystem.md):** add a pointer to this

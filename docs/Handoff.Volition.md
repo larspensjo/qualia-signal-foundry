@@ -186,7 +186,10 @@ so you can see a new goal win or lose arbitration in real time without inspectin
   in the fixture if the protected-tier goals feel invisible in live sessions.
 - **Personality scope:** emotion/personality slices, multi-turn Plans, conscious/subconscious,
   user-vs-simulator goals — classified as new scope in
-  [Design.VolitionBriefReconciliation.md](Plans/Design.VolitionBriefReconciliation.md); none scheduled.
+  [Design.VolitionBriefReconciliation.md](Plans/Design.VolitionBriefReconciliation.md), now
+  sequenced in [Plan.VolitionMotivationalTexture.md](Plans/Plan.VolitionMotivationalTexture.md)
+  (provenance → emotion signals → conscious/subconscious → multi-turn Plans). Skeleton only;
+  per-phase detailing pending.
 - **Phase 6 reconciliation item:** the reviewed-seed-only vs. snapshot-restore seeding divergence is
   resolved as snapshot-restore (the implemented behavior); the UI panel must not claim "tick resets
   each session" (it does not). No further action unless the behavior changes.

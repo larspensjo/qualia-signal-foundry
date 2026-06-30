@@ -37,8 +37,8 @@ idiom; *Defer* = new scope to schedule:
 | Intentions (3.4) | `InitiativeProposal` / `InitiativeOutput` | Built |
 | Plans (3.5, 4.6) | multi-turn initiative sequence | Defer (new) |
 | Notice opportunities (4.1) | opportunity-detection step | Defer |
-| Initiate / resist (4.4–4.5) | live context injection + bounded initiative | Defer (realtime, not started) |
-| Unfinished business (4.7) | `Blocked` / open-thread goals + persistence | Partial; persistence deferred |
+| Initiate / resist (4.4–4.5) | live context injection + bounded initiative | Built (realtime) |
+| Unfinished business (4.7) | `Blocked` / open-thread goals + persistence | Built (cross-session persistence live) |
 | Conscious vs subconscious (6) | goal-visibility attribute | Defer (new) |
 | World model / delta (7) | world-model→delta→initiative loop | Built (compact) |
 | Emotion + visualization (8) | derived signals + brain-state UI | Defer (new, gated) |
@@ -47,8 +47,8 @@ idiom; *Defer* = new scope to schedule:
 | Conflict (11) | `arbitrate_with_mode` + tiers | Built |
 | User vs simulator goals (12) | goal-provenance tag | Defer (new) |
 | Introspection (13) | `build_state_inspection` + read-only tools | Built |
-| Control policy (14) | shaping-intensity dial | Defer (design into influence phase) |
-| Idle-time (15) | sleep / consolidation pass | Partial |
+| Control policy (14) | shaping-intensity dial | Built (shaping-intensity dial live) |
+| Idle-time (15) | sleep / consolidation pass | Built (volition consolidation pass) |
 | External actions (17) | out of scope by boundary | Reject for now |
 | Safety / control (18) | boundary tension + protected tiers | Built |
 
