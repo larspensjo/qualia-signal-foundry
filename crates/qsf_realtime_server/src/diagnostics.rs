@@ -25,21 +25,25 @@ pub enum DiagnosticTrust {
 pub enum DiagnosticRecord {
     SessionAllocated {
         qsf_session_id: String,
+        #[serde(with = "time::serde::rfc3339")]
         at: OffsetDateTime,
     },
     NoSecretEvidence {
         qsf_session_id: String,
+        #[serde(with = "time::serde::rfc3339")]
         at: OffsetDateTime,
         note: String,
     },
     CallBound {
         qsf_session_id: String,
         call_id: String,
+        #[serde(with = "time::serde::rfc3339")]
         bound_at: OffsetDateTime,
     },
     CallInvalidated {
         qsf_session_id: String,
         call_id: String,
+        #[serde(with = "time::serde::rfc3339")]
         invalidated_at: OffsetDateTime,
         reason: String,
     },
@@ -47,29 +51,35 @@ pub enum DiagnosticRecord {
         qsf_session_id: String,
         event_id: String,
         event_kind: String,
+        #[serde(with = "time::serde::rfc3339")]
         at: OffsetDateTime,
     },
     LatencyObservation {
         qsf_session_id: String,
         label: String,
+        #[serde(with = "time::serde::rfc3339")]
         started_at: OffsetDateTime,
+        #[serde(with = "time::serde::rfc3339")]
         finished_at: OffsetDateTime,
         latency_ms: i64,
     },
     VolitionContextInjected {
         qsf_session_id: String,
         exchange_index: usize,
+        #[serde(with = "time::serde::rfc3339")]
         recorded_at: OffsetDateTime,
         trace: VolitionContextInjectionTrace,
     },
     RealtimeBoundedInitiative {
         qsf_session_id: String,
         exchange_index: usize,
+        #[serde(with = "time::serde::rfc3339")]
         recorded_at: OffsetDateTime,
         trace: RealtimeBoundedInitiativeTrace,
     },
     VolitionContinuityNote {
         qsf_session_id: String,
+        #[serde(with = "time::serde::rfc3339")]
         recorded_at: OffsetDateTime,
         note: String,
         artifact_reference: String,
@@ -78,6 +88,7 @@ pub enum DiagnosticRecord {
         qsf_session_id: String,
         source: String,
         trust: DiagnosticTrust,
+        #[serde(with = "time::serde::rfc3339")]
         recorded_at: OffsetDateTime,
         exchange: Exchange,
     },
@@ -86,6 +97,7 @@ pub enum DiagnosticRecord {
         transcript: String,
         turn_phase: TurnPhase,
         response_id: Option<String>,
+        #[serde(with = "time::serde::rfc3339")]
         at: OffsetDateTime,
     },
     StaleProviderEvent {
@@ -93,6 +105,7 @@ pub enum DiagnosticRecord {
         response_id: Option<String>,
         status: Option<String>,
         exchange_index: Option<usize>,
+        #[serde(with = "time::serde::rfc3339")]
         at: OffsetDateTime,
     },
 }

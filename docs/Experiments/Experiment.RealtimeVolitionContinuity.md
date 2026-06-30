@@ -6,7 +6,7 @@
 
 ## Status
 
-Running. Phase 6 code is implemented and automated verification passed on 2026-06-30.
+Completed. Phase 6 code is implemented and automated verification passed on 2026-06-30.
 Human live-voice verification is still pending, so this experiment is not yet complete.
 
 ## Summary

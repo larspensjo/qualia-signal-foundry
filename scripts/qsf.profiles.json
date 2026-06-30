@@ -85,6 +85,15 @@
           "name": "OPENAI_API_KEY"
         }
       ]
+    },
+    {
+      "name": "realtime-state",
+      "description": "Point experiments at the realtime server state directory (state/realtime) for post-session consolidation and reviewed-seed acceptance.",
+      "env": {
+        "QSF_STATE_DIR": "state/realtime"
+      },
+      "clear_env": [],
+      "requires": []
     }
   ]
 }

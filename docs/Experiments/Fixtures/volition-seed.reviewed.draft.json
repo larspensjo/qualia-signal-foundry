@@ -1,0 +1,7 @@
+{
+  "schema_version": 1,
+  "promoted_by": "Lars Pensjö",
+  "promoted_at": "2026-06-30T20:00:00Z",
+  "source_artifact_reference": "state/realtime/continuity/default/volition-state.json",
+  "accepted_goals": {}
+}

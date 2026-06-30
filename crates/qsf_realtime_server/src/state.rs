@@ -6,7 +6,7 @@ use anyhow::Context;
 use qsf_realtime_protocol::{OPENAI_REALTIME_WS_BASE_URL, RealtimeToolDefinition};
 use qsf_session::LiveSessionState;
 use qsf_session::{MemorySourceConfig, SessionConfig as QsfSessionConfig, SessionState};
-use qsf_volition::{Mode, realtime_seed_fixture};
+use qsf_volition::{Mode, VolitionContinuitySnapshot, realtime_seed_fixture};
 use serde::{Deserialize, Serialize};
 use time::OffsetDateTime;
 use tokio::sync::{Mutex, watch};
@@ -215,6 +215,39 @@ impl AppState {
         })?;
 
         let mut runtime = SessionRuntime::new(qsf_session_id.clone(), config.clone(), diagnostics);
+
+        let snapshot_path = self.continuity_volition_snapshot_path(&qsf_session_id);
+        if snapshot_path.exists() {
+            match VolitionContinuitySnapshot::load_or_upgrade(&snapshot_path) {
+                Ok(snapshot) => {
+                    let tick = snapshot.state.tick;
+                    runtime.volition.state = snapshot.state;
+                    runtime
+                        .diagnostics
+                        .write(&DiagnosticRecord::VolitionContinuityNote {
+                            qsf_session_id: qsf_session_id.clone(),
+                            recorded_at: OffsetDateTime::now_utc(),
+                            note: format!(
+                                "restored volition state from continuity snapshot (tick={tick})"
+                            ),
+                            artifact_reference: snapshot_path.display().to_string(),
+                        })?;
+                }
+                Err(error) => {
+                    runtime
+                        .diagnostics
+                        .write(&DiagnosticRecord::VolitionContinuityNote {
+                            qsf_session_id: qsf_session_id.clone(),
+                            recorded_at: OffsetDateTime::now_utc(),
+                            note: format!(
+                                "volition continuity snapshot could not be loaded: {error}"
+                            ),
+                            artifact_reference: snapshot_path.display().to_string(),
+                        })?;
+                }
+            }
+        }
+
         let reviewed_seed_path = self.continuity_reviewed_volition_seed_path(&qsf_session_id);
         if let Some(reviewed_seed) =
             crate::realtime::volition_continuity::load_reviewed_seed_or_note(

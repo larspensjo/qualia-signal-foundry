@@ -3,7 +3,7 @@ use std::path::{Path, PathBuf};
 use anyhow::Context;
 use qsf_volition::{
     REALTIME_SEED_FIXTURE_ID, ReviewedVolitionSeed, VolitionContinuitySnapshot,
-    apply_reviewed_seed, build_state_inspection, load_reviewed_volition_seed,
+    apply_reviewed_seed_in_place, build_state_inspection, load_reviewed_volition_seed,
     persist_volition_continuity_snapshot,
 };
 use time::OffsetDateTime;
@@ -75,6 +75,5 @@ pub fn apply_reviewed_seed_to_runtime(
     runtime: &mut VolitionRuntimeState,
     reviewed_seed: &ReviewedVolitionSeed,
 ) -> anyhow::Result<()> {
-    runtime.state = apply_reviewed_seed(&runtime.fixture, reviewed_seed)?;
-    Ok(())
+    apply_reviewed_seed_in_place(&mut runtime.state, &runtime.fixture, reviewed_seed)
 }

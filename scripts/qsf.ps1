@@ -11,6 +11,7 @@ param(
     [Alias("Profile")]
     [string]$LaunchProfile = "",
     [string]$VoiceMemoryFile = "",
+    [string]$VolitionDraft = "",
     [ValidateSet("auto", "empty", "file", "fixture")]
     [string]$SessionMemorySource = "auto",
     [string]$SessionMemoryFile = "",
@@ -56,6 +57,7 @@ $script:QsfKnownManagedEnvironmentVariables = @(
     "QSF_REALTIME_SESSION_PROVIDER",
     "QSF_REALTIME_SESSION_WAV_PATH",
     "QSF_REVIEWED_MEMORY_SLEEP_REPORT",
+    "QSF_REVIEWED_VOLITION_DRAFT",
     "QSF_SESSION_ALLOW_OVER_LIMIT",
     "QSF_SESSION_MAX_TURNS",
     "QSF_SESSION_MEMORY_FILE",
@@ -270,6 +272,13 @@ function Get-ProfileEnvironmentDelta {
         $envSets["QSF_VOICE_MEMORY_FILE"] = $VoiceMemoryFile
     }
 
+    if (-not [string]::IsNullOrWhiteSpace($VolitionDraft)) {
+        if ([string]::IsNullOrWhiteSpace($Experiment)) {
+            Write-Error "-VolitionDraft is only meaningful with app -Experiment."
+        }
+        $envSets["QSF_REVIEWED_VOLITION_DRAFT"] = $VolitionDraft
+    }
+
     if (-not [string]::IsNullOrWhiteSpace($LaunchProfile) -and $LaunchProfile -eq "file-memory" -and [string]::IsNullOrWhiteSpace($VoiceMemoryFile)) {
         Write-Error "Profile 'file-memory' requires -VoiceMemoryFile <path>."
     }
@@ -464,7 +473,7 @@ QSF launcher
 
 Usage:
   .\scripts\qsf.ps1 help
-  .\scripts\qsf.ps1 app [-Experiment <name>] [-LaunchProfile <name>] [-VoiceMemoryFile <path>] [-SessionMemorySource <auto|empty|file|fixture>] [-SessionMemoryFile <path>] [-DemoMemory]
+  .\scripts\qsf.ps1 app [-Experiment <name>] [-LaunchProfile <name>] [-VoiceMemoryFile <path>] [-VolitionDraft <path>] [-SessionMemorySource <auto|empty|file|fixture>] [-SessionMemoryFile <path>] [-DemoMemory]
   .\scripts\qsf.ps1 browser [<store>] [-Store <path>] [-BindHost <ip>] [-Port <port>]
   .\scripts\qsf.ps1 ui [browser|realtime]
   .\scripts\qsf.ps1 workbench [<store>] [-Store <path>] [-BindHost <ip>] [-Port <port>]
@@ -491,6 +500,7 @@ Examples:
   .\scripts\qsf.ps1 app -Experiment multi-turn-text-loop -SessionMemorySource file -SessionMemoryFile docs/Experiments/Fixtures/session-memory.empty.json
   .\scripts\qsf.ps1 app -Experiment multi-turn-text-loop -LaunchProfile mock
   .\scripts\qsf.ps1 app -Experiment text-owned-voice-loop -LaunchProfile file-memory -VoiceMemoryFile docs/Experiments/Fixtures/voice-memory.example.json
+  .\scripts\qsf.ps1 app -Experiment accept-reviewed-volition-seed -LaunchProfile realtime-state -VolitionDraft docs/Experiments/Fixtures/volition-seed.reviewed.draft.json
   .\scripts\qsf.ps1 browser -Store $sampleStore -BindHost 127.0.0.1 -Port 3939
   .\scripts\qsf.ps1 ui
   .\scripts\qsf.ps1 ui realtime

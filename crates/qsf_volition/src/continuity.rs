@@ -144,6 +144,17 @@ pub fn apply_reviewed_seed(
     reviewed_seed: &ReviewedVolitionSeed,
 ) -> anyhow::Result<VolitionState> {
     let mut state = VolitionState::from_fixture(fixture);
+    apply_reviewed_seed_in_place(&mut state, fixture, reviewed_seed)?;
+    Ok(state)
+}
+
+/// Merge reviewed seed goals into an existing `VolitionState` without resetting tick or
+/// existing goal dynamics. Applies the same validation rules as `apply_reviewed_seed`.
+pub fn apply_reviewed_seed_in_place(
+    state: &mut VolitionState,
+    fixture: &VolitionFixture,
+    reviewed_seed: &ReviewedVolitionSeed,
+) -> anyhow::Result<()> {
     let mut seen_ids = BTreeSet::new();
 
     for (goal_id, goal) in &reviewed_seed.accepted_goals {
@@ -183,7 +194,7 @@ pub fn apply_reviewed_seed(
             .insert(goal_id.clone(), GoalDynamicState::initial());
     }
 
-    Ok(state)
+    Ok(())
 }
 
 fn goal_effective_tier(goal: &Goal, fixture: &VolitionFixture) -> u8 {
