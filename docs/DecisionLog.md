@@ -1458,3 +1458,41 @@ intensity is clamped to at most `Low` when a protected tier wins arbitration.
 Refs: docs/Plans/Plan.RealtimeVolitionIntegration.md,
 docs/Experiments/Experiment.RealtimeVolitionContextInjection.md,
 docs/Plans/Review.RealtimeVolitionIntegration.phase4.Plan.codex.json
+
+## 2026-06-30 - Realtime bounded-initiative surfacing, anti-nag cadence, and trace granularity
+Type: Decision
+Decision: Realtime bounded internal initiative is derived from the arbitration winner and
+recorded to diagnostics on every trusted turn, but the model-facing initiative line is surfaced
+only under bounded conditions. A protected-tier winner (effective tier at or below the protected
+floor) surfaces a line only when the turn carries a genuine opportunity signal beyond the
+winner's own topic self-match — expressed uncertainty, an introduced contradiction, or an
+open-goal-topic match grounded on a different goal; otherwise the protected turn stays silent.
+The anti-nag rule is consecutive-turn alternation: the same goal is not surfaced on two adjacent
+trusted turns, tracked by a previous-turn-surfaced marker that is set only when a line surfaces
+and cleared on any non-surfaced turn (not by a last-initiative marker). Bounded-initiative state
+snapshots use the compact state-inspection projection, and the trace contract asserts the
+winning goal's before/after transition (status, last activation, last initiative output) rather
+than a full state clone. The surfaced line rides inside the existing single per-turn volition
+system item. Context-retrieval initiatives are never surfaced and never executed; they only
+stash next-turn memory-injection hints. The behavior is default-on with no flag.
+Context: The Phase 5 plan review stopped for manual feedback because the plan claimed the shaping
+dial would keep protected and `None` turns quiet, but the protected goal `honor-explicit-user-
+request` matches common words and its own keyword match counts as an opportunity, so the dial
+returns `Low` and would surface a reflection on ordinary direct requests. The project vision
+prioritizes presence and appropriate reflection over task completion, so full suppression on
+every direct request was rejected in favor of surfacing only when the moment genuinely invites
+it. The proposed `last_initiative_goal_id` anti-nag marker was also shown to suppress a repeated
+winner indefinitely.
+Consequences: A direct user request stays focused unless the conversation itself shows
+uncertainty, contradiction, or another open thread, at which point a single bounded reflection
+may surface; the same goal cannot repeat on back-to-back turns. The surfacing gate is a
+realtime-side rule layered on top of the shared shaping dial, so the already-shipped context-
+injection intensity behavior is unchanged. Initiative stays auditable through the diagnostics
+record even when no line is spoken, and the trace verifies the state transition the initiative
+event caused. A longer tick-based cooldown remains the documented upgrade path if live testing
+shows alternation still nags. Curiosity and exploration still cannot surface initiative while a
+protected goal wins arbitration.
+Refs: docs/Plans/Plan.RealtimeVolitionIntegration.md,
+docs/Plans/Review.RealtimeVolitionIntegration.phase5.Plan.codex.json,
+docs/ProjectFrame/ProjectVision.md,
+docs/DecisionLog.md#2026-06-29---volition-context-injection-carrier-and-grounding-boundary
