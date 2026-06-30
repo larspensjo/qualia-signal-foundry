@@ -26,8 +26,23 @@ pub async fn serve(args: Args) -> anyhow::Result<()> {
     let addr = SocketAddr::new(args.host, args.port);
     let listener = tokio::net::TcpListener::bind(addr).await?;
     log::info!("listening on http://{}", addr);
-    axum::serve(listener, app).await?;
+    axum::serve(listener, app)
+        .with_graceful_shutdown(shutdown_signal())
+        .await?;
     Ok(())
+}
+
+/// Resolves when the process receives a Ctrl+C / console interrupt.
+///
+/// Awaiting `tokio::signal::ctrl_c` installs a handler that reports the event as
+/// handled, which keeps Windows from terminating the process through its default
+/// handler with `STATUS_CONTROL_C_EXIT` (0xC000013A). Without it `cargo run` sees
+/// that exit code and reports a spurious failure when the dev server is stopped
+/// with Ctrl+C, even though stopping that way is the intended way to halt it.
+async fn shutdown_signal() {
+    if let Err(err) = tokio::signal::ctrl_c().await {
+        log::error!("failed to listen for Ctrl+C shutdown signal: {err}");
+    }
 }
 
 fn log_startup_summary(args: &Args, state: &AppState) {
