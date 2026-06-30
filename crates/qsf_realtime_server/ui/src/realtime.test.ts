@@ -8,8 +8,10 @@ import {
   parseProviderDataChannelMessage,
   parseSidebandStatusMessage,
   parseTurnContextMessage,
+  parseVolitionStateMessage,
   providerTypeToRelayKind,
   reduceConversationState,
+  selectVolitionPanelModel,
 } from "./realtime";
 
 describe("provider relay mapping", () => {
@@ -439,6 +441,112 @@ describe("turn context reducer", () => {
   });
 });
 
+describe("volition state reducer", () => {
+  const activeState = reduceConversationState(INITIAL_STATE, {
+    type: "session_allocated",
+    sessionId: "session_1",
+  });
+
+  const sampleCapture = {
+    qsfSessionId: "session_1",
+    exchangeIndex: 4,
+    capturedAt: "2026-06-30T12:00:00Z",
+    responseCreateEventRef: "hash-abc",
+    inspection: {
+      mode: "neutral",
+      tick: 12,
+      activeGoals: [
+        {
+          id: "honor-explicit-user-request",
+          title: "Honor explicit user request",
+          salience: 9,
+          cooldownUntilTick: null,
+          lastActivatedTick: 11,
+        },
+      ],
+      acceptedGoals: [],
+      blockedGoals: [],
+      cooldownGoals: [],
+      retiredGoals: [],
+      pendingCandidateCount: 1,
+      acceptedCandidateCount: 2,
+      lastInitiativeSummaries: [
+        {
+          goalId: "honor-explicit-user-request",
+          goalTitle: "Honor explicit user request",
+          outputKind: "reflection_requested",
+        },
+      ],
+    },
+    decision: {
+      winnerGoalId: "honor-explicit-user-request",
+      winnerGoalTitle: "Honor explicit user request",
+      winnerEffectiveTier: 2,
+      winnerBiasedTier: 2,
+      protectedTierActive: true,
+      modeBiasOutcomes: [
+        {
+          goalId: "honor-explicit-user-request",
+          goalTitle: "Honor explicit user request",
+          effectiveTier: 2,
+          biasedTier: 2,
+          protected: true,
+        },
+      ],
+      selectedGoalIds: ["honor-explicit-user-request"],
+      omittedOrSuppressedGoalIds: ["research-curiosity"],
+      shapingIntensity: "low",
+      lastInitiativeOutputKind: "reflection_requested",
+      lastInitiativeSurfaced: true,
+      lastInitiativeSuppressionReason: null,
+      lastInitiativeRenderedLinePresent: true,
+    },
+  };
+
+  it("sets latestVolitionState when capture matches the active session", () => {
+    const next = reduceConversationState(activeState, {
+      type: "volition_state_captured",
+      capture: sampleCapture,
+    });
+    expect(next.latestVolitionState).toEqual(sampleCapture);
+  });
+
+  it("ignores volition_state_captured for a different session", () => {
+    const mismatch = { ...sampleCapture, qsfSessionId: "session_other" };
+    const next = reduceConversationState(activeState, {
+      type: "volition_state_captured",
+      capture: mismatch,
+    });
+    expect(next).toBe(activeState);
+    expect(next.latestVolitionState).toBeNull();
+  });
+
+  it("preserves latestVolitionState on stopped so diagnostics remain visible", () => {
+    const withCapture = reduceConversationState(activeState, {
+      type: "volition_state_captured",
+      capture: sampleCapture,
+    });
+    expect(withCapture.latestVolitionState).not.toBeNull();
+
+    const stopped = reduceConversationState(withCapture, { type: "stopped" });
+    expect(stopped.latestVolitionState).toEqual(sampleCapture);
+  });
+
+  it("clears latestVolitionState on session_allocated", () => {
+    const withCapture = reduceConversationState(activeState, {
+      type: "volition_state_captured",
+      capture: sampleCapture,
+    });
+    expect(withCapture.latestVolitionState).not.toBeNull();
+
+    const reallocated = reduceConversationState(withCapture, {
+      type: "session_allocated",
+      sessionId: "session_2",
+    });
+    expect(reallocated.latestVolitionState).toBeNull();
+  });
+});
+
 describe("turn context message parsing", () => {
   it("parses a valid wire message and maps snake_case to camelCase", () => {
     const result = parseTurnContextMessage(
@@ -497,6 +605,170 @@ describe("turn context message parsing", () => {
   });
 });
 
+describe("volition state message parsing", () => {
+  const baseMessage = {
+    kind: "volition_state",
+    qsf_session_id: "session_1",
+    exchange_index: 4,
+    captured_at: "2026-06-30T12:00:00Z",
+    response_create_event_ref: "hash-abc",
+    inspection: {
+      mode: "neutral",
+      tick: 12,
+      active_goals: [
+        {
+          id: "honor-explicit-user-request",
+          title: "Honor explicit user request",
+          salience: 9,
+          cooldown_until_tick: null,
+          last_activated_tick: 11,
+        },
+      ],
+      accepted_goals: [],
+      blocked_goals: [],
+      cooldown_goals: [],
+      retired_goals: [],
+      pending_candidate_count: 1,
+      accepted_candidate_count: 2,
+      last_initiative_summaries: [
+        {
+          goal_id: "honor-explicit-user-request",
+          goal_title: "Honor explicit user request",
+          output_kind: "reflection_requested",
+        },
+      ],
+    },
+    decision: {
+      winner_goal_id: "honor-explicit-user-request",
+      winner_goal_title: "Honor explicit user request",
+      winner_effective_tier: 2,
+      winner_biased_tier: 2,
+      protected_tier_active: true,
+      mode_bias_outcomes: [
+        {
+          goal_id: "honor-explicit-user-request",
+          goal_title: "Honor explicit user request",
+          effective_tier: 2,
+          biased_tier: 2,
+          protected: true,
+        },
+      ],
+      selected_goal_ids: ["honor-explicit-user-request"],
+      omitted_or_suppressed_goal_ids: ["research-curiosity"],
+      shaping_intensity: "low",
+      last_initiative_output_kind: "reflection_requested",
+      last_initiative_surfaced: true,
+      last_initiative_suppression_reason: null,
+      last_initiative_rendered_line_present: true,
+    },
+  };
+
+  it("parses a well-formed state message with and without a decision", () => {
+    expect(parseVolitionStateMessage(JSON.stringify(baseMessage))).toEqual({
+      qsfSessionId: "session_1",
+      exchangeIndex: 4,
+      capturedAt: "2026-06-30T12:00:00Z",
+      responseCreateEventRef: "hash-abc",
+      inspection: {
+        mode: "neutral",
+        tick: 12,
+        activeGoals: [
+          {
+            id: "honor-explicit-user-request",
+            title: "Honor explicit user request",
+            salience: 9,
+            cooldownUntilTick: null,
+            lastActivatedTick: 11,
+          },
+        ],
+        acceptedGoals: [],
+        blockedGoals: [],
+        cooldownGoals: [],
+        retiredGoals: [],
+        pendingCandidateCount: 1,
+        acceptedCandidateCount: 2,
+        lastInitiativeSummaries: [
+          {
+            goalId: "honor-explicit-user-request",
+            goalTitle: "Honor explicit user request",
+            outputKind: "reflection_requested",
+          },
+        ],
+      },
+      decision: {
+        winnerGoalId: "honor-explicit-user-request",
+        winnerGoalTitle: "Honor explicit user request",
+        winnerEffectiveTier: 2,
+        winnerBiasedTier: 2,
+        protectedTierActive: true,
+        modeBiasOutcomes: [
+          {
+            goalId: "honor-explicit-user-request",
+            goalTitle: "Honor explicit user request",
+            effectiveTier: 2,
+            biasedTier: 2,
+            protected: true,
+          },
+        ],
+        selectedGoalIds: ["honor-explicit-user-request"],
+        omittedOrSuppressedGoalIds: ["research-curiosity"],
+        shapingIntensity: "low",
+        lastInitiativeOutputKind: "reflection_requested",
+        lastInitiativeSurfaced: true,
+        lastInitiativeSuppressionReason: null,
+        lastInitiativeRenderedLinePresent: true,
+      },
+    });
+
+    expect(parseVolitionStateMessage(JSON.stringify({ ...baseMessage, decision: null }))).toEqual({
+      qsfSessionId: "session_1",
+      exchangeIndex: 4,
+      capturedAt: "2026-06-30T12:00:00Z",
+      responseCreateEventRef: "hash-abc",
+      inspection: {
+        mode: "neutral",
+        tick: 12,
+        activeGoals: [
+          {
+            id: "honor-explicit-user-request",
+            title: "Honor explicit user request",
+            salience: 9,
+            cooldownUntilTick: null,
+            lastActivatedTick: 11,
+          },
+        ],
+        acceptedGoals: [],
+        blockedGoals: [],
+        cooldownGoals: [],
+        retiredGoals: [],
+        pendingCandidateCount: 1,
+        acceptedCandidateCount: 2,
+        lastInitiativeSummaries: [
+          {
+            goalId: "honor-explicit-user-request",
+            goalTitle: "Honor explicit user request",
+            outputKind: "reflection_requested",
+          },
+        ],
+      },
+      decision: null,
+    });
+  });
+
+  it("returns null for malformed or wrong-kind messages", () => {
+    expect(parseVolitionStateMessage("not json")).toBeNull();
+    expect(parseVolitionStateMessage(JSON.stringify({ kind: "turn_context" }))).toBeNull();
+    expect(
+      parseVolitionStateMessage(
+        JSON.stringify({
+          ...baseMessage,
+          inspection: { ...baseMessage.inspection, active_goals: [{}] },
+        }),
+      ),
+    ).toBeNull();
+  });
+});
+
 describe("sideband status message parsing", () => {
   it("parses a well-formed status message", () => {
     expect(
@@ -523,5 +795,110 @@ describe("sideband status message parsing", () => {
       ),
     ).toBeNull();
     expect(parseSidebandStatusMessage("not json")).toBeNull();
+  });
+});
+
+describe("volition panel selector", () => {
+  const sampleCapture = {
+    qsfSessionId: "session_1",
+    exchangeIndex: 4,
+    capturedAt: "2026-06-30T12:00:00Z",
+    responseCreateEventRef: "hash-abc",
+    inspection: {
+      mode: "neutral",
+      tick: 12,
+      activeGoals: [
+        {
+          id: "honor-explicit-user-request",
+          title: "Honor explicit user request",
+          salience: 9,
+          cooldownUntilTick: null,
+          lastActivatedTick: 11,
+        },
+      ],
+      acceptedGoals: [],
+      blockedGoals: [],
+      cooldownGoals: [],
+      retiredGoals: [],
+      pendingCandidateCount: 1,
+      acceptedCandidateCount: 2,
+      lastInitiativeSummaries: [
+        {
+          goalId: "honor-explicit-user-request",
+          goalTitle: "Honor explicit user request",
+          outputKind: "reflection_requested",
+        },
+      ],
+    },
+    decision: {
+      winnerGoalId: "honor-explicit-user-request",
+      winnerGoalTitle: "Honor explicit user request",
+      winnerEffectiveTier: 2,
+      winnerBiasedTier: 2,
+      protectedTierActive: true,
+      modeBiasOutcomes: [
+        {
+          goalId: "honor-explicit-user-request",
+          goalTitle: "Honor explicit user request",
+          effectiveTier: 2,
+          biasedTier: 2,
+          protected: true,
+        },
+      ],
+      selectedGoalIds: ["honor-explicit-user-request"],
+      omittedOrSuppressedGoalIds: ["research-curiosity"],
+      shapingIntensity: "low",
+      lastInitiativeOutputKind: "reflection_requested",
+      lastInitiativeSurfaced: true,
+      lastInitiativeSuppressionReason: null,
+      lastInitiativeRenderedLinePresent: true,
+    },
+  };
+
+  it("renders protected winner tiers and trace details without hard-coded ids", () => {
+    const state = {
+      ...INITIAL_STATE,
+      sessionId: "session_1",
+      latestVolitionState: sampleCapture,
+    };
+    const model = selectVolitionPanelModel(state);
+
+    expect(model.kind).toBe("decision");
+    expect(model.banner).toBe("Decision captured for this trusted turn.");
+    expect(model.sections).toHaveLength(2);
+    const decisionSection = model.sections[1];
+    expect(decisionSection.title).toBe("Decision detail");
+    const winnerTiers = decisionSection.rows.find((row) => row.label === "Winner tiers");
+    expect(winnerTiers?.value).toContain("effective 2");
+    expect(winnerTiers?.value).toContain("biased 2");
+    expect(winnerTiers?.value).toContain("protected yes");
+    expect(decisionSection.rows.find((row) => row.label === "Trace ref")?.value).toBe("hash-abc");
+  });
+
+  it("renders a no-decision snapshot with an explicit marker", () => {
+    const state = {
+      ...INITIAL_STATE,
+      sessionId: "session_1",
+      latestVolitionState: { ...sampleCapture, decision: null },
+    };
+    const model = selectVolitionPanelModel(state);
+
+    expect(model.kind).toBe("snapshot");
+    expect(model.banner).toBe("No volition decision this turn.");
+    expect(model.sections).toHaveLength(1);
+    const snapshotSection = model.sections[0];
+    expect(snapshotSection.rows.find((row) => row.label === "Tick")?.value).toBe("12");
+    expect(snapshotSection.rows.find((row) => row.label === "Active goals")?.value).toContain(
+      "Honor explicit user request",
+    );
+  });
+
+  it("renders a stable empty state before any capture arrives", () => {
+    const model = selectVolitionPanelModel(INITIAL_STATE);
+
+    expect(model.kind).toBe("empty");
+    expect(model.headline).toBe("No volition state yet");
+    expect(model.banner).toBe("Awaiting the first trusted turn.");
+    expect(model.sections).toHaveLength(0);
   });
 });

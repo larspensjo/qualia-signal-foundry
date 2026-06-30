@@ -16,6 +16,7 @@ use crate::cli::Args;
 use crate::diagnostics::{DiagnosticRecord, DiagnosticTrust, DiagnosticWriter};
 use crate::realtime::turn_context::TurnContextCapture;
 use crate::realtime::volition_injection::build_stable_baseline_instructions;
+use crate::realtime::volition_inspection_capture::VolitionInspectionCapture;
 
 pub const DEFAULT_QSF_SESSION_ID: &str = "default";
 const DEFAULT_OPENAI_BASE_URL: &str = "https://api.openai.com";
@@ -488,6 +489,7 @@ pub struct SessionRuntime {
     pub volition: crate::realtime::volition::VolitionRuntimeState,
     status_tx: watch::Sender<SidebandStatus>,
     turn_context_tx: watch::Sender<Option<TurnContextCapture>>,
+    volition_inspection_tx: watch::Sender<Option<VolitionInspectionCapture>>,
 }
 
 impl SessionRuntime {
@@ -521,6 +523,7 @@ impl SessionRuntime {
             volition: crate::realtime::volition::VolitionRuntimeState::new(),
             status_tx: watch::channel(SidebandStatus::default()).0,
             turn_context_tx: watch::channel(None).0,
+            volition_inspection_tx: watch::channel(None).0,
         }
     }
 
@@ -542,6 +545,21 @@ impl SessionRuntime {
     /// `SessionRuntime` can publish captures without holding a `MutexGuard`.
     pub fn turn_context_sender(&self) -> watch::Sender<Option<TurnContextCapture>> {
         self.turn_context_tx.clone()
+    }
+
+    /// Subscribe to volition inspection captures. A late-joining subscriber
+    /// immediately observes the most recent capture stored in the channel, even
+    /// if it was published before this call (watch channel guarantee).
+    pub fn subscribe_volition_inspection(
+        &self,
+    ) -> watch::Receiver<Option<VolitionInspectionCapture>> {
+        self.volition_inspection_tx.subscribe()
+    }
+
+    /// Return a clone of the volition-inspection sender so callers outside
+    /// `SessionRuntime` can publish captures without holding a `MutexGuard`.
+    pub fn volition_inspection_sender(&self) -> watch::Sender<Option<VolitionInspectionCapture>> {
+        self.volition_inspection_tx.clone()
     }
 
     /// Record the current sideband health and notify any status subscribers.
@@ -776,5 +794,89 @@ mod tests {
         assert_eq!(received.request_hash, "hash-abc");
         assert_eq!(received.qsf_session_id, "test-session");
         assert_eq!(received.exchange_index, 0);
+    }
+
+    #[test]
+    fn volition_inspection_watch_holds_value_for_late_subscriber() {
+        use crate::realtime::volition_inspection_capture::build_volition_inspection_capture;
+        use qsf_volition::{VolitionState, build_state_inspection, realtime_seed_fixture};
+
+        let tempdir = tempfile::tempdir().expect("tempdir");
+        let diagnostics =
+            DiagnosticWriter::create(tempdir.path().join("test.jsonl")).expect("diagnostics");
+        let runtime = SessionRuntime::new(
+            "test-session".to_string(),
+            BrowserSessionConfig::default(),
+            diagnostics,
+        );
+
+        let fixture = realtime_seed_fixture();
+        let state = VolitionState::from_fixture(&fixture);
+        let inspection = build_state_inspection(&state, &fixture);
+        let capture = build_volition_inspection_capture(
+            "test-session".to_string(),
+            0,
+            time::OffsetDateTime::from_unix_timestamp(1_700_000_000).expect("timestamp"),
+            "request-ref".to_string(),
+            inspection,
+            None,
+        );
+
+        runtime
+            .volition_inspection_sender()
+            .send_replace(Some(capture.clone()));
+
+        let rx = runtime.subscribe_volition_inspection();
+        let received = rx.borrow().clone();
+        assert!(
+            received.is_some(),
+            "late subscriber must see stored capture"
+        );
+        let received = received.unwrap();
+        assert_eq!(received.response_create_event_ref, "request-ref");
+        assert_eq!(received.qsf_session_id, "test-session");
+        assert_eq!(received.exchange_index, 0);
+    }
+
+    #[test]
+    fn volition_inspection_state_isolated_between_sessions() {
+        use crate::realtime::volition_inspection_capture::build_volition_inspection_capture;
+        use qsf_volition::{VolitionState, build_state_inspection, realtime_seed_fixture};
+
+        let tempdir = tempfile::tempdir().expect("tempdir");
+        let diagnostics_a =
+            DiagnosticWriter::create(tempdir.path().join("test-a.jsonl")).expect("diagnostics");
+        let diagnostics_b =
+            DiagnosticWriter::create(tempdir.path().join("test-b.jsonl")).expect("diagnostics");
+        let runtime_a = SessionRuntime::new(
+            "session-a".to_string(),
+            BrowserSessionConfig::default(),
+            diagnostics_a,
+        );
+        let runtime_b = SessionRuntime::new(
+            "session-b".to_string(),
+            BrowserSessionConfig::default(),
+            diagnostics_b,
+        );
+
+        let fixture = realtime_seed_fixture();
+        let state = VolitionState::from_fixture(&fixture);
+        let capture = build_volition_inspection_capture(
+            "session-a".to_string(),
+            0,
+            time::OffsetDateTime::from_unix_timestamp(1_700_000_000).expect("timestamp"),
+            "request-ref".to_string(),
+            build_state_inspection(&state, &fixture),
+            None,
+        );
+
+        runtime_a
+            .volition_inspection_sender()
+            .send_replace(Some(capture));
+
+        let received_a = runtime_a.subscribe_volition_inspection().borrow().clone();
+        let received_b = runtime_b.subscribe_volition_inspection().borrow().clone();
+        assert!(received_a.is_some());
+        assert!(received_b.is_none());
     }
 }

@@ -423,6 +423,75 @@ button:disabled {
   word-break: break-all;
 }
 
+.volition-state-body {
+  display: grid;
+  gap: 0.75rem;
+  margin-top: 0.6rem;
+}
+
+.volition-state-banner {
+  margin: 0;
+  padding: 0.72rem 0.85rem;
+  border-radius: 12px;
+  border: 1px solid rgba(125, 211, 252, 0.18);
+  background: rgba(125, 211, 252, 0.08);
+  color: var(--text);
+  font-size: 0.88rem;
+  line-height: 1.45;
+}
+
+.volition-state-banner-empty {
+  border-color: rgba(184, 191, 215, 0.16);
+  background: rgba(184, 191, 215, 0.08);
+  color: var(--muted);
+}
+
+.volition-state-banner-snapshot {
+  border-color: rgba(245, 158, 11, 0.18);
+  background: rgba(245, 158, 11, 0.1);
+}
+
+.volition-state-banner-decision {
+  border-color: rgba(125, 211, 252, 0.24);
+  background: rgba(125, 211, 252, 0.12);
+}
+
+.volition-state-section h3 {
+  margin: 0 0 0.45rem;
+  color: var(--accent-2);
+  font-size: 0.76rem;
+  text-transform: uppercase;
+  letter-spacing: 0.16em;
+}
+
+.volition-state-list {
+  display: grid;
+  gap: 0.55rem;
+  margin: 0;
+}
+
+.volition-state-row {
+  padding: 0.8rem 0.85rem;
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.volition-state-row dt {
+  color: var(--muted);
+  font-size: 0.72rem;
+  text-transform: uppercase;
+  letter-spacing: 0.14em;
+}
+
+.volition-state-row dd {
+  margin: 0.35rem 0 0;
+  color: var(--text);
+  font-size: 0.88rem;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+
 @media (max-width: 900px) {
   body {
     overflow: auto;
@@ -464,6 +533,10 @@ button:disabled {
 
   .transcript {
     max-height: min(46vh, 28rem);
+  }
+
+  .details-panel {
+    overflow: visible;
   }
 }
 

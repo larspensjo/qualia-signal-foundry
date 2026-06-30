@@ -102,6 +102,18 @@ candidate categories listed below still have no shared module.
   a durable fidelity cross-check anchor. The capture is live-only and not persisted
   to the diagnostics JSONL.
   ([realtime/turn_context.rs](../../crates/qsf_realtime_server/src/realtime/turn_context.rs))
+- **Live volition inspection capture** mirrors the turn-context surface for the
+  already-computed volition state. Each trusted turn publishes a
+  `VolitionInspectionCapture` with the compact `VolitionStateInspection` snapshot
+  plus an optional `VolitionTurnDecisionSummary` that appears only on selection
+  turns. The summary carries the winner tiers, protected-tier flag, compact
+  mode-bias outcomes, selected and omitted/suppressed goal ids, shaping intensity,
+  and last-initiative surfacing fields. The `response_create_event_ref` links the
+  capture back to the same turn's `turn_context` capture always, and to the
+  `VolitionContextInjected` / `RealtimeBoundedInitiative` diagnostics only on
+  selection turns. The capture is live-only and not persisted to the diagnostics
+  JSONL.
+  ([realtime/volition_inspection_capture.rs](../../crates/qsf_realtime_server/src/realtime/volition_inspection_capture.rs))
 
 **Partial:**
 
@@ -135,7 +147,7 @@ Last reviewed: 2026-06-30 against explicit remember-this capture observability,
 retrieval skip reasons, the implemented sideband promotion path, the realtime
 diagnostic surface, realtime tool execution records, the live-loop
 latency/interruption diagnostics, volition tool trace persistence, and the live
-literal turn-context capture surface.
+literal turn-context plus volition inspection capture surfaces.
 
 ## Summary
 

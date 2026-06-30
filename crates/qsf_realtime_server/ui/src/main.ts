@@ -10,9 +10,11 @@ import {
   parseProviderDataChannelMessage,
   parseSidebandStatusMessage,
   parseTurnContextMessage,
+  parseVolitionStateMessage,
   reduceConversationState,
   type SdpExchangeResponse,
   type SessionAllocationResponse,
+  selectVolitionPanelModel,
 } from "./realtime";
 
 interface UiRefs {
@@ -31,6 +33,7 @@ interface UiRefs {
   warningBanner: HTMLElement;
   remoteAudio: HTMLAudioElement;
   turnContextBody: HTMLElement;
+  volitionStateBody: HTMLElement;
 }
 
 interface ActiveConversation {
@@ -125,6 +128,10 @@ root.innerHTML = `
           <summary>Last turn context</summary>
           <div data-role="turn-context-body" class="turn-context-body"></div>
         </details>
+        <details class="turn-context-details">
+          <summary>Volition state</summary>
+          <div data-role="volition-state-body" class="volition-state-body"></div>
+        </details>
       </aside>
     </section>
   </main>
@@ -189,6 +196,10 @@ async function startConversation(options: ConversationStartOptions): Promise<boo
       const turnCtx = parseTurnContextMessage(raw);
       if (turnCtx !== null) {
         dispatch({ type: "turn_context_captured", capture: turnCtx });
+      }
+      const volitionState = parseVolitionStateMessage(raw);
+      if (volitionState !== null) {
+        dispatch({ type: "volition_state_captured", capture: volitionState });
       }
     });
     relaySocket.addEventListener("close", () => {
@@ -464,6 +475,8 @@ function render() {
     pre.textContent = JSON.stringify(ctx.messages, null, 2);
     refs.turnContextBody.replaceChildren(meta, pre);
   }
+
+  renderVolitionStatePanel(refs.volitionStateBody, selectVolitionPanelModel(state));
 }
 
 function scrollTranscriptToLatest() {
@@ -583,7 +596,49 @@ function collectRefs(container: HTMLElement): UiRefs {
     warningBanner: query<HTMLElement>('[data-role="warning"]'),
     remoteAudio: query<HTMLAudioElement>('[data-role="remote-audio"]'),
     turnContextBody: query<HTMLElement>('[data-role="turn-context-body"]'),
+    volitionStateBody: query<HTMLElement>('[data-role="volition-state-body"]'),
   };
+}
+
+function renderVolitionStatePanel(
+  container: HTMLElement,
+  model: ReturnType<typeof selectVolitionPanelModel>,
+) {
+  container.replaceChildren();
+
+  const banner = document.createElement("p");
+  banner.className = `volition-state-banner volition-state-banner-${model.kind}`;
+  banner.textContent = model.banner;
+  container.appendChild(banner);
+
+  for (const section of model.sections) {
+    const sectionElement = document.createElement("section");
+    sectionElement.className = "volition-state-section";
+
+    const heading = document.createElement("h3");
+    heading.textContent = section.title;
+    sectionElement.appendChild(heading);
+
+    const list = document.createElement("dl");
+    list.className = "volition-state-list";
+
+    for (const row of section.rows) {
+      const rowElement = document.createElement("div");
+      rowElement.className = "volition-state-row";
+
+      const label = document.createElement("dt");
+      label.textContent = row.label;
+
+      const value = document.createElement("dd");
+      value.textContent = row.value;
+
+      rowElement.append(label, value);
+      list.appendChild(rowElement);
+    }
+
+    sectionElement.appendChild(list);
+    container.appendChild(sectionElement);
+  }
 }
 
 function messageFromError(error: unknown): string {

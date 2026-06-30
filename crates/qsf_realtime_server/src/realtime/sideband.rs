@@ -59,6 +59,10 @@ use crate::realtime::volition_initiative::{
 use crate::realtime::volition_injection::{
     build_volition_context_injection_trace, build_volition_turn_context_packet,
 };
+use crate::realtime::volition_inspection_capture::{
+    VolitionInspectionCapture, build_volition_inspection_capture,
+    build_volition_turn_decision_summary,
+};
 use crate::state::{AppState, SessionRuntime};
 
 const DEFAULT_INJECTION_FRAGMENT_LIMIT: usize = 4;
@@ -1317,6 +1321,7 @@ async fn inject_trusted_turn_context_and_response(
     let mut guard = session.lock().await;
     let diagnostics = guard.diagnostics.clone();
     let turn_context_tx = guard.turn_context_sender();
+    let volition_inspection_tx = guard.volition_inspection_sender();
     apply_live_session_event(
         &mut guard.session_state,
         LiveSessionEvent::MemoryContextRecorded {
@@ -1544,6 +1549,30 @@ async fn inject_trusted_turn_context_and_response(
                 trace: initiative_trace,
             })?;
         }
+        let volition_inspection_capture = {
+            let guard = session.lock().await;
+            let inspection = build_state_inspection(&guard.volition.state, &guard.volition.fixture);
+            build_volition_inspection_capture(
+                qsf_session_id.to_string(),
+                exchange_index,
+                OffsetDateTime::now_utc(),
+                request_hash.to_string(),
+                inspection,
+                arbitration.as_ref().and_then(|arbitration| {
+                    initiative_output.as_ref().map(|output| {
+                        build_volition_turn_decision_summary(
+                            &ranked,
+                            arbitration,
+                            output,
+                            surfaced,
+                            suppression_reason,
+                            rendered_line_present,
+                            intensity,
+                        )
+                    })
+                }),
+            )
+        };
         return send_response_create_and_capture(
             outbound_tx,
             response_create,
@@ -1555,6 +1584,8 @@ async fn inject_trusted_turn_context_and_response(
             qsf_session_id,
             memory_injected_at,
             &turn_context_tx,
+            &volition_inspection_tx,
+            volition_inspection_capture,
         );
     }
 
@@ -1565,6 +1596,18 @@ async fn inject_trusted_turn_context_and_response(
     );
     turn_request_values.push(response_create.clone());
     let request_hash = hash_request_sequence(&turn_request_values);
+    let volition_inspection_capture = {
+        let guard = session.lock().await;
+        let inspection = build_state_inspection(&guard.volition.state, &guard.volition.fixture);
+        build_volition_inspection_capture(
+            qsf_session_id.to_string(),
+            exchange_index,
+            OffsetDateTime::now_utc(),
+            request_hash.to_string(),
+            inspection,
+            None,
+        )
+    };
     send_response_create_and_capture(
         outbound_tx,
         response_create,
@@ -1576,19 +1619,20 @@ async fn inject_trusted_turn_context_and_response(
         qsf_session_id,
         memory_injected_at,
         &turn_context_tx,
+        &volition_inspection_tx,
+        volition_inspection_capture,
     )
 }
 
 /// Send `response.create` and, on success, publish a [`TurnContextCapture`] to the
-/// session's turn-context watch channel.
+/// session's turn-context and volition-inspection watch channels.
 ///
-/// Both the volition and no-volition branches of
-/// [`inject_trusted_turn_context_and_response`] call this helper so the publish
-/// is guaranteed to be consistent with the hash for every branch.
+/// Both branches of [`inject_trusted_turn_context_and_response`] call this
+/// helper so the publish is guaranteed to be consistent with the hash for every
+/// trusted turn.
 ///
-/// The `request_hash` must be pre-computed by the caller (the volition branch
-/// computes it early for its diagnostics traces).  This function never calls
-/// `hash_request_sequence` internally.
+/// The `request_hash` and volition inspection capture must be pre-computed by
+/// the caller. This function never calls `hash_request_sequence` internally.
 ///
 /// The publish happens **only** after `send_json` returns without error.  If
 /// `send_json` fails the `?` propagates and the watch channel is not updated.
@@ -1604,6 +1648,8 @@ fn send_response_create_and_capture(
     qsf_session_id: &str,
     memory_injected_at: Option<OffsetDateTime>,
     turn_context_tx: &watch::Sender<Option<TurnContextCapture>>,
+    volition_inspection_tx: &watch::Sender<Option<VolitionInspectionCapture>>,
+    volition_inspection_capture: VolitionInspectionCapture,
 ) -> anyhow::Result<()> {
     send_json(outbound_tx, response_create)?;
     runtime_state.response_create_sent_at = Some(OffsetDateTime::now_utc());
@@ -1624,6 +1670,7 @@ fn send_response_create_and_capture(
         turn_request_values,
     );
     turn_context_tx.send_replace(Some(capture));
+    volition_inspection_tx.send_replace(Some(volition_inspection_capture));
     runtime_state.current_request_hash = Some(request_hash);
     runtime_state.current_message_count = message_count;
     runtime_state.pending_response_exchange = Some(exchange_index);
@@ -2440,6 +2487,23 @@ mod tests {
             .apply_events(vec![VolitionEvent::ModeChanged { mode, tick }]);
     }
 
+    fn dummy_volition_inspection_capture()
+    -> crate::realtime::volition_inspection_capture::VolitionInspectionCapture {
+        use crate::realtime::volition_inspection_capture::build_volition_inspection_capture;
+        use qsf_volition::{VolitionState, build_state_inspection, realtime_seed_fixture};
+
+        let fixture = realtime_seed_fixture();
+        let state = VolitionState::from_fixture(&fixture);
+        build_volition_inspection_capture(
+            "test-session".to_string(),
+            0,
+            OffsetDateTime::from_unix_timestamp(1_700_000_000).expect("timestamp"),
+            "request-ref".to_string(),
+            build_state_inspection(&state, &fixture),
+            None,
+        )
+    }
+
     #[test]
     fn hash_request_sequence_is_deterministic() {
         let first = hash_request_sequence(&[serde_json::json!({"a": 1})]);
@@ -2467,6 +2531,7 @@ mod tests {
 
         let (outbound_tx, _outbound_rx) = mpsc::unbounded_channel::<Message>();
         let (turn_context_tx, turn_context_rx) = watch::channel::<Option<TurnContextCapture>>(None);
+        let (volition_inspection_tx, volition_inspection_rx) = watch::channel(None);
 
         let memory_injected_at = None;
         let mut runtime_state = SidebandRuntimeState::default();
@@ -2487,6 +2552,8 @@ mod tests {
             "test-session",
             memory_injected_at,
             &turn_context_tx,
+            &volition_inspection_tx,
+            dummy_volition_inspection_capture(),
         );
 
         assert!(
@@ -2505,6 +2572,7 @@ mod tests {
             capture.messages, expected_messages,
             "captured messages must be the verbatim turn_request_values in send order"
         );
+        assert!(volition_inspection_rx.borrow().is_some());
     }
 
     /// Verifies the failure-path contract: if `outbound_tx` is closed before
@@ -2521,6 +2589,7 @@ mod tests {
         drop(outbound_rx);
 
         let (turn_context_tx, turn_context_rx) = watch::channel::<Option<TurnContextCapture>>(None);
+        let (volition_inspection_tx, volition_inspection_rx) = watch::channel(None);
 
         let memory_injected_at = Some(OffsetDateTime::now_utc());
         let mut runtime_state = SidebandRuntimeState {
@@ -2548,6 +2617,8 @@ mod tests {
             "test-session",
             memory_injected_at,
             &turn_context_tx,
+            &volition_inspection_tx,
+            dummy_volition_inspection_capture(),
         );
 
         assert!(
@@ -2557,6 +2628,172 @@ mod tests {
         assert!(
             turn_context_rx.borrow().is_none(),
             "turn_context must not be published when send_json fails"
+        );
+        assert!(
+            volition_inspection_rx.borrow().is_none(),
+            "volition inspection must not be published when send_json fails"
+        );
+    }
+
+    #[tokio::test]
+    async fn trusted_selection_turn_publishes_volition_capture_and_cross_links_diagnostics() {
+        let tempdir = TempDir::new().expect("tempdir");
+        let state = state(&tempdir);
+        let allocation = state.create_session().await.expect("session");
+
+        let runtime = state
+            .session_runtime(&allocation.qsf_session_id)
+            .await
+            .expect("runtime");
+        let (turn_context_rx, volition_rx) = {
+            let guard = runtime.lock().await;
+            (
+                guard.subscribe_turn_context(),
+                guard.subscribe_volition_inspection(),
+            )
+        };
+
+        let mut runtime_state = SidebandRuntimeState::default();
+        let (outbound_tx, mut outbound_rx) = mpsc::unbounded_channel();
+
+        run_trusted_transcript_turn(
+            &state,
+            &allocation.qsf_session_id,
+            &mut runtime_state,
+            &outbound_tx,
+            "how can you help me",
+            "selection-turn",
+        )
+        .await;
+
+        let mut turn_context_rx = turn_context_rx;
+        turn_context_rx
+            .changed()
+            .await
+            .expect("turn context update");
+        let mut volition_rx = volition_rx;
+        volition_rx.changed().await.expect("volition update");
+
+        let turn_context_capture = turn_context_rx
+            .borrow()
+            .clone()
+            .expect("turn context capture");
+        let volition_capture = volition_rx.borrow().clone().expect("volition capture");
+        let outbound_texts = drain_outbound_texts(&mut outbound_rx);
+        assert!(
+            outbound_texts
+                .iter()
+                .any(|text| text.contains("response.create")),
+            "trusted selection turn must send response.create"
+        );
+        let decision = volition_capture
+            .decision
+            .as_ref()
+            .expect("selection turn must include a decision");
+        assert!(decision.protected_tier_active);
+        assert_eq!(
+            turn_context_capture.request_hash,
+            volition_capture.response_create_event_ref
+        );
+
+        let records = diagnostic_records(&state, &allocation.qsf_session_id).await;
+        let injected = records
+            .iter()
+            .find_map(|record| match record {
+                DiagnosticRecord::VolitionContextInjected { trace, .. } => Some(trace),
+                _ => None,
+            })
+            .expect("volition context injected trace");
+        assert_eq!(
+            injected.response_create_event_ref,
+            volition_capture.response_create_event_ref
+        );
+        let initiative = records
+            .iter()
+            .find_map(|record| match record {
+                DiagnosticRecord::RealtimeBoundedInitiative { trace, .. } => Some(trace),
+                _ => None,
+            })
+            .expect("realtime bounded initiative trace");
+        assert_eq!(
+            initiative.response_create_event_ref,
+            volition_capture.response_create_event_ref
+        );
+    }
+
+    #[tokio::test]
+    async fn trusted_no_selection_turn_publishes_state_only_capture() {
+        let tempdir = TempDir::new().expect("tempdir");
+        let state = state(&tempdir);
+        let allocation = state.create_session().await.expect("session");
+
+        let runtime = state
+            .session_runtime(&allocation.qsf_session_id)
+            .await
+            .expect("runtime");
+        let (turn_context_rx, volition_rx) = {
+            let guard = runtime.lock().await;
+            (
+                guard.subscribe_turn_context(),
+                guard.subscribe_volition_inspection(),
+            )
+        };
+
+        let mut runtime_state = SidebandRuntimeState::default();
+        let (outbound_tx, mut outbound_rx) = mpsc::unbounded_channel();
+
+        run_trusted_transcript_turn(
+            &state,
+            &allocation.qsf_session_id,
+            &mut runtime_state,
+            &outbound_tx,
+            "xyzzy frobnicator quux",
+            "no-selection-turn",
+        )
+        .await;
+
+        let mut turn_context_rx = turn_context_rx;
+        turn_context_rx
+            .changed()
+            .await
+            .expect("turn context update");
+        let mut volition_rx = volition_rx;
+        volition_rx.changed().await.expect("volition update");
+
+        let turn_context_capture = turn_context_rx
+            .borrow()
+            .clone()
+            .expect("turn context capture");
+        let volition_capture = volition_rx.borrow().clone().expect("volition capture");
+        assert!(
+            volition_capture.decision.is_none(),
+            "no-selection turn must publish a state-only capture"
+        );
+        let outbound_texts = drain_outbound_texts(&mut outbound_rx);
+        assert!(
+            outbound_texts
+                .iter()
+                .any(|text| text.contains("response.create")),
+            "trusted no-selection turn must still send response.create"
+        );
+        assert_eq!(
+            turn_context_capture.request_hash,
+            volition_capture.response_create_event_ref
+        );
+
+        let records = diagnostic_records(&state, &allocation.qsf_session_id).await;
+        assert!(
+            records
+                .iter()
+                .all(|record| !matches!(record, DiagnosticRecord::VolitionContextInjected { .. })),
+            "no-selection turn must not write a volition context-injected diagnostic"
+        );
+        assert!(
+            records.iter().all(|record| !matches!(
+                record,
+                DiagnosticRecord::RealtimeBoundedInitiative { .. }
+            )),
+            "no-selection turn must not write a bounded-initiative diagnostic"
         );
     }
 

@@ -1513,3 +1513,21 @@ Refs: docs/Plans/Design.RealtimeVolitionContinuity.md,
 docs/Experiments/Experiment.RealtimeVolitionContinuity.md,
 docs/Architecture/Architecture.RealtimeSessionServer.md,
 docs/Architecture/Architecture.VolitionSystem.md
+
+## 2026-06-30 - Realtime volition inspection uses the events socket
+Type: Decision
+Decision: Realtime volition inspection is published over the existing per-session
+events socket as a `volition_state` message backed by a `watch` channel, not by a
+polling HTTP endpoint. The capture is latest-only, read-only, and no-secret; it
+mirrors the live volition snapshot plus an optional decision summary. No-selection
+trusted turns publish a state-only capture and do not fabricate a winner.
+Context: Phase 7 needed a browser-visible volition surface that updates during the
+spoken turn and preserves the same session-isolation pattern as the turn-context
+inspector. The events-socket push path already fits that behavior and avoids a new
+polling route that would add latency and duplicate session lookup logic.
+Consequences: The realtime UI consumes a push stream rather than polling state.
+Session-local watch channels remain the transport for live inspection surfaces, and
+operator-facing volition details stay bounded to the compact capture shape.
+Refs: docs/Experiments/Experiment.RealtimeVolitionInspectionUi.md,
+docs/Architecture/Architecture.RealtimeSessionServer.md,
+docs/Architecture/Architecture.StateAndObservability.md

@@ -74,6 +74,13 @@ mode, not a one-off experiment server.
   Late-joining sockets receive the stored latest value immediately (the same
   `send_replace` / subscribe pattern used by the sideband-status channel). Access
   via `subscribe_turn_context()` and `turn_context_sender()`.
+- `SessionRuntime` now also owns a per-session `volition_inspection_tx:
+  watch::Sender<Option<VolitionInspectionCapture>>`. Each trusted turn publishes
+  a compact volition inspection capture to connected browser sockets as a
+  `kind: "volition_state"` events-socket message. The capture mirrors the live
+  volition snapshot plus an optional decision summary, and late-joining sockets
+  receive the stored latest value immediately via `subscribe_volition_inspection()`
+  and `volition_inspection_sender()`.
 
 **Partial:**
 
@@ -86,7 +93,8 @@ mode, not a one-off experiment server.
 
 - Full `qsf_app` tool exposure to the live realtime model.
 
-Last reviewed: 2026-06-29 against the implemented trusted typed-turn path.
+Last reviewed: 2026-06-30 against the implemented trusted typed-turn path and
+the live volition inspection capture surface.
 
 ## Purpose
 

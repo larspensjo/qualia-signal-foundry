@@ -318,7 +318,9 @@ fn build_candidate_summaries(
     summaries
 }
 
-fn build_mode_bias_outcomes(arbitration: &ModeArbitrationResult) -> Vec<VolitionModeBiasOutcome> {
+pub(crate) fn build_mode_bias_outcomes(
+    arbitration: &ModeArbitrationResult,
+) -> Vec<VolitionModeBiasOutcome> {
     let mut outcomes = vec![VolitionModeBiasOutcome {
         goal_id: arbitration.winner.goal.id.clone(),
         goal_title: arbitration.winner.goal.title.clone(),

@@ -18,6 +18,7 @@ use time::OffsetDateTime;
 
 use crate::diagnostics::DiagnosticRecord;
 use crate::realtime::turn_context::TurnContextCapture;
+use crate::realtime::volition_inspection_capture::VolitionInspectionCapture;
 use crate::state::{AppState, CallBinding, SessionRuntime, SidebandStatus};
 use qsf_session::{
     Exchange, ExchangeOutput, LiveSessionEvent, LiveSessionState, PartialTranscript,
@@ -383,9 +384,11 @@ async fn handle_events_socket(
     // session's health.
     let mut status_rx: Option<watch::Receiver<SidebandStatus>> = None;
     let mut turn_context_rx: Option<watch::Receiver<Option<TurnContextCapture>>> = None;
+    let mut volition_inspection_rx: Option<watch::Receiver<Option<VolitionInspectionCapture>>> =
+        None;
     let mut bound_session: Option<String> = session_hint;
     if let Some(id) = bound_session.clone() {
-        if let Some((srx, tcrx)) = subscribe_session(&state, &id).await {
+        if let Some((srx, tcrx, virx)) = subscribe_session(&state, &id).await {
             let status = srx.borrow().clone();
             push_status(&mut socket, &id, &status).await;
             status_rx = Some(srx);
@@ -394,6 +397,11 @@ async fn handle_events_socket(
                 push_turn_context(&mut socket, &capture).await;
             }
             turn_context_rx = Some(tcrx);
+            let initial_volition_capture = virx.borrow().clone();
+            if let Some(capture) = initial_volition_capture {
+                push_volition_inspection(&mut socket, &capture).await;
+            }
+            volition_inspection_rx = Some(virx);
         }
     }
 
@@ -406,6 +414,12 @@ async fn handle_events_socket(
         };
         let turn_context_changed = async {
             match turn_context_rx.as_mut() {
+                Some(rx) => rx.changed().await,
+                None => std::future::pending::<Result<(), watch::error::RecvError>>().await,
+            }
+        };
+        let volition_inspection_changed = async {
+            match volition_inspection_rx.as_mut() {
                 Some(rx) => rx.changed().await,
                 None => std::future::pending::<Result<(), watch::error::RecvError>>().await,
             }
@@ -441,6 +455,22 @@ async fn handle_events_socket(
                     }
                     // Sender dropped (session removed): stop watching, keep relaying.
                     Err(_) => turn_context_rx = None,
+                }
+            }
+            vi_result = volition_inspection_changed => {
+                match vi_result {
+                    Ok(()) => {
+                        let capture = volition_inspection_rx
+                            .as_ref()
+                            .expect("volition inspection receiver present when change observed")
+                            .borrow()
+                            .clone();
+                        if let Some(capture) = capture {
+                            push_volition_inspection(&mut socket, &capture).await;
+                        }
+                    }
+                    // Sender dropped (session removed): stop watching, keep relaying.
+                    Err(_) => volition_inspection_rx = None,
                 }
             }
             incoming = socket.next() => {
@@ -504,7 +534,7 @@ async fn handle_events_socket(
                             .ok();
 
                         if status_rx.is_none() {
-                            if let Some((srx, tcrx)) =
+                            if let Some((srx, tcrx, virx)) =
                                 subscribe_session(&state, &qsf_session_id).await
                             {
                                 let status = srx.borrow().clone();
@@ -515,6 +545,11 @@ async fn handle_events_socket(
                                     push_turn_context(&mut socket, &capture).await;
                                 }
                                 turn_context_rx = Some(tcrx);
+                                let initial_volition_capture = virx.borrow().clone();
+                                if let Some(capture) = initial_volition_capture {
+                                    push_volition_inspection(&mut socket, &capture).await;
+                                }
+                                volition_inspection_rx = Some(virx);
                             }
                         }
                     }
@@ -527,19 +562,24 @@ async fn handle_events_socket(
     Ok(())
 }
 
-/// Perform a single session lookup and return both the sideband-status receiver
-/// and the turn-context receiver so callers never need two separate lookups for
-/// one logical subscription event.
+/// Perform a single session lookup and return the sideband-status receiver plus
+/// the live inspection receivers so callers never need separate lookups for one
+/// logical subscription event.
 async fn subscribe_session(
     state: &AppState,
     qsf_session_id: &str,
 ) -> Option<(
     watch::Receiver<SidebandStatus>,
     watch::Receiver<Option<TurnContextCapture>>,
+    watch::Receiver<Option<VolitionInspectionCapture>>,
 )> {
     let session = state.session_runtime(qsf_session_id).await?;
     let guard = session.lock().await;
-    Some((guard.subscribe_status(), guard.subscribe_turn_context()))
+    Some((
+        guard.subscribe_status(),
+        guard.subscribe_turn_context(),
+        guard.subscribe_volition_inspection(),
+    ))
 }
 
 /// Push a sideband health update to the browser. The `kind` discriminator lets
@@ -575,6 +615,23 @@ struct TurnContextMessage {
 async fn push_turn_context(socket: &mut WebSocket, capture: &TurnContextCapture) {
     let message = TurnContextMessage {
         kind: "turn_context",
+        capture: capture.clone(),
+    };
+    if let Ok(text) = serde_json::to_string(&message) {
+        socket.send(Message::Text(text.into())).await.ok();
+    }
+}
+
+#[derive(Debug, Serialize)]
+struct VolitionInspectionMessage {
+    kind: &'static str,
+    #[serde(flatten)]
+    capture: VolitionInspectionCapture,
+}
+
+async fn push_volition_inspection(socket: &mut WebSocket, capture: &VolitionInspectionCapture) {
+    let message = VolitionInspectionMessage {
+        kind: "volition_state",
         capture: capture.clone(),
     };
     if let Ok(text) = serde_json::to_string(&message) {
