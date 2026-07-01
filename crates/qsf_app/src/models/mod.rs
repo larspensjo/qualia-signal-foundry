@@ -1,3 +1,4 @@
+mod coherence_judge;
 mod mock_model;
 mod model_client;
 mod model_role;
@@ -5,6 +6,9 @@ mod openai_provider;
 mod openai_tool_client;
 mod tool_dispatch;
 
+pub use coherence_judge::{
+    CoherenceJudge, CoherenceJudgeGoalRef, ModelBackedCoherenceJudge, ScriptedCoherenceJudge,
+};
 pub use mock_model::MockModelClient;
 pub use model_client::{
     ModelClient, ModelMessage, ModelMessageRole, ModelRequest, ModelResponse, ModelResponseFormat,

@@ -57,6 +57,28 @@ and—going forward—`qsf_realtime_server`), not in the crate.
   cooldown tick, and last-activated tick, plus `InitiativeSummary` records for
   recent initiative outputs. Consumed by `inspect_volition_state` in the realtime
   server.
+- Goal coherence (offline) in `qsf_volition::coherence`: `Contradiction`,
+  `CoherenceJudgeRef`, `CoherenceVerdict`, `AdmissionResolution`, `SweepResolution`,
+  and the pure resolution functions `resolve_admission`, `resolve_sweep`,
+  `candidate_hard_tier_floor_rejected`, and `resolve_protected_floor_rejection`. The
+  model only *detects* contradictions (recorded as a `CoherenceVerdict`); resolution
+  is pure and reuses the **existing** goal-lifecycle events — no new `VolitionEvent`
+  variants. `reducer::effective_tier_from_tension_ids` (public) tiers any
+  `tension_ids` slice against `fixture.tensions`, replacing the old fixture-goals-only
+  lookup so accepted and proposed candidates tier correctly instead of defaulting to
+  `u8::MAX`. The `CoherenceJudge` adapter seam
+  ([crates/qsf_app/src/models/coherence_judge.rs](../../crates/qsf_app/src/models/coherence_judge.rs))
+  has a deterministic `ScriptedCoherenceJudge` (default) and a `ModelBackedCoherenceJudge`
+  over a new `ModelRoleId::CoherenceJudge` role (real-model opt-in via the existing
+  provider selection). The offline harness experiment `volition-goal-coherence`
+  ([crates/qsf_app/src/experiments/volition_goal_coherence.rs](../../crates/qsf_app/src/experiments/volition_goal_coherence.rs))
+  exercises admit / reject / admit-and-cancel / hard-tier-floor-gate / reject-dominates
+  admission and a whole-set sweep (cancel, activation-tick tie-break, goal-id tie-break,
+  floor-vs-floor flag), recording each decision as a `goal-coherence-check` trace record
+  per the contract in
+  [Experiment.GoalCoherenceUnderProtectedFloor.md](../Experiments/Experiment.GoalCoherenceUnderProtectedFloor.md).
+  Live wiring (candidate formation from discussion, off-hot-path admission, the
+  sleep-pass sweep) is Phase 2, not yet implemented.
 
 **Not in this crate (by design):**
 

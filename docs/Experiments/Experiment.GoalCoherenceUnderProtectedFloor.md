@@ -2,8 +2,12 @@
 
 ## Status
 
-Planned. Not yet implemented. This scaffold defines the offline validation for the goal
-coherence engine before any live wiring.
+Implemented. Pure resolution lives in `qsf_volition::coherence`
+([crates/qsf_volition/src/coherence.rs](../../crates/qsf_volition/src/coherence.rs)); the
+`CoherenceJudge` adapter seam and offline harness live in `qsf_app`
+([crates/qsf_app/src/models/coherence_judge.rs](../../crates/qsf_app/src/models/coherence_judge.rs),
+[crates/qsf_app/src/experiments/volition_goal_coherence.rs](../../crates/qsf_app/src/experiments/volition_goal_coherence.rs)).
+Live wiring (Phase 2) is not yet implemented.
 
 ## Summary
 
@@ -156,41 +160,48 @@ formation/rejection phase.
 ## Trace Completeness Contract
 
 Each coherence check writes one `TraceRecord` with operation `goal-coherence-check` to
-`traces.jsonl`; the lifecycle events it resolves to are written to `events.jsonl`.
+`traces.jsonl`. That record is authoritative for the check, including the lifecycle events it
+resolved to — `qsf_app`'s `events.jsonl`, consistent with every other experiment in this
+codebase, carries only the framework `EventType` stream (`InputReceived`, `TraceRecorded`, ...)
+and does not hold raw `VolitionEvent`s as first-class entries; a `TraceRecorded` event links
+back to its `goal-coherence-check` trace by `trace_id`.
 
-Required fields:
+Required fields (in the trace record's `details`):
 
 - `trigger` — `admission` or `sweep`
 - `tick`
-- `candidate` — `{ goal_id, effective_tier }` (admission only)
-- `goal_set_snapshot` — evaluated goals (merged `fixture.goals` + `accepted_candidates`) as
-  `{ goal_id, effective_tier, status, last_activated_tick }`
+- `candidate` — `{ goal_id, effective_tier }` (admission only; `null` for a sweep)
+- `goal_set_snapshot` — evaluated goals (merged `fixture.goals` + `accepted_candidates`,
+  excluding already-retired goals) as `{ goal_id, effective_tier, status, last_activated_tick }`
 - `judge_ref` — model role + prompt-version id, or `null` for a pre-judge floor rejection
 - `contradictions` — list of `{ goal_a, goal_b, rationale }`; empty for a pre-judge floor
   rejection
-- `hard_tier_floor_rejected` — bool (admission only)
-- `resolution` — admission: `{ admitted, rejected_by, cancelled_goal_ids,
-  suppressed_cancellations_due_to_rejection }`, or `reject_protected_floor` for the pre-judge
-  gate; sweep: list of `{ cancelled_goal_id, conflicting_goal_id, tie_break }` plus any
-  `flagged { goal_a, goal_b }`
+- `hard_tier_floor_rejected` — bool (admission only; `null` for a sweep)
+- `resolution` — admission: `{ kind: "judged", admitted, rejected_by, cancelled_goal_ids,
+  suppressed_cancellations_due_to_rejection }`, or `{ kind: "reject_protected_floor" }` for the
+  pre-judge gate; sweep: `{ cancellations: [{ cancelled_goal_id, conflicting_goal_id, tie_break
+  }], flagged: [{ goal_a, goal_b }] }`
 - `events_emitted` — the emitted `VolitionEvent`s (`GoalCandidateAccepted` /
-  `GoalCandidateRejected` / `GoalRetired`)
-- `goal_status_before` / `goal_status_after` — for each affected goal
-- `artifact_or_record_reference`
+  `GoalCandidateRejected` / `GoalRetired`) — the authoritative record of what the reducer
+  applied for this check
+- `goal_status_before` / `goal_status_after` — one object each, keyed by affected goal id
+- `artifact_or_record_reference` — a stable pointer back to this check (`trigger` + `tick`)
 
 Artifact boundary:
 
 ```text
 traces.jsonl (TraceRecord, operation "goal-coherence-check"):
   Authoritative record of each check: the recorded model verdict (or null for a pre-judge
-  floor rejection) plus the deterministic resolution.
+  floor rejection), the deterministic resolution, and the events_emitted the reducer applied.
 
 events.jsonl:
-  The chronological lifecycle events applied — GoalCandidateAccepted / GoalCandidateRejected /
-  GoalRetired — that the reducer folded into state.
+  The framework EventType stream (InputReceived, TraceRecorded, ...). A TraceRecorded event
+  links back to its goal-coherence-check trace by trace_id; it does not duplicate the
+  VolitionEvents themselves.
 
 pure state:
-  Changes only through apply() over the emitted events; never holds the model output.
+  Changes only through apply() over the events_emitted recorded in traces.jsonl; never holds
+  the model output.
 ```
 
 Parsing verification:
@@ -219,4 +230,24 @@ Parsing verification:
 
 ## Results
 
-Pending implementation.
+Implemented as `qsf_app`'s `volition-goal-coherence` experiment, run over a purpose-built
+9-goal/5-tension fixture (disjoint tension id-terms so `propose_goal_candidates` matches each
+scripted question to exactly one tension, per D4). All ten automated-verification items and
+every parsing-verification bullet pass:
+
+- Five admission checks cover admit (no contradiction), reject-by-tier, admit-and-cancel
+  (`GoalRetired` before `GoalCandidateAccepted`), the hard tier-floor gate (`judge_ref: null`,
+  `contradictions: []`, no model call), and reject-dominates (rejection suppresses the
+  cancelling conflict without retiring it).
+- One sweep covers cancel-less-fundamental — including tiering an admitted candidate absent
+  from `fixture.goals` purely from its own `tension_ids` — both tie-break rules (greater
+  activation tick, then greater goal id on a tick tie), and a floor-vs-floor pair that is
+  flagged and never cancelled.
+- `qsf_app::experiments::volition_goal_coherence::tests` parses `traces.jsonl` and
+  `events.jsonl` from disk (not in-memory structs) and replays each admission's resolution from
+  its own recorded `contradictions` and `goal_set_snapshot` effective tiers, independent of the
+  scripted model verdict that produced them.
+- `ModelBackedCoherenceJudge` and `ScriptedCoherenceJudge` both validate every returned
+  contradiction against the queried goal set before returning a verdict, failing with context
+  on an unknown goal id or a self-contradiction rather than letting an unreal id silently tier
+  as `u8::MAX` or produce a no-op retirement.

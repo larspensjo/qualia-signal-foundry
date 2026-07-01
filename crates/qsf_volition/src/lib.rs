@@ -8,6 +8,9 @@ pub use arbitration::*;
 mod candidate;
 pub use candidate::*;
 
+mod coherence;
+pub use coherence::*;
+
 mod continuity;
 pub use continuity::*;
 

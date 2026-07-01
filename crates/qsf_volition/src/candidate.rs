@@ -76,6 +76,10 @@ impl ProposedGoalCandidate {
         &self.title
     }
 
+    pub fn summary(&self) -> &str {
+        &self.summary
+    }
+
     pub fn activation_keywords(&self) -> &[String] {
         &self.activation_keywords
     }

@@ -113,6 +113,14 @@ impl Default for MockModelClient {
                 output_tokens: 17,
             },
         );
+        fixtures.insert(
+            ModelRoleId::CoherenceJudge,
+            MockFixture {
+                output_text: json!({ "contradictions": [] }).to_string(),
+                input_tokens: 40,
+                output_tokens: 8,
+            },
+        );
 
         Self {
             provider_name: "mock".to_string(),

@@ -21,6 +21,7 @@ mod voice_loop;
 mod volition_arbitration_conflict;
 mod volition_bounded_initiative_execution;
 mod volition_continuity;
+mod volition_goal_coherence;
 mod volition_goal_fixture;
 mod volition_mode_bias;
 mod volition_reflection_goal_candidates;

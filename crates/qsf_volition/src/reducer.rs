@@ -294,18 +294,43 @@ fn event_tick(event: &VolitionEvent) -> u64 {
     }
 }
 
-/// Returns the minimum arbitration tier across a goal's parent tensions in the fixture.
-/// Goals with no parent tensions in the fixture return `u8::MAX`.
-fn goal_effective_tier(goal_id: &str, fixture: &VolitionFixture) -> u8 {
-    let Some(goal) = fixture.goals.iter().find(|g| g.id == goal_id) else {
-        return u8::MAX;
-    };
-    goal.tension_ids
+/// Returns the minimum arbitration tier among the given tension ids' fixture tensions.
+/// An id with no match in `fixture.tensions` contributes nothing; an empty result (no
+/// parent tensions found at all) is `u8::MAX`. Shared by goals, proposed candidates, and
+/// accepted candidates alike, since all three carry `tension_ids`.
+pub fn effective_tier_from_tension_ids(tension_ids: &[String], fixture: &VolitionFixture) -> u8 {
+    tension_ids
         .iter()
         .filter_map(|tid| fixture.tensions.iter().find(|t| t.id == *tid))
         .map(|t| t.arbitration_tier)
         .min()
         .unwrap_or(u8::MAX)
+}
+
+/// Returns the minimum arbitration tier across a goal's parent tensions, resolving
+/// `tension_ids` from the fixture's static goals or, failing that, `state`'s accepted
+/// candidates — so accepted candidates are tiered from their own `tension_ids` rather than
+/// defaulting to `u8::MAX` as an unmatched fixture lookup would.
+pub(crate) fn goal_effective_tier(
+    goal_id: &str,
+    state: &VolitionState,
+    fixture: &VolitionFixture,
+) -> u8 {
+    let tension_ids = fixture
+        .goals
+        .iter()
+        .find(|g| g.id == goal_id)
+        .map(|g| g.tension_ids.as_slice())
+        .or_else(|| {
+            state
+                .accepted_candidates
+                .get(goal_id)
+                .map(|g| g.tension_ids.as_slice())
+        });
+    match tension_ids {
+        Some(ids) => effective_tier_from_tension_ids(ids, fixture),
+        None => u8::MAX,
+    }
 }
 
 /// Given the current state and the next tick, returns any tick-driven events that should
@@ -339,7 +364,8 @@ pub fn tick_events(
                         tick: new_tick,
                     });
                 }
-                let is_protected = goal_effective_tier(goal_id, fixture) <= PROTECTED_TIER_FLOOR;
+                let is_protected =
+                    goal_effective_tier(goal_id, state, fixture) <= PROTECTED_TIER_FLOOR;
                 let last_active = dynamic.last_activated_tick.unwrap_or(0);
                 if !is_protected
                     && new_tick.saturating_sub(last_active) >= RETIREMENT_INACTIVITY_TICKS
@@ -371,7 +397,7 @@ mod tests {
     use super::*;
     use crate::{
         AllowedEffect, EvidenceRef, GoalScope, GoalStatus, InitiativeOutput, ProposedGoalCandidate,
-        propose_goal_candidates, static_fixture,
+        propose_goal_candidates, realtime_seed_fixture, static_fixture,
     };
 
     // ── Test helpers ────────────────────────────────────────────────────────
@@ -809,6 +835,49 @@ mod tests {
             event,
             VolitionEvent::GoalCooldownElapsed { goal_id: id, .. } if id == goal_id
         )));
+    }
+
+    #[test]
+    fn tick_events_never_retires_protected_tier_accepted_candidate() {
+        let fixture = realtime_seed_fixture();
+        let mut state = VolitionState::from_fixture(&fixture);
+        let candidate = ProposedGoalCandidate::try_new(
+            "accepted-protected-candidate".to_string(),
+            "Protected candidate".to_string(),
+            "Summary".to_string(),
+            vec!["explicit-user-intent".to_string()],
+            GoalScope::Session,
+            70,
+            vec![AllowedEffect::Reflect],
+            "Satisfied when resolved.".to_string(),
+            vec![EvidenceRef::try_new("test").unwrap()],
+            "test".to_string(),
+            vec![],
+        )
+        .unwrap();
+        state = apply(
+            state,
+            VolitionEvent::GoalCandidateAdded { candidate, tick: 1 },
+        );
+        let acceptance_evidence = EvidenceRef::try_new("test-accept").unwrap();
+        state = apply(
+            state,
+            VolitionEvent::GoalCandidateAccepted {
+                goal_id: "accepted-protected-candidate".to_string(),
+                acceptance_evidence,
+                tick: 2,
+            },
+        );
+
+        let events = tick_events(&state, &fixture, RETIREMENT_INACTIVITY_TICKS + 2);
+
+        assert!(
+            !events.iter().any(|event| matches!(
+                event,
+                VolitionEvent::GoalRetired { goal_id: id, .. } if id == "accepted-protected-candidate"
+            )),
+            "protected-tier accepted candidate must never be retired by idle lifecycle"
+        );
     }
 
     #[test]

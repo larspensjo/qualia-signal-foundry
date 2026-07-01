@@ -31,6 +31,7 @@ use super::voice_loop::{VOICE_LOOP_DESCRIPTION, VoiceLoopExperiment};
 use super::volition_arbitration_conflict::VolitionArbitrationConflictExperiment;
 use super::volition_bounded_initiative_execution::VolitionBoundedInitiativeExecutionExperiment;
 use super::volition_continuity::VolitionContinuityExperiment;
+use super::volition_goal_coherence::VolitionGoalCoherenceExperiment;
 use super::volition_goal_fixture::VolitionGoalFixtureExperiment;
 use super::volition_mode_bias::VolitionModeBiasExperiment;
 use super::volition_reflection_goal_candidates::VolitionReflectionGoalCandidatesExperiment;
@@ -64,6 +65,7 @@ pub enum ExperimentName {
     VolitionBoundedInitiativeExecution,
     VolitionModeBias,
     VolitionContinuity,
+    VolitionGoalCoherence,
 }
 
 impl ExperimentName {
@@ -93,6 +95,7 @@ impl ExperimentName {
             Self::VolitionBoundedInitiativeExecution => "volition-bounded-initiative-execution",
             Self::VolitionModeBias => "volition-mode-bias",
             Self::VolitionContinuity => "volition-continuity",
+            Self::VolitionGoalCoherence => "volition-goal-coherence",
         }
     }
 
@@ -165,6 +168,9 @@ impl ExperimentName {
             }
             Self::VolitionContinuity => {
                 "Read realtime volition continuity artifacts and consolidate them into reviewable report artifacts"
+            }
+            Self::VolitionGoalCoherence => {
+                "Admit, reject, and cancel goal candidates and sweep the whole goal set for contradictions under an immutable protected floor — offline, no live wiring"
             }
         }
     }
@@ -419,6 +425,7 @@ fn experiment_for(name: ExperimentName) -> Box<dyn Experiment> {
         }
         ExperimentName::VolitionModeBias => Box::new(VolitionModeBiasExperiment),
         ExperimentName::VolitionContinuity => Box::new(VolitionContinuityExperiment),
+        ExperimentName::VolitionGoalCoherence => Box::new(VolitionGoalCoherenceExperiment),
     }
 }
 

@@ -14,6 +14,7 @@ pub enum ModelRoleId {
     SessionTurnSummarizer,
     ResearchPlanner,
     Critic,
+    CoherenceJudge,
 }
 
 impl ModelRoleId {
@@ -26,6 +27,7 @@ impl ModelRoleId {
             Self::SessionTurnSummarizer => "session_turn_summarizer",
             Self::ResearchPlanner => "research_planner",
             Self::Critic => "critic",
+            Self::CoherenceJudge => "coherence_judge",
         }
     }
 }
@@ -125,6 +127,14 @@ impl ModelRole {
                 default_model: "gpt-5.4".to_string(),
                 output_expectation: ModelOutputExpectation::Text,
             },
+            ModelRoleId::CoherenceJudge => Self {
+                role_id,
+                purpose: "Detect contradictions between a candidate goal and the existing goal set, or across the whole goal set, without resolving them.".to_string(),
+                allowed_tools: vec![],
+                context_budget: ContextBudget::new(12, 1_600),
+                default_model: "gpt-5.4".to_string(),
+                output_expectation: ModelOutputExpectation::JsonObject,
+            },
         }
     }
 }
@@ -143,6 +153,7 @@ mod tests {
             ModelRoleId::SessionTurnSummarizer,
             ModelRoleId::ResearchPlanner,
             ModelRoleId::Critic,
+            ModelRoleId::CoherenceJudge,
         ];
 
         for role_id in ids {
