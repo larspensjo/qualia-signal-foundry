@@ -3,6 +3,7 @@ mod memory_store;
 mod routes;
 pub(crate) mod sideband;
 mod sideband_tool_execution;
+mod sideband_turn_injection;
 pub(crate) mod tools;
 pub(crate) mod turn_context;
 pub(crate) mod turn_integrity;
