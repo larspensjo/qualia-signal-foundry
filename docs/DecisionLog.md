@@ -42,7 +42,6 @@ between what happened (events) and what changed (state). Established in Agents.m
 mirrored in Architecture.RuntimeLoop.md.
 Consequences: Side-effect-producing operations (model calls, tool invocations, I/O) must
 not modify state directly. They must emit events that the reducer then processes.
-Refs: docs/Architecture/Architecture.RuntimeLoop.md, Agents.md
 
 ## 2026-05-09 - Diary and decision-log document contracts
 Decision: `EngineeringDiary.md` is the chronological "what happened" log (every
@@ -57,8 +56,6 @@ Consequences: Implementation summaries and bug-fix postmortems do not produce
 decision-log entries; a fix only earns one when it yields a durable rule, and the rule
 itself is the entry. Diary entries that implement a prior decision should reference it
 in their Refs line.
-Refs: docs/EngineeringDiary.md, docs/DecisionLog.md,
-docs/ProjectFrame/ProjectWorkflow.md
 
 ## 2026-05-10 - Transcript-first realtime speech integration
 Decision: The first real audio provider integration uses streaming transcription as
@@ -74,11 +71,6 @@ Consequences: `gpt-realtime-whisper` is the first OpenAI realtime speech target.
 `gpt-realtime-translate` is reserved for translation-specific experiments. Realtime
 providers emit QSF events and do not own runtime state, memory promotion, tool
 permissions, or decisions.
-Refs: docs/Experiments/Experiment.StreamingTranscriptionMVP.md,
-docs/Architecture/Architecture.AudioLoop.md,
-https://developers.openai.com/api/docs/guides/realtime-transcription,
-https://developers.openai.com/api/docs/models/gpt-realtime-2,
-https://developers.openai.com/api/docs/models/gpt-realtime-translate
 
 ## 2026-05-10 - Memory schema versioning is per record type and run artifacts are sealed
 Decision: `MemoryRecord` and `Association` each carry an independent `schema_version: u16`
@@ -98,16 +90,11 @@ attempting to interpret them. Compatibility readers are written only when a sche
 actually changes, and are kept out of the live runtime. A future cross-run shared memory
 store (for example, from sleep-phase consolidation) is out of scope and may use a
 different policy.
-Refs: docs/Plans/Design.MemorySchemaVersioning.md,
-docs/Architecture/Architecture.MemorySystem.md
 
 ## 2026-05-11 - Model access uses explicit roles and optional provider adapters
 Decision: Model invocations are expressed as typed `ModelRole` plus `ModelRequest` pairs and execute through a synchronous `ModelClient` boundary. The OpenAI-backed path remains an optional adapter over `openai_provider_kit` and is selected explicitly by configuration rather than automatically when `OPENAI_API_KEY` happens to be present.
 Context: The model-role work needed deterministic experiments and a real OpenAI-backed path without forcing the whole runtime loop async or letting ambient environment variables silently change behavior.
 Consequences: Mock and OpenAI clients share one provider-agnostic contract, model-role traces can stay uniform across providers, and future async or multi-provider work changes the adapter/effects boundary rather than every call site. Possessing an API key alone does not switch the runtime away from deterministic mock behavior.
-Refs: Cargo.toml, crates/qsf_app/src/models,
-crates/qsf_app/src/experiments/model_role_smoke.rs,
-docs/Architecture/Architecture.ModelRoles.md
 
 ## 2026-05-12 - Real audio providers remain explicit evaluation paths
 Decision: Real streaming transcription inputs are selected explicitly through
@@ -121,8 +108,6 @@ just because those capabilities are compiled in.
 Consequences: Tests and normal experiment runs stay deterministic by default. WAV and
 microphone evaluation are opt-in side-effect paths, and any future provider must preserve
 the same no-secret/no-raw-audio observability boundary.
-Refs: crates/qsf_app/src/audio/transcript_provider.rs,
-crates/qsf_app/src/experiments/streaming_transcription_mvp.rs
 
 ## 2026-05-13 - Feature-gated audio providers need explicit compile checks
 Decision: Real-audio readiness includes compiling the `qsf_app/openai` feature
@@ -133,8 +118,6 @@ Tungstenite APIs. Real WAV and microphone smoke tests depend on this feature-gat
 Consequences: Changes to optional audio adapters should include at least one targeted
 `--features openai` compile or test pass before considering the phase ready for real
 audio evaluation.
-Refs: crates/qsf_app/src/audio/transcript_provider.rs,
-docs/EngineeringDiary.md
 
 ## 2026-05-13 - Realtime transcription optimizes for latency first
 Decision: The OpenAI realtime transcription adapter defaults to `gpt-realtime-whisper`.
@@ -148,10 +131,6 @@ Consequences: `gpt-realtime-whisper` is the first provider-backed transcription
 target. Accuracy comparisons should use explicit model selection rather than changing
 the default away from the realtime path. Full speech-to-speech work remains separate
 and should use the documented Realtime conversation model family.
-Refs: crates/qsf_app/src/audio/transcript_provider.rs,
-docs/Experiments/Experiment.StreamingTranscriptionMVP.md,
-https://developers.openai.com/api/docs/guides/realtime-transcription,
-https://developers.openai.com/api/docs/models/gpt-realtime-whisper
 
 ## 2026-05-14 - Realtime voice providers cannot execute tools directly
 Decision: Realtime voice-session providers are side-effect adapters. Provider tool-call
@@ -163,9 +142,6 @@ without letting provider sessions bypass reducers, memory rules, or tool permiss
 Consequences: Realtime voice providers may report requested tool calls, but they must
 not invoke tools or mutate runtime state directly. Voice-session experiments stay
 explicitly selected and remain observable through QSF events and traces.
-Refs: crates/qsf_app/src/audio/voice_session_provider.rs,
-crates/qsf_app/src/experiments/realtime_voice_session.rs,
-docs/Experiments/Experiment.RealtimeVoiceSessionMVP.md
 
 ## 2026-05-14 - Voice answers retrieve memory before context assembly
 Decision: Text-owned voice responses retrieve memory after final speech becomes
@@ -177,9 +153,6 @@ Consequences: Voice turns now reuse the existing association-weighted memory ret
 path and log `MemoryRetrievalRequested`/`MemoryRetrieved` before selected fragments are
 passed to `ConversationalResponder`. The first slice selects one memory candidate so
 the three voice-boundary fragments remain inside the four-fragment context budget.
-Refs: crates/qsf_app/src/experiments/text_owned_voice_loop.rs,
-docs/Experiments/Experiment.TextOwnedVoiceLoop.md,
-docs/Experiments/Report.VoiceLoopComparison.2026-05-14.md
 
 ## 2026-05-14 - Voice-loop latency reports include model runtime
 Decision: Text-owned voice-loop latency totals include transcript dispatch, memory
@@ -190,9 +163,6 @@ duration. That made comparisons against provider-owned realtime voice misleading
 Consequences: Generated reports and latency events now expose each stage separately
 and use a total observed turn latency that includes model runtime. Future comparison
 reports should use those corrected fields.
-Refs: crates/qsf_app/src/experiments/text_owned_voice_loop.rs,
-docs/Experiments/Experiment.TextOwnedVoiceLoop.md,
-docs/Experiments/Report.VoiceLoopComparison.2026-05-14.md
 
 ## 2026-05-15 - Voice memory source is explicit and opt-in
 Decision: The text-owned voice loop loads memory through a `VoiceLoopMemorySource`
@@ -205,9 +175,6 @@ ambient files or prior runs.
 Consequences: Deterministic tests and default runs stay stable. File-backed voice
 memory can be evaluated deliberately, and every run records the loaded source in
 `voice-memory-source.json` plus generated diagnostics.
-Refs: crates/qsf_app/src/experiments/text_owned_voice_loop.rs,
-crates/qsf_app/src/memory/fixtures.rs,
-docs/Experiments/Experiment.TextOwnedVoiceLoop.md
 
 ## 2026-05-15 - Self-reflection can use project introspection as perception
 Decision: Explore self-reflection by letting selected model roles inspect project
@@ -221,9 +188,6 @@ Consequences: The first useful shape is documentation-only introspection for an
 offline reflection role, with source inspection delayed until retrieval, permissions,
 and observability are proven. Introspection results should enter context as compact
 observations with references, not raw repository dumps.
-Refs: docs/Plans/Idea.SelfReflectionProjectIntrospection.md,
-docs/Concepts/Concept.ToolsAsPerception.md,
-docs/Architecture/Architecture.ContextManagement.md
 
 ## 2026-05-15 - Volition is an explicit research surface
 Decision: Explore a goal or volition system as inspectable simulation state that can
@@ -237,9 +201,6 @@ Consequences: Early goal-system work should avoid specifying final goals and sho
 start with read-only, observable fixtures that influence attention, reflection, and
 proposals only. The introspection mechanism should be able to inspect active goals
 and explain how they affected behavior.
-Refs: docs/Plans/Idea.VolitionGoalSystem.md,
-docs/Plans/Idea.SelfReflectionProjectIntrospection.md,
-docs/ProjectFrame/NonGoals.md
 
 ## 2026-05-15 - Experiment artifacts use stable behavior names
 Decision: Generated experiment summaries, report titles, and boundary descriptions use
@@ -251,9 +212,6 @@ Consequences: Reports and outcome summaries now describe the behavior under test
 Shared constructors cover the transcript-provider runtime boundary, failure recorders
 emit consistent sanitized events and engine logs, and timing conversions use one
 saturating helper surface.
-Refs: crates/qsf_app/src/experiments,
-crates/qsf_app/src/audio/mod.rs,
-crates/qsf_app/src/observability/trace.rs
 
 ## 2026-05-16 - Sleep-to-memory conversion is explicit and separate
 Decision: Sleep reports may be converted into file-backed memory drafts only through an
@@ -264,8 +222,6 @@ voice-loop memory without weakening the manual review boundary.
 Consequences: Conversion artifacts remain inspectable before acceptance, source sleep
 runs are left unchanged, and the text-owned voice loop only uses converted memory when
 configured through the explicit file-backed memory source.
-Refs: crates/qsf_app/src/experiments/reviewed_memory_draft.rs,
-crates/qsf_app/src/memory/reviewed_memory_draft.rs
 
 ## 2026-05-17 - Multi-turn warm tier ages by active turn count
 Decision: The multi-turn text loop warm tier ages the oldest active verbatim turns by
@@ -279,8 +235,6 @@ Consequences: `QSF_SESSION_WARM_THRESHOLD` controls active verbatim turns only; 
 turns remain available in session records and reports but are skipped during prompt
 assembly. Summary model changes should happen through role defaults or a deliberate
 summary-model configuration variable, not by inheriting the responder model implicitly.
-Refs: crates/qsf_app/src/experiments/multi_turn_text_loop.rs,
-crates/qsf_app/src/models/model_role.rs
 
 ## 2026-05-17 - Multi-turn recall is scoped to summarized turns
 Decision: The multi-turn text loop's `recall_turn` tool may return verbatim text only
@@ -291,7 +245,6 @@ turn recall would add token cost without extending continuity.
 Consequences: Recall execution validates that the requested `turn_id` is summarized
 before returning verbatim text. Future wider recall behavior should be introduced as a
 deliberate policy change, not as an implicit side effect of tool plumbing.
-Refs: crates/qsf_app/src/experiments/multi_turn_text_loop.rs
 
 ## 2026-05-17 - Stage 3.1 bypasses openai_provider_kit for tool-capable requests
 Decision: Stage 3.1 of the multi-turn text loop writes OpenAI-specific tool-capable
@@ -310,8 +263,6 @@ continue through the kit path unchanged. Auth, error mapping, and usage parsing 
 duplicated in the new module for the tool path. Future kit upgrades or a migration to
 the Responses API can replace the bypass module without affecting the provider-agnostic
 model boundary.
-Refs: crates/qsf_app/src/models/openai_provider.rs,
-crates/qsf_app/Cargo.toml
 
 ## 2026-05-17 - Stage 3.1 uses Chat Completions, not Responses API
 Decision: Stage 3.1 sends tool definitions and tool results through the Chat
@@ -325,8 +276,6 @@ Consequences: Tool definitions use the `{"type":"function","function":{...}}` wr
 shape. Tool results use `{"role":"tool","tool_call_id":"...","content":"..."}`.
 `finish_reason: "tool_calls"` signals a tool call. A future migration to the Responses
 API should be a separate phase that changes both paths together.
-Refs: https://developers.openai.com/docs/guides/function-calling,
-https://developers.openai.com/docs/guides/migrate-to-responses
 
 ## 2026-05-17 - allowed_tools on ModelRole is removed as unenforced
 Decision: The `allowed_tools` field is removed from `ModelRole`. Tool authorization
@@ -341,8 +290,6 @@ Consequences: `ModelRole::allowed_tools` is deleted. The
 `conversational_responder_role_with_recall_tool()` helper no longer sets it. No
 behavior change — no code ever read the field. If enforcement is added later, it
 belongs in `invoke_model_role` or the provider adapter, not as a passive annotation.
-Refs: crates/qsf_app/src/models/model_role.rs,
-crates/qsf_app/src/experiments/multi_turn_text_loop.rs:597-601
 
 ## 2026-05-17 - ToolContext uses typed borrowed-state accessors
 Decision: Tool execution keeps a single `Tool` trait, and tools receive runtime
@@ -354,10 +301,6 @@ state cannot be downcast through `Any` because `Any` requires `'static`. A fake
 Consequences: New runtime state exposed to tools must be added deliberately to
 `ToolContext` instead of being hidden behind untyped downcasts. Shared state types
 needed by tools live outside experiment driver modules.
-Refs: crates/qsf_app/src/tools/tool_registry.rs,
-crates/qsf_app/src/tools/recall_turn_tool.rs,
-crates/qsf_app/src/session/mod.rs,
-docs/Reviews/Review.ToolSystemBridge.Phase3.md
 
 ## 2026-05-18 - allowed_tools is retained and enforced
 Decision: `ModelRole.allowed_tools` is retained as the role-level allow-list for
@@ -372,10 +315,6 @@ Consequences: Production model requests derive advertised tool definitions from
 role fail before registry execution. Future roles that need tools must list them in
 `allowed_tools`; future request builders must keep `ModelRequest.tools` in sync with
 that declaration.
-Refs: crates/qsf_app/src/models/model_role.rs,
-crates/qsf_app/src/models/tool_dispatch.rs,
-crates/qsf_app/src/experiments/multi_turn_text_loop.rs,
-docs/DecisionLog.md#2026-05-17---allowed_tools-on-modelrole-is-removed-as-unenforced
 
 ## 2026-05-18 - Tool execution boundary is the ToolRegistry
 Decision: All tool execution flows through `ToolRegistry`. `ModelToolDefinition` and
@@ -393,10 +332,6 @@ Consequences: New tools land as `Tool` implementations and expose a
 do not execute tools directly. Realtime voice and future provider paths route tool
 requests through the same registry boundary before any runtime state or external
 capability is touched.
-Refs: crates/qsf_app/src/tools,
-crates/qsf_app/src/models/tool_dispatch.rs,
-crates/qsf_app/src/models/model_client.rs,
-docs/DecisionLog.md#2026-05-14---realtime-voice-providers-cannot-execute-tools-directly
 
 ## 2026-05-18 - Model tool dispatch fails fast
 Decision: Model tool dispatch returns an error as soon as any requested tool call fails,
@@ -408,7 +343,6 @@ incomplete tool batch as if it were coherent.
 Consequences: Callers must treat a failed model tool batch as failed. Any future partial
 result behavior needs an explicit result type that distinguishes completed calls from the
 failing call.
-Refs: crates/qsf_app/src/models/tool_dispatch.rs
 
 ## 2026-05-20 - openai Cargo feature removed
 Decision: The `openai` Cargo feature is removed from `qsf_app`. Real-provider
@@ -423,9 +357,6 @@ paths. Removing the gate also unblocks the planned voice/text loop unification.
 Consequences: `cargo build` / `cargo test` exercise the full path. API keys still
 do not switch the runtime away from mocks; provider selection is the single
 decision point.
-Refs: crates/qsf_app/Cargo.toml, crates/qsf_app/src/models,
-crates/qsf_app/src/audio,
-docs/DecisionLog.md#2026-05-11---model-access-uses-explicit-roles-and-optional-provider-adapters
 
 ## 2026-05-20 - Text-loop continuity uses a manifest-backed state directory
 Decision: The multi-turn text loop persists awake continuation under a gitignored
@@ -445,8 +376,6 @@ decisions are visible through `SessionResumed` events, including config-drift do
 Stage 4 sleep must update or clear sleep metadata as it consumes the manifest.
 Changing runtime limit overrides can continue the same awake session while recomputing
 limit state against the new run configuration.
-Refs: crates/qsf_app/src/session, crates/qsf_app/src/experiments/multi_turn_text_loop.rs,
-crates/qsf_app/src/observability/event_log.rs
 
 ## 2026-05-20 - Sleep auto-promotes routine memory candidates
 Decision: Sleep promotes `SleepReport.memory_candidates` into the cross-session
@@ -468,12 +397,6 @@ can retrieve the resulting memory store, reinforce retrieved memories, and form 
 strengthen co-retrieval associations. Future memory categories that carry decision or
 preference weight should choose explicitly between automatic observation promotion and
 manual reviewed-memory promotion.
-Refs: docs/Plans/Design.CrossSessionContinuity.md,
-docs/Plans/Plan.CrossSessionContinuity.md,
-crates/qsf_app/src/sleep/auto_promote.rs,
-crates/qsf_app/src/sleep/commit.rs,
-crates/qsf_app/src/memory/co_retrieval.rs,
-docs/DecisionLog.md#2026-05-16---sleep-to-memory-conversion-is-explicit-and-separate
 
 ## 2026-05-20 - Post-hoc browser tools use Rust backend + browser frontend split
 Decision: Browser-based post-hoc inspection tools (starting with the Memory Association
@@ -498,10 +421,6 @@ loading. New post-hoc inspection tools that read sealed artifacts may add route
 groups to `qsf_browser_server`. Live observability tools must not be added to
 `qsf_browser_server`; they belong in `qsf_app`. The TypeScript frontend defines DTO
 type mirrors but does not own persisted-format knowledge.
-Refs: docs/Plans/Design.MemoryAssociationBrowser.md,
-docs/Plans/Idea.MemoryAssociationBrowser.md,
-docs/Plans/Design.LiveActivationDashboard.md,
-docs/RustBackendBrowserFrontend.md
 
 ## 2026-05-22 - PowerShell launcher is the Windows development entry point
 Decision: Windows local-development documentation presents `scripts/qsf.ps1` as the
@@ -517,8 +436,6 @@ mutating the caller's shell permanently.
 Consequences: New Windows operator workflows should prefer extending the launcher when
 they compose existing commands, but underlying binaries must stay independently
 runnable and documented. Completion setup must not silently edit user shell profiles.
-Refs: scripts/qsf.ps1, scripts/qsf.profiles.json, scripts/qsf-completion.ps1,
-README.md, docs/Plans/Plan.PowerShellLauncher.md
 
 ## 2026-05-22 - Sleep auto-promotes candidate associations
 Decision: Sleep automatically promotes valid `SleepReport.association_candidates` into
@@ -534,9 +451,6 @@ Consequences: Sleep-generated links can immediately affect memory browsing and
 association-weighted retrieval. The decay algorithm for weak or invalid associations
 remains an open design point and must be handled separately. Decision candidates remain
 outside this rule.
-Refs: crates/qsf_app/src/sleep/auto_promote.rs,
-crates/qsf_app/src/experiments/sleep_phase_session_summary.rs,
-docs/DecisionLog.md#2026-05-20---sleep-auto-promotes-routine-memory-candidates
 
 ## 2026-05-23 - Durable associations require present endpoints
 Decision: Sleep commit writes durable associations only when both endpoint memory IDs
@@ -551,8 +465,6 @@ Consequences: Memory browser counts, graph rendering, retrieval, and future deca
 operate on associations whose endpoints are real store records. If a future workflow
 wants associations to external or archived memories, it must introduce an explicit
 reference model rather than reusing durable in-store associations.
-Refs: crates/qsf_app/src/sleep/auto_promote.rs,
-state/qa-memory-browser-real/memory-store.json
 
 ## 2026-05-24 - Launcher text-loop runs avoid demo memory by default
 Decision: `scripts/qsf.ps1 app -Experiment multi-turn-text-loop` passes an empty
@@ -567,8 +479,6 @@ Consequences: Local Windows launcher runs model "new session" as empty memory by
 default. Demo retrieval remains available through `-DemoMemory`,
 `-SessionMemorySource fixture`, or the `demo-memory` launch profile. Raw Cargo runs
 still exercise the experiment's in-code fallback unless configured separately.
-Refs: scripts/qsf.ps1, scripts/qsf.profiles.json, README.md,
-docs/Experiments/Fixtures/session-memory.empty.json
 
 ## 2026-05-25 - Zero-signal memories are not retrieved by default
 Decision: Keyword/tag live retrieval does not select durable memories that have no
@@ -1509,10 +1419,6 @@ Consequences: `volition-state.json` remains an inspectable continuity artifact, 
 session seed of record. `volition-seed.reviewed.json` is the only durable seed consumed
 at session start, the sleep/consolidation pass can propose changes but not apply them,
 and reviewed-seed loading failures degrade to the plain fixture with a diagnostics note.
-Refs: docs/Plans/Design.RealtimeVolitionContinuity.md,
-docs/Experiments/Experiment.RealtimeVolitionContinuity.md,
-docs/Architecture/Architecture.RealtimeSessionServer.md,
-docs/Architecture/Architecture.VolitionSystem.md
 
 ## 2026-06-30 - Realtime volition inspection uses the events socket
 Type: Decision
@@ -1528,9 +1434,6 @@ polling route that would add latency and duplicate session lookup logic.
 Consequences: The realtime UI consumes a push stream rather than polling state.
 Session-local watch channels remain the transport for live inspection surfaces, and
 operator-facing volition details stay bounded to the compact capture shape.
-Refs: docs/Experiments/Experiment.RealtimeVolitionInspectionUi.md,
-docs/Architecture/Architecture.RealtimeSessionServer.md,
-docs/Architecture/Architecture.StateAndObservability.md
 
 ## 2026-06-30 - Adopted goals belong to the simulation; coherence replaces goal provenance
 Type: Decision
@@ -1552,10 +1455,6 @@ rather than a narrated one. New goals are admitted only when consistent with the
 core, so the system can reject requests that would violate it. The brief's §12 is retired as
 not-adopted. A goal carries at most a remembered origin, not an owner classification.
 Identity stays anchored to the immutable protected core.
-Refs: docs/Plans/Plan.VolitionMotivationalTexture.md,
-docs/Plans/Design.VolitionBriefReconciliation.md,
-docs/ProjectFrame/ProjectVision.md,
-docs/DecisionLog.md#2026-05-15---volition-is-an-explicit-research-surface
 
 ## 2026-06-30 - Goal coherence is model-judged off the hot path and repaired during sleep
 Type: Decision
@@ -1581,7 +1480,35 @@ a researcher can replay. Turn latency is unaffected by coherence work. A freshly
 that proves incompatible is retired before it can shape later turns, with the rejection
 surfacing on a later turn or under introspection. Live, in-the-moment rejection would be a
 separate decision.
-Refs: docs/Plans/Plan.VolitionMotivationalTexture.md,
-docs/Architecture/Architecture.VolitionSystem.md,
-docs/DecisionLog.md#2026-05-09---unidirectional-event-reducer-state-flow,
-docs/DecisionLog.md#2026-06-27---mode-bias-may-reorder-only-within-the-biasable-band-protected-tiers-are-immune
+
+## 2026-07-01 - Live goal formation and coherence detection run as one cache-structured model call per turn
+Type: Decision
+Decision: In the realtime loop, live goal formation and coherence detection run as a single
+cache-structured model call once per trusted turn, off the hot path (after the response is
+dispatched); the pure reducer resolves the result into the existing goal-lifecycle events. There
+is no heuristic pre-filter gate — the call runs every trusted turn. A rejected candidate is
+recorded as a durable, injectable session context record (the conflicting goal id + rationale),
+model-visible from the next turn onward; the model decides whether and how to voice it. Sleep
+performs whole-history goal formation and the whole-set coherence sweep. To let the realtime
+server run these calls, the model layer (`ModelClient`, `ModelRole`, `invoke_model_role`,
+`CoherenceJudge`) is extracted into a shared crate that both `qsf_app` and `qsf_realtime_server`
+depend on, with the `ModelClient` boundary exposing a stable-prefix / cache-breakpoint seam.
+Context: Detailing the live wiring of the goal-coherence engine (companion 2026-06-30 entry)
+needed a formation trigger for discussion-formed candidates and a place to run admission. The
+formation call runs off the hot path, and prompt caching bills cache reads at ~0.1x base input
+over a goal-set prefix that stays byte-stable until the goal set changes (a prefix-hash rule
+re-warms the cache when an admission, retirement, or sweep changes the set) — so a per-turn model
+call is cheap and non-blocking, and the simplest uniform design (run every turn, one combined
+formation+detection call) beats a heuristic gate and minimizes round-trips. The realtime server
+has no model access today and deliberately does not depend on `qsf_app`, so the model layer is
+shared rather than duplicated or reached across a heavy dependency.
+Consequences: Turn latency is unaffected; the agent can form a goal and, within the same session,
+decline one that contradicts a more fundamental goal. Because the turn's model context is built
+before the response is sent while admission runs after, a rejection is model-visible from the next
+turn, not the turn that formed it. The decline is inspectable, evidence-backed session context the
+model may act on rather than a scripted line, so it cannot nag. The extraction requires the
+`ModelClient` abstraction to express cache breakpoints — it reports provider cached-token usage
+today but has no cache-breakpoint request field — so that boundary check is the first
+implementation step. Emergent goals and accumulated drift are caught in the sleep pass. This
+refines, and does not reverse, the 2026-06-30 "model-judged off the hot path and repaired during
+sleep" decision.
