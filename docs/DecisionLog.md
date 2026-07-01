@@ -1531,3 +1531,57 @@ operator-facing volition details stay bounded to the compact capture shape.
 Refs: docs/Experiments/Experiment.RealtimeVolitionInspectionUi.md,
 docs/Architecture/Architecture.RealtimeSessionServer.md,
 docs/Architecture/Architecture.StateAndObservability.md
+
+## 2026-06-30 - Adopted goals belong to the simulation; coherence replaces goal provenance
+Type: Decision
+Decision: Every goal the simulation adopts belongs to the simulation, whatever its
+origin (user input, reflection, or perception). The system does not classify goals by
+owner (user / simulator / shared); origin may be kept only as a background memory or
+association, never as a separate class of goal held on someone's behalf. Because it owns
+its goals the simulation must stay coherent with them: a malleable goal may exist only if
+it does not contradict a more fundamental (lower-tier) goal. The protected tier floor is
+immutable; only goals above it form, change, or are cancelled.
+Context: Detailing the first phase of the motivational-texture work reopened the imported
+brief's "user vs simulator vs shared goals" idea (§12). On reflection an ownership tag is
+the wrong model: what makes the system read as a separate agent is not a label but its
+capacity to own its goals and decline input that would make it incoherent. This supersedes
+the brief's provenance concept and refines the 2026-05-15 volition stance; the rule that
+the protected core is immutable at runtime stands.
+Consequences: Goal-conflict explanation becomes truthful through a detected incompatibility
+rather than a narrated one. New goals are admitted only when consistent with the protected
+core, so the system can reject requests that would violate it. The brief's §12 is retired as
+not-adopted. A goal carries at most a remembered origin, not an owner classification.
+Identity stays anchored to the immutable protected core.
+Refs: docs/Plans/Plan.VolitionMotivationalTexture.md,
+docs/Plans/Design.VolitionBriefReconciliation.md,
+docs/ProjectFrame/ProjectVision.md,
+docs/DecisionLog.md#2026-05-15---volition-is-an-explicit-research-surface
+
+## 2026-06-30 - Goal coherence is model-judged off the hot path and repaired during sleep
+Type: Decision
+Decision: Contradiction between goals is detected by model judgment, not by hand-declared
+incompatibility links, from the first implementation. Detection is a side effect that lives
+in an adapter; its verdict is recorded as an inspectable trace artifact and fed back into
+the pure reducer as events, which resolve it deterministically (cancel the higher-tier-number
+goal, never one at or below the protected floor). Judging happens off the live turn's
+critical path: discussion may form a goal candidate live, but coherence checking and any
+rejection happen after the turn or during sleep, not within the same response. Sleep performs
+a periodic whole-goal-set coherence sweep in a single model round-trip to catch drift between
+goals that have come to contradict each other.
+Context: A simulation that owns and believes its goals (companion entry above) needs a way to
+tell when two goals are incompatible. Incompatibility is semantic, so a model is the right
+judge and determinism is neither required nor desired. The live loop is latency-sensitive and
+candidate formation is rare, so per-turn model judging on the hot path is not worth its cost;
+a coherence repair is real and useful even when it is not felt within the same breath. Cost is
+bounded by judging once per new candidate and once per sleep rather than per goal.
+Consequences: This keeps a non-deterministic judge inside the project's evidence-based,
+inspectable stance and its unidirectional event-reducer-state flow: the model detects, the
+reducer resolves. Goal admission, rejection, and cancellation are explained by trace artifacts
+a researcher can replay. Turn latency is unaffected by coherence work. A freshly formed goal
+that proves incompatible is retired before it can shape later turns, with the rejection
+surfacing on a later turn or under introspection. Live, in-the-moment rejection would be a
+separate decision.
+Refs: docs/Plans/Plan.VolitionMotivationalTexture.md,
+docs/Architecture/Architecture.VolitionSystem.md,
+docs/DecisionLog.md#2026-05-09---unidirectional-event-reducer-state-flow,
+docs/DecisionLog.md#2026-06-27---mode-bias-may-reorder-only-within-the-biasable-band-protected-tiers-are-immune

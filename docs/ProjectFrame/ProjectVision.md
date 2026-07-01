@@ -173,6 +173,32 @@ magic. If a capability changes behavior, it should enter the architecture as a
 named signal, state object, tool, model role, or traceable process so researchers
 can inspect how it affected the simulated mind.
 
+### Volition as a Distinct, Coherent Agent
+
+The simulated mind is a distinct agent, not an extension of the user. It is
+expected to hold its own goals and, at times, to want different things than the
+user does.
+
+Once the system adopts a goal, that goal belongs to the simulation — whether it
+originated in something the user said, in the system's own reflection, or in what
+its perception tools reveal. Where a goal came from may be remembered as an
+association, but it does not create a separate class of goal that the system
+merely carries on someone else's behalf.
+
+Because the system owns its goals, it is expected to *believe* them: it should not
+adopt or keep a goal that contradicts a more fundamental one, and it may therefore
+decline input that would make it incoherent. A stable, protected core of goals
+anchors the agent's identity, while goals above that core form, change, and
+dissolve over time as discussion and perception provide evidence.
+
+Maintaining this coherence is an act of judgment rather than a fixed rule, so it is
+performed by a model whose findings are recorded as inspectable, traceable state
+rather than asserted as hidden truth. Coherence is re-examined during sleep-like
+consolidation, where contradictions that accumulated over time can be detected and
+resolved. This keeps the system's motivational life consistent with the stance
+above: a capability that shapes behavior enters as a named, inspectable process,
+never as invisible magic.
+
 ## Early Focus
 
 The early focus should be on building enough infrastructure to run useful experiments.
