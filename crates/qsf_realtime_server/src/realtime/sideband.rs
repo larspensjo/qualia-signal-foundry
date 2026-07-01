@@ -24,7 +24,6 @@ use qsf_session::{
     ToolExecutionStatus, ToolPermissionDecision, Turn, apply_live_session_event,
     persist_session_state, reduce_session_in_place,
 };
-use qsf_tools::ToolRequest;
 use qsf_volition::{
     GroundingRef, OpportunitySignal, OpportunitySignalKind, ReceptivenessHint, VolitionEvent,
     arbitrate_with_mode, build_state_inspection, choose_shaping_intensity, detect_opportunities,
@@ -44,6 +43,10 @@ use crate::realtime::injection::{
     build_memory_injection_packet,
 };
 use crate::realtime::memory_store::retrieve_session_memories;
+use crate::realtime::sideband_tool_execution::{
+    PendingToolExecution, aborted_tool_resolution, execute_realtime_tool_call,
+    extract_response_function_call_attempts,
+};
 use crate::realtime::tools::{
     self, RealtimeToolContext, ToolSessionSnapshot, VolitionStateSnapshot, tool_allow_list,
     tool_permission_decision,
@@ -1141,27 +1144,6 @@ fn response_usage_number(event: &serde_json::Value, path: &[&str]) -> Option<u64
     current.as_u64()
 }
 
-struct FunctionCallAttempt {
-    name: String,
-    call_id: String,
-    arguments: Option<serde_json::Value>,
-    arguments_summary: String,
-    parse_error: Option<String>,
-}
-
-struct PendingToolExecution {
-    name: String,
-    call_id: String,
-    arguments: serde_json::Value,
-    arguments_summary: String,
-    requested_at: SystemTime,
-}
-
-struct ToolResolutionOutput {
-    record: qsf_session::ToolExecutionRecord,
-    output_message: serde_json::Value,
-}
-
 fn record_latency_observation_once(
     runtime_state: &mut SidebandRuntimeState,
     diagnostics: &crate::diagnostics::DiagnosticWriter,
@@ -2114,153 +2096,6 @@ async fn handle_response_done_event(
     Ok(())
 }
 
-fn summarize_function_call_arguments(arguments: &serde_json::Value) -> String {
-    let text = serde_json::to_string(arguments).unwrap_or_else(|_| "{}".to_string());
-    text.chars().take(240).collect()
-}
-
-fn summarize_raw_function_call_arguments(arguments: &str) -> String {
-    arguments.chars().take(240).collect()
-}
-
-fn extract_response_function_call_attempts(event: &serde_json::Value) -> Vec<FunctionCallAttempt> {
-    let Some(output) = event
-        .get("response")
-        .and_then(|response| response.get("output"))
-        .and_then(serde_json::Value::as_array)
-    else {
-        return Vec::new();
-    };
-
-    let mut calls = Vec::new();
-    for item in output {
-        let Some(item_type) = item.get("type").and_then(serde_json::Value::as_str) else {
-            continue;
-        };
-        if item_type != "function_call" && item_type != "tool_search_call" {
-            continue;
-        }
-
-        let call_id = item
-            .get("call_id")
-            .and_then(serde_json::Value::as_str)
-            .unwrap_or_default()
-            .to_string();
-        let name = item
-            .get("name")
-            .and_then(serde_json::Value::as_str)
-            .unwrap_or_default()
-            .to_string();
-        let arguments_text = item
-            .get("arguments")
-            .and_then(serde_json::Value::as_str)
-            .unwrap_or_default();
-        match serde_json::from_str::<serde_json::Value>(arguments_text) {
-            Ok(arguments) => calls.push(FunctionCallAttempt {
-                name,
-                call_id,
-                arguments_summary: summarize_function_call_arguments(&arguments),
-                arguments: Some(arguments),
-                parse_error: None,
-            }),
-            Err(error) => calls.push(FunctionCallAttempt {
-                name,
-                call_id,
-                arguments: None,
-                arguments_summary: summarize_raw_function_call_arguments(arguments_text),
-                parse_error: Some(error.to_string()),
-            }),
-        }
-    }
-
-    calls
-}
-
-fn execute_realtime_tool_call(
-    registry: &qsf_tools::ToolRegistry,
-    tool_context: &RealtimeToolContext,
-    exchange_index: usize,
-    pending: PendingToolExecution,
-    response_model_use: &ExchangeModelUse,
-    event_id: Option<String>,
-    qsf_session_id: &str,
-) -> ToolResolutionOutput {
-    let tool_request = ToolRequest {
-        tool_name: pending.name.clone(),
-        input: pending.arguments_summary.clone(),
-        structured: Some(pending.arguments),
-        permission: qsf_tools::ToolPermission::read_only(),
-        requested_by: qsf_session_id.to_string(),
-    };
-
-    let (status, result_summary, error, output_text, numeric_value, output_status) =
-        match registry.validate_and_execute(&tool_request, tool_context) {
-            Ok((_metadata, result)) => (
-                ToolExecutionStatus::Completed,
-                result.observation_summary.clone(),
-                None,
-                result.output_text.clone(),
-                result.numeric_value,
-                "completed",
-            ),
-            Err(exec_error) => (
-                ToolExecutionStatus::Failed,
-                "tool execution failed before producing a result".to_string(),
-                Some(exec_error.to_string()),
-                String::new(),
-                None,
-                "failed",
-            ),
-        };
-
-    let record = tools::tool_execution_record(
-        exchange_index,
-        pending.call_id.clone(),
-        pending.name.clone(),
-        ToolPermissionDecision::Allowed,
-        status,
-        result_summary.clone(),
-        error.clone(),
-        pending.requested_at,
-        Some(SystemTime::now()),
-        Some(response_model_use.clone()),
-        event_id,
-    );
-    let output_message = build_openai_realtime_function_call_output(
-        &pending.call_id,
-        &serde_json::json!({
-            "status": output_status,
-            "tool_name": pending.name,
-            "result_summary": result_summary,
-            "output_text": output_text,
-            "numeric_value": numeric_value,
-            "error": error,
-        })
-        .to_string(),
-    );
-
-    ToolResolutionOutput {
-        record,
-        output_message,
-    }
-}
-
-fn aborted_tool_resolution(
-    mut resolution: ToolResolutionOutput,
-    response_model_use: &ExchangeModelUse,
-    event_id: Option<String>,
-) -> ToolResolutionOutput {
-    resolution.record.status = ToolExecutionStatus::Aborted;
-    resolution.record.result_summary =
-        "tool execution aborted because the sideband became degraded before the result was returned"
-            .to_string();
-    resolution.record.error = Some("sideband degraded during tool execution".to_string());
-    resolution.record.completed_at = Some(SystemTime::now());
-    resolution.record.response_model_use = Some(response_model_use.clone());
-    resolution.record.returning_event_id = event_id;
-    resolution
-}
-
 #[cfg(test)]
 mod tests {
     use std::fs;
@@ -2403,7 +2238,7 @@ mod tests {
 
         fn execute(
             &self,
-            request: &ToolRequest,
+            request: &qsf_tools::ToolRequest,
             _ctx: &dyn qsf_tools::ToolContext,
         ) -> anyhow::Result<qsf_tools::ToolResult> {
             set_flag(&self.started);

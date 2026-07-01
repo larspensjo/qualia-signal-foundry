@@ -2,6 +2,7 @@ mod injection;
 mod memory_store;
 mod routes;
 pub(crate) mod sideband;
+mod sideband_tool_execution;
 pub(crate) mod tools;
 pub(crate) mod turn_context;
 pub(crate) mod turn_integrity;
