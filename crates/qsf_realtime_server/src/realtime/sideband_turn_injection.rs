@@ -256,6 +256,9 @@ pub(crate) async fn inject_trusted_turn_context_and_response(
         runtime_state.previous_turn_surfaced_goal_id = None;
     }
 
+    // Reuse the caller's snapshot rather than taking a third `session.lock()` on this path —
+    // declined_candidates is reducer-derived state living on `volition_snapshot.state`, and
+    // nothing before this point in the turn mutates it.
     let volition_packet = build_volition_turn_context_packet(
         volition_snapshot,
         &ranked,
@@ -264,6 +267,7 @@ pub(crate) async fn inject_trusted_turn_context_and_response(
         intensity,
         crate::realtime::volition_injection::stable_baseline_hash(&config.instructions),
         initiative_line.as_deref(),
+        &volition_snapshot.state.declined_candidates,
     );
     debug_assert!(
         initiative_output.is_none() || volition_packet.is_some(),

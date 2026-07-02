@@ -11,6 +11,14 @@ use super::model_role::ModelRoleId;
 const CALCULATOR_TOOL_NAME: &str = "calculator";
 const RECALL_TURN_TOOL_NAME: &str = "recall_turn";
 
+/// Formats a single user/assistant exchange in the `[User]\n…\n\n[Assistant]\n…` transcript
+/// shape that `MockModelClient` parses (see `extract_arithmetic_expression`) and the offline
+/// harness fixtures hardcode. The one canonical producer of this shape, so the live realtime
+/// hook and the tests cannot drift from what the mock expects.
+pub fn format_exchange_transcript(user: &str, assistant: &str) -> String {
+    format!("[User]\n{user}\n\n[Assistant]\n{assistant}")
+}
+
 #[derive(Clone, Debug)]
 struct MockFixture {
     output_text: String,
@@ -119,6 +127,15 @@ impl Default for MockModelClient {
                 output_text: json!({ "contradictions": [] }).to_string(),
                 input_tokens: 40,
                 output_tokens: 8,
+            },
+        );
+        fixtures.insert(
+            ModelRoleId::LiveGoalFormationJudge,
+            MockFixture {
+                output_text: json!({ "proposed_candidate": null, "contradictions": [] })
+                    .to_string(),
+                input_tokens: 48,
+                output_tokens: 10,
             },
         );
 
@@ -276,7 +293,7 @@ fn calculator_result_from_tool_message(request: &ModelRequest) -> Option<String>
 #[cfg(test)]
 mod tests {
     use super::MockModelClient;
-    use crate::models::{ModelClient, ModelMessage, ModelRequest, ModelRole, ModelRoleId};
+    use crate::{ModelClient, ModelMessage, ModelRequest, ModelRole, ModelRoleId};
 
     #[test]
     fn sleep_summarizer_mock_response_contains_structured_output() {

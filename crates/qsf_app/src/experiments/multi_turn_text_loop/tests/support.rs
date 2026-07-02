@@ -291,7 +291,7 @@ impl ModelClient for CapturingOpenAiRecallClient {
             && request
                 .messages
                 .iter()
-                .all(|message| message.role != crate::models::ModelMessageRole::Tool)
+                .all(|message| message.role != qsf_models::ModelMessageRole::Tool)
             && request
                 .last_user_message()
                 .map(|message| message.to_ascii_lowercase().contains("recall turn"))

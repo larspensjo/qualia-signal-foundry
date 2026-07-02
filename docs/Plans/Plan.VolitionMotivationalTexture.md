@@ -3,10 +3,9 @@
 ## Maturity
 
 Candidate. **Detail level: Phase 2 detailed** — Phase 1 (goal coherence under a protected
-floor) is implemented and summarized below; Phase 2 (live goal formation and off-hot-path
-coherence) has a full spec below plus an `Experiment.*.md` scaffold and trace contract. The
-remaining phases are sequenced and scoped but not yet specified. Detailing the next phase is
-the step after Phase 2 ships.
+floor) and Phase 2 (live goal formation and off-hot-path coherence) are both implemented and
+summarized below. The remaining phases are sequenced and scoped but not yet specified.
+Detailing the next phase is the step after Phase 2's human voice testing is complete.
 
 ## Purpose
 
@@ -89,7 +88,7 @@ Validated by
 the two 2026-06-30 DecisionLog entries record the durable stance. This is the substrate Phase 2
 wires into the live loop. Human testing was not required for Phase 1 (offline, deterministic).
 
-### Phase 2 — Live goal formation and off-hot-path coherence
+### Phase 2 — Live goal formation and off-hot-path coherence — implemented
 
 Wire the Phase 1 engine into the realtime loop so the simulation **forms its own goals from
 live discussion** and can **decline input that would make it incoherent** — the felt,
@@ -186,13 +185,53 @@ step, before wiring the per-turn call.
 
 **Verification:** offline
 [Experiment.LiveGoalFormationAndCoherence.md](../Experiments/Experiment.LiveGoalFormationAndCoherence.md)
-(scaffold written with this phase) — see its trace-completeness contract. A deterministic scripted
-judge drives the form → detect → resolve → inject pipeline and the sleep formation + sweep; the
-harness parses artifacts and asserts each decision (admit / reject / cancel / declined-context
-injection) is reconstructable from the trace alone. **Human voice testing is recommended** here (it
-is the point of the phase): the agent forms a goal from discussion, keeps it when consistent, and
-declines it when it contradicts the core, with the decline available as session context it can act
-on.
+— see its trace-completeness contract. A deterministic scripted judge drives the form → detect →
+resolve → inject pipeline and the sleep formation + sweep; the harness parses artifacts and asserts
+each decision (admit / reject / cancel / declined-context injection) is reconstructable from the
+trace alone. **Human voice testing is recommended** here (it is the point of the phase): the agent
+forms a goal from discussion, keeps it when consistent, and declines it when it contradicts the
+core, with the decline available as session context it can act on.
+
+**Shipped surface:**
+- The model layer — `ModelClient`, `ModelRequest`/`ModelMessage` (with a
+  `stable_prefix_message_count` / `stable_prefix_hash` cache-boundary seam), `ModelRole`/
+  `ModelRoleId`, `CoherenceJudge`, and `invoke_model` — is extracted from `qsf_app` into a new
+  shared [`qsf_models`](../../crates/qsf_models/src/lib.rs) crate that both `qsf_app` and
+  `qsf_realtime_server` depend on. A `ModelInvoker` trait decouples model callers from any one
+  observability backend: `qsf_app`'s `RunContext` implements it via the existing
+  `invoke_model_role` (unchanged behavior for all prior offline callers); the realtime loop uses
+  `DirectModelInvoker` and records its own diagnostic.
+- The cache-breakpoint requirement (D6) resolves as an **application-level** stable-prefix
+  marker, not a provider request field — neither `openai_provider_kit` nor the raw OpenAI Chat
+  Completions API expose a `cache_control`-style breakpoint (confirmed by inspection); OpenAI's
+  own prompt caching is automatic over a byte-stable prefix. See the 2026-07-01 DecisionLog
+  addendum.
+- The combined formation-and-detection judge —
+  [`LiveGoalFormationJudge`](../../crates/qsf_models/src/live_goal_formation.rs)
+  (`ScriptedLiveGoalFormationJudge` default, `ModelBackedLiveGoalFormationJudge` real-model
+  opt-in) — proposes an optional `ProposedGoalCandidate` and a `CoherenceVerdict` in one call,
+  reusing Phase 1's `resolve_admission` / `candidate_hard_tier_floor_rejected` /
+  `resolve_protected_floor_rejection` unchanged.
+- The realtime post-response hook
+  ([`live_goal_formation.rs`](../../crates/qsf_realtime_server/src/realtime/live_goal_formation.rs))
+  fires once per trusted turn after `response.create` is dispatched, via
+  `tokio::task::spawn_blocking` (since `ModelClient::complete` is a blocking call), so it never
+  delays turn completion; it records a `DiagnosticRecord::LiveGoalFormationPerformed` carrying
+  the live analogue of the trace contract below.
+- A rejection is recorded as a `DeclinedCandidate` on `VolitionRuntimeState`
+  (`crates/qsf_realtime_server/src/realtime/volition.rs`) and injected as a new `coherence` layer
+  in the volition turn packet
+  (`crates/qsf_realtime_server/src/realtime/volition_injection.rs`), present from the turn after
+  the rejection onward — the rejection turn's own context already predates admission.
+- The offline harness `live-goal-formation-and-coherence`
+  (`crates/qsf_app/src/experiments/live_goal_formation_and_coherence.rs`) exercises admit /
+  reject-with-decline / no-goal-formed, the declined-candidate injection-ordering invariant, the
+  pending-candidate-not-selectable invariant, sleep whole-history formation, and the sleep sweep,
+  satisfying the trace-completeness contract below with a deterministic scripted judge.
+
+**Open item:** human voice testing (the Human Test Steps in
+[Experiment.LiveGoalFormationAndCoherence.md](../Experiments/Experiment.LiveGoalFormationAndCoherence.md))
+has not yet been run.
 
 ### Phase 3 — Emotion-like signals, visualization-first (brief §8)
 

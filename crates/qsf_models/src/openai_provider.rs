@@ -14,7 +14,7 @@ mod enabled {
         ModelClient, ModelMessageRole, ModelRequest, ModelResponse, ModelResponseFormat, ModelUsage,
     };
 
-    use crate::models::openai_tool_client::OpenAiToolClient;
+    use crate::openai_tool_client::OpenAiToolClient;
 
     pub struct OpenAiProviderModelClient {
         provider: OpenAiProvider,
@@ -131,7 +131,7 @@ mod enabled {
         use super::{
             OpenAiProviderModelClient, map_message_role, request_uses_tool_capable_serialization,
         };
-        use crate::models::{
+        use crate::{
             ModelClient, ModelMessage, ModelMessageRole, ModelRequest, ModelRole, ModelRoleId,
             ModelToolCall, ModelToolDefinition,
         };

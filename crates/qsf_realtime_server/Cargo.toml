@@ -15,6 +15,7 @@ futures-util.workspace = true
 log.workspace = true
 qsf_context = { path = "../qsf_context" }
 qsf_memory = { path = "../qsf_memory" }
+qsf_models = { path = "../qsf_models" }
 qsf_session = { path = "../qsf_session" }
 qsf_realtime_protocol = { path = "../qsf_realtime_protocol" }
 qsf_tools = { path = "../qsf_tools" }

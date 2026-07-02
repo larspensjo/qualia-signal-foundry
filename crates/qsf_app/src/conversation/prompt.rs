@@ -2,7 +2,7 @@ use serde_json::Value;
 use sha2::{Digest, Sha256};
 
 use crate::context::ContextAssembly;
-use crate::models::{ModelMessage, ModelMessageRole, ModelToolCall};
+use qsf_models::{ModelMessage, ModelMessageRole, ModelToolCall};
 use qsf_session::ContentHash;
 
 /// Constant system-prompt prefix; warm-tier summaries are appended at assembly time.
@@ -297,7 +297,7 @@ mod tests {
         assemble_prompt_with_summaries_and_project_doc_channel, canonical_hash, format_new_turn,
         prior_request_prefix_hash, retrieved_memory_block,
     };
-    use crate::models::{ModelMessage, ModelMessageRole};
+    use qsf_models::{ModelMessage, ModelMessageRole};
 
     #[test]
     fn prior_request_hash_is_stable_when_new_retrieval_changes() {
@@ -491,7 +491,7 @@ mod tests {
     fn canonical_hash_changes_when_assistant_tool_calls_change() {
         let first = vec![ModelMessage::assistant_tool_calls(
             "",
-            vec![crate::models::ModelToolCall::new(
+            vec![qsf_models::ModelToolCall::new(
                 "call-1",
                 "recall_turn",
                 serde_json::json!({ "turn_id": 0 }),
@@ -499,7 +499,7 @@ mod tests {
         )];
         let second = vec![ModelMessage::assistant_tool_calls(
             "",
-            vec![crate::models::ModelToolCall::new(
+            vec![qsf_models::ModelToolCall::new(
                 "call-2",
                 "recall_turn",
                 serde_json::json!({ "turn_id": 0 }),

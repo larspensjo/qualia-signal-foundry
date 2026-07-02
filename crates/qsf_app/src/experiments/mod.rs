@@ -4,6 +4,7 @@ mod accept_reviewed_memory;
 mod accept_reviewed_volition_seed;
 mod audio_preparation_layer;
 mod failure;
+mod live_goal_formation_and_coherence;
 mod live_memory_extraction;
 mod memory_and_context;
 mod model_role_smoke;
@@ -27,6 +28,7 @@ mod volition_mode_bias;
 mod volition_reflection_goal_candidates;
 mod volition_salience_and_satisfaction;
 mod volition_trace_backed_initiative;
+pub(crate) mod volition_trace_support;
 
 pub use registry::{
     Experiment, ExperimentInfo, ExperimentName, ExperimentOutcome, ExperimentRunSummary,

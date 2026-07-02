@@ -14,6 +14,7 @@ use crate::runtime::run_context::RunContext;
 use super::accept_reviewed_memory::AcceptReviewedMemoryExperiment;
 use super::accept_reviewed_volition_seed::AcceptReviewedVolitionSeedExperiment;
 use super::audio_preparation_layer::AudioPreparationLayerExperiment;
+use super::live_goal_formation_and_coherence::LiveGoalFormationAndCoherenceExperiment;
 use super::live_memory_extraction::LiveMemoryExtractionExperiment;
 use super::memory_and_context::{
     AssociativeMemoryToyModelExperiment, ContextBudgetRetrievalTestExperiment,
@@ -66,6 +67,7 @@ pub enum ExperimentName {
     VolitionModeBias,
     VolitionContinuity,
     VolitionGoalCoherence,
+    LiveGoalFormationAndCoherence,
 }
 
 impl ExperimentName {
@@ -96,6 +98,7 @@ impl ExperimentName {
             Self::VolitionModeBias => "volition-mode-bias",
             Self::VolitionContinuity => "volition-continuity",
             Self::VolitionGoalCoherence => "volition-goal-coherence",
+            Self::LiveGoalFormationAndCoherence => "live-goal-formation-and-coherence",
         }
     }
 
@@ -171,6 +174,9 @@ impl ExperimentName {
             }
             Self::VolitionGoalCoherence => {
                 "Admit, reject, and cancel goal candidates and sweep the whole goal set for contradictions under an immutable protected floor — offline, no live wiring"
+            }
+            Self::LiveGoalFormationAndCoherence => {
+                "Form candidate goals from trusted turns, detect contradictions in the same call, admit or reject deterministically, and carry a rejection as durable declined-candidate context — off the hot path, offline"
             }
         }
     }
@@ -426,6 +432,9 @@ fn experiment_for(name: ExperimentName) -> Box<dyn Experiment> {
         ExperimentName::VolitionModeBias => Box::new(VolitionModeBiasExperiment),
         ExperimentName::VolitionContinuity => Box::new(VolitionContinuityExperiment),
         ExperimentName::VolitionGoalCoherence => Box::new(VolitionGoalCoherenceExperiment),
+        ExperimentName::LiveGoalFormationAndCoherence => {
+            Box::new(LiveGoalFormationAndCoherenceExperiment)
+        }
     }
 }
 

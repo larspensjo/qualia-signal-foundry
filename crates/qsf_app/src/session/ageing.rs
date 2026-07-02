@@ -6,12 +6,11 @@ use std::time::SystemTime;
 use serde_json::json;
 
 use crate::console::styling::{ColorMode, STYLE_DROP_MARKER, paint};
-use crate::models::{
-    ModelClient, ModelMessage, ModelRequest, ModelRole, ModelRoleId, invoke_model_role,
-};
+use crate::models::invoke_model_role;
 use crate::observability::event_log::EventType;
 use crate::observability::trace::elapsed_ms;
 use crate::runtime::run_context::RunContext;
+use qsf_models::{ModelClient, ModelMessage, ModelRequest, ModelRole, ModelRoleId};
 
 use super::{SessionEvent, SessionState, Turn, TurnRange, TurnSummary, apply_session_event};
 

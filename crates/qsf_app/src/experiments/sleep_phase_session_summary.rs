@@ -6,13 +6,13 @@ use std::time::Instant;
 use anyhow::Context;
 use serde_json::json;
 
-use crate::models::{build_client, requested_provider_from_env};
 use crate::observability::event_log::EventType;
 use crate::observability::trace::{TraceRecord, elapsed_ns};
 use crate::runtime::run_context::RunContext;
 use crate::session::resume::ResumeInputs;
 use crate::session::{SessionState, SleepRecord, StateDirectoryResolution};
 use crate::sleep::{SleepInputBundle, SleepReport, summarize_session};
+use qsf_models::{build_client, requested_provider_from_env};
 
 use super::registry::{Experiment, ExperimentName, ExperimentOutcome};
 use super::transcript_format::{
@@ -189,7 +189,7 @@ impl SleepPhaseSessionSummaryExperiment {
 }
 
 pub(crate) fn commit_cross_session_sleep(
-    context: &RunContext,
+    context: &mut RunContext,
     report: &SleepReport,
     mut outcome: ExperimentOutcome,
     state_resolution: &StateDirectoryResolution,
@@ -270,6 +270,36 @@ pub(crate) fn commit_cross_session_sleep(
         promoted_count,
         new_associations_count,
     };
+
+    // Run the sleep volition goal-maintenance pass (whole-history formation + whole-set sweep)
+    // before writing the consumed-session commit marker. If the model-backed maintenance pass
+    // fails, the next sleep run must still retry this session instead of treating it as consumed.
+    let maintenance_client = qsf_models::build_client_from_env()?;
+    if let Some(maintenance) = super::volition_continuity::run_sleep_volition_goal_maintenance(
+        context,
+        maintenance_client.as_ref(),
+        state_dir,
+        &session.session_id,
+        &report.session_summary,
+    )? {
+        if let Some(admitted) = maintenance.admitted_goal_id {
+            outcome.observations.push(format!(
+                "Sleep whole-history formation admitted durable goal `{admitted}`."
+            ));
+        }
+        if let Some(declined) = maintenance.declined_candidate {
+            outcome.observations.push(format!(
+                "Sleep whole-history formation declined candidate `{}`.",
+                declined.candidate_id
+            ));
+        }
+        if !maintenance.swept_goal_ids.is_empty() {
+            outcome.observations.push(format!(
+                "Sleep whole-set sweep cancelled goal(s): {}.",
+                maintenance.swept_goal_ids.join(", ")
+            ));
+        }
+    }
 
     crate::sleep::commit::SleepCommit {
         state_dir,
@@ -615,7 +645,6 @@ mod tests {
     use crate::context::{ContextAssembly, ContextBudget, ContextFragment, ContextSelection};
     use crate::experiments::ExperimentOutcome;
     use crate::memory::{MemoryFixture, MemoryRecord, MemoryRecordKind, MemoryStore};
-    use crate::models::{MockModelClient, ModelClient, ModelRequest, ModelResponse};
     use crate::runtime::run_context::RunContext;
     use crate::session::manifest::{ContinuityManifest, ResumeMode};
     use crate::session::resume::ResumeInputs;
@@ -625,6 +654,7 @@ mod tests {
         SessionConfig, SessionState, StateDirectoryResolution, TurnSummary,
     };
     use crate::sleep::{SleepMemoryCandidate, SleepReport};
+    use qsf_models::{MockModelClient, ModelClient, ModelRequest, ModelResponse};
     use time::OffsetDateTime;
 
     #[test]
@@ -1085,7 +1115,7 @@ mod tests {
             future_context_hints: vec!["Resume voice continuity from this brief.".to_string()],
             review_notes: vec![],
         };
-        let context =
+        let mut context =
             RunContext::create_in(base_dir.join("runs"), "sleep-voice-commit-test").unwrap();
         let outcome = ExperimentOutcome {
             summary: "test".to_string(),
@@ -1097,7 +1127,7 @@ mod tests {
         };
 
         let outcome = super::commit_cross_session_sleep(
-            &context,
+            &mut context,
             &report,
             outcome,
             &StateDirectoryResolution {

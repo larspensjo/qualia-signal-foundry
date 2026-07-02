@@ -1,0 +1,18 @@
+[package]
+name = "qsf_models"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+anyhow.workspace = true
+openai_provider_kit = { git = "https://github.com/larspensjo/web_page_filet_mignon", package = "openai_provider_kit", rev = "ca28629d42fb350a7935df6907573e2f972b3ba9" }
+qsf_context = { path = "../qsf_context" }
+qsf_volition = { path = "../qsf_volition" }
+reqwest = { version = "0.12", default-features = false, features = ["blocking", "json", "rustls-tls"] }
+serde.workspace = true
+serde_json.workspace = true
+sha2.workspace = true
+tokio.workspace = true

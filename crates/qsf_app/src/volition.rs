@@ -1528,6 +1528,7 @@ mod tests {
             VolitionEvent::GoalCandidateRejected {
                 goal_id: "cand-reject".to_string(),
                 reason: "Not relevant enough.".to_string(),
+                coherence_decline: None,
                 tick: 2,
             },
         );

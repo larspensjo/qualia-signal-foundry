@@ -4,9 +4,7 @@ use anyhow::Context;
 use serde_json::json;
 
 use crate::conversation::prompt::PromptToolMessage;
-use crate::models::{
-    ModelMessage, ModelRequest, ModelRole, ModelRoleId, ModelToolCall, dispatch_model_tool_calls,
-};
+use crate::models::dispatch_model_tool_calls;
 use crate::observability::trace::{TraceRecord, elapsed_ms};
 use crate::project_docs::ProjectDocService;
 use crate::runtime::run_context::RunContext;
@@ -15,6 +13,7 @@ use crate::tools::{
     CALCULATOR_TOOL_NAME, READ_PROJECT_DOC_TOOL_NAME, RECALL_TURN_TOOL_NAME, ResponderToolContext,
     SEARCH_PROJECT_DOCS_TOOL_NAME, ToolRegistry, ToolResult,
 };
+use qsf_models::{ModelMessage, ModelRequest, ModelRole, ModelRoleId, ModelToolCall};
 
 pub(crate) struct ToolExecution {
     pub(crate) prompt_message: PromptToolMessage,

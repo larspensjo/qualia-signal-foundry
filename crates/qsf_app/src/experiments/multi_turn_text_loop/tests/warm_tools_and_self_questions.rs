@@ -353,7 +353,7 @@ fn openai_recall_path_preserves_tool_call_id_across_batched_follow_up() {
                     .messages
                     .iter()
                     .rev()
-                    .find(|message| message.role == crate::models::ModelMessageRole::User)
+                    .find(|message| message.role == qsf_models::ModelMessageRole::User)
                     .map(|message| message.content.to_ascii_lowercase().contains("recall turn"))
                     .unwrap_or(false)
         })
@@ -372,7 +372,7 @@ fn openai_recall_path_preserves_tool_call_id_across_batched_follow_up() {
         ]
     );
     assert!(first_call.messages.iter().any(|message| message.role
-        == crate::models::ModelMessageRole::User
+        == qsf_models::ModelMessageRole::User
         && message.content.to_ascii_lowercase().contains("recall turn")));
 
     let second_call = &calls[tool_call_index + 1];
@@ -389,13 +389,13 @@ fn openai_recall_path_preserves_tool_call_id_across_batched_follow_up() {
     let tool_message_index = second_call
         .messages
         .iter()
-        .position(|message| message.role == crate::models::ModelMessageRole::Tool)
+        .position(|message| message.role == qsf_models::ModelMessageRole::Tool)
         .unwrap();
     assert!(tool_message_index > 0);
     let assistant_tool_call_message = &second_call.messages[tool_message_index - 1];
     assert_eq!(
         assistant_tool_call_message.role,
-        crate::models::ModelMessageRole::Assistant
+        qsf_models::ModelMessageRole::Assistant
     );
     assert_eq!(assistant_tool_call_message.tool_calls.len(), 1);
     assert_eq!(
@@ -406,7 +406,7 @@ fn openai_recall_path_preserves_tool_call_id_across_batched_follow_up() {
         second_call
             .messages
             .iter()
-            .filter(|message| message.role == crate::models::ModelMessageRole::Tool)
+            .filter(|message| message.role == qsf_models::ModelMessageRole::Tool)
             .count(),
         1
     );
@@ -549,7 +549,7 @@ fn responder_can_search_then_read_across_two_tool_batches() {
         call.messages
             .first()
             .map(|message| {
-                message.role == crate::models::ModelMessageRole::System
+                message.role == qsf_models::ModelMessageRole::System
                     && message.content.contains("search_project_docs")
                     && message.content.contains("kind and maturity")
             })
@@ -566,7 +566,7 @@ fn responder_can_search_then_read_across_two_tool_batches() {
     let search_tool_message = calls[1]
         .messages
         .iter()
-        .find(|message| message.role == crate::models::ModelMessageRole::Tool)
+        .find(|message| message.role == qsf_models::ModelMessageRole::Tool)
         .expect("search follow-up should include tool result");
     assert!(
         search_tool_message
@@ -582,7 +582,7 @@ fn responder_can_search_then_read_across_two_tool_batches() {
         .messages
         .iter()
         .rev()
-        .find(|message| message.role == crate::models::ModelMessageRole::Tool)
+        .find(|message| message.role == qsf_models::ModelMessageRole::Tool)
         .expect("final response request should include read tool result");
     assert!(read_tool_message.content.contains("[read_project_doc]"));
     assert!(read_tool_message.content.contains("Project Vision"));
@@ -739,7 +739,7 @@ fn responder_reuses_project_doc_budget_across_tool_batches() {
     assert_eq!(calls[1].tools, responder_tool_names());
     assert!(calls[2].tools.is_empty());
     assert!(calls[2].messages.iter().any(|message| {
-        message.role == crate::models::ModelMessageRole::Tool
+        message.role == qsf_models::ModelMessageRole::Tool
             && message.content.contains("per_turn_cap")
     }));
 
@@ -935,7 +935,7 @@ fn self_question_battery_drives_real_bounded_loop() {
                 .expect("provider request should include a system prompt");
             assert_eq!(
                 system_message.role,
-                crate::models::ModelMessageRole::System,
+                qsf_models::ModelMessageRole::System,
                 "question {}: every provider call should begin with the system prompt",
                 question.id
             );

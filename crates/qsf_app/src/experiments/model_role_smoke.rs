@@ -3,12 +3,12 @@ use std::fs;
 use anyhow::Context;
 use serde_json::json;
 
-use crate::models::{
-    ModelMessage, ModelRequest, ModelRole, ModelRoleId, build_client, invoke_model_role,
-    requested_provider_from_env,
-};
+use crate::models::invoke_model_role;
 use crate::observability::event_log::EventType;
 use crate::runtime::run_context::RunContext;
+use qsf_models::{
+    ModelMessage, ModelRequest, ModelRole, ModelRoleId, build_client, requested_provider_from_env,
+};
 
 use super::registry::{Experiment, ExperimentName, ExperimentOutcome};
 
@@ -107,7 +107,7 @@ fn write_model_invocation_report(
     context: &RunContext,
     requested_provider: &str,
     request: &ModelRequest,
-    response: &crate::models::ModelResponse,
+    response: &qsf_models::ModelResponse,
 ) -> anyhow::Result<()> {
     let mut markdown = String::new();
     markdown.push_str("# Model Invocation\n\n");

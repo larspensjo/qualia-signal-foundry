@@ -2,12 +2,13 @@
 
 ## Status
 
-Planned. Depends on the offline coherence engine from
+Implemented (offline harness + live wiring). Depends on the offline coherence engine from
 [Experiment.GoalCoherenceUnderProtectedFloor.md](Experiment.GoalCoherenceUnderProtectedFloor.md)
 (`qsf_volition::coherence` + the `CoherenceJudge` seam), which is implemented. This experiment
 adds the live-loop wiring, off-hot-path admission, the declined-candidate context layer, and the
 sleep formation + sweep. See
-[Plan.VolitionMotivationalTexture.md](../Plans/Plan.VolitionMotivationalTexture.md).
+[Plan.VolitionMotivationalTexture.md](../Plans/Plan.VolitionMotivationalTexture.md). Human voice
+testing (the Human Test Steps below) is still pending.
 
 ## Summary
 
@@ -47,10 +48,10 @@ appropriate.
 
 ### D3 - Model proposes and detects; the pure reducer resolves
 
-The model returns an optional proposed candidate and a `CoherenceVerdict`. Pure
-`resolve_admission` / `resolve_sweep` (Phase 1) resolve deterministically into the **existing**
-`GoalCandidateAccepted` / `GoalCandidateRejected` / `GoalRetired` events. No new event types; the
-model never mutates state.
+The model returns an optional proposed candidate and a `CoherenceVerdict`. The offline
+goal-coherence engine's pure `resolve_admission` / `resolve_sweep` resolve deterministically into
+the **existing** `GoalCandidateAccepted` / `GoalCandidateRejected` / `GoalRetired` events. No new
+event types; the model never mutates state.
 
 ### D4 - A rejection becomes durable session context, not a shaping rule
 
@@ -209,10 +210,13 @@ Required fields for a `live-goal-formation` record (in `details`):
 - `goal_set_snapshot` — evaluated goals as `{ goal_id, effective_tier, status, last_activated_tick }`
 - `contradictions` — list of `{ goal_a, goal_b, rationale }`; empty when none
 - `hard_tier_floor_rejected` — bool when a candidate was proposed; `null` otherwise
-- `resolution` — the `AdmissionResolution` shape from Phase 1 (`judged` or
+- `resolution` — the `AdmissionResolution` shape from the coherence engine (`judged` or
   `reject_protected_floor`)
-- `declined_candidate` — `{ candidate_id, conflicting_goal_id, rationale, tick }` when the
-  candidate was rejected; `null` otherwise
+- `declined_candidate` — `{ candidate_id, title, conflict, rationale, tick }` when the candidate
+  was rejected; `null` otherwise. `conflict` is a tagged `DeclineReason`: either
+  `{ "kind": "conflicting_goal", "goal_id": <id> }` or `{ "kind": "protected_floor" }` (which
+  names no goal, since a floor rejection is grounded in the candidate's own tier, not another
+  goal)
 - `response_dispatch_ref` — reference to the turn's dispatched `response.create` (exchange +
   request hash); `null` for `sleep_formation`
 - `response_dispatched_at` / `formation_started_at` / `formation_completed_at` — timestamps that
@@ -226,9 +230,11 @@ Required fields for a `live-goal-formation` record (in `details`):
 Required fields for the declined-candidate injection (extending the existing volition
 context-injection record with a `coherence` layer):
 
-- `injected_layers` — includes a `coherence` layer naming the carrier and injection point
-- `declined_candidates_injected` — the list of `{ candidate_id, conflicting_goal_id }` present in
-  the injected context for this turn
+- `injected_layers` — includes a `coherence` layer naming the carrier and injection point,
+  declared only on turns whose text actually carries a declined-candidate section (layers are
+  modeled as data, so the trace never declares a layer the text lacks)
+- `declined_candidates_injected` — the list of `{ candidate_id, conflict }` present in the
+  injected context for this turn (`conflict` is the tagged `DeclineReason` described above)
 - `input_transcript_ref`, `request_hash` — as in the existing `VolitionContextInjected` trace
 
 Artifact boundary:
@@ -280,9 +286,54 @@ Parsing verification:
   the incompatible ones off the hot path, and carries each rejection as durable, model-usable
   session context — with every decision explained by a trace record and its emitted lifecycle
   events, and turn latency unchanged.
-- Pure resolution reused unchanged from Phase 1; the new offline harness passes without any real
-  model call (scripted judge).
+- Pure resolution reused unchanged from the offline goal-coherence engine; the new offline
+  harness passes without any real model call (scripted judge).
 
 ## Results
 
-Pending implementation.
+Offline harness implemented as `live-goal-formation-and-coherence`
+(`crates/qsf_app/src/experiments/live_goal_formation_and_coherence.rs`), all automated checks
+passing:
+
+1. **Form and admit (compatible):** a scripted formation over a fixture turn proposes a
+   non-contradicting candidate; `GoalCandidateAccepted` is emitted and the candidate enters
+   `accepted_candidates`.
+2. **Form and reject (incompatible):** a scripted formation proposes a candidate contradicting
+   the malleable core goal `maintain-coherence`; `GoalCandidateRejected` is emitted (reason names
+   the conflicting goal), no `GoalCandidateAccepted`, and a `DeclinedCandidate` record is added.
+3. **Declined-candidate injection:** an offline `live-goal-formation-injection` trace record
+   shows zero declined candidates in the rejection turn's own injected context and exactly one
+   (naming `maintain-coherence`) from the next turn onward.
+4. **Pending candidate does not shape turns:** verified directly against
+   `select_goals_ranked`, which reads only `fixture.goals` + `state.accepted_candidates` — a
+   candidate added via `GoalCandidateAdded` but not yet resolved is structurally absent from
+   every field of `RankedSelectionResult`.
+5. **Off-hot-path ordering:** every `live_formation` record satisfies
+   `formation_started_at >= response_dispatched_at` and `formation_completed_at >=
+   formation_started_at` from its own recorded timestamps.
+6. **No goal formed:** the no-op fixture turn emits zero lifecycle events and an empty
+   `proposed_candidate`.
+7. **Sleep whole-history formation:** a scripted whole-history formation (keyed by a
+   `sleep-input-bundle` reference, not a per-turn transcript) proposes a durable candidate, which
+   `resolve_admission` admits through the identical code path as the per-turn case.
+8. **Sleep sweep:** the whole-set sweep cancels the less-fundamental goal of the
+   `align-current-focus` / `sustain-current-focus` drift pair via the activation-tick tie-break,
+   and never touches the protected-floor goal `protect-boundaries`.
+9. **Trace parse:** `traces.jsonl` and `events.jsonl` are parsed from disk (not in-memory
+   structs); every `live-goal-formation` record's resolution is reconstructable from its own
+   `proposed_candidate` / `contradictions` / `goal_set_snapshot`, and `prefix_cache_eligible` is
+   `false` exactly on the turns whose goal set changed (admission) and `true` when it didn't.
+
+Live wiring (the realtime post-response hook, the `coherence` injection layer, and the
+`qsf_models` shared crate) is implemented per the Architecture doc's Implementation Status. The
+real sleep/consolidation pass now runs whole-history formation and the whole-set sweep against the
+persisted volition snapshot (`run_sleep_volition_goal_maintenance`, invoked from
+`commit_cross_session_sleep`) through the same shared resolvers, so sleep goal maintenance is no
+longer exercised only by the offline harness. **Human voice testing has not yet been run** and
+remains the recommended next step before this phase is considered fully validated end-to-end.
+
+One resolved deviation from the original spec text: the "cache-breakpoint boundary" (D2/D6) is
+an application-level `stable_prefix_message_count` / `stable_prefix_hash` marker on `ModelRequest`
+rather than a provider-side `cache_control` field, since neither `openai_provider_kit` nor the
+raw OpenAI Chat Completions API expose one — OpenAI's own prompt caching is automatic over a
+byte-stable prefix. See the 2026-07-01 DecisionLog addendum.

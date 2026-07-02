@@ -25,10 +25,6 @@ use crate::memory::{
     Association, LiveCaptureInput, MemoryFixture, MemoryRecord, MemoryRecordKind, MemoryStore,
     RetrievalStrategy, capture_live_memory_candidates, phase_four_fixture, retrieve_memories,
 };
-use crate::models::{
-    MockModelClient, ModelClient, ModelMessage, ModelRequest, ModelResponse, ModelRoleId,
-    ModelToolCall, ModelUsage,
-};
 use crate::observability::event_log::{EventRecord, EventType};
 use crate::observability::trace::TraceRecord;
 use crate::runtime::run_context::RunContext;
@@ -41,6 +37,10 @@ use crate::session::{
 use crate::tools::{
     CALCULATOR_TOOL_NAME, READ_PROJECT_DOC_TOOL_NAME, RECALL_TURN_TOOL_NAME,
     SEARCH_PROJECT_DOCS_TOOL_NAME,
+};
+use qsf_models::{
+    MockModelClient, ModelClient, ModelMessage, ModelRequest, ModelResponse, ModelRoleId,
+    ModelToolCall, ModelUsage,
 };
 
 include!("tests/basics.rs");

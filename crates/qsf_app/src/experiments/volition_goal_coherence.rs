@@ -3,11 +3,8 @@ use std::fs;
 
 use anyhow::Context;
 use serde_json::json;
-use uuid::Uuid;
 
-use crate::models::{CoherenceJudge, CoherenceJudgeGoalRef, ScriptedCoherenceJudge};
 use crate::observability::event_log::EventType;
-use crate::observability::trace::TraceRecord;
 use crate::runtime::run_context::RunContext;
 use crate::volition::{
     AllowedEffect, Goal, GoalScope, GoalStatus, ProposedGoalCandidate, Tension, TensionPriority,
@@ -15,8 +12,10 @@ use crate::volition::{
     effective_tier_from_tension_ids, propose_goal_candidates, resolve_admission,
     resolve_protected_floor_rejection, resolve_sweep,
 };
+use qsf_models::{CoherenceJudge, CoherenceJudgeGoalRef, ScriptedCoherenceJudge};
 
 use super::registry::{Experiment, ExperimentName, ExperimentOutcome};
+use super::volition_trace_support::{goal_status_diff, write_coherence_trace};
 
 pub struct VolitionGoalCoherenceExperiment;
 
@@ -368,45 +367,6 @@ fn goal_set_snapshot_json(evaluated: &[EvaluatedGoal<'_>]) -> serde_json::Value 
     )
 }
 
-fn event_goal_id(event: &VolitionEvent) -> Option<&str> {
-    match event {
-        VolitionEvent::GoalCandidateAccepted { goal_id, .. }
-        | VolitionEvent::GoalCandidateRejected { goal_id, .. }
-        | VolitionEvent::GoalRetired { goal_id, .. } => Some(goal_id.as_str()),
-        _ => None,
-    }
-}
-
-fn goal_status_diff(
-    events: &[VolitionEvent],
-    before: &VolitionState,
-    after: &VolitionState,
-) -> (serde_json::Value, serde_json::Value) {
-    let affected: Vec<&str> = events.iter().filter_map(event_goal_id).collect();
-    let status_before: serde_json::Map<String, serde_json::Value> = affected
-        .iter()
-        .map(|id| {
-            (
-                id.to_string(),
-                json!(before.goal(id).map(|dynamic| dynamic.status.to_string())),
-            )
-        })
-        .collect();
-    let status_after: serde_json::Map<String, serde_json::Value> = affected
-        .iter()
-        .map(|id| {
-            (
-                id.to_string(),
-                json!(after.goal(id).map(|dynamic| dynamic.status.to_string())),
-            )
-        })
-        .collect();
-    (
-        serde_json::Value::Object(status_before),
-        serde_json::Value::Object(status_after),
-    )
-}
-
 fn run_admission_check(
     context: &mut RunContext,
     state: VolitionState,
@@ -531,25 +491,6 @@ fn run_sweep_check(
     )?;
 
     Ok(next_state)
-}
-
-fn write_coherence_trace(
-    context: &mut RunContext,
-    trigger: &str,
-    tick: u64,
-    events: &[VolitionEvent],
-    details: serde_json::Value,
-) -> anyhow::Result<Uuid> {
-    let trace_record = TraceRecord::new(
-        context.experiment_id(),
-        "goal-coherence-check",
-        format!("trigger={trigger} tick={tick}"),
-        format!("events_emitted={}", events.len()),
-    )
-    .with_details(details);
-    let trace_id = trace_record.trace_id;
-    context.record_trace(trace_record)?;
-    Ok(trace_id)
 }
 
 fn write_coherence_report(

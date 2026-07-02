@@ -1,4 +1,5 @@
 mod injection;
+pub(crate) mod live_goal_formation;
 mod memory_store;
 mod routes;
 pub(crate) mod sideband;

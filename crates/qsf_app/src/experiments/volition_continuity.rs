@@ -5,6 +5,13 @@ use std::time::Instant;
 use anyhow::Context;
 use serde_json::Value;
 
+use qsf_models::{
+    CoherenceJudge, LiveGoalFormationJudge, ModelBackedCoherenceJudge,
+    ModelBackedLiveGoalFormationJudge, ModelClient, coherence_judge_goal_set,
+    live_goal_formation_stable_prefix_hash,
+};
+use serde_json::json;
+
 use crate::observability::event_log::EventType;
 use crate::observability::trace::{TraceRecord, elapsed_ns};
 use crate::runtime::run_context::RunContext;
@@ -12,12 +19,18 @@ use crate::session::{
     ContinuityManifest, StateDirectoryResolution, resolve_shared_state_directory_from_env,
 };
 use qsf_volition::{
-    REALTIME_SEED_FIXTURE_ID, ReviewedVolitionSeed, VolitionConsolidationReport,
-    VolitionConsolidationSnapshotRecord, VolitionContinuitySnapshot, VolitionTurnOutcome,
-    build_volition_consolidation_report, load_reviewed_volition_seed,
+    AdmissionResolution, DeclinedCandidate, REALTIME_SEED_FIXTURE_ID, ReviewedVolitionSeed,
+    VolitionConsolidationReport, VolitionConsolidationSnapshotRecord, VolitionContinuitySnapshot,
+    VolitionFixture, VolitionTurnOutcome, apply, build_state_inspection,
+    build_volition_consolidation_report, effective_tier_from_tension_ids,
+    load_reviewed_volition_seed, newly_declined_candidate, persist_volition_continuity_snapshot,
+    realtime_seed_fixture, resolve_formed_candidate, resolve_sweep,
 };
 
 use super::registry::{Experiment, ExperimentName, ExperimentOutcome};
+use super::volition_trace_support::{
+    goal_set_snapshot_json, goal_status_diff, write_coherence_trace, write_volition_trace,
+};
 
 const CONTINUITY_SESSION_ID_ENV_VAR: &str = "QSF_VOLITION_CONTINUITY_SESSION_ID";
 const CONTINUITY_REPORT_JSON: &str = "volition-continuity-report.json";
@@ -233,6 +246,221 @@ pub(crate) fn consolidate_session_volition(
     Ok(Some(report))
 }
 
+/// Summary of what the sleep goal-maintenance pass changed, for the sleep outcome observations.
+pub(crate) struct SleepVolitionMaintenanceSummary {
+    pub admitted_goal_id: Option<String>,
+    pub declined_candidate: Option<DeclinedCandidate>,
+    pub swept_goal_ids: Vec<String>,
+}
+
+/// Rebuilds the seed fixture named by a snapshot's `seed_fixture_id`. Only the realtime seed
+/// fixture is a known reconstructable fixture today.
+fn fixture_for_seed_id(seed_fixture_id: &str) -> Option<VolitionFixture> {
+    (seed_fixture_id == REALTIME_SEED_FIXTURE_ID).then(realtime_seed_fixture)
+}
+
+/// The real sleep/consolidation goal-maintenance pass (whole-history formation + whole-set
+/// sweep), the live analogue of the offline `live-goal-formation-and-coherence` harness's sleep
+/// steps. Loads the persisted volition snapshot, runs one whole-history formation call and one
+/// whole-set coherence sweep through the **same** pure resolvers the live per-turn hook uses
+/// (`resolve_formed_candidate` / `resolve_sweep`), applies the resulting events, re-persists the
+/// snapshot, and records a `live-goal-formation` and a `goal-coherence-check` trace per the
+/// trace-completeness contract. Returns `None` when no continuity snapshot exists for the session
+/// or its seed fixture is not reconstructable.
+///
+/// The default mock client forms no candidate and detects no contradictions, so the default path
+/// runs end to end (persisting an unchanged snapshot and two trace records) without a real model.
+pub(crate) fn run_sleep_volition_goal_maintenance(
+    context: &mut RunContext,
+    client: &dyn ModelClient,
+    state_root: &Path,
+    session_id: &str,
+    whole_history_input: &str,
+) -> anyhow::Result<Option<SleepVolitionMaintenanceSummary>> {
+    let continuity_dir = state_root.join("continuity").join(session_id);
+    let manifest_path = continuity_dir.join("continuity-manifest.json");
+    if !manifest_path.exists() {
+        return Ok(None);
+    }
+    let snapshot_path = snapshot_path_from_manifest(&manifest_path, &continuity_dir)?;
+    if !snapshot_path.exists() {
+        return Ok(None);
+    }
+
+    let snapshot = VolitionContinuitySnapshot::load_or_upgrade(&snapshot_path)?;
+    let Some(fixture) = fixture_for_seed_id(&snapshot.seed_fixture_id) else {
+        return Ok(None);
+    };
+    let mut state = snapshot.state;
+
+    // ── Whole-history formation ─────────────────────────────────────────────
+    let formation_tick = state.tick + 1;
+    let goal_set = coherence_judge_goal_set(&state, &fixture);
+    let prefix_hash = live_goal_formation_stable_prefix_hash(&goal_set);
+    let judge = ModelBackedLiveGoalFormationJudge::new(client);
+    let formation_started_at = time::OffsetDateTime::now_utc();
+    let outcome = judge.form_and_detect(context, &goal_set, whole_history_input)?;
+    let formation_completed_at = time::OffsetDateTime::now_utc();
+
+    let proposed_candidate_json;
+    let (formation_events, resolution) = match &outcome.proposed_candidate {
+        Some(candidate) => {
+            let candidate_tier = effective_tier_from_tension_ids(candidate.tension_ids(), &fixture);
+            proposed_candidate_json = json!({
+                "goal_id": candidate.id(),
+                "title": candidate.title(),
+                "effective_tier": candidate_tier,
+                "tension_ids": candidate.tension_ids(),
+            });
+            let (events, resolution) = resolve_formed_candidate(
+                candidate,
+                &outcome.verdict,
+                &state,
+                &fixture,
+                formation_tick,
+            );
+            (events, Some(resolution))
+        }
+        None => {
+            proposed_candidate_json = serde_json::Value::Null;
+            (Vec::new(), None)
+        }
+    };
+    let hard_tier_floor_rejected = resolution
+        .as_ref()
+        .map(|resolution| matches!(resolution, AdmissionResolution::RejectProtectedFloor));
+
+    let state_before_formation = state.clone();
+    for event in formation_events.clone() {
+        state = apply(state, event);
+    }
+    let admitted_goal_id = matches!(
+        resolution,
+        Some(AdmissionResolution::Judged { admitted: true, .. })
+    )
+    .then(|| {
+        outcome
+            .proposed_candidate
+            .as_ref()
+            .map(|c| c.id().to_string())
+    })
+    .flatten();
+    let declined_candidate = outcome.proposed_candidate.as_ref().and_then(|candidate| {
+        newly_declined_candidate(&state_before_formation, &state, candidate.id())
+    });
+    let (formation_status_before, formation_status_after) =
+        goal_status_diff(&formation_events, &state_before_formation, &state);
+
+    let formation_details = json!({
+        "trigger": "sleep_formation",
+        "tick": formation_tick,
+        "input_ref": whole_history_input_ref(session_id),
+        "cached_prefix_ref": prefix_hash,
+        "prefix_cache_eligible": false,
+        "judge_ref": outcome.verdict.judge_ref,
+        "proposed_candidate": proposed_candidate_json,
+        "goal_set_snapshot": goal_set_snapshot_json(&state_before_formation, &fixture, &goal_set),
+        "contradictions": outcome.verdict.contradictions,
+        "hard_tier_floor_rejected": hard_tier_floor_rejected,
+        "resolution": resolution.as_ref().map(|r| json!(r)).unwrap_or(serde_json::Value::Null),
+        "declined_candidate": declined_candidate.as_ref().map(|d| json!(d)),
+        "response_dispatch_ref": serde_json::Value::Null,
+        "response_dispatched_at": serde_json::Value::Null,
+        "formation_started_at": formation_started_at.unix_timestamp_nanos(),
+        "formation_completed_at": formation_completed_at.unix_timestamp_nanos(),
+        "events_emitted": formation_events,
+        "goal_status_before": formation_status_before,
+        "goal_status_after": formation_status_after,
+        "artifact_or_record_reference": format!("live-goal-formation#trigger=sleep_formation&tick={formation_tick}"),
+    });
+    let formation_trace_id = write_volition_trace(
+        context,
+        "live-goal-formation",
+        "sleep_formation",
+        formation_tick,
+        &formation_events,
+        formation_details,
+    )?;
+    context.record_event(
+        EventType::TraceRecorded,
+        json!({
+            "trigger": "sleep_formation",
+            "tick": formation_tick,
+            "proposed_candidate": outcome.proposed_candidate.as_ref().map(|c| c.id()),
+            "events_emitted": formation_events.len(),
+        }),
+        Some(formation_trace_id),
+    )?;
+
+    // ── Whole-set sweep ─────────────────────────────────────────────────────
+    let sweep_tick = state.tick + 1;
+    let sweep_goal_set = coherence_judge_goal_set(&state, &fixture);
+    let sweep_judge = ModelBackedCoherenceJudge::new(client);
+    let verdict = sweep_judge.judge(context, &sweep_goal_set)?;
+    let (sweep_resolution, sweep_events) = resolve_sweep(&verdict, &state, &fixture, sweep_tick);
+
+    let state_before_sweep = state.clone();
+    for event in sweep_events.clone() {
+        state = apply(state, event);
+    }
+    let swept_goal_ids: Vec<String> = sweep_resolution
+        .cancellations
+        .iter()
+        .map(|cancellation| cancellation.cancelled_goal_id.clone())
+        .collect();
+    let (sweep_status_before, sweep_status_after) =
+        goal_status_diff(&sweep_events, &state_before_sweep, &state);
+
+    let sweep_details = json!({
+        "trigger": "sweep",
+        "tick": sweep_tick,
+        "candidate": null,
+        "goal_set_snapshot": goal_set_snapshot_json(&state_before_sweep, &fixture, &sweep_goal_set),
+        "judge_ref": verdict.judge_ref,
+        "contradictions": verdict.contradictions,
+        "hard_tier_floor_rejected": null,
+        "resolution": sweep_resolution,
+        "events_emitted": sweep_events,
+        "goal_status_before": sweep_status_before,
+        "goal_status_after": sweep_status_after,
+        "artifact_or_record_reference": format!("goal-coherence-check#trigger=sweep&tick={sweep_tick}"),
+    });
+    let sweep_trace_id =
+        write_coherence_trace(context, "sweep", sweep_tick, &sweep_events, sweep_details)?;
+    context.record_event(
+        EventType::TraceRecorded,
+        json!({
+            "trigger": "sweep",
+            "tick": sweep_tick,
+            "cancelled_goal_ids": swept_goal_ids,
+            "flagged_pairs": sweep_resolution.flagged.len(),
+            "events_emitted": sweep_events.len(),
+        }),
+        Some(sweep_trace_id),
+    )?;
+
+    // Persist the consolidated snapshot so the next session resumes with the maintained goals.
+    let inspection = build_state_inspection(&state, &fixture);
+    let updated_snapshot = VolitionContinuitySnapshot::new(
+        snapshot.qsf_session_id,
+        snapshot.recorded_at,
+        snapshot.seed_fixture_id,
+        state,
+        inspection,
+    );
+    persist_volition_continuity_snapshot(&updated_snapshot, &snapshot_path)?;
+
+    Ok(Some(SleepVolitionMaintenanceSummary {
+        admitted_goal_id,
+        declined_candidate,
+        swept_goal_ids,
+    }))
+}
+
+fn whole_history_input_ref(session_id: &str) -> String {
+    format!("sleep-input-bundle#session={session_id}")
+}
+
 fn load_reviewed_seed(path: &Path) -> anyhow::Result<ReviewedVolitionSeed> {
     load_reviewed_volition_seed(path)
         .with_context(|| format!("failed to load reviewed volition seed `{}`", path.display()))
@@ -329,7 +557,103 @@ pub(crate) fn render_markdown_report(report: &VolitionConsolidationReport) -> St
 #[cfg(test)]
 mod tests {
     use super::*;
+    use qsf_models::MockModelClient;
+    use qsf_volition::VolitionState;
     use tempfile::TempDir;
+
+    fn write_snapshot_fixture(state_root: &Path, session_id: &str) -> anyhow::Result<()> {
+        let continuity_dir = state_root.join("continuity").join(session_id);
+        std::fs::create_dir_all(&continuity_dir)?;
+        let fixture = realtime_seed_fixture();
+        let state = VolitionState::from_fixture(&fixture);
+        let inspection = build_state_inspection(&state, &fixture);
+        let snapshot = VolitionContinuitySnapshot::new(
+            session_id,
+            "2026-07-02T00:00:00Z",
+            REALTIME_SEED_FIXTURE_ID,
+            state,
+            inspection,
+        );
+        persist_volition_continuity_snapshot(
+            &snapshot,
+            continuity_dir.join("volition-state.json"),
+        )?;
+        let manifest = ContinuityManifest {
+            current_volition_snapshot_path: Some(PathBuf::from("volition-state.json")),
+            ..ContinuityManifest::default()
+        };
+        manifest.persist(continuity_dir.join("continuity-manifest.json"))?;
+        Ok(())
+    }
+
+    #[test]
+    fn sleep_goal_maintenance_runs_end_to_end_with_the_default_mock_client() {
+        let state_root = TempDir::new().unwrap();
+        write_snapshot_fixture(state_root.path(), "session-1").unwrap();
+
+        let mut context =
+            RunContext::create_in(state_root.path().join("runs"), "sleep-maintenance-test")
+                .unwrap();
+        let client = MockModelClient::default();
+
+        let summary = run_sleep_volition_goal_maintenance(
+            &mut context,
+            &client,
+            state_root.path(),
+            "session-1",
+            "The whole-session summary.",
+        )
+        .unwrap()
+        .expect("maintenance runs when a snapshot exists");
+
+        // The default mock forms nothing and detects no contradictions.
+        assert!(summary.admitted_goal_id.is_none());
+        assert!(summary.declined_candidate.is_none());
+        assert!(summary.swept_goal_ids.is_empty());
+
+        // Both trace records were written, so the sleep pass is reconstructable from traces.
+        let traces = std::fs::read_to_string(context.run_dir().join("traces.jsonl")).unwrap();
+        let operations: Vec<String> = traces
+            .lines()
+            .filter(|line| !line.trim().is_empty())
+            .map(|line| {
+                serde_json::from_str::<serde_json::Value>(line).unwrap()["operation"]
+                    .as_str()
+                    .unwrap()
+                    .to_string()
+            })
+            .collect();
+        assert!(operations.iter().any(|op| op == "live-goal-formation"));
+        assert!(operations.iter().any(|op| op == "goal-coherence-check"));
+
+        // The snapshot was re-persisted and still parses.
+        let snapshot_path = state_root
+            .path()
+            .join("continuity")
+            .join("session-1")
+            .join("volition-state.json");
+        assert!(VolitionContinuitySnapshot::load_or_upgrade(&snapshot_path).is_ok());
+    }
+
+    #[test]
+    fn sleep_goal_maintenance_returns_none_without_a_snapshot() {
+        let state_root = TempDir::new().unwrap();
+        let mut context =
+            RunContext::create_in(state_root.path().join("runs"), "sleep-maintenance-none")
+                .unwrap();
+        let client = MockModelClient::default();
+
+        let result = run_sleep_volition_goal_maintenance(
+            &mut context,
+            &client,
+            state_root.path(),
+            "absent-session",
+            "summary",
+        )
+        .unwrap();
+
+        assert!(result.is_none());
+    }
 
     /// Constructs a minimal `realtime_bounded_initiative` JSONL line matching the wire format
     /// emitted by `DiagnosticRecord::RealtimeBoundedInitiative` (which cannot be imported here

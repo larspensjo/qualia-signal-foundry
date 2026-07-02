@@ -1,8 +1,7 @@
 //! Goal coherence: a model *detects* contradictions between goals (`CoherenceVerdict`), and
 //! these pure functions *resolve* the verdict deterministically into existing goal-lifecycle
 //! events (`GoalCandidateAccepted` / `GoalCandidateRejected` / `GoalRetired`). No new event
-//! types. See `docs/Plans/Plan.VolitionMotivationalTexture.md` Phase 1 and
-//! `docs/Experiments/Experiment.GoalCoherenceUnderProtectedFloor.md`.
+//! types. See `docs/Experiments/Experiment.GoalCoherenceUnderProtectedFloor.md`.
 
 use std::collections::BTreeSet;
 
@@ -10,7 +9,10 @@ use serde::{Deserialize, Serialize};
 
 use crate::arbitration::PROTECTED_TIER_FLOOR;
 use crate::reducer::goal_effective_tier;
-use crate::{EvidenceRef, ProposedGoalCandidate, VolitionEvent, VolitionFixture, VolitionState};
+use crate::{
+    CoherenceDecline, DeclineReason, DeclinedCandidate, EvidenceRef, ProposedGoalCandidate,
+    VolitionEvent, VolitionFixture, VolitionState,
+};
 
 /// A single contradiction between two goals (by id), as judged by the model. Field order
 /// carries no meaning; a contradiction between A and B is the same fact regardless of which
@@ -103,9 +105,62 @@ pub fn resolve_protected_floor_rejection(
     let events = vec![VolitionEvent::GoalCandidateRejected {
         goal_id: candidate.id().to_string(),
         reason: "candidate effective tier is at or below the protected floor".to_string(),
+        coherence_decline: Some(CoherenceDecline {
+            conflict: DeclineReason::ProtectedFloor,
+            rationale: "the candidate's own effective tier is at or below the protected floor"
+                .to_string(),
+        }),
         tick,
     }];
     (AdmissionResolution::RejectProtectedFloor, events)
+}
+
+/// Resolves one formed candidate end to end: the hard tier-floor gate first, then (if it
+/// passes) a judged admission against `verdict`. Emits `GoalCandidateAdded` followed by
+/// whatever the gate/admission resolves to. Applying the returned events is sufficient to
+/// update `VolitionState::declined_candidates` — callers no longer need to separately construct
+/// a declined-candidate record (see `VolitionState::declined_candidates`).
+pub fn resolve_formed_candidate(
+    candidate: &ProposedGoalCandidate,
+    verdict: &CoherenceVerdict,
+    state: &VolitionState,
+    fixture: &VolitionFixture,
+    tick: u64,
+) -> (Vec<VolitionEvent>, AdmissionResolution) {
+    let mut events = vec![VolitionEvent::GoalCandidateAdded {
+        candidate: candidate.clone(),
+        tick,
+    }];
+    let (resolution, resolution_events) = if candidate_hard_tier_floor_rejected(candidate, fixture)
+    {
+        resolve_protected_floor_rejection(candidate, tick)
+    } else {
+        resolve_admission(candidate, verdict, state, fixture, tick)
+    };
+    events.extend(resolution_events);
+    (events, resolution)
+}
+
+/// Returns the declined-candidate record newly introduced for `candidate_id` by applying a
+/// formation resolution, if any. This compares candidate identity rather than window length so it
+/// still works when `VolitionState::declined_candidates` is already at its retention cap and the
+/// reducer drops the oldest entry while appending the new one.
+pub fn newly_declined_candidate(
+    before: &VolitionState,
+    after: &VolitionState,
+    candidate_id: &str,
+) -> Option<DeclinedCandidate> {
+    after
+        .declined_candidates
+        .iter()
+        .find(|declined| {
+            declined.candidate_id == candidate_id
+                && !before
+                    .declined_candidates
+                    .iter()
+                    .any(|existing| existing.candidate_id == declined.candidate_id)
+        })
+        .cloned()
 }
 
 fn contradiction_counterpart<'a>(contradiction: &'a Contradiction, id: &str) -> Option<&'a str> {
@@ -159,12 +214,35 @@ pub fn resolve_admission(
             cancelled_goal_ids: vec![],
             suppressed_cancellations_due_to_rejection: cancellation_targets.into_iter().collect(),
         };
+        // Only the primary (first, deterministically ordered) conflicting goal is carried into
+        // the declined-candidate record — matches the injected-context contract, which grounds
+        // a decline in one conflicting goal, not the full rejected_by set.
+        let coherence_decline = rejected_by.first().map(|conflicting_goal_id| {
+            let rationale = verdict
+                .contradictions
+                .iter()
+                .find(|contradiction| {
+                    (contradiction.goal_a == candidate_id
+                        && contradiction.goal_b == *conflicting_goal_id)
+                        || (contradiction.goal_b == candidate_id
+                            && contradiction.goal_a == *conflicting_goal_id)
+                })
+                .map(|contradiction| contradiction.rationale.clone())
+                .unwrap_or_default();
+            CoherenceDecline {
+                conflict: DeclineReason::ConflictingGoal {
+                    goal_id: conflicting_goal_id.clone(),
+                },
+                rationale,
+            }
+        });
         let events = vec![VolitionEvent::GoalCandidateRejected {
             goal_id: candidate_id.to_string(),
             reason: format!(
                 "contradicts more-or-equally fundamental goal(s): {}",
                 rejected_by.join(", ")
             ),
+            coherence_decline,
             tick,
         }];
         return (resolution, events);
@@ -414,6 +492,12 @@ mod tests {
             vec![VolitionEvent::GoalCandidateRejected {
                 goal_id: "floor-candidate".to_string(),
                 reason: "candidate effective tier is at or below the protected floor".to_string(),
+                coherence_decline: Some(CoherenceDecline {
+                    conflict: DeclineReason::ProtectedFloor,
+                    rationale:
+                        "the candidate's own effective tier is at or below the protected floor"
+                            .to_string(),
+                }),
                 tick: 1,
             }]
         );
@@ -479,6 +563,12 @@ mod tests {
             vec![VolitionEvent::GoalCandidateRejected {
                 goal_id: "tangent-candidate".to_string(),
                 reason: "contradicts more-or-equally fundamental goal(s): core-goal".to_string(),
+                coherence_decline: Some(CoherenceDecline {
+                    conflict: DeclineReason::ConflictingGoal {
+                        goal_id: "core-goal".to_string(),
+                    },
+                    rationale: "tangent-candidate vs core-goal".to_string(),
+                }),
                 tick: 3,
             }]
         );
@@ -593,6 +683,12 @@ mod tests {
             vec![VolitionEvent::GoalCandidateRejected {
                 goal_id: "mixed-candidate".to_string(),
                 reason: "contradicts more-or-equally fundamental goal(s): core-goal".to_string(),
+                coherence_decline: Some(CoherenceDecline {
+                    conflict: DeclineReason::ConflictingGoal {
+                        goal_id: "core-goal".to_string(),
+                    },
+                    rationale: "mixed-candidate vs core-goal".to_string(),
+                }),
                 tick: 2,
             }],
             "reject dominates: no GoalRetired must be emitted"

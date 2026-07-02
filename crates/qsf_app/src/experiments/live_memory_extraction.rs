@@ -3,13 +3,13 @@ use std::time::Instant;
 
 use serde_json::json;
 
-use crate::models::{ModelClient, build_client, requested_provider_from_env};
 use crate::observability::event_log::EventType;
 use crate::observability::trace::{TraceRecord, elapsed_ns};
 use crate::runtime::run_context::RunContext;
 use crate::session::resume::load_resume_inputs;
 use crate::session::{Exchange, SessionState, StateDirectoryResolution, Turn};
 use crate::sleep::{SleepInputBundle, summarize_session};
+use qsf_models::{ModelClient, build_client, requested_provider_from_env};
 
 use super::registry::{Experiment, ExperimentName, ExperimentOutcome};
 use super::sleep_phase_session_summary::{commit_cross_session_sleep, write_sleep_artifacts};
@@ -476,7 +476,6 @@ mod tests {
     use super::{LiveMemoryExtractionExperiment, build_live_memory_extraction_input};
     use crate::context::{ContextAssembly, ContextBudget, ContextFragment, ContextSelection};
     use crate::memory::MemoryStore;
-    use crate::models::MockModelClient;
     use crate::runtime::run_context::RunContext;
     use crate::session::manifest::{ContinuityManifest, ResumeMode};
     use crate::session::persistence::persist_session_state;
@@ -485,6 +484,7 @@ mod tests {
         InterruptionRecord, InterruptionStopOutcome, MemorySourceConfig, ProviderEventKind,
         ProviderEventRecord, SessionConfig, SessionState, ToolRequestRecord,
     };
+    use qsf_models::MockModelClient;
     use qsf_session::{ToolExecutionRecord, ToolExecutionStatus, ToolPermissionDecision};
 
     #[test]

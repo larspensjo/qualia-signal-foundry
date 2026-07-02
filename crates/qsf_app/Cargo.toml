@@ -16,14 +16,13 @@ futures-util.workspace = true
 globset = "0.4"
 hound.workspace = true
 log.workspace = true
-openai_provider_kit = { git = "https://github.com/larspensjo/web_page_filet_mignon", package = "openai_provider_kit", rev = "ca28629d42fb350a7935df6907573e2f972b3ba9" }
 qsf_memory = { path = "../qsf_memory" }
 qsf_context = { path = "../qsf_context" }
+qsf_models = { path = "../qsf_models" }
 qsf_volition = { path = "../qsf_volition" }
 qsf_realtime_protocol = { path = "../qsf_realtime_protocol" }
 qsf_session = { path = "../qsf_session" }
 qsf_tools = { path = "../qsf_tools" }
-reqwest = { version = "0.12", default-features = false, features = ["blocking", "json", "rustls-tls"] }
 serde.workspace = true
 serde_json.workspace = true
 sha2.workspace = true

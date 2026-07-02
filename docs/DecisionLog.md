@@ -1512,3 +1512,73 @@ today but has no cache-breakpoint request field — so that boundary check is th
 implementation step. Emergent goals and accumulated drift are caught in the sleep pass. This
 refines, and does not reverse, the 2026-06-30 "model-judged off the hot path and repaired during
 sleep" decision.
+
+## 2026-07-01 - Live goal formation and off-hot-path coherence: cache boundary is an application-level marker, model layer moves to a new `qsf_models` crate, `ModelInvoker` decouples callers from RunContext
+Type: Decision
+Decision: Implementing the previous entry's "first implementation step" found that neither
+`openai_provider_kit`'s `LlmRequest` nor the raw OpenAI Chat Completions API expose a
+`cache_control`-style request field — OpenAI's own prompt caching is automatic over a
+byte-stable prefix of the raw request, with no explicit breakpoint to set. The cache-breakpoint
+boundary is therefore implemented as an application-level seam:
+`ModelRequest::with_stable_prefix_message_count` / `stable_prefix_hash` mark and hash the leading
+messages a caller declares stable (system instructions + goal set), used to populate the trace's
+`cached_prefix_ref` / `prefix_cache_eligible` fields — not forwarded to any provider request.
+Separately, the model layer (`ModelClient`, `ModelRequest`/`ModelMessage`, `ModelRole`/
+`ModelRoleId`, `CoherenceJudge`, and the new `LiveGoalFormationJudge`) moves out of `qsf_app` into
+a new shared crate, `qsf_models`, rather than into `qsf_volition` (deliberately pure/no-IO) or
+directly into `qsf_realtime_server` (which would leave `qsf_app` without it). `CoherenceJudge`'s
+and `LiveGoalFormationJudge`'s `judge`/`form_and_detect` methods no longer take `&mut RunContext`
+directly; they take `&mut dyn ModelInvoker` (also defined in `qsf_models`), a seam that
+decouples model callers from any one observability backend. `qsf_app`'s `RunContext` implements
+`ModelInvoker` by delegating to the existing `invoke_model_role` (kept in `qsf_app`, unchanged
+behavior and unchanged offline call sites via `&mut RunContext`'s coercion to `&mut dyn
+ModelInvoker`); the realtime loop uses a trace-free `DirectModelInvoker` and records its own
+`DiagnosticRecord::LiveGoalFormationPerformed` around the whole formation call instead of a
+per-model-call trace.
+Context: The prior entry's D6 named `ModelClient`/`ModelRole`/`invoke_model_role`/`CoherenceJudge`
+for extraction and a Claude-`cache_control`-shaped cache seam as the first implementation step,
+written before checking what the actual model client wraps. Inspection during implementation
+confirmed the only `ModelClient` impls are OpenAI-backed (`OpenAiProviderModelClient`,
+`OpenAiToolClient`) and a mock — no Anthropic client exists anywhere in the app — so an
+Anthropic-shaped cache-breakpoint field would have had nothing to attach to. `invoke_model_role`
+was also found to be hard-wired to `RunContext`/`TraceRecord`/`EventType` (qsf_app-only
+constructs), and `CoherenceJudge::judge` took `&mut RunContext` directly in its trait signature,
+neither of which `qsf_realtime_server` has an equivalent of (it has `DiagnosticWriter`/
+`DiagnosticRecord` instead).
+Consequences: The cache-prefix hash is honest, inspectable state describing what this
+application declares stable — it does not claim a provider-side caching guarantee that doesn't
+exist for the OpenAI path today, and it would carry real meaning without further change if an
+explicit-breakpoint provider is added later. The `qsf_models` crate boundary and the
+`ModelInvoker` seam mean `qsf_app`'s existing offline model-invocation tests, traces, and events
+are unchanged (verified: all pre-existing `qsf_app` tests pass unmodified), while
+`qsf_realtime_server` gains model-invocation capability without depending on `qsf_app` or
+duplicating the model-client code. This refines, and does not reverse, the 2026-07-01 "one
+cache-structured model call per turn" decision above.
+
+## 2026-07-02 - Sleep goal maintenance auto-applies formation and sweep; declined candidates become reducer-derived state
+Type: Decision
+Decision: The sleep/consolidation pass runs whole-history goal formation and a whole-set coherence
+sweep that **auto-apply** to the persisted volition snapshot
+(`run_sleep_volition_goal_maintenance`, invoked from `commit_cross_session_sleep`), through the
+same shared pure resolvers the live per-turn hook uses (`resolve_formed_candidate` /
+`resolve_sweep`). The separate `consolidate_session_volition` report remains reviewable-only and
+human-gated; only the goal-maintenance pass mutates durable state, matching the
+Experiment.LiveGoalFormationAndCoherence D5 "sleep does whole-history formation and the whole-set
+sweep" scope and the offline harness. Separately, coherence-declined candidates are no longer a
+side-channel list written next to the event stream: they are reducer-derived
+`VolitionState::declined_candidates`, populated when `apply` folds a `GoalCandidateRejected` event
+carrying a `CoherenceDecline { conflict, rationale }`, deduplicated by title and capped at a
+window, so replaying the event stream reproduces the injected coherence context.
+Context: A review of the live goal formation and off-hot-path coherence change found the real
+sleep pass never gained the formation/sweep behavior it was scoped for (only the offline harness
+exercised it), the declined-candidate state and the ~55-line candidate-resolution block were
+duplicated between the live hook and the offline harness, and the injected `coherence` layer used
+a `"protected_floor"` sentinel stored in a goal-id field. The auto-apply choice for sleep goal
+maintenance was made deliberately (over a proposal-only alternative) to match D5 and keep the
+offline harness a faithful validation of live behavior.
+Consequences: One shared resolver and one declined-candidate type back both the live hook and the
+offline harness, so a semantic change can no longer desync them. A protected-floor decline renders
+honestly ("is below the protected floor tier") instead of naming a non-existent goal. The default
+mock client forms nothing and sweeps nothing, so the sleep goal-maintenance path runs end to end
+by default. This refines, and does not reverse, the 2026-07-01 decisions above; it does not change
+the reviewable-only, human-gated nature of the `consolidate_session_volition` continuity report.

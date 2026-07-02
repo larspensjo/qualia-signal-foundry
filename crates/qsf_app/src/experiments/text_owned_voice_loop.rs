@@ -23,16 +23,17 @@ use crate::memory::{
     Association, MemoryFixture, MemoryRecord, RetrievalResult, RetrievalStrategy, RetrievedMemory,
     phase_four_fixture, retrieve_memories, retrieved_memory_ids,
 };
-use crate::models::{
-    ModelClient, ModelMessage, ModelRequest, ModelResponse, ModelRole, ModelRoleId, build_client,
-    invoke_model_role, requested_provider_from_env,
-};
+use crate::models::invoke_model_role;
 use crate::observability::event_log::EventType;
 use crate::observability::trace::{TraceRecord, elapsed_ms};
 use crate::runtime::run_context::RunContext;
 use crate::session::{
     Exchange, ExchangeModelUse, ExchangeOutput, LiveSessionEvent, SessionBootRequest,
     SessionConfig, SessionEndReason, SessionEvent, StateDirectoryResolution, Turn, UtteranceRecord,
+};
+use qsf_models::{
+    ModelClient, ModelMessage, ModelRequest, ModelResponse, ModelRole, ModelRoleId, build_client,
+    requested_provider_from_env,
 };
 
 use super::failure::{SanitizedFailure, record_sanitized_failure};
@@ -1572,13 +1573,13 @@ mod tests {
     };
     use crate::experiments::registry::{Experiment, ExperimentName};
     use crate::memory::{Association, MemoryFixture, MemoryRecord, MemoryRecordKind, MemoryStore};
-    use crate::models::{MockModelClient, ModelClient, ModelRequest, ModelResponse, ModelUsage};
     use crate::observability::event_log::{EventRecord, EventType};
     use crate::runtime::run_context::RunContext;
     use crate::session::{
         MemorySourceConfig, SessionConfig, SessionEndReason, StateDirectoryResolution,
     };
     use anyhow::anyhow;
+    use qsf_models::{MockModelClient, ModelClient, ModelRequest, ModelResponse, ModelUsage};
     use time::OffsetDateTime;
     use time::format_description::well_known::Rfc3339;
     use uuid::Uuid;

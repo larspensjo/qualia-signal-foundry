@@ -13,7 +13,7 @@ use crate::tools::{
     ToolRegistry, ToolRequest, ToolResult, ToolSideEffectLevel,
 };
 
-use super::{ModelRequest, ModelToolCall};
+use qsf_models::{ModelRequest, ModelToolCall};
 
 pub fn dispatch_model_tool_calls(
     context: &mut RunContext,
@@ -505,9 +505,7 @@ mod tests {
     use serde_json::json;
 
     use super::dispatch_model_tool_calls;
-    use crate::models::{
-        ModelRequest, ModelRole, ModelRoleId, ModelToolCall, ProjectDocToolBudget,
-    };
+    use crate::models::ProjectDocToolBudget;
     use crate::observability::event_log::{EventRecord, EventType};
     use crate::observability::trace::TraceRecord;
     use crate::project_docs::{DocHit, DocRead, ProjectDocService};
@@ -518,6 +516,7 @@ mod tests {
         SEARCH_PROJECT_DOCS_TOOL_NAME, SessionToolContext, ToolCategory, ToolRegistry,
         ToolSideEffectLevel,
     };
+    use qsf_models::{ModelRequest, ModelRole, ModelRoleId, ModelToolCall};
 
     fn fixtures_root() -> PathBuf {
         PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("src/project_docs/fixtures")
@@ -651,7 +650,7 @@ mod tests {
         role.allowed_tools = vec!["missing_tool".to_string()];
         let request = ModelRequest::new(role, vec![])
             .with_session_id(context.run_id())
-            .with_tools(vec![crate::models::ModelToolDefinition::new(
+            .with_tools(vec![qsf_models::ModelToolDefinition::new(
                 "missing_tool",
                 "Missing test tool",
                 json!({ "type": "object" }),

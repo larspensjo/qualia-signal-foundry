@@ -3,7 +3,7 @@ use qsf_tools::{
     ToolResult,
 };
 
-use crate::models::ModelToolDefinition;
+use qsf_models::ModelToolDefinition;
 
 use super::calculator_tool::CalculatorTool;
 use super::read_project_doc_tool::ReadProjectDocTool;
@@ -47,7 +47,7 @@ impl ToolRegistry {
     pub fn model_tool_definitions_for(&self, names: &[&str]) -> Vec<ModelToolDefinition> {
         self.definitions_for(names)
             .into_iter()
-            .map(Into::into)
+            .map(model_tool_definition_from_tool_definition)
             .collect()
     }
 
@@ -72,10 +72,8 @@ impl ToolRegistry {
     }
 }
 
-impl From<ToolDefinition> for ModelToolDefinition {
-    fn from(value: ToolDefinition) -> Self {
-        Self::new(value.name, value.description, value.parameters)
-    }
+fn model_tool_definition_from_tool_definition(value: ToolDefinition) -> ModelToolDefinition {
+    ModelToolDefinition::new(value.name, value.description, value.parameters)
 }
 
 #[cfg(test)]

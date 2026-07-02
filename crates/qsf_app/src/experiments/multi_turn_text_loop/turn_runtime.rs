@@ -11,9 +11,7 @@ use crate::context::{ContextAssembly, ContextFragment, ContextSourceKind, assemb
 use crate::conversation::PromptAssembly;
 use crate::conversation::prompt;
 use crate::memory::RetrievalResult;
-use crate::models::{
-    ModelClient, ModelMessage, ModelResponse, ModelRole, ModelRoleId, invoke_model_role,
-};
+use crate::models::invoke_model_role;
 use crate::observability::event_log::EventType;
 use crate::observability::trace::elapsed_ms;
 use crate::runtime::run_context::RunContext;
@@ -22,6 +20,7 @@ use crate::session::{
     Exchange, ExchangeModelUse, ExchangeOutput, LiveSessionEvent, SessionEvent, SessionState, Turn,
 };
 use crate::tools::{ResponderToolContext, ToolRegistry};
+use qsf_models::{ModelClient, ModelMessage, ModelResponse, ModelRole, ModelRoleId};
 
 use super::{
     MAX_RESPONDER_TOOL_ROUNDS_PER_TURN, NON_REPLAYED_TOOL_PROMPT_PREFIX_INVALIDATION,

@@ -7,6 +7,7 @@ use anyhow::Context;
 use serde::{Deserialize, Serialize};
 use time::OffsetDateTime;
 
+use crate::realtime::live_goal_formation::LiveGoalFormationTrace;
 use crate::realtime::turn_integrity::TurnPhase;
 use crate::realtime::volition_initiative::RealtimeBoundedInitiativeTrace;
 use crate::realtime::volition_injection::VolitionContextInjectionTrace;
@@ -76,6 +77,32 @@ pub enum DiagnosticRecord {
         #[serde(with = "time::serde::rfc3339")]
         recorded_at: OffsetDateTime,
         trace: RealtimeBoundedInitiativeTrace,
+    },
+    LiveGoalFormationPerformed {
+        qsf_session_id: String,
+        exchange_index: usize,
+        #[serde(with = "time::serde::rfc3339")]
+        recorded_at: OffsetDateTime,
+        trace: LiveGoalFormationTrace,
+    },
+    /// Persistent record of a formation attempt that errored (provider failure, non-JSON
+    /// output, or judge-output validation failure) — without this, "formation failed" was
+    /// indistinguishable in the diagnostics from "formation never attempted".
+    LiveGoalFormationFailed {
+        qsf_session_id: String,
+        exchange_index: usize,
+        #[serde(with = "time::serde::rfc3339")]
+        recorded_at: OffsetDateTime,
+        error: String,
+    },
+    /// Persistent record of a formation attempt that did not apply because it was skipped or
+    /// discarded by runtime guards.
+    LiveGoalFormationSkipped {
+        qsf_session_id: String,
+        exchange_index: usize,
+        #[serde(with = "time::serde::rfc3339")]
+        recorded_at: OffsetDateTime,
+        reason: String,
     },
     VolitionContinuityNote {
         qsf_session_id: String,

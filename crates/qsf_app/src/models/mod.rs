@@ -1,21 +1,11 @@
-mod coherence_judge;
-mod mock_model;
+//! App-specific model glue. The shared model layer (`ModelClient`, `ModelRequest`,
+//! `ModelRole`, the judges, provider selection, …) lives in the `qsf_models` crate and is
+//! imported directly as `qsf_models::*`; this module only holds the pieces that are genuinely
+//! `qsf_app`-specific: `invoke_model_role` (records offline `RunContext` traces/events around a
+//! model call) and the project-doc `tool_dispatch`.
+
 mod model_client;
-mod model_role;
-mod openai_provider;
-mod openai_tool_client;
 mod tool_dispatch;
 
-pub use coherence_judge::{
-    CoherenceJudge, CoherenceJudgeGoalRef, ModelBackedCoherenceJudge, ScriptedCoherenceJudge,
-};
-pub use mock_model::MockModelClient;
-pub use model_client::{
-    ModelClient, ModelMessage, ModelMessageRole, ModelRequest, ModelResponse, ModelResponseFormat,
-    ModelToolCall, ModelToolDefinition, ModelUsage, invoke_model_role,
-};
-pub use model_role::{ModelOutputExpectation, ModelRole, ModelRoleId};
-pub use openai_provider::{
-    OpenAiProviderModelClient, build_client, build_client_from_env, requested_provider_from_env,
-};
+pub use model_client::invoke_model_role;
 pub use tool_dispatch::{ProjectDocToolBudget, dispatch_model_tool_calls};

@@ -39,6 +39,42 @@ impl GoalDynamicState {
     }
 }
 
+/// Which coherence-engine rule produced a `GoalCandidateRejected` event. Distinguishes a
+/// coherence-originated rejection (which becomes reducer-derived `declined_candidates` state)
+/// from other rejection paths (e.g. reflection-candidate review) that share the same event.
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum DeclineReason {
+    ConflictingGoal { goal_id: String },
+    ProtectedFloor,
+}
+
+/// Structured detail attached to a coherence-originated `GoalCandidateRejected` event. `None`
+/// on this event means the rejection came from a different subsystem (e.g. reflection-candidate
+/// review), which the reducer must not fold into `declined_candidates`.
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+pub struct CoherenceDecline {
+    pub conflict: DeclineReason,
+    pub rationale: String,
+}
+
+/// A candidate the coherence engine declined this run, reducer-derived from
+/// `GoalCandidateRejected` events carrying a `CoherenceDecline` — durable context the model may
+/// voice on a later turn. Evidence-backed (names the goal it conflicted with + the judge's
+/// rationale) rather than a scripted line, per the coherent-agent stance.
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+pub struct DeclinedCandidate {
+    pub candidate_id: String,
+    pub title: String,
+    pub conflict: DeclineReason,
+    pub rationale: String,
+    pub tick: u64,
+}
+
+/// Maximum number of `declined_candidates` retained; oldest entries are dropped once exceeded,
+/// so a judge that keeps re-proposing the same declined idea does not grow this list unbounded.
+pub const DECLINED_CANDIDATES_WINDOW: usize = 10;
+
 /// Durable-within-a-run volition state: a logical tick and per-goal dynamic state for
 /// all Accepted goals seeded from the fixture.
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
@@ -55,6 +91,12 @@ pub struct VolitionState {
     /// Active arbitration bias mode. Changed via `ModeChanged` event; default `Neutral`.
     #[serde(default)]
     pub mode: Mode,
+    /// Candidates declined by the coherence engine, reducer-derived from `GoalCandidateRejected`
+    /// events carrying a `CoherenceDecline`. Deduplicated by title and capped at
+    /// `DECLINED_CANDIDATES_WINDOW`. `#[serde(default)]` so continuity snapshots persisted before
+    /// this field existed still deserialize.
+    #[serde(default)]
+    pub declined_candidates: Vec<DeclinedCandidate>,
 }
 
 impl VolitionState {
@@ -72,6 +114,7 @@ impl VolitionState {
             pending_candidates: Vec::new(),
             accepted_candidates: BTreeMap::new(),
             mode: Mode::Neutral,
+            declined_candidates: Vec::new(),
         }
     }
 
@@ -146,11 +189,16 @@ pub enum VolitionEvent {
         acceptance_evidence: EvidenceRef,
         tick: u64,
     },
-    /// Removes a pending candidate from `pending_candidates`. Rejection reason is
-    /// captured in the event log; no durable state for rejected candidates is kept.
+    /// Removes a pending candidate from `pending_candidates`. `reason` is a free-text summary
+    /// captured in the event log. When `coherence_decline` is `Some` (the coherence engine
+    /// rejected the candidate), the reducer also appends a `DeclinedCandidate` to
+    /// `VolitionState::declined_candidates`; other rejection paths (e.g. reflection-candidate
+    /// review) leave it `None` and keep no durable state for the rejection.
     GoalCandidateRejected {
         goal_id: String,
         reason: String,
+        #[serde(default)]
+        coherence_decline: Option<CoherenceDecline>,
         tick: u64,
     },
     /// Records a bounded internal initiative output. Sets the goal to Active and stores
@@ -249,12 +297,38 @@ pub fn apply(mut state: VolitionState, event: VolitionEvent) -> VolitionState {
                 // fixture goals.
                 state
                     .goals
-                    .entry(goal_id.clone())
-                    .or_insert_with(GoalDynamicState::initial);
+                    .insert(goal_id.clone(), GoalDynamicState::initial());
                 state.accepted_candidates.insert(goal_id, goal);
             }
         }
-        VolitionEvent::GoalCandidateRejected { goal_id, .. } => {
+        VolitionEvent::GoalCandidateRejected {
+            goal_id,
+            coherence_decline,
+            tick,
+            ..
+        } => {
+            if let Some(decline) = coherence_decline {
+                if let Some(candidate) = state.pending_candidates.iter().find(|c| c.id() == goal_id)
+                {
+                    let title = candidate.title().to_string();
+                    let already_declined = state
+                        .declined_candidates
+                        .iter()
+                        .any(|declined| declined.title == title);
+                    if !already_declined {
+                        state.declined_candidates.push(DeclinedCandidate {
+                            candidate_id: goal_id.clone(),
+                            title,
+                            conflict: decline.conflict,
+                            rationale: decline.rationale,
+                            tick,
+                        });
+                        if state.declined_candidates.len() > DECLINED_CANDIDATES_WINDOW {
+                            state.declined_candidates.remove(0);
+                        }
+                    }
+                }
+            }
             state.pending_candidates.retain(|c| c.id() != goal_id);
         }
         VolitionEvent::InitiativeExecuted {
@@ -311,11 +385,7 @@ pub fn effective_tier_from_tension_ids(tension_ids: &[String], fixture: &Volitio
 /// `tension_ids` from the fixture's static goals or, failing that, `state`'s accepted
 /// candidates — so accepted candidates are tiered from their own `tension_ids` rather than
 /// defaulting to `u8::MAX` as an unmatched fixture lookup would.
-pub(crate) fn goal_effective_tier(
-    goal_id: &str,
-    state: &VolitionState,
-    fixture: &VolitionFixture,
-) -> u8 {
+pub fn goal_effective_tier(goal_id: &str, state: &VolitionState, fixture: &VolitionFixture) -> u8 {
     let tension_ids = fixture
         .goals
         .iter()
@@ -971,6 +1041,7 @@ mod tests {
             VolitionEvent::GoalCandidateRejected {
                 goal_id: "cand-reject".to_string(),
                 reason: "Not relevant enough.".to_string(),
+                coherence_decline: None,
                 tick: 2,
             },
         );
@@ -982,6 +1053,122 @@ mod tests {
                 .any(|c| c.id() == "cand-reject")
         );
         assert!(!state.accepted_candidates.contains_key("cand-reject"));
+        assert!(
+            state.declined_candidates.is_empty(),
+            "a rejection with no coherence_decline must not populate declined_candidates"
+        );
+    }
+
+    fn reject_with_coherence_decline(
+        state: VolitionState,
+        candidate_id: &str,
+        title: &str,
+        conflict: DeclineReason,
+        tick: u64,
+    ) -> VolitionState {
+        let candidate = ProposedGoalCandidate::try_new(
+            candidate_id.to_string(),
+            title.to_string(),
+            format!("Summary for {candidate_id}"),
+            vec![],
+            GoalScope::Session,
+            70,
+            vec![AllowedEffect::Reflect],
+            "Satisfied when resolved.".to_string(),
+            vec![EvidenceRef::try_new(format!("open-question: {candidate_id}")).unwrap()],
+            format!("source: {candidate_id}"),
+            vec![],
+        )
+        .unwrap();
+        let state = apply(
+            state,
+            VolitionEvent::GoalCandidateAdded {
+                candidate,
+                tick: tick.saturating_sub(1),
+            },
+        );
+        apply(
+            state,
+            VolitionEvent::GoalCandidateRejected {
+                goal_id: candidate_id.to_string(),
+                reason: "coherence check rejected".to_string(),
+                coherence_decline: Some(CoherenceDecline {
+                    conflict,
+                    rationale: "conflicts with a more fundamental goal".to_string(),
+                }),
+                tick,
+            },
+        )
+    }
+
+    #[test]
+    fn goal_candidate_rejected_with_coherence_decline_appends_declined_candidate() {
+        let fixture = static_fixture();
+        let state = VolitionState::from_fixture(&fixture);
+        let state = reject_with_coherence_decline(
+            state,
+            "cand-declined",
+            "A declined idea",
+            DeclineReason::ConflictingGoal {
+                goal_id: "core-goal".to_string(),
+            },
+            2,
+        );
+
+        assert_eq!(state.declined_candidates.len(), 1);
+        assert_eq!(state.declined_candidates[0].candidate_id, "cand-declined");
+        assert_eq!(state.declined_candidates[0].title, "A declined idea");
+        assert_eq!(
+            state.declined_candidates[0].conflict,
+            DeclineReason::ConflictingGoal {
+                goal_id: "core-goal".to_string()
+            }
+        );
+    }
+
+    #[test]
+    fn declined_candidates_dedup_by_title() {
+        let fixture = static_fixture();
+        let mut state = VolitionState::from_fixture(&fixture);
+        for index in 0..3 {
+            state = reject_with_coherence_decline(
+                state,
+                &format!("cand-{index}"),
+                "Same idea, reproposed",
+                DeclineReason::ConflictingGoal {
+                    goal_id: "core-goal".to_string(),
+                },
+                (index as u64) + 1,
+            );
+        }
+
+        assert_eq!(
+            state.declined_candidates.len(),
+            1,
+            "reproposing the same title must not grow declined_candidates"
+        );
+    }
+
+    #[test]
+    fn declined_candidates_are_capped_at_the_window() {
+        let fixture = static_fixture();
+        let mut state = VolitionState::from_fixture(&fixture);
+        for index in 0..(DECLINED_CANDIDATES_WINDOW + 3) {
+            state = reject_with_coherence_decline(
+                state,
+                &format!("cand-{index}"),
+                &format!("Distinct idea {index}"),
+                DeclineReason::ProtectedFloor,
+                (index as u64) + 1,
+            );
+        }
+
+        assert_eq!(state.declined_candidates.len(), DECLINED_CANDIDATES_WINDOW);
+        assert_eq!(
+            state.declined_candidates.last().unwrap().candidate_id,
+            format!("cand-{}", DECLINED_CANDIDATES_WINDOW + 2),
+            "the window must retain the most recently declined candidates"
+        );
     }
 
     #[test]
@@ -1076,6 +1263,42 @@ mod tests {
         let dynamic = state.goals.get(&candidate_id).unwrap();
         assert_eq!(dynamic.status, GoalStatus::Accepted);
         assert_eq!(dynamic.salience, 0);
+    }
+
+    #[test]
+    fn accepting_candidate_reusing_retired_goal_id_resets_dynamic_state() {
+        let fixture = static_fixture();
+        let state = VolitionState::from_fixture(&fixture);
+        let candidate = make_candidate("clarify-weak-evidence-topic");
+        let state = apply(
+            state,
+            VolitionEvent::GoalRetired {
+                goal_id: "clarify-weak-evidence-topic".to_string(),
+                tick: 1,
+            },
+        );
+        assert_eq!(
+            state.goal("clarify-weak-evidence-topic").unwrap().status,
+            GoalStatus::Retired
+        );
+
+        let state = apply(
+            state,
+            VolitionEvent::GoalCandidateAdded { candidate, tick: 2 },
+        );
+        let state = apply(
+            state,
+            VolitionEvent::GoalCandidateAccepted {
+                goal_id: "clarify-weak-evidence-topic".to_string(),
+                acceptance_evidence: EvidenceRef::try_new("trace: accepted").unwrap(),
+                tick: 3,
+            },
+        );
+
+        let dynamic = state.goal("clarify-weak-evidence-topic").unwrap();
+        assert_eq!(dynamic.status, GoalStatus::Accepted);
+        assert_eq!(dynamic.salience, 0);
+        assert_eq!(dynamic.last_activated_tick, None);
     }
 
     #[test]

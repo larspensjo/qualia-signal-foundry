@@ -2,7 +2,7 @@ use std::fmt;
 
 use serde::{Deserialize, Serialize};
 
-use crate::context::ContextBudget;
+use qsf_context::ContextBudget;
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, Hash, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -15,6 +15,7 @@ pub enum ModelRoleId {
     ResearchPlanner,
     Critic,
     CoherenceJudge,
+    LiveGoalFormationJudge,
 }
 
 impl ModelRoleId {
@@ -28,6 +29,7 @@ impl ModelRoleId {
             Self::ResearchPlanner => "research_planner",
             Self::Critic => "critic",
             Self::CoherenceJudge => "coherence_judge",
+            Self::LiveGoalFormationJudge => "live_goal_formation_judge",
         }
     }
 }
@@ -135,6 +137,14 @@ impl ModelRole {
                 default_model: "gpt-5.4".to_string(),
                 output_expectation: ModelOutputExpectation::JsonObject,
             },
+            ModelRoleId::LiveGoalFormationJudge => Self {
+                role_id,
+                purpose: "Propose one live goal candidate from trusted conversation context and detect contradictions against the current goal set without resolving them.".to_string(),
+                allowed_tools: vec![],
+                context_budget: ContextBudget::new(12, 1_600),
+                default_model: "gpt-5.4".to_string(),
+                output_expectation: ModelOutputExpectation::JsonObject,
+            },
         }
     }
 }
@@ -154,6 +164,7 @@ mod tests {
             ModelRoleId::ResearchPlanner,
             ModelRoleId::Critic,
             ModelRoleId::CoherenceJudge,
+            ModelRoleId::LiveGoalFormationJudge,
         ];
 
         for role_id in ids {

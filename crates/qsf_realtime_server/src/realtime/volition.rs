@@ -4,17 +4,31 @@ use qsf_volition::{
 };
 
 /// Per-session in-memory volition state owned by the realtime server. Seeded from
-/// `realtime_seed_fixture()` on session creation; not persisted (Phase 2 is in-memory only).
+/// `realtime_seed_fixture()` on session creation; in-memory only, not persisted mid-session.
+///
+/// Coherence-declined candidates are reducer-derived state: they live in
+/// `state.declined_candidates` (`qsf_volition::DeclinedCandidate`), populated automatically when
+/// `apply_events` applies a `GoalCandidateRejected` event carrying a `CoherenceDecline` — there
+/// is no separate side-channel write here, so replaying `state.declined_candidates` from the
+/// applied event stream reproduces the same durable context (see `volition_injection.rs`).
 pub struct VolitionRuntimeState {
     pub state: VolitionState,
     pub fixture: VolitionFixture,
+    /// Hash of the goal-set prefix sent to the live-goal-formation judge on the last trusted
+    /// turn, so the next turn can tell whether its own prefix is cache-hit-eligible (unchanged)
+    /// or was just invalidated by an admission/retirement/sweep.
+    pub last_goal_set_prefix_hash: Option<String>,
 }
 
 impl VolitionRuntimeState {
     pub fn new() -> Self {
         let fixture = realtime_seed_fixture();
         let state = VolitionState::from_fixture(&fixture);
-        Self { state, fixture }
+        Self {
+            state,
+            fixture,
+            last_goal_set_prefix_hash: None,
+        }
     }
 
     pub fn apply_events(&mut self, events: Vec<VolitionEvent>) {
@@ -86,6 +100,63 @@ mod tests {
     use qsf_volition::{GoalStatus, VolitionState, realtime_seed_fixture};
 
     // ── VolitionRuntimeState ─────────────────────────────────────────────────
+
+    #[test]
+    fn new_runtime_state_starts_with_no_declined_candidates() {
+        let runtime = VolitionRuntimeState::new();
+        assert!(runtime.state.declined_candidates.is_empty());
+    }
+
+    #[test]
+    fn applying_a_coherence_rejection_populates_reducer_derived_declined_candidates() {
+        use qsf_volition::{
+            AllowedEffect, CoherenceDecline, DeclineReason, EvidenceRef, GoalScope,
+            ProposedGoalCandidate,
+        };
+
+        let mut runtime = VolitionRuntimeState::new();
+        let candidate = ProposedGoalCandidate::try_new(
+            "candidate-1".to_string(),
+            "candidate title".to_string(),
+            "candidate summary".to_string(),
+            vec![],
+            GoalScope::Session,
+            50,
+            vec![AllowedEffect::Reflect],
+            "satisfied when discussed".to_string(),
+            vec![EvidenceRef::try_new("turn transcript evidence").unwrap()],
+            "formed from live discussion".to_string(),
+            vec![],
+        )
+        .unwrap();
+        runtime.apply_events(vec![
+            VolitionEvent::GoalCandidateAdded { candidate, tick: 3 },
+            VolitionEvent::GoalCandidateRejected {
+                goal_id: "candidate-1".to_string(),
+                reason: "contradicts more-or-equally fundamental goal(s): complete-current-task"
+                    .to_string(),
+                coherence_decline: Some(CoherenceDecline {
+                    conflict: DeclineReason::ConflictingGoal {
+                        goal_id: "complete-current-task".to_string(),
+                    },
+                    rationale: "would undermine the current task".to_string(),
+                }),
+                tick: 3,
+            },
+        ]);
+
+        assert_eq!(runtime.state.declined_candidates.len(), 1);
+        assert_eq!(
+            runtime.state.declined_candidates[0].candidate_id,
+            "candidate-1"
+        );
+        assert_eq!(
+            runtime.state.declined_candidates[0].conflict,
+            DeclineReason::ConflictingGoal {
+                goal_id: "complete-current-task".to_string()
+            }
+        );
+    }
 
     #[test]
     fn new_runtime_state_is_seeded_from_realtime_fixture() {

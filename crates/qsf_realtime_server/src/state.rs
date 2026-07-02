@@ -487,6 +487,10 @@ pub struct SessionRuntime {
     pub degraded: bool,
     pub sideband: Option<crate::realtime::sideband::SidebandHandle>,
     pub volition: crate::realtime::volition::VolitionRuntimeState,
+    /// Set while a `live_goal_formation` task is running for this session, so a second trusted
+    /// turn completing before the first task finishes skips spawning another one rather than
+    /// racing it on a stale goal-set snapshot.
+    pub live_goal_formation_in_flight: bool,
     status_tx: watch::Sender<SidebandStatus>,
     turn_context_tx: watch::Sender<Option<TurnContextCapture>>,
     volition_inspection_tx: watch::Sender<Option<VolitionInspectionCapture>>,
@@ -521,6 +525,7 @@ impl SessionRuntime {
             degraded: false,
             sideband: None,
             volition: crate::realtime::volition::VolitionRuntimeState::new(),
+            live_goal_formation_in_flight: false,
             status_tx: watch::channel(SidebandStatus::default()).0,
             turn_context_tx: watch::channel(None).0,
             volition_inspection_tx: watch::channel(None).0,

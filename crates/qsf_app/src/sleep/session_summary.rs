@@ -1,10 +1,8 @@
 use anyhow::{Context, anyhow};
 
-use crate::models::{
-    ModelClient, ModelMessage, ModelRequest, ModelResponse, ModelRole, ModelRoleId,
-    invoke_model_role,
-};
+use crate::models::invoke_model_role;
 use crate::runtime::run_context::RunContext;
+use qsf_models::{ModelClient, ModelMessage, ModelRequest, ModelResponse, ModelRole, ModelRoleId};
 
 use super::sleep_report::{SleepInputBundle, SleepReport, parse_sleep_report};
 
@@ -76,9 +74,9 @@ fn build_sleep_user_prompt(input: &SleepInputBundle) -> String {
 #[cfg(test)]
 mod tests {
     use super::{SLEEP_PHASE_SYSTEM_PROMPT, SLEEP_SUMMARY_MAX_OUTPUT_TOKENS, summarize_session};
-    use crate::models::{MockModelClient, ModelClient, ModelRequest, ModelResponse};
     use crate::runtime::run_context::RunContext;
     use crate::sleep::SleepInputBundle;
+    use qsf_models::{MockModelClient, ModelClient, ModelRequest, ModelResponse};
 
     #[test]
     fn summarize_session_uses_sleep_role_and_parses_report() {

@@ -1615,10 +1615,49 @@ async fn handle_response_done_event(
         );
     }
     promote_completed_trusted_exchanges(state, &mut guard).await?;
+    let response_dispatched_at = runtime_state.response_create_sent_at;
     runtime_state.clear_in_flight_response_state();
     runtime_state.active_exchange_index = None;
     runtime_state.pending_response_exchange = None;
     runtime_state.turn_phase = TurnPhase::Idle;
+    // Captured before drop: gates the live-goal-formation spawn below on the same
+    // promotability/degraded facts the promotion pipeline itself just used, so formation never
+    // runs on a turn the pipeline distrusts (a cancelled/failed response, a degraded session).
+    let session_degraded = guard.degraded;
+    let exchange_promotable = !guard
+        .non_promotable_exchange_indices
+        .contains(&exchange_index);
+    let live_goal_formation_eligible = response_status == "completed"
+        && exchange_promotable
+        && !session_degraded
+        && !response_text.trim().is_empty();
+    let live_goal_formation_user_input = live_goal_formation_eligible
+        .then(|| {
+            guard
+                .session_state
+                .live
+                .active_exchange
+                .as_ref()
+                .map(|exchange| exchange.final_user_input().to_string())
+        })
+        .flatten();
+    drop(guard);
+
+    // Off-hot-path: dispatched after the response, never awaited here, so turn latency is
+    // unaffected. See crate::realtime::live_goal_formation. Gated on a completed, promotable,
+    // non-degraded, non-empty assistant turn - a barge-in mid-answer or a degraded session must
+    // not form a durable goal (or a permanently injected declined record) from a half-spoken or
+    // untrusted turn.
+    if let Some(user_input) = live_goal_formation_user_input {
+        let turn_transcript = qsf_models::format_exchange_transcript(&user_input, &response_text);
+        crate::realtime::live_goal_formation::spawn_live_goal_formation(
+            session,
+            qsf_session_id.to_string(),
+            exchange_index,
+            turn_transcript,
+            response_dispatched_at,
+        );
+    }
 
     Ok(())
 }

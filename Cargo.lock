@@ -1541,14 +1541,13 @@ dependencies = [
  "globset",
  "hound",
  "log",
- "openai_provider_kit",
  "qsf_context",
  "qsf_memory",
+ "qsf_models",
  "qsf_realtime_protocol",
  "qsf_session",
  "qsf_tools",
  "qsf_volition",
- "reqwest 0.12.28",
  "serde",
  "serde_json",
  "sha2 0.11.0",
@@ -1607,6 +1606,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "qsf_models"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "openai_provider_kit",
+ "qsf_context",
+ "qsf_volition",
+ "reqwest 0.12.28",
+ "serde",
+ "serde_json",
+ "sha2 0.11.0",
+ "tokio",
+]
+
+[[package]]
 name = "qsf_realtime_protocol"
 version = "0.1.0"
 dependencies = [
@@ -1629,6 +1643,7 @@ dependencies = [
  "log",
  "qsf_context",
  "qsf_memory",
+ "qsf_models",
  "qsf_realtime_protocol",
  "qsf_session",
  "qsf_tools",

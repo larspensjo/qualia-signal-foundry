@@ -14,7 +14,6 @@ use crate::memory::{
     Association, MemoryFixture, MemoryRecord, RetrievalResult, RetrievalStrategy,
     retrieve_memories, retrieved_memory_ids,
 };
-use crate::models::{ModelClient, build_client, requested_provider_from_env};
 use crate::observability::event_log::EventType;
 use crate::observability::trace::TraceRecord;
 use crate::runtime::run_context::RunContext;
@@ -23,6 +22,7 @@ use crate::session::{
     LiveSessionEvent, SessionBootRequest, SessionConfig, SessionEndReason, SessionEvent,
     SessionState, StateDirectoryResolution, is_turn_summarized,
 };
+use qsf_models::{ModelClient, build_client, requested_provider_from_env};
 
 use super::registry::{Experiment, ExperimentName, ExperimentOutcome};
 

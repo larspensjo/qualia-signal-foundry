@@ -156,6 +156,7 @@ impl Experiment for VolitionReflectionGoalCandidatesExperiment {
             VolitionEvent::GoalCandidateRejected {
                 goal_id: reject_id.clone(),
                 reason: rejection_reason.to_string(),
+                coherence_decline: None,
                 tick: 3,
             },
         );
@@ -590,6 +591,7 @@ mod tests {
             VolitionEvent::GoalCandidateRejected {
                 goal_id: reject_id.clone(),
                 reason: "Already covered by fixture goal.".to_string(),
+                coherence_decline: None,
                 tick: 2,
             },
         );

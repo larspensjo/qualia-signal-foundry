@@ -6,7 +6,7 @@ use serde_json::{Value, json};
 use super::{
     ModelMessageRole, ModelRequest, ModelResponse, ModelResponseFormat, ModelToolCall, ModelUsage,
 };
-use crate::models::ModelMessage;
+use crate::ModelMessage;
 
 const OPENAI_CHAT_COMPLETIONS_URL: &str = "https://api.openai.com/v1/chat/completions";
 const OPENAI_API_KEY_ENV_VAR: &str = "OPENAI_API_KEY";
@@ -142,7 +142,7 @@ fn chat_message_to_value(message: &ModelMessage) -> anyhow::Result<Value> {
     }
 }
 
-fn model_tool_definition_to_value(tool: &crate::models::ModelToolDefinition) -> Value {
+fn model_tool_definition_to_value(tool: &crate::ModelToolDefinition) -> Value {
     json!({
         "type": "function",
         "function": {
@@ -340,7 +340,7 @@ mod tests {
         ChatCompletionPromptTokensDetails, ChatCompletionResponse, ChatCompletionToolCall,
         ChatCompletionUsage, MessageContent, build_request_body, parse_completion_response,
     };
-    use crate::models::{
+    use crate::{
         ModelMessage, ModelRequest, ModelRole, ModelRoleId, ModelToolCall, ModelToolDefinition,
     };
 
