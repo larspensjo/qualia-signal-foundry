@@ -412,7 +412,7 @@ async fn protected_winner_on_direct_request_records_but_does_not_surface_initiat
         &allocation.qsf_session_id,
         &mut runtime_state,
         &outbound_tx,
-        "how can you help me",
+        "how can you help",
         "protected-direct",
     )
     .await;
@@ -463,7 +463,7 @@ async fn protected_direct_request_suppresses_surfaced_initiative_under_all_modes
             &allocation.qsf_session_id,
             &mut runtime_state,
             &outbound_tx,
-            "how can you help me",
+            "how can you help",
             &format!("protected-direct-{mode}"),
         )
         .await;
@@ -484,10 +484,7 @@ async fn protected_direct_request_suppresses_surfaced_initiative_under_all_modes
                 _ => None,
             })
             .expect("initiative trace");
-        assert_eq!(
-            initiative_trace.winning_goal_id,
-            "honor-explicit-user-request"
-        );
+        assert_eq!(initiative_trace.winning_goal_id, "serve-the-present-person");
     }
 }
 
@@ -512,7 +509,7 @@ async fn curiosity_terms_do_not_surface_curiosity_initiative_when_protected_goal
             &allocation.qsf_session_id,
             &mut runtime_state,
             &outbound_tx,
-            "how can you help me compare the memory evidence",
+            "how can you help me",
             &format!("curiosity-suppression-{mode}"),
         )
         .await;
@@ -521,7 +518,7 @@ async fn curiosity_terms_do_not_surface_curiosity_initiative_when_protected_goal
         assert!(
             outbound_texts
                 .iter()
-                .all(|text| !text.contains("Clarify weak evidence topic")),
+                .all(|text| !text.contains("Learn what drives this person")),
             "curiosity initiative should not be the surfaced line under {mode}"
         );
 
@@ -533,10 +530,7 @@ async fn curiosity_terms_do_not_surface_curiosity_initiative_when_protected_goal
                 _ => None,
             })
             .expect("initiative trace");
-        assert_eq!(
-            initiative_trace.winning_goal_id,
-            "honor-explicit-user-request"
-        );
+        assert_eq!(initiative_trace.winning_goal_id, "serve-the-present-person");
     }
 }
 
@@ -601,7 +595,7 @@ async fn context_retrieval_hints_round_trip_into_the_next_turn() {
         &allocation.qsf_session_id,
         &mut runtime_state,
         &outbound_tx,
-        "continuity thread",
+        "remember something from earlier",
         "hint-source",
     )
     .await;
@@ -765,7 +759,7 @@ async fn empty_store_turn_records_empty_context_and_promotes() {
             "type": "conversation.item.input_audio_transcription.completed",
             "event_id": "evt-transcript",
             "item_id": "item-user",
-            "transcript": "hello without seeded memory"
+            "transcript": "please say hello without seeded memory"
         }),
         &mut runtime_state,
         &outbound_tx,
@@ -822,7 +816,10 @@ async fn empty_store_turn_records_empty_context_and_promotes() {
     let persisted = qsf_session::load_session_state(continuity_dir.join("session-state.json"))
         .expect("persisted state");
     assert_eq!(persisted.turns.len(), 1);
-    assert_eq!(persisted.turns[0].user_input, "hello without seeded memory");
+    assert_eq!(
+        persisted.turns[0].user_input,
+        "please say hello without seeded memory"
+    );
     assert!(persisted.turns[0].context_assembly.selected.is_empty());
     assert_eq!(
         persisted.turns[0].context_assembly.budget,

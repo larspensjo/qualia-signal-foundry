@@ -692,16 +692,16 @@ mod tests {
                 .volition
                 .state
                 .goals
-                .contains_key("honor-explicit-user-request"),
-            "realtime seed must include tier-2 protected goal"
+                .contains_key("serve-the-present-person"),
+            "realtime seed must include tier-3 protected goal"
         );
         assert!(
             guard
                 .volition
                 .state
                 .goals
-                .contains_key("complete-current-task"),
-            "realtime seed must include tier-3 protected goal"
+                .contains_key("keep-theses-distinct-from-fact"),
+            "realtime seed must include tier-2 protected goal"
         );
     }
 

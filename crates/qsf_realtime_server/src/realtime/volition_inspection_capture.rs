@@ -193,7 +193,7 @@ mod tests {
         assert!(
             decision
                 .selected_goal_ids
-                .contains(&"honor-explicit-user-request".to_string())
+                .contains(&"serve-the-present-person".to_string())
         );
         assert!(!decision.omitted_or_suppressed_goal_ids.is_empty());
         assert_eq!(

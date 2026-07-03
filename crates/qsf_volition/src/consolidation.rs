@@ -456,7 +456,7 @@ mod tests {
             exchange_index: 1,
             recorded_at: "2026-06-30T12:00:00Z".to_string(),
             response_create_event_ref: "ref-1".to_string(),
-            winning_goal_id: "honor-explicit-user-request".to_string(),
+            winning_goal_id: "serve-the-present-person".to_string(),
             initiative_output: InitiativeOutput::ContextRetrievalRequested {
                 query_terms: vec!["thread".to_string()],
             },
@@ -481,7 +481,7 @@ mod tests {
         }));
         assert!(report.items.iter().any(|item| {
             item.kind == VolitionConsolidationPatternKind::UnactedInitiative
-                && item.goal_or_candidate_id == "honor-explicit-user-request"
+                && item.goal_or_candidate_id == "serve-the-present-person"
                 && item.suppression_reason == Some(VolitionSuppressionReason::NonRenderableOutput)
         }));
     }

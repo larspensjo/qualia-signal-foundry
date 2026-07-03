@@ -317,8 +317,8 @@ mod tests {
 
         let merged = apply_reviewed_seed(&fixture, &reviewed_seed).unwrap();
 
-        assert!(merged.goals.contains_key("honor-explicit-user-request"));
-        assert!(merged.goals.contains_key("complete-current-task"));
+        assert!(merged.goals.contains_key("serve-the-present-person"));
+        assert!(merged.goals.contains_key("keep-theses-distinct-from-fact"));
         assert!(merged.accepted_candidates.contains_key(&reviewed_goal.id));
         assert_eq!(
             merged.accepted_candidates.get(&reviewed_goal.id).unwrap(),
@@ -332,14 +332,14 @@ mod tests {
         let protected_goal = fixture
             .goals
             .iter()
-            .find(|goal| goal.id == "honor-explicit-user-request")
+            .find(|goal| goal.id == "serve-the-present-person")
             .unwrap()
             .clone();
         let illegal_goal = Goal {
             id: "protected-reviewed".to_string(),
             title: "Protected reviewed".to_string(),
             summary: "Should be rejected".to_string(),
-            tension_ids: vec!["explicit-user-intent".to_string()],
+            tension_ids: vec!["present-person-priority".to_string()],
             status: GoalStatus::Accepted,
             scope: GoalScope::Input,
             base_priority: 99,
@@ -456,14 +456,14 @@ mod tests {
                         goal: fixture
                             .goals
                             .iter()
-                            .find(|goal| goal.id == "honor-explicit-user-request")
+                            .find(|goal| goal.id == "serve-the-present-person")
                             .unwrap()
                             .clone(),
                         relevance_score: 10.0,
                         matched_terms: vec!["help".to_string()],
                         initiative: crate::InitiativeProposal {
-                            goal_id: "honor-explicit-user-request".to_string(),
-                            goal_title: "Honor explicit user request".to_string(),
+                            goal_id: "serve-the-present-person".to_string(),
+                            goal_title: "Serve the present person".to_string(),
                             effect: AllowedEffect::Reflect,
                             rationale: "test".to_string(),
                             matched_terms: vec!["help".to_string()],
@@ -475,7 +475,7 @@ mod tests {
                 mode,
             )
             .unwrap();
-            assert_eq!(result.winner.goal.id, "honor-explicit-user-request");
+            assert_eq!(result.winner.goal.id, "serve-the-present-person");
         }
     }
 
@@ -503,7 +503,7 @@ mod tests {
             id: "reviewed-weak".to_string(),
             title: "Reviewed weak".to_string(),
             summary: "Rejected tier".to_string(),
-            tension_ids: vec!["explicit-user-intent".to_string()],
+            tension_ids: vec!["present-person-priority".to_string()],
             status: GoalStatus::Accepted,
             scope: GoalScope::Input,
             base_priority: 90,

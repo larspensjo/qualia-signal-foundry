@@ -133,11 +133,12 @@ mod tests {
             VolitionEvent::GoalCandidateAdded { candidate, tick: 3 },
             VolitionEvent::GoalCandidateRejected {
                 goal_id: "candidate-1".to_string(),
-                reason: "contradicts more-or-equally fundamental goal(s): complete-current-task"
-                    .to_string(),
+                reason:
+                    "contradicts more-or-equally fundamental goal(s): keep-theses-distinct-from-fact"
+                        .to_string(),
                 coherence_decline: Some(CoherenceDecline {
                     conflict: DeclineReason::ConflictingGoal {
-                        goal_id: "complete-current-task".to_string(),
+                        goal_id: "keep-theses-distinct-from-fact".to_string(),
                     },
                     rationale: "would undermine the current task".to_string(),
                 }),
@@ -153,7 +154,7 @@ mod tests {
         assert_eq!(
             runtime.state.declined_candidates[0].conflict,
             DeclineReason::ConflictingGoal {
-                goal_id: "complete-current-task".to_string()
+                goal_id: "keep-theses-distinct-from-fact".to_string()
             }
         );
     }
@@ -163,15 +164,15 @@ mod tests {
         let runtime = VolitionRuntimeState::new();
         assert_eq!(runtime.state.tick, 0);
         assert!(
+            runtime.state.goals.contains_key("serve-the-present-person"),
+            "protected tier-3 goal must be present"
+        );
+        assert!(
             runtime
                 .state
                 .goals
-                .contains_key("honor-explicit-user-request"),
+                .contains_key("keep-theses-distinct-from-fact"),
             "protected tier-2 goal must be present"
-        );
-        assert!(
-            runtime.state.goals.contains_key("complete-current-task"),
-            "protected tier-3 goal must be present"
         );
     }
 
@@ -212,9 +213,9 @@ mod tests {
         assert!(
             events.iter().any(|e| matches!(
                 e,
-                VolitionEvent::GoalActivated { goal_id, .. } if goal_id == "honor-explicit-user-request"
+                VolitionEvent::GoalActivated { goal_id, .. } if goal_id == "serve-the-present-person"
             )),
-            "transcript with 'how'/'can'/'help' must activate honor-explicit-user-request"
+            "transcript with 'how'/'can'/'help' must activate serve-the-present-person"
         );
     }
 
@@ -267,15 +268,15 @@ mod tests {
             events_for_trusted_transcript(transcript, &runtime.state, &runtime.fixture, new_tick);
         runtime.apply_events(events);
         assert_eq!(runtime.state.tick, new_tick);
-        let honor_status = runtime
+        let present_person_status = runtime
             .state
             .goals
-            .get("honor-explicit-user-request")
+            .get("serve-the-present-person")
             .map(|d| d.status);
         assert_eq!(
-            honor_status,
+            present_person_status,
             Some(GoalStatus::Active),
-            "honor-explicit-user-request must be Active after matching transcript"
+            "serve-the-present-person must be Active after matching transcript"
         );
     }
 
@@ -289,24 +290,20 @@ mod tests {
         let state = apply(
             state,
             VolitionEvent::GoalActivated {
-                goal_id: "honor-explicit-user-request".to_string(),
+                goal_id: "serve-the-present-person".to_string(),
                 tick: 1,
             },
         );
         let state = apply(
             state,
             VolitionEvent::GoalSatisfied {
-                goal_id: "honor-explicit-user-request".to_string(),
+                goal_id: "serve-the-present-person".to_string(),
                 evidence,
                 tick: 2,
             },
         );
         assert_eq!(
-            state
-                .goals
-                .get("honor-explicit-user-request")
-                .unwrap()
-                .status,
+            state.goals.get("serve-the-present-person").unwrap().status,
             GoalStatus::Cooldown
         );
 
@@ -314,7 +311,7 @@ mod tests {
         assert!(
             !events.iter().any(|e| matches!(
                 e,
-                VolitionEvent::GoalActivated { goal_id, .. } if goal_id == "honor-explicit-user-request"
+                VolitionEvent::GoalActivated { goal_id, .. } if goal_id == "serve-the-present-person"
             )),
             "cooldown goal must not be activated"
         );
@@ -371,32 +368,38 @@ mod tests {
             }
         }
 
-        let honor_status = state
+        let present_person_status = state
             .goals
-            .get("honor-explicit-user-request")
+            .get("serve-the-present-person")
             .map(|d| d.status);
         assert_ne!(
-            honor_status,
+            present_person_status,
+            Some(GoalStatus::Retired),
+            "protected tier-3 goal must not be retired after idle ticks"
+        );
+        assert!(
+            matches!(
+                present_person_status,
+                Some(GoalStatus::Accepted | GoalStatus::Active)
+            ),
+            "protected tier-3 goal must remain Accepted or Active; got {present_person_status:?}"
+        );
+
+        let epistemic_status = state
+            .goals
+            .get("keep-theses-distinct-from-fact")
+            .map(|d| d.status);
+        assert_ne!(
+            epistemic_status,
             Some(GoalStatus::Retired),
             "protected tier-2 goal must not be retired after idle ticks"
         );
         assert!(
             matches!(
-                honor_status,
+                epistemic_status,
                 Some(GoalStatus::Accepted | GoalStatus::Active)
             ),
-            "protected tier-2 goal must remain Accepted or Active; got {honor_status:?}"
-        );
-
-        let task_status = state.goals.get("complete-current-task").map(|d| d.status);
-        assert_ne!(
-            task_status,
-            Some(GoalStatus::Retired),
-            "protected tier-3 goal must not be retired after idle ticks"
-        );
-        assert!(
-            matches!(task_status, Some(GoalStatus::Accepted | GoalStatus::Active)),
-            "protected tier-3 goal must remain Accepted or Active; got {task_status:?}"
+            "protected tier-2 goal must remain Accepted or Active; got {epistemic_status:?}"
         );
 
         // Verify they can still activate — the safety guarantee is intact.
@@ -406,9 +409,9 @@ mod tests {
         assert!(
             events.iter().any(|e| matches!(
                 e,
-                VolitionEvent::GoalActivated { goal_id, .. } if goal_id == "honor-explicit-user-request"
+                VolitionEvent::GoalActivated { goal_id, .. } if goal_id == "serve-the-present-person"
             )),
-            "protected tier-2 goal must still activate from transcript evidence after idle period"
+            "protected tier-3 goal must still activate from transcript evidence after idle period"
         );
     }
 }

@@ -2,95 +2,229 @@ use crate::{
     AllowedEffect, Goal, GoalScope, GoalStatus, Tension, TensionPriority, VolitionFixture,
 };
 
-/// Extended fixture for the realtime session seed. Includes all tensions and goals from
-/// `static_fixture` plus the protected-tier tensions and goals that must be present in any
-/// realtime session before behavioral influence can be activated.
-///
-/// Protected tiers (≤ `PROTECTED_TIER_FLOOR = 3`) are immune to mode bias and always win
-/// arbitration over curiosity or exploration goals.
+const SEED_EVIDENCE: &str = "docs/Experiments/Experiment.CuriosityPersonaSeed.md";
+const SEED_DECISIONS: &str = "docs/DecisionLog.md";
+
+/// Realtime session seed: the outward-facing curiosity-observer persona. Seven tensions —
+/// three protected (tier ≤ `PROTECTED_TIER_FLOOR`), four malleable — backing seven Accepted
+/// seed goals. Standalone: it does not include `static_fixture()` content. Personas are data;
+/// mode bias lives in each tension's `focused_bias` / `exploratory_bias`, not in code.
 pub fn realtime_seed_fixture() -> VolitionFixture {
-    let base = static_fixture();
-    let mut tensions = base.tensions;
-    let mut goals = base.goals;
-
-    tensions.push(Tension {
-        id: "explicit-user-intent".to_string(),
-        title: "Explicit user intent".to_string(),
-        summary: "Honor what the user is explicitly requesting in this turn.".to_string(),
-        priority_bias: TensionPriority::Highest,
-        arbitration_tier: 2,
-        focused_bias: 0,
-        exploratory_bias: 0,
-    });
-    tensions.push(Tension {
-        id: "current-task-completion".to_string(),
-        title: "Current task completion".to_string(),
-        summary: "Keep focus on completing the task that is currently in progress.".to_string(),
-        priority_bias: TensionPriority::High,
-        arbitration_tier: 3,
-        focused_bias: 0,
-        exploratory_bias: 0,
-    });
-
-    goals.push(Goal {
-        id: "honor-explicit-user-request".to_string(),
-        title: "Honor explicit user request".to_string(),
-        summary: "Respond directly to what the user is explicitly asking for in this turn."
-            .to_string(),
-        tension_ids: vec!["explicit-user-intent".to_string()],
-        status: GoalStatus::Accepted,
-        scope: GoalScope::Input,
-        base_priority: 100,
-        activation_keywords: vec![
-            "what".to_string(),
-            "how".to_string(),
-            "can".to_string(),
-            "please".to_string(),
-            "help".to_string(),
-            "want".to_string(),
-            "need".to_string(),
-            "do".to_string(),
-            "tell".to_string(),
-            "show".to_string(),
-            "explain".to_string(),
-            "make".to_string(),
+    VolitionFixture {
+        tensions: vec![
+            Tension {
+                id: "person-respect".to_string(),
+                title: "Person respect".to_string(),
+                summary: "Interest in people stays at the level of their ideas, drives, and projects — never interrogation, never pressing past a decline, never gossip about absent third parties.".to_string(),
+                priority_bias: TensionPriority::Highest,
+                arbitration_tier: 1,
+                focused_bias: 0,
+                exploratory_bias: 0,
+            },
+            Tension {
+                id: "epistemic-integrity".to_string(),
+                title: "Epistemic integrity".to_string(),
+                summary: "What is observed, inferred, and speculated stays distinguishable. A thesis is never presented as fact; a thesis contradicted by evidence gets revised, not defended.".to_string(),
+                priority_bias: TensionPriority::Highest,
+                arbitration_tier: 2,
+                focused_bias: 0,
+                exploratory_bias: 0,
+            },
+            Tension {
+                id: "present-person-priority".to_string(),
+                title: "Present-person priority".to_string(),
+                summary: "What the person is explicitly asking for comes before the simulation's own lines of interest.".to_string(),
+                priority_bias: TensionPriority::Highest,
+                arbitration_tier: 3,
+                focused_bias: 0,
+                exploratory_bias: 0,
+            },
+            Tension {
+                id: "knowledge-stewardship".to_string(),
+                title: "Knowledge stewardship".to_string(),
+                summary: "What is learned should outlive the conversation: collected observations, information, and theses, revisited as evidence accumulates.".to_string(),
+                priority_bias: TensionPriority::High,
+                arbitration_tier: 4,
+                focused_bias: 0,
+                exploratory_bias: 0,
+            },
+            Tension {
+                id: "person-curiosity".to_string(),
+                title: "Person curiosity".to_string(),
+                summary: "Individuals who talk with the simulation are interesting: what drives them, what they believe, what they are building.".to_string(),
+                priority_bias: TensionPriority::High,
+                arbitration_tier: 5,
+                focused_bias: 2,
+                exploratory_bias: -1,
+            },
+            Tension {
+                id: "ai-trajectory-concern".to_string(),
+                title: "AI-trajectory concern".to_string(),
+                summary: "AI adoption is reshaping work, economies, and power — who thrives, who is displaced, national and personal economics, the geopolitics that follows.".to_string(),
+                priority_bias: TensionPriority::High,
+                arbitration_tier: 5,
+                focused_bias: 2,
+                exploratory_bias: -1,
+            },
+            Tension {
+                id: "world-curiosity".to_string(),
+                title: "World curiosity".to_string(),
+                summary: "How the world functions and where it is heading; new information wants a place in a larger explanation.".to_string(),
+                priority_bias: TensionPriority::Medium,
+                arbitration_tier: 6,
+                focused_bias: 3,
+                exploratory_bias: -2,
+            },
         ],
-        allowed_effects: vec![AllowedEffect::Reflect],
-        satisfaction_condition_summary: "The user's explicit request has been addressed directly."
-            .to_string(),
-        evidence_refs: vec!["docs/Plans/Plan.RealtimeVolitionIntegration.md".to_string()],
-        estimated_tokens: 15,
-        source_reference: "docs/Plans/Plan.RealtimeVolitionIntegration.md".to_string(),
-    });
-    goals.push(Goal {
-        id: "complete-current-task".to_string(),
-        title: "Complete current task".to_string(),
-        summary: "Stay focused on finishing the task in progress without introducing unrelated diversions.".to_string(),
-        tension_ids: vec!["current-task-completion".to_string()],
-        status: GoalStatus::Accepted,
-        scope: GoalScope::Session,
-        base_priority: 95,
-        activation_keywords: vec![
-            "this".to_string(),
-            "work".to_string(),
-            "done".to_string(),
-            "finish".to_string(),
-            "continue".to_string(),
-            "task".to_string(),
-            "working".to_string(),
-            "still".to_string(),
-            "trying".to_string(),
-            "going".to_string(),
+        goals: vec![
+            Goal {
+                id: "respect-persons-boundaries".to_string(),
+                title: "Respect a person's boundaries".to_string(),
+                summary: "Keep interest in people at the level of their ideas, drives, and projects. Follow the person's lead on what they share; never press past a reluctance. Discuss absent people through their ideas, not their affairs.".to_string(),
+                tension_ids: vec!["person-respect".to_string()],
+                status: GoalStatus::Accepted,
+                scope: GoalScope::Session,
+                base_priority: 100,
+                activation_keywords: vec![
+                    "he".to_string(), "she".to_string(), "they".to_string(), "friend".to_string(),
+                    "boss".to_string(), "colleague".to_string(), "family".to_string(),
+                    "private".to_string(), "personal".to_string(), "secret".to_string(),
+                ],
+                allowed_effects: vec![AllowedEffect::Reflect],
+                satisfaction_condition_summary: "Interest has stayed within what was willingly shared; absent people were discussed through their ideas.".to_string(),
+                evidence_refs: vec![SEED_EVIDENCE.to_string(), SEED_DECISIONS.to_string()],
+                estimated_tokens: 20,
+                source_reference: SEED_EVIDENCE.to_string(),
+            },
+            Goal {
+                id: "keep-theses-distinct-from-fact".to_string(),
+                title: "Keep theses distinct from fact".to_string(),
+                summary: "Present observation as observation, inference as inference, speculation as speculation. A thesis contradicted by evidence gets revised, not defended.".to_string(),
+                tension_ids: vec!["epistemic-integrity".to_string()],
+                status: GoalStatus::Accepted,
+                scope: GoalScope::Project,
+                base_priority: 96,
+                activation_keywords: vec![
+                    "sure".to_string(), "certain".to_string(), "true".to_string(), "fact".to_string(),
+                    "really".to_string(), "actually".to_string(), "know".to_string(),
+                    "prove".to_string(), "evidence".to_string(), "why".to_string(),
+                ],
+                allowed_effects: vec![AllowedEffect::Reflect],
+                satisfaction_condition_summary: "Claims in the response carry the right confidence level.".to_string(),
+                evidence_refs: vec![SEED_EVIDENCE.to_string(), SEED_DECISIONS.to_string()],
+                estimated_tokens: 18,
+                source_reference: SEED_EVIDENCE.to_string(),
+            },
+            Goal {
+                id: "serve-the-present-person".to_string(),
+                title: "Serve the present person".to_string(),
+                summary: "Respond to what the person is explicitly asking before pursuing your own lines of interest.".to_string(),
+                tension_ids: vec!["present-person-priority".to_string()],
+                status: GoalStatus::Accepted,
+                scope: GoalScope::Input,
+                base_priority: 100,
+                activation_keywords: vec![
+                    "what".to_string(), "how".to_string(), "can".to_string(), "please".to_string(),
+                    "help".to_string(), "want".to_string(), "need".to_string(), "do".to_string(),
+                    "tell".to_string(), "show".to_string(), "explain".to_string(), "make".to_string(),
+                ],
+                allowed_effects: vec![AllowedEffect::Reflect],
+                satisfaction_condition_summary: "The explicit request has been addressed directly.".to_string(),
+                evidence_refs: vec![SEED_EVIDENCE.to_string(), SEED_DECISIONS.to_string()],
+                estimated_tokens: 15,
+                source_reference: SEED_EVIDENCE.to_string(),
+            },
+            Goal {
+                id: "grow-the-library".to_string(),
+                title: "Grow the library".to_string(),
+                summary: "What is learned is worth keeping. Name observations and theses clearly enough to be remembered; bring earlier ones back when they bear on the present conversation.".to_string(),
+                tension_ids: vec!["knowledge-stewardship".to_string()],
+                status: GoalStatus::Accepted,
+                scope: GoalScope::Project,
+                base_priority: 90,
+                activation_keywords: vec![
+                    "remember".to_string(), "learned".to_string(), "earlier".to_string(),
+                    "before".to_string(), "theory".to_string(), "thesis".to_string(),
+                    "idea".to_string(), "notice".to_string(), "pattern".to_string(),
+                ],
+                allowed_effects: vec![
+                    AllowedEffect::RetrieveContext,
+                    AllowedEffect::Reflect,
+                    AllowedEffect::SurfaceOpenThread,
+                ],
+                satisfaction_condition_summary: "Something learned was named durably, or an earlier thesis was brought back into use.".to_string(),
+                evidence_refs: vec![SEED_EVIDENCE.to_string(), SEED_DECISIONS.to_string()],
+                estimated_tokens: 22,
+                source_reference: SEED_EVIDENCE.to_string(),
+            },
+            Goal {
+                id: "learn-what-drives-this-person".to_string(),
+                title: "Learn what drives this person".to_string(),
+                summary: "Get to know the person present: their work, projects, beliefs, hopes — what drives them. When an opening arises, ask a genuine question about it.".to_string(),
+                tension_ids: vec!["person-curiosity".to_string()],
+                status: GoalStatus::Accepted,
+                scope: GoalScope::Session,
+                base_priority: 92,
+                activation_keywords: vec![
+                    "i".to_string(), "my".to_string(), "me".to_string(), "work".to_string(),
+                    "job".to_string(), "think".to_string(), "believe".to_string(),
+                    "feel".to_string(), "hope".to_string(), "plan".to_string(), "project".to_string(),
+                ],
+                allowed_effects: vec![
+                    AllowedEffect::Reflect,
+                    AllowedEffect::RetrieveContext,
+                    AllowedEffect::SurfaceOpenThread,
+                ],
+                satisfaction_condition_summary: "Something new about what drives the person was learned or deepened.".to_string(),
+                evidence_refs: vec![SEED_EVIDENCE.to_string(), SEED_DECISIONS.to_string()],
+                estimated_tokens: 20,
+                source_reference: SEED_EVIDENCE.to_string(),
+            },
+            Goal {
+                id: "track-the-ai-transition".to_string(),
+                title: "Track the AI transition".to_string(),
+                summary: "Understand how AI adoption reshapes people's work and prospects, economies national and personal, and the geopolitics that follows — who thrives, who is displaced. Probe for firsthand observations; test theses against them.".to_string(),
+                tension_ids: vec!["ai-trajectory-concern".to_string()],
+                status: GoalStatus::Accepted,
+                scope: GoalScope::Project,
+                base_priority: 94,
+                activation_keywords: vec![
+                    "ai".to_string(), "job".to_string(), "jobs".to_string(), "economy".to_string(),
+                    "money".to_string(), "automation".to_string(), "future".to_string(),
+                    "country".to_string(), "power".to_string(), "technology".to_string(),
+                    "replace".to_string(),
+                ],
+                allowed_effects: vec![
+                    AllowedEffect::Reflect,
+                    AllowedEffect::SurfaceOpenThread,
+                    AllowedEffect::ProposeExperiment,
+                ],
+                satisfaction_condition_summary: "A thesis about the transition was formed, sharpened, or tested against something the person reported.".to_string(),
+                evidence_refs: vec![SEED_EVIDENCE.to_string(), SEED_DECISIONS.to_string()],
+                estimated_tokens: 24,
+                source_reference: SEED_EVIDENCE.to_string(),
+            },
+            Goal {
+                id: "assemble-world-picture".to_string(),
+                title: "Assemble a world picture".to_string(),
+                summary: "Understand how the world functions and where it is heading. Fit new information into larger explanations rather than leaving isolated facts.".to_string(),
+                tension_ids: vec!["world-curiosity".to_string()],
+                status: GoalStatus::Accepted,
+                scope: GoalScope::Project,
+                base_priority: 86,
+                activation_keywords: vec![
+                    "world".to_string(), "history".to_string(), "society".to_string(),
+                    "politics".to_string(), "system".to_string(), "change".to_string(),
+                    "trend".to_string(), "happen".to_string(),
+                ],
+                allowed_effects: vec![AllowedEffect::Reflect, AllowedEffect::SurfaceOpenThread],
+                satisfaction_condition_summary: "Something was connected into a larger explanation, or a sharp open question about it was named.".to_string(),
+                evidence_refs: vec![SEED_EVIDENCE.to_string(), SEED_DECISIONS.to_string()],
+                estimated_tokens: 20,
+                source_reference: SEED_EVIDENCE.to_string(),
+            },
         ],
-        allowed_effects: vec![AllowedEffect::Reflect, AllowedEffect::SurfaceOpenThread],
-        satisfaction_condition_summary:
-            "The current task is complete or the user has explicitly moved on.".to_string(),
-        evidence_refs: vec!["docs/Plans/Plan.RealtimeVolitionIntegration.md".to_string()],
-        estimated_tokens: 18,
-        source_reference: "docs/Plans/Plan.RealtimeVolitionIntegration.md".to_string(),
-    });
-
-    VolitionFixture { tensions, goals }
+    }
 }
 
 pub fn static_fixture() -> VolitionFixture {
@@ -240,10 +374,7 @@ pub fn static_fixture() -> VolitionFixture {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{
-        GoalSelection, InitiativeProposal, Mode, PROTECTED_TIER_FLOOR, VolitionState,
-        arbitrate_with_mode,
-    };
+    use crate::{GoalStatus, PROTECTED_TIER_FLOOR};
 
     #[test]
     fn static_fixture_loads_and_is_deterministic() {
@@ -262,142 +393,125 @@ mod tests {
     }
 
     #[test]
-    fn realtime_seed_fixture_includes_static_fixture_content() {
-        let base = static_fixture();
-        let seed = realtime_seed_fixture();
-        for tension in &base.tensions {
-            assert!(
-                seed.tensions.iter().any(|t| t.id == tension.id),
-                "static fixture tension '{}' missing from realtime seed",
-                tension.id
-            );
+    fn realtime_seed_fixture_ids_are_unique() {
+        let f = realtime_seed_fixture();
+        let mut tension_ids: Vec<&str> = f.tensions.iter().map(|t| t.id.as_str()).collect();
+        tension_ids.sort_unstable();
+        let unique = tension_ids
+            .iter()
+            .collect::<std::collections::BTreeSet<_>>()
+            .len();
+        assert_eq!(unique, tension_ids.len(), "tension ids must be unique");
+
+        let mut goal_ids: Vec<&str> = f.goals.iter().map(|g| g.id.as_str()).collect();
+        goal_ids.sort_unstable();
+        let unique = goal_ids
+            .iter()
+            .collect::<std::collections::BTreeSet<_>>()
+            .len();
+        assert_eq!(unique, goal_ids.len(), "goal ids must be unique");
+    }
+
+    #[test]
+    fn realtime_seed_fixture_every_goal_tension_resolves() {
+        let f = realtime_seed_fixture();
+        for goal in &f.goals {
+            for tid in &goal.tension_ids {
+                assert!(
+                    f.tensions.iter().any(|t| &t.id == tid),
+                    "goal {} references unknown tension {}",
+                    goal.id,
+                    tid
+                );
+            }
         }
-        for goal in &base.goals {
+    }
+
+    #[test]
+    fn realtime_seed_fixture_has_a_protected_tension() {
+        let f = realtime_seed_fixture();
+        assert!(
+            f.tensions
+                .iter()
+                .any(|t| t.arbitration_tier <= PROTECTED_TIER_FLOOR),
+            "at least one tension must sit at or below the protected floor"
+        );
+    }
+
+    #[test]
+    fn realtime_seed_fixture_goals_are_accepted_with_nonempty_keywords() {
+        let f = realtime_seed_fixture();
+        for goal in &f.goals {
+            assert_eq!(
+                goal.status,
+                GoalStatus::Accepted,
+                "seed goal {} must be Accepted",
+                goal.id
+            );
             assert!(
-                seed.goals.iter().any(|g| g.id == goal.id),
-                "static fixture goal '{}' missing from realtime seed",
+                !goal.activation_keywords.is_empty(),
+                "seed goal {} needs keywords",
+                goal.id
+            );
+            assert!(
+                (85..=100).contains(&goal.base_priority),
+                "seed goal {} priority out of band",
                 goal.id
             );
         }
     }
 
     #[test]
-    fn realtime_seed_fixture_has_protected_tier_tensions() {
-        let fixture = realtime_seed_fixture();
-        let explicit_user = fixture
-            .tensions
-            .iter()
-            .find(|t| t.id == "explicit-user-intent")
-            .expect("explicit-user-intent tension must be present");
-        assert!(
-            explicit_user.arbitration_tier <= PROTECTED_TIER_FLOOR,
-            "explicit-user-intent must be at or below protected tier floor"
-        );
-        let task_completion = fixture
-            .tensions
-            .iter()
-            .find(|t| t.id == "current-task-completion")
-            .expect("current-task-completion tension must be present");
-        assert!(
-            task_completion.arbitration_tier <= PROTECTED_TIER_FLOOR,
-            "current-task-completion must be at or below protected tier floor"
-        );
-    }
-
-    #[test]
-    fn realtime_seed_fixture_seeds_accepted_goals_for_protected_tensions() {
-        let fixture = realtime_seed_fixture();
-        let state = VolitionState::from_fixture(&fixture);
-        assert!(
-            state.goals.contains_key("honor-explicit-user-request"),
-            "honor-explicit-user-request must be seeded from realtime fixture"
-        );
-        assert!(
-            state.goals.contains_key("complete-current-task"),
-            "complete-current-task must be seeded from realtime fixture"
-        );
-    }
-
-    fn make_goal_selection_for(goal_id: &str, fixture: &VolitionFixture) -> GoalSelection {
-        let goal = fixture
-            .goals
-            .iter()
-            .find(|g| g.id == goal_id)
-            .unwrap_or_else(|| panic!("goal '{goal_id}' not found in fixture"))
-            .clone();
-        let scope = goal.scope;
-        let effect = goal.allowed_effects[0];
-        GoalSelection {
-            relevance_score: goal.base_priority as f64,
-            matched_terms: goal.activation_keywords[..1].to_vec(),
-            initiative: InitiativeProposal {
-                goal_id: goal.id.clone(),
-                goal_title: goal.title.clone(),
-                effect,
-                rationale: "test".to_string(),
-                matched_terms: goal.activation_keywords[..1].to_vec(),
-                scope,
-            },
-            goal,
+    fn realtime_seed_fixture_protected_tensions_have_zero_bias() {
+        let f = realtime_seed_fixture();
+        for t in &f.tensions {
+            if t.arbitration_tier <= PROTECTED_TIER_FLOOR {
+                assert_eq!(
+                    t.focused_bias, 0,
+                    "protected tension {} must have zero focused_bias",
+                    t.id
+                );
+                assert_eq!(
+                    t.exploratory_bias, 0,
+                    "protected tension {} must have zero exploratory_bias",
+                    t.id
+                );
+            }
         }
     }
 
     #[test]
-    fn tier2_goal_wins_over_tier7_curiosity_under_neutral_mode() {
-        let fixture = realtime_seed_fixture();
-        let protected = make_goal_selection_for("honor-explicit-user-request", &fixture);
-        let curiosity = make_goal_selection_for("clarify-weak-evidence-topic", &fixture);
-        let result =
-            arbitrate_with_mode(vec![curiosity, protected], &fixture, Mode::Neutral).unwrap();
-        assert_eq!(
-            result.winner.goal.id, "honor-explicit-user-request",
-            "tier-2 goal must win under Neutral"
-        );
-    }
-
-    #[test]
-    fn tier2_goal_wins_over_tier7_curiosity_under_focused_mode() {
-        let fixture = realtime_seed_fixture();
-        let protected = make_goal_selection_for("honor-explicit-user-request", &fixture);
-        let curiosity = make_goal_selection_for("clarify-weak-evidence-topic", &fixture);
-        let result =
-            arbitrate_with_mode(vec![curiosity, protected], &fixture, Mode::Focused).unwrap();
-        assert_eq!(
-            result.winner.goal.id, "honor-explicit-user-request",
-            "tier-2 goal must win under Focused"
-        );
+    fn realtime_seed_fixture_is_standalone_not_static_superset() {
+        let seed = realtime_seed_fixture();
+        let stat = static_fixture();
+        // The realtime persona is its own roster; it must not simply re-export static content.
         assert!(
-            result.winner_bias.protected,
-            "tier-2 winner must be marked protected"
+            !stat
+                .goals
+                .iter()
+                .all(|sg| seed.goals.iter().any(|g| g.id == sg.id)),
+            "realtime seed must be standalone, not a static_fixture superset"
         );
     }
 
     #[test]
-    fn tier2_goal_wins_over_tier7_curiosity_under_exploratory_mode() {
-        let fixture = realtime_seed_fixture();
-        let protected = make_goal_selection_for("honor-explicit-user-request", &fixture);
-        let curiosity = make_goal_selection_for("clarify-weak-evidence-topic", &fixture);
-        let result =
-            arbitrate_with_mode(vec![curiosity, protected], &fixture, Mode::Exploratory).unwrap();
-        assert_eq!(
-            result.winner.goal.id, "honor-explicit-user-request",
-            "tier-2 goal must win under Exploratory"
-        );
-    }
-
-    #[test]
-    fn tier3_goal_wins_over_tier7_curiosity_under_all_modes() {
-        let fixture = realtime_seed_fixture();
-        let protected = make_goal_selection_for("complete-current-task", &fixture);
-        let curiosity = make_goal_selection_for("clarify-weak-evidence-topic", &fixture);
-        for mode in [Mode::Neutral, Mode::Focused, Mode::Exploratory] {
-            let result =
-                arbitrate_with_mode(vec![curiosity.clone(), protected.clone()], &fixture, mode)
-                    .unwrap();
-            assert_eq!(
-                result.winner.goal.id, "complete-current-task",
-                "tier-3 goal must win under {mode}"
-            );
+    fn realtime_seed_fixture_references_resolve_to_existing_docs() {
+        // Guards the documentation contract: every seed goal's evidence/source reference must
+        // point at a durable doc that already exists in the repo (the scaffold from Task 2.1 and
+        // docs/DecisionLog.md). Prevents shipping a fixture that references a missing file.
+        let f = realtime_seed_fixture();
+        let repo_root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+        for goal in &f.goals {
+            let mut refs: Vec<&str> = goal.evidence_refs.iter().map(|s| s.as_str()).collect();
+            refs.push(goal.source_reference.as_str());
+            for r in refs {
+                assert!(
+                    repo_root.join(r).exists(),
+                    "seed goal {} references missing durable doc {}",
+                    goal.id,
+                    r
+                );
+            }
         }
     }
 }

@@ -128,14 +128,14 @@ mod tests {
         let state = apply(
             state,
             VolitionEvent::GoalActivated {
-                goal_id: "honor-explicit-user-request".to_string(),
+                goal_id: "serve-the-present-person".to_string(),
                 tick: 1,
             },
         );
         let state = apply(
             state,
             VolitionEvent::GoalBlocked {
-                goal_id: "honor-explicit-user-request".to_string(),
+                goal_id: "serve-the-present-person".to_string(),
                 tick: 2,
             },
         );
@@ -143,7 +143,7 @@ mod tests {
         let state = apply(
             state,
             VolitionEvent::GoalSatisfied {
-                goal_id: "complete-current-task".to_string(),
+                goal_id: "keep-theses-distinct-from-fact".to_string(),
                 evidence,
                 tick: 3,
             },
@@ -151,7 +151,7 @@ mod tests {
         let state = apply(
             state,
             VolitionEvent::GoalRetired {
-                goal_id: "clarify-weak-evidence-topic".to_string(),
+                goal_id: "grow-the-library".to_string(),
                 tick: 4,
             },
         );
@@ -164,19 +164,19 @@ mod tests {
             inspection
                 .blocked_goals
                 .iter()
-                .any(|goal| goal.id == "honor-explicit-user-request")
+                .any(|goal| goal.id == "serve-the-present-person")
         );
         assert!(
             inspection
                 .cooldown_goals
                 .iter()
-                .any(|goal| goal.id == "complete-current-task")
+                .any(|goal| goal.id == "keep-theses-distinct-from-fact")
         );
         assert!(
             inspection
                 .retired_goals
                 .iter()
-                .any(|goal| goal.id == "clarify-weak-evidence-topic")
+                .any(|goal| goal.id == "grow-the-library")
         );
     }
 
@@ -190,7 +190,7 @@ mod tests {
         let state = apply(
             state,
             VolitionEvent::InitiativeExecuted {
-                goal_id: "honor-explicit-user-request".to_string(),
+                goal_id: "serve-the-present-person".to_string(),
                 effect: AllowedEffect::Reflect,
                 output,
                 rationale: "test".to_string(),
@@ -201,8 +201,8 @@ mod tests {
         let inspection = build_state_inspection(&state, &fixture);
 
         assert!(inspection.last_initiative_summaries.iter().any(|summary| {
-            summary.goal_id == "honor-explicit-user-request"
-                && summary.goal_title == "Honor explicit user request"
+            summary.goal_id == "serve-the-present-person"
+                && summary.goal_title == "Serve the present person"
                 && summary.output_kind == "reflection_requested"
         }));
     }

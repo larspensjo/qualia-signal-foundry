@@ -112,12 +112,23 @@ mod tests {
     }
 
     #[test]
-    fn stance_renders_mode_and_sorted_tensions() {
+    fn stance_renders_most_protected_tension_first() {
         let fixture = realtime_seed_fixture();
         let rendered = render_volition_stance(&fixture, Mode::Neutral);
-        let boundary = rendered.find("Boundary preservation").expect("boundary");
-        let curiosity = rendered.find("Research curiosity").expect("curiosity");
-        assert!(boundary < curiosity);
+        let min_tier = fixture
+            .tensions
+            .iter()
+            .map(|t| t.arbitration_tier)
+            .min()
+            .unwrap();
+        let first_tension_line = rendered
+            .lines()
+            .find(|l| l.trim_start().starts_with("- [tier "))
+            .expect("stance must render at least one tension line");
+        assert!(
+            first_tension_line.contains(&format!("[tier {min_tier}]")),
+            "first rendered tension must carry the minimum tier; got: {first_tension_line}"
+        );
         assert!(rendered.contains("Default mode: Neutral."));
     }
 

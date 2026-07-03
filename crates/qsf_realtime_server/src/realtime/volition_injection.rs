@@ -735,7 +735,7 @@ mod tests {
             candidate_id: "candidate-1".to_string(),
             title: "pursue an unrelated tangent".to_string(),
             conflict: DeclineReason::ConflictingGoal {
-                goal_id: "complete-current-task".to_string(),
+                goal_id: "keep-theses-distinct-from-fact".to_string(),
             },
             rationale: "would derail the current task".to_string(),
             tick: 3,
@@ -754,7 +754,7 @@ mod tests {
 
         assert!(packet.text.contains("Declined goal candidates"));
         assert!(packet.text.contains("pursue an unrelated tangent"));
-        assert!(packet.text.contains("complete-current-task"));
+        assert!(packet.text.contains("keep-theses-distinct-from-fact"));
         assert!(packet.text.contains("would derail the current task"));
         assert_eq!(packet.summary.declined_candidates, declined);
         assert!(
@@ -822,7 +822,7 @@ mod tests {
             candidate_id: "candidate-3".to_string(),
             title: "pursue an unrelated tangent".to_string(),
             conflict: DeclineReason::ConflictingGoal {
-                goal_id: "complete-current-task".to_string(),
+                goal_id: "keep-theses-distinct-from-fact".to_string(),
             },
             rationale: "would derail the current task".to_string(),
             tick: 5,

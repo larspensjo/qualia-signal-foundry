@@ -225,14 +225,14 @@ mod tests {
         let state = apply(
             state,
             VolitionEvent::GoalActivated {
-                goal_id: "honor-explicit-user-request".to_string(),
+                goal_id: "serve-the-present-person".to_string(),
                 tick: 1,
             },
         );
         let state = apply(
             state,
             VolitionEvent::GoalSatisfied {
-                goal_id: "honor-explicit-user-request".to_string(),
+                goal_id: "serve-the-present-person".to_string(),
                 evidence,
                 tick: 2,
             },
@@ -244,13 +244,13 @@ mod tests {
             result
                 .selected
                 .iter()
-                .all(|s| s.goal.id != "honor-explicit-user-request")
+                .all(|s| s.goal.id != "serve-the-present-person")
         );
         assert!(
             result
                 .suppressed_cooldown
                 .iter()
-                .any(|g| g.goal.id == "honor-explicit-user-request")
+                .any(|g| g.goal.id == "serve-the-present-person")
         );
     }
 
@@ -261,14 +261,14 @@ mod tests {
         let state = apply(
             state,
             VolitionEvent::GoalActivated {
-                goal_id: "honor-explicit-user-request".to_string(),
+                goal_id: "serve-the-present-person".to_string(),
                 tick: 1,
             },
         );
         let state = apply(
             state,
             VolitionEvent::GoalBlocked {
-                goal_id: "honor-explicit-user-request".to_string(),
+                goal_id: "serve-the-present-person".to_string(),
                 tick: 2,
             },
         );
@@ -279,13 +279,13 @@ mod tests {
             result
                 .selected
                 .iter()
-                .all(|s| s.goal.id != "honor-explicit-user-request")
+                .all(|s| s.goal.id != "serve-the-present-person")
         );
         assert!(
             result
                 .visible_blocked
                 .iter()
-                .any(|g| g.goal.id == "honor-explicit-user-request")
+                .any(|g| g.goal.id == "serve-the-present-person")
         );
     }
 
@@ -305,7 +305,7 @@ mod tests {
         let state = apply(
             state,
             VolitionEvent::GoalRetired {
-                goal_id: "honor-explicit-user-request".to_string(),
+                goal_id: "serve-the-present-person".to_string(),
                 tick: 1,
             },
         );
@@ -316,13 +316,13 @@ mod tests {
             result
                 .selected
                 .iter()
-                .all(|s| s.goal.id != "honor-explicit-user-request")
+                .all(|s| s.goal.id != "serve-the-present-person")
         );
         assert!(
             result
                 .omitted
                 .iter()
-                .any(|g| g.goal.id == "honor-explicit-user-request")
+                .any(|g| g.goal.id == "serve-the-present-person")
         );
     }
 

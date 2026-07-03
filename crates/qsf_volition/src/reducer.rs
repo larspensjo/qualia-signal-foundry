@@ -915,7 +915,7 @@ mod tests {
             "accepted-protected-candidate".to_string(),
             "Protected candidate".to_string(),
             "Summary".to_string(),
-            vec!["explicit-user-intent".to_string()],
+            vec!["person-respect".to_string()],
             GoalScope::Session,
             70,
             vec![AllowedEffect::Reflect],
