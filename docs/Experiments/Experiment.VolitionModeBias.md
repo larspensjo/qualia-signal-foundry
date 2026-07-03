@@ -151,8 +151,14 @@ Floor input (turn 3) — additionally matches the tier-1 goal:
 
 ### Automated (all must pass before the experiment is considered complete)
 
-- [ ] `Mode::Neutral.bias_vector()` is empty, and `arbitrate_with_mode(.., Neutral)` produces the
-  same winner/loser ordering as `arbitrate` for the same selection.
+- [ ] `Mode::Neutral.tension_delta(&t) == 0` for every tension `t`, and
+  `arbitrate_with_mode(.., Neutral)` produces the same winner/loser ordering as `arbitrate` for the
+  same selection.
+- [ ] The migrated per-tension deltas reproduce the mode behavior: in `static_fixture()`,
+  `Mode::Focused.tension_delta(research-curiosity) == 3` /
+  `Mode::Exploratory.tension_delta(research-curiosity) == -2`, and
+  `Mode::Focused.tension_delta(continuity-preservation) == -1` /
+  `Mode::Exploratory.tension_delta(continuity-preservation) == 1`.
 - [ ] `ModeChanged` updates `state.mode`; replay of the event log reproduces the same `state.mode`.
 - [ ] Flip turn: under `Exploratory`, the winner differs from the `Neutral` winner on the same
   selection (`mode_changed_winner == true`), and the new winner is the curiosity goal.
@@ -179,8 +185,8 @@ Floor input (turn 3) — additionally matches the tier-1 goal:
 
 ### Human (requires running the experiment and reading the report)
 
-- [ ] The active mode and its bias vector are legible in each turn's trace; a reader can see *why*
-  the ordering changed without rerunning the code.
+- [ ] The active mode and its per-tension deltas (`Mode::tension_delta`) are legible in each turn's
+  trace; a reader can see *why* the ordering changed without rerunning the code.
 - [ ] The flip (Exploratory) and the non-flip (Focused, and the floor turn) read as sensible,
   deterministic consequences of the declared vectors — not arbitrary.
 - [ ] The floor-immunity turn is convincing: nothing suggests a mode could elevate a band goal

@@ -17,17 +17,18 @@ pub struct VolitionFixture {
 /// effective tier is the minimum `arbitration_tier` among its parent tensions (defaulting
 /// to `u8::MAX` if it has no parent tensions in the fixture). Lower tier wins.
 ///
-/// Covered tiers in the current fixture:
-/// - **1** — Safety and project boundaries (`boundary-preservation`)
-/// - **4** — Coherence and self-correction (`coherence-maintenance`)
-/// - **5** — Continuity preservation (`continuity-preservation`)
-/// - **7** — Research curiosity (`research-curiosity`)
+/// Tiers are assigned per fixture, not fixed globally. Tiers `1..=PROTECTED_TIER_FLOOR`
+/// (see `arbitration::PROTECTED_TIER_FLOOR`) are the protected floor: goals at those tiers
+/// are immune to mode bias and to idle-lifecycle retirement. Tiers above the floor form the
+/// biasable band, where `Mode` can reorder goals relative to each other. Lower number = higher
+/// precedence.
 ///
-/// Extension points (not yet covered by any fixture tension):
-/// - **2** — Explicit user intent
-/// - **3** — Current task completion
-/// - **6** — Active experiment mode
-/// - **8** — Optional exploration
+/// The two shipped fixtures (`crate::fixture`) illustrate different tier maps:
+/// - `static_fixture()` (dev-assistant): `boundary-preservation` (1),
+///   `coherence-maintenance` (4), `continuity-preservation` (5), `research-curiosity` (7).
+/// - `realtime_seed_fixture()` (curiosity-observer persona): `person-respect` (1),
+///   `epistemic-integrity` (2), `present-person-priority` (3), `knowledge-stewardship` (4),
+///   `person-curiosity` / `ai-trajectory-concern` (5), `world-curiosity` (6).
 ///
 /// Future tensions must be assigned the correct tier when added. A goal with effective
 /// tier `u8::MAX` (no parent tensions in the fixture) is a signal that a tension

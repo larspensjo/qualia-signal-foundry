@@ -93,8 +93,9 @@ mode, not a one-off experiment server.
 
 - Full `qsf_app` tool exposure to the live realtime model.
 
-Last reviewed: 2026-06-30 against the implemented trusted typed-turn path and
-the live volition inspection capture surface.
+Last reviewed: 2026-07-03 against the curiosity-observer seed fixture, the
+compatible-snapshot restore / incompatible-snapshot discard resume path, and the
+live volition inspection capture surface.
 
 ## Purpose
 
@@ -273,20 +274,30 @@ Browser media human verification:
 Each live session owns an independent `VolitionRuntimeState` (defined in
 `crates/qsf_realtime_server/src/realtime/volition.rs`). It is:
 
-- **Seeded** at session creation via `realtime_seed_fixture()`, which produces the
-  full static fixture plus the protected tier-2 (`explicit-user-intent`) and tier-3
-  (`current-task-completion`) tensions and goals.
+- **Seeded** at session creation via `realtime_seed_fixture()`, the standalone
+  outward-facing curiosity-observer persona roster (it does *not* include
+  `static_fixture()` content). Seven tensions back seven Accepted goals: three protected
+  (tier ≤ `PROTECTED_TIER_FLOOR`) — `person-respect` (tier 1), `epistemic-integrity`
+  (tier 2), `present-person-priority` (tier 3) — and four malleable —
+  `knowledge-stewardship` (tier 4), `person-curiosity` and `ai-trajectory-concern`
+  (tier 5), `world-curiosity` (tier 6). Mode bias is data: each tension carries its own
+  `focused_bias` / `exploratory_bias`.
 - **Per-session**: `VolitionRuntimeState` is a field on `SessionRuntime` and never
   shared across sessions. Two concurrent sessions have independent lifecycle.
 - **Mutated on trusted transcripts only**: `apply_trusted_transcript_to_volition` in
   `sideband.rs` maps each trusted turn (spoken `StartTurn` / `Interrupt` dispositions
   and accepted typed turns) to volition events and applies them in-memory. No other
   code path mutates volition state.
-- **Persisted for continuity, not replay**: continuity promotion writes a versioned
-  `volition-state.json` snapshot plus a manifest pointer under the session continuity
-  root, but `create_session` never restores the raw snapshot verbatim. The next session
-  still seeds from `realtime_seed_fixture()` and applies only the explicit reviewed seed
-  artifact (`volition-seed.reviewed.json`) if one exists.
+- **Persisted for continuity, restored when compatible**: continuity promotion writes a
+  versioned `volition-state.json` snapshot plus a manifest pointer under the session
+  continuity root. On `create_session`, if a snapshot exists it is loaded and checked
+  against the current seed fixture via `snapshot_is_fixture_compatible` (every Accepted
+  seed goal must be present in the snapshot). A compatible snapshot is restored verbatim
+  (preserving tick and goal lifecycle across sessions); a fixture-incompatible snapshot —
+  e.g. one written under a prior persona whose goal ids no longer exist — is discarded and
+  the session starts from the freshly seeded `realtime_seed_fixture()`. Either outcome
+  emits a `VolitionContinuityNote` diagnostic. After the snapshot step, the explicit
+  reviewed seed artifact (`volition-seed.reviewed.json`) is applied on top if one exists.
 - **Human-gated reviewed seed**: reviewed volition changes are accepted explicitly and
   recorded with a human-promotion marker. Missing or corrupt reviewed seeds fall back to
   the plain fixture seed and emit a `VolitionContinuityNote` diagnostic instead of
@@ -313,12 +324,13 @@ and the diagnostics stream remains in:
 
 `tick_events` accepts the `VolitionFixture` and skips retirement events for any goal
 whose effective arbitration tier (minimum tier across its parent tensions) is at or
-below `PROTECTED_TIER_FLOOR = 3`. This means tier-2 and tier-3 goals — the
-`honor-explicit-user-request` and `complete-current-task` goals from the realtime seed
-fixture — are permanently exempt from idle-lifecycle retirement. They remain `Accepted`
-or `Active` regardless of session length, ensuring the safety guarantee that explicit
-user intent and current-task-completion dominate arbitration is preserved even in very
-long sessions.
+below `PROTECTED_TIER_FLOOR = 3`. In the curiosity-observer seed this covers the tier-1
+`respect-persons-boundaries` (`person-respect`), tier-2 `keep-theses-distinct-from-fact`
+(`epistemic-integrity`), and tier-3 `serve-the-present-person` (`present-person-priority`)
+goals. They are permanently exempt from idle-lifecycle retirement and remain `Accepted`
+or `Active` regardless of session length, preserving the guarantee that person respect,
+epistemic integrity, and the present person's explicit request dominate arbitration even
+in very long sessions.
 
 ### Read-Only Volition Tools
 

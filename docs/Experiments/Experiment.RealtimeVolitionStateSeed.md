@@ -8,13 +8,23 @@
 
 Completed
 
+**Superseded (2026-07-03):** this experiment originally validated the retired
+dev-assistant realtime seed, whose protected goals were the tier-2 `explicit-user-intent`
+and tier-3 `current-task-completion` tensions. That seed no longer exists.
+`realtime_seed_fixture()` now seeds the curiosity-observer persona, whose protected goals
+are `person-respect` (tier 1), `epistemic-integrity` (tier 2), and
+`present-person-priority` (tier 3). The current seed is validated by
+[Experiment.CuriosityPersonaSeed.md](Experiment.CuriosityPersonaSeed.md). Historical
+result text below records the original run and is kept as-is; the Summary and Hypothesis
+have been updated to name the current protected tensions.
+
 ## Summary
 
 Validates that each realtime session receives an isolated, fixture-backed `VolitionState`
 on creation, that a trusted user transcript is mapped to `VolitionEvent`s and applied to
-that state, and that the protected-tier tensions (tier-2 explicit-user-intent, tier-3
-current-task-completion) win arbitration over curiosity or exploration goals under all
-modes.
+that state, and that the protected-tier tensions win arbitration over curiosity or
+exploration goals under all modes. (Current protected tensions: `person-respect`,
+`epistemic-integrity`, `present-person-priority`; see the supersession note above.)
 
 This experiment corresponds to Phase 2 of `Plan.RealtimeVolitionIntegration.md`: adding
 realtime-owned volition runtime state before any live behavioral influence is enabled.

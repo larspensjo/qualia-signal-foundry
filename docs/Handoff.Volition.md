@@ -1,6 +1,7 @@
 # Handoff: Volition Work — Resume Here
 
-**Date:** 2026-06-30 (updated after Phase 7 complete)
+**Date:** 2026-07-03 (updated after the curiosity-observer persona replaced the realtime seed;
+see [Experiment.CuriosityPersonaSeed.md](Experiments/Experiment.CuriosityPersonaSeed.md))
 **Status:** All volition work is **complete**. Both Plan.VolitionGoalSystem.md (8 phases)
 and Plan.RealtimeVolitionIntegration.md (7 phases) are fully implemented and human-tested.
 Both plans are ready to delete. The next open track is personality / goal experimentation —
@@ -107,15 +108,24 @@ goals with the character you want, at the right tier.
 | `continuity-preservation` | 5 | High |
 | `research-curiosity` | 7 | Medium |
 
-**Protected tensions (realtime_seed_fixture, tier ≤ 3):**
-| ID | Tier | Bias |
-|---|---|---|
-| `explicit-user-intent` | 2 | Highest |
-| `current-task-completion` | 3 | High |
+**Tensions (realtime_seed_fixture — curiosity-observer persona, standalone):**
+| ID | Tier | Bias | Protected? |
+|---|---|---|---|
+| `person-respect` | 1 | Highest | yes (≤ 3) |
+| `epistemic-integrity` | 2 | Highest | yes (≤ 3) |
+| `present-person-priority` | 3 | Highest | yes (≤ 3) |
+| `knowledge-stewardship` | 4 | High | no |
+| `person-curiosity` | 5 | High | no |
+| `ai-trajectory-concern` | 5 | High | no |
+| `world-curiosity` | 6 | Medium | no |
 
-**Goals:** `clarify-weak-evidence-topic`, `avoid-overstating-impl-status`,
-`resurface-open-thread`, `propose-followup-experiment`, `honor-explicit-user-request`,
-`complete-current-task`.
+**static_fixture goals:** `clarify-weak-evidence-topic`, `avoid-overstating-impl-status`,
+`resurface-open-thread`, `propose-followup-experiment`.
+
+**realtime_seed_fixture goals:** `respect-persons-boundaries`,
+`keep-theses-distinct-from-fact`, `serve-the-present-person`, `grow-the-library`,
+`learn-what-drives-this-person`, `track-the-ai-transition`, `assemble-world-picture`.
+Mode bias is carried per-tension (`focused_bias` / `exploratory_bias`), not in code.
 
 ### How to add a new tension/goal
 
@@ -181,9 +191,11 @@ so you can see a new goal win or lose arbitration in real time without inspectin
 - **Initiative derivation:** stay rule-based (`execute_initiative`) or add a later model-assisted
   proposer emitting the same `InitiativeOutput` shape. Default: rule-based only. Revisit if the
   rule-based outputs feel mechanical after more personality experimentation.
-- **Selector quality:** broad help-related prompts may not activate `honor-explicit-user-request` /
-  `complete-current-task` because those goals require specific keyword matches. Revisit keyword lists
-  in the fixture if the protected-tier goals feel invisible in live sessions.
+- **Selector quality:** `learn-what-drives-this-person` activates on the broad first-person tokens
+  `"i"` / `"my"` / `"me"`, so it fires on almost any personal statement. This broad match is accepted
+  (the curiosity-observer persona *wants* to engage whenever the person talks about themselves), but
+  it is the fixture's main tuning risk — revisit its keyword list if the goal feels over-eager or
+  crowds out other goals in live sessions.
 - **Personality scope:** emotion/personality slices, multi-turn Plans, conscious/subconscious,
   user-vs-simulator goals — classified as new scope in
   [Design.VolitionBriefReconciliation.md](Plans/Design.VolitionBriefReconciliation.md), now
