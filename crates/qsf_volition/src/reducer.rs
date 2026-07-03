@@ -409,6 +409,9 @@ pub fn goal_effective_tier(goal_id: &str, state: &VolitionState, fixture: &Volit
 ///
 /// Goals whose effective arbitration tier in the fixture is `<= PROTECTED_TIER_FLOOR` are
 /// never retired by idle lifecycle — their safety guarantee must survive long sessions.
+/// Every seed-fixture-member goal is likewise immune to idle retirement, since seed-fixture
+/// goals are the persona's identity; only live-formed accepted candidates (ids absent from
+/// the fixture) remain retirable.
 pub fn tick_events(
     state: &VolitionState,
     fixture: &VolitionFixture,
@@ -436,8 +439,10 @@ pub fn tick_events(
                 }
                 let is_protected =
                     goal_effective_tier(goal_id, state, fixture) <= PROTECTED_TIER_FLOOR;
+                let is_seed_fixture_goal = fixture.goals.iter().any(|g| &g.id == goal_id);
                 let last_active = dynamic.last_activated_tick.unwrap_or(0);
                 if !is_protected
+                    && !is_seed_fixture_goal
                     && new_tick.saturating_sub(last_active) >= RETIREMENT_INACTIVITY_TICKS
                     && dynamic.reinforcement_count == 0
                     && dynamic.salience == 0
@@ -865,15 +870,99 @@ mod tests {
     #[test]
     fn tick_events_emits_retirement_for_zero_salience_inactive_goal() {
         let fixture = static_fixture();
-        let state = VolitionState::from_fixture(&fixture);
-        let goal_id = "clarify-weak-evidence-topic";
+        let mut state = VolitionState::from_fixture(&fixture);
+        let candidate = ProposedGoalCandidate::try_new(
+            "live-formed-tangent".to_string(),
+            "Live-formed tangent".to_string(),
+            "A malleable, non-fixture candidate.".to_string(),
+            vec!["research-curiosity".to_string()], // tier 7, above the floor
+            GoalScope::Session,
+            88,
+            vec![AllowedEffect::Reflect],
+            "Satisfied when resolved.".to_string(),
+            vec![EvidenceRef::try_new("test").unwrap()],
+            "test".to_string(),
+            vec![],
+        )
+        .unwrap();
+        state = apply(
+            state,
+            VolitionEvent::GoalCandidateAdded { candidate, tick: 1 },
+        );
+        let acceptance_evidence = EvidenceRef::try_new("test-accept").unwrap();
+        state = apply(
+            state,
+            VolitionEvent::GoalCandidateAccepted {
+                goal_id: "live-formed-tangent".to_string(),
+                acceptance_evidence,
+                tick: 2,
+            },
+        );
 
-        let events = tick_events(&state, &fixture, RETIREMENT_INACTIVITY_TICKS);
+        let events = tick_events(&state, &fixture, 2 + RETIREMENT_INACTIVITY_TICKS);
 
         assert!(events.iter().any(|event| matches!(
             event,
-            VolitionEvent::GoalRetired { goal_id: id, .. } if id == goal_id
+            VolitionEvent::GoalRetired { goal_id: id, .. } if id == "live-formed-tangent"
         )));
+    }
+
+    #[test]
+    fn tick_events_never_retires_seed_fixture_goals() {
+        let fixture = realtime_seed_fixture();
+        let state = VolitionState::from_fixture(&fixture);
+        // No activation, zero salience, well past the inactivity window.
+        let events = tick_events(&state, &fixture, RETIREMENT_INACTIVITY_TICKS + 5);
+        for goal in &fixture.goals {
+            assert!(
+                !events.iter().any(|e| matches!(
+                    e, VolitionEvent::GoalRetired { goal_id, .. } if goal_id == &goal.id
+                )),
+                "seed fixture goal {} must never idle-retire",
+                goal.id
+            );
+        }
+    }
+
+    #[test]
+    fn tick_events_retires_idle_live_formed_candidate() {
+        let fixture = realtime_seed_fixture();
+        let mut state = VolitionState::from_fixture(&fixture);
+        let candidate = ProposedGoalCandidate::try_new(
+            "live-formed-tangent".to_string(),
+            "Live-formed tangent".to_string(),
+            "A malleable, non-fixture candidate.".to_string(),
+            vec!["world-curiosity".to_string()], // tier 6, above the floor
+            GoalScope::Session,
+            88,
+            vec![AllowedEffect::Reflect],
+            "Satisfied when resolved.".to_string(),
+            vec![EvidenceRef::try_new("test").unwrap()],
+            "test".to_string(),
+            vec![],
+        )
+        .unwrap();
+        state = apply(
+            state,
+            VolitionEvent::GoalCandidateAdded { candidate, tick: 1 },
+        );
+        let acceptance_evidence = EvidenceRef::try_new("test-accept").unwrap();
+        state = apply(
+            state,
+            VolitionEvent::GoalCandidateAccepted {
+                goal_id: "live-formed-tangent".to_string(),
+                acceptance_evidence,
+                tick: 2,
+            },
+        );
+
+        let events = tick_events(&state, &fixture, 2 + RETIREMENT_INACTIVITY_TICKS);
+        assert!(
+            events.iter().any(|e| matches!(
+                e, VolitionEvent::GoalRetired { goal_id, .. } if goal_id == "live-formed-tangent"
+            )),
+            "an idle live-formed accepted candidate (not in the fixture) must still retire"
+        );
     }
 
     #[test]
