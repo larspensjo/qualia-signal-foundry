@@ -457,8 +457,8 @@ describe("volition state reducer", () => {
       tick: 12,
       activeGoals: [
         {
-          id: "honor-explicit-user-request",
-          title: "Honor explicit user request",
+          id: "serve-the-present-person",
+          title: "Serve the present person",
           salience: 9,
           cooldownUntilTick: null,
           lastActivatedTick: 11,
@@ -472,29 +472,29 @@ describe("volition state reducer", () => {
       acceptedCandidateCount: 2,
       lastInitiativeSummaries: [
         {
-          goalId: "honor-explicit-user-request",
-          goalTitle: "Honor explicit user request",
+          goalId: "serve-the-present-person",
+          goalTitle: "Serve the present person",
           outputKind: "reflection_requested",
         },
       ],
     },
     decision: {
-      winnerGoalId: "honor-explicit-user-request",
-      winnerGoalTitle: "Honor explicit user request",
+      winnerGoalId: "serve-the-present-person",
+      winnerGoalTitle: "Serve the present person",
       winnerEffectiveTier: 2,
       winnerBiasedTier: 2,
       protectedTierActive: true,
       modeBiasOutcomes: [
         {
-          goalId: "honor-explicit-user-request",
-          goalTitle: "Honor explicit user request",
+          goalId: "serve-the-present-person",
+          goalTitle: "Serve the present person",
           effectiveTier: 2,
           biasedTier: 2,
           protected: true,
         },
       ],
-      selectedGoalIds: ["honor-explicit-user-request"],
-      omittedOrSuppressedGoalIds: ["research-curiosity"],
+      selectedGoalIds: ["serve-the-present-person"],
+      omittedOrSuppressedGoalIds: ["world-curiosity"],
       shapingIntensity: "low",
       lastInitiativeOutputKind: "reflection_requested",
       lastInitiativeSurfaced: true,
@@ -617,8 +617,8 @@ describe("volition state message parsing", () => {
       tick: 12,
       active_goals: [
         {
-          id: "honor-explicit-user-request",
-          title: "Honor explicit user request",
+          id: "serve-the-present-person",
+          title: "Serve the present person",
           salience: 9,
           cooldown_until_tick: null,
           last_activated_tick: 11,
@@ -632,29 +632,29 @@ describe("volition state message parsing", () => {
       accepted_candidate_count: 2,
       last_initiative_summaries: [
         {
-          goal_id: "honor-explicit-user-request",
-          goal_title: "Honor explicit user request",
+          goal_id: "serve-the-present-person",
+          goal_title: "Serve the present person",
           output_kind: "reflection_requested",
         },
       ],
     },
     decision: {
-      winner_goal_id: "honor-explicit-user-request",
-      winner_goal_title: "Honor explicit user request",
+      winner_goal_id: "serve-the-present-person",
+      winner_goal_title: "Serve the present person",
       winner_effective_tier: 2,
       winner_biased_tier: 2,
       protected_tier_active: true,
       mode_bias_outcomes: [
         {
-          goal_id: "honor-explicit-user-request",
-          goal_title: "Honor explicit user request",
+          goal_id: "serve-the-present-person",
+          goal_title: "Serve the present person",
           effective_tier: 2,
           biased_tier: 2,
           protected: true,
         },
       ],
-      selected_goal_ids: ["honor-explicit-user-request"],
-      omitted_or_suppressed_goal_ids: ["research-curiosity"],
+      selected_goal_ids: ["serve-the-present-person"],
+      omitted_or_suppressed_goal_ids: ["world-curiosity"],
       shaping_intensity: "low",
       last_initiative_output_kind: "reflection_requested",
       last_initiative_surfaced: true,
@@ -674,8 +674,8 @@ describe("volition state message parsing", () => {
         tick: 12,
         activeGoals: [
           {
-            id: "honor-explicit-user-request",
-            title: "Honor explicit user request",
+            id: "serve-the-present-person",
+            title: "Serve the present person",
             salience: 9,
             cooldownUntilTick: null,
             lastActivatedTick: 11,
@@ -689,29 +689,29 @@ describe("volition state message parsing", () => {
         acceptedCandidateCount: 2,
         lastInitiativeSummaries: [
           {
-            goalId: "honor-explicit-user-request",
-            goalTitle: "Honor explicit user request",
+            goalId: "serve-the-present-person",
+            goalTitle: "Serve the present person",
             outputKind: "reflection_requested",
           },
         ],
       },
       decision: {
-        winnerGoalId: "honor-explicit-user-request",
-        winnerGoalTitle: "Honor explicit user request",
+        winnerGoalId: "serve-the-present-person",
+        winnerGoalTitle: "Serve the present person",
         winnerEffectiveTier: 2,
         winnerBiasedTier: 2,
         protectedTierActive: true,
         modeBiasOutcomes: [
           {
-            goalId: "honor-explicit-user-request",
-            goalTitle: "Honor explicit user request",
+            goalId: "serve-the-present-person",
+            goalTitle: "Serve the present person",
             effectiveTier: 2,
             biasedTier: 2,
             protected: true,
           },
         ],
-        selectedGoalIds: ["honor-explicit-user-request"],
-        omittedOrSuppressedGoalIds: ["research-curiosity"],
+        selectedGoalIds: ["serve-the-present-person"],
+        omittedOrSuppressedGoalIds: ["world-curiosity"],
         shapingIntensity: "low",
         lastInitiativeOutputKind: "reflection_requested",
         lastInitiativeSurfaced: true,
@@ -730,8 +730,8 @@ describe("volition state message parsing", () => {
         tick: 12,
         activeGoals: [
           {
-            id: "honor-explicit-user-request",
-            title: "Honor explicit user request",
+            id: "serve-the-present-person",
+            title: "Serve the present person",
             salience: 9,
             cooldownUntilTick: null,
             lastActivatedTick: 11,
@@ -745,8 +745,8 @@ describe("volition state message parsing", () => {
         acceptedCandidateCount: 2,
         lastInitiativeSummaries: [
           {
-            goalId: "honor-explicit-user-request",
-            goalTitle: "Honor explicit user request",
+            goalId: "serve-the-present-person",
+            goalTitle: "Serve the present person",
             outputKind: "reflection_requested",
           },
         ],
@@ -809,8 +809,8 @@ describe("volition panel selector", () => {
       tick: 12,
       activeGoals: [
         {
-          id: "honor-explicit-user-request",
-          title: "Honor explicit user request",
+          id: "serve-the-present-person",
+          title: "Serve the present person",
           salience: 9,
           cooldownUntilTick: null,
           lastActivatedTick: 11,
@@ -824,29 +824,29 @@ describe("volition panel selector", () => {
       acceptedCandidateCount: 2,
       lastInitiativeSummaries: [
         {
-          goalId: "honor-explicit-user-request",
-          goalTitle: "Honor explicit user request",
+          goalId: "serve-the-present-person",
+          goalTitle: "Serve the present person",
           outputKind: "reflection_requested",
         },
       ],
     },
     decision: {
-      winnerGoalId: "honor-explicit-user-request",
-      winnerGoalTitle: "Honor explicit user request",
+      winnerGoalId: "serve-the-present-person",
+      winnerGoalTitle: "Serve the present person",
       winnerEffectiveTier: 2,
       winnerBiasedTier: 2,
       protectedTierActive: true,
       modeBiasOutcomes: [
         {
-          goalId: "honor-explicit-user-request",
-          goalTitle: "Honor explicit user request",
+          goalId: "serve-the-present-person",
+          goalTitle: "Serve the present person",
           effectiveTier: 2,
           biasedTier: 2,
           protected: true,
         },
       ],
-      selectedGoalIds: ["honor-explicit-user-request"],
-      omittedOrSuppressedGoalIds: ["research-curiosity"],
+      selectedGoalIds: ["serve-the-present-person"],
+      omittedOrSuppressedGoalIds: ["world-curiosity"],
       shapingIntensity: "low",
       lastInitiativeOutputKind: "reflection_requested",
       lastInitiativeSurfaced: true,
@@ -889,7 +889,7 @@ describe("volition panel selector", () => {
     const snapshotSection = model.sections[0];
     expect(snapshotSection.rows.find((row) => row.label === "Tick")?.value).toBe("12");
     expect(snapshotSection.rows.find((row) => row.label === "Active goals")?.value).toContain(
-      "Honor explicit user request",
+      "Serve the present person",
     );
   });
 
