@@ -1582,3 +1582,45 @@ honestly ("is below the protected floor tier") instead of naming a non-existent 
 mock client forms nothing and sweeps nothing, so the sleep goal-maintenance path runs end to end
 by default. This refines, and does not reverse, the 2026-07-01 decisions above; it does not change
 the reviewable-only, human-gated nature of the `consolidate_session_volition` continuity report.
+
+## 2026-07-03 - Realtime persona replaced with curiosity-observer; personas are data
+
+Decision: The realtime seed persona is the outward-facing curiosity-observer roster
+(`realtime_seed_fixture()`): three protected tensions (person-respect, epistemic-integrity,
+present-person-priority) and four malleable ones (knowledge-stewardship, person-curiosity,
+ai-trajectory-concern, world-curiosity). A personality change must not change code, constants
+excepted: mode bias now lives in per-tension `focused_bias` / `exploratory_bias` fixture data,
+not in a hardcoded vector.
+
+Context: The prior dev-assistant persona had goals about the QSF project itself and coupled one
+personality datum — mode bias — to code via `Mode::bias_vector()`. The curiosity-observer persona
+runs the pending live goal-formation voice test against a persona for which goal-formation
+conversations are natural.
+
+Consequences: This **amends the 2026-06-27 "mode bias may reorder only within the biasable band"
+decision**, which declared `Mode::bias_vector()` the source of truth. The revised rule: mode labels
+(`Neutral` / `Focused` / `Exploratory`) stay fixed; each tension's own `focused_bias` /
+`exploratory_bias` supplies the bias delta (read via `Mode::tension_delta`); tiers 1–3 remain
+code-enforced bias-immune. Seed-fixture goals are immune to idle retirement (only live-formed
+accepted candidates retire). On resume, a continuity snapshot that is incompatible with the active
+fixture (a persona swap changed the goal ids) is **discarded** and the session restarts from the
+seed. This **reverses the approved design's stated preference for reconciliation**
+(`Design.curiosity-observer-persona.md`): reconciliation would preserve live-formed accepted
+candidates and tick continuity across the swap, but for this one-time id replacement that state
+belongs to the retired persona and is not worth a reconciler's complexity; the accepted cost is
+losing those candidates and tick continuity whenever an incompatible snapshot is dropped. If a
+future slice evolves a fixture *within* a persona era (adding or removing a goal without a full id
+swap), reconciliation should be revisited then. First-class thesis/library support (a thesis
+lifecycle on the memory system) is deferred to a later slice.
+
+One seed goal's activation keywords carry a known, accepted keyword-tuning cost: the malleable goal
+`learn-what-drives-this-person` includes the activation keyword `"me"`, which co-occurs with almost
+any first-person direct request ("help me", "tell me"). As a result, ordinary first-person direct
+requests now also register as a genuine opportunity for the person-curiosity goal, nudging the
+bounded-initiative suppression logic to surface curiosity initiatives more often than the prior
+persona did. This is accepted as a known consequence to be tuned after the live voice test, per the
+near-universal `i`/`my`/`me` keyword tuning already flagged in
+`Experiment.CuriosityPersonaSeed.md`'s Open Items — not a bug to fix now.
+
+Refs: crates/qsf_volition/src/fixture.rs, crates/qsf_volition/src/model.rs,
+crates/qsf_volition/src/arbitration.rs, docs/Experiments/Experiment.CuriosityPersonaSeed.md

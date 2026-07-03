@@ -11,12 +11,24 @@ Running (automated tests pass; awaiting human review). The phase sequencing live
 [Design.VolitionModeBias.md](../Plans/Design.VolitionModeBias.md); the rationale and terminology
 live in [Idea.VolitionGoalSystem.md](../Plans/Idea.VolitionGoalSystem.md).
 
+**Superseded source of truth (2026-07-03):** the curiosity-observer persona replacement moved mode
+bias out of a hardcoded `Mode::bias_vector()` and into per-tension `focused_bias` /
+`exploratory_bias` fixture data, read via `Mode::tension_delta`, per the 2026-07-03 DecisionLog
+entry amending the 2026-06-27 decision below. The experiment still passes: `static_fixture()`'s
+`research-curiosity` (`focused_bias: 3, exploratory_bias: -2`) and `continuity-preservation`
+(`focused_bias: -1, exploratory_bias: 1`) tensions carry the migrated deltas that reproduce the
+same flip/floor/suppress outcomes described below. Passages further down that describe
+`bias_vector()` as the source of truth are historical — read them as "the mechanism at the time
+this experiment was designed," not current fact.
+
 ## Summary
 
 Add an inspectable **mode** — a named, declared bias over arbitration ordering — and show that it
 can deterministically shift which goal wins a conflict **without** being able to override the
-safety/boundary floor. A mode's meaning is its declared `bias_vector()`; the label is only a
-handle (no free-form mood drives the bias).
+safety/boundary floor. A mode's meaning was originally its declared `bias_vector()`; that vector is
+now per-tension `focused_bias` / `exploratory_bias` data read via `Mode::tension_delta` (see the
+superseded-source-of-truth note above). The label is only a handle (no free-form mood drives the
+bias).
 
 The bias reorders goals **only within a biasable band** (effective tier ≥ 4 — coherence,
 continuity, experiment mode, curiosity, exploration). A protected floor (effective tier ≤ 3 —
@@ -116,8 +128,10 @@ Floor input (turn 3) — additionally matches the tier-1 goal:
 
 - New `Mode` enum (`Neutral`, `Focused`, `Exploratory`) with `Display`, serde
   (`#[serde(rename_all = "snake_case")]`), and `#[default]` on the `Neutral` variant;
-  `Mode::bias_vector(self) -> BTreeMap<String, i8>` (the declared source of truth; empty for
-  `Neutral`).
+  originally `Mode::bias_vector(self) -> BTreeMap<String, i8>` was the declared source of truth
+  (empty for `Neutral`). **Superseded 2026-07-03:** the source of truth is now each tension's own
+  `focused_bias` / `exploratory_bias` fields, read via `Mode::tension_delta(self, tension: &Tension)
+  -> i8` (zero for `Neutral`); see the note in Status.
 - `pub const PROTECTED_TIER_FLOOR: u8 = 3`.
 - New `BiasOutcome`, `ModeArbitrationLoser`, `ModeArbitrationResult` types (per
   `Design.VolitionModeBias.md`).

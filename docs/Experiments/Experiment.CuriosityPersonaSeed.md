@@ -35,7 +35,6 @@ persona can be trusted).
 
 ```text
 docs/Plans/Plan.CuriosityObserverPersona.md
-docs/superpowers/specs/Design.curiosity-observer-persona.md
 docs/Architecture/Architecture.VolitionSystem.md
 docs/Experiments/Experiment.LiveGoalFormationAndCoherence.md
 docs/Experiments/Experiment.VolitionModeBias.md

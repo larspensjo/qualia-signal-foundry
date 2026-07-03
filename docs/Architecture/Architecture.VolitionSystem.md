@@ -6,7 +6,7 @@ Candidate
 
 ## Implementation Status
 
-Last reviewed: 2026-07-02
+Last reviewed: 2026-07-03
 
 The volition domain is extracted into a standalone `qsf_volition` crate
 ([crates/qsf_volition/src/lib.rs](../../crates/qsf_volition/src/lib.rs)). It holds
@@ -28,8 +28,11 @@ and—going forward—`qsf_realtime_server`), not in the crate.
 - Context-neutral selection record `GoalSelection` (goal, relevance score, matched terms,
   proposed initiative) and the deterministic arbitration functions `arbitrate()` and
   `arbitrate_with_mode()`.
-- Mode-aware arbitration: `Mode` with a declared `bias_vector()`, a `PROTECTED_TIER_FLOOR`
-  that makes safety/boundary tiers immune to bias, and per-goal `BiasOutcome` records.
+- Mode-aware arbitration: `Mode` (`Neutral` / `Focused` / `Exploratory`) reads its bias
+  per goal via `Mode::tension_delta`, sourced from each tension's own `focused_bias` /
+  `exploratory_bias` fixture data rather than a hardcoded vector — a persona swap is a
+  fixture-data change, not a code change. A `PROTECTED_TIER_FLOOR` makes safety/boundary
+  tiers immune to bias, and per-goal `BiasOutcome` records carry the applied delta.
 - Bounded internal initiative: `InitiativeProposal`, `InitiativeOutput`, and
   `execute_initiative()` — structural records only; no external write-capable effect.
 - Continuity and consolidation helpers: `VolitionContinuitySnapshot`,
