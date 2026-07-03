@@ -402,6 +402,8 @@ mod tests {
             summary: "test".to_string(),
             priority_bias: TensionPriority::Medium,
             arbitration_tier: tier,
+            focused_bias: 0,
+            exploratory_bias: 0,
         }
     }
 

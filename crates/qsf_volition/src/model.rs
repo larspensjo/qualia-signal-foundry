@@ -40,6 +40,12 @@ pub struct Tension {
     pub priority_bias: TensionPriority,
     /// Arbitration precedence tier; lower tier wins conflict resolution. See type doc.
     pub arbitration_tier: u8,
+    /// Mode-bias delta applied to this tension's effective tier under `Mode::Focused`.
+    /// Positive demotes (higher tier), negative promotes (lower tier), 0 is neutral.
+    /// Must be 0 for protected tiers (≤ `PROTECTED_TIER_FLOOR`), which are bias-immune in code.
+    pub focused_bias: i8,
+    /// Mode-bias delta applied under `Mode::Exploratory`. Same sign convention as `focused_bias`.
+    pub exploratory_bias: i8,
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, PartialEq, Serialize)]

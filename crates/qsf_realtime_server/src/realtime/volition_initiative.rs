@@ -225,6 +225,8 @@ mod tests {
                 summary: "summary".to_string(),
                 priority_bias: TensionPriority::Medium,
                 arbitration_tier: 3,
+                focused_bias: 0,
+                exploratory_bias: 0,
             }],
             goals: vec![selection.goal.clone()],
         };

@@ -8,8 +8,8 @@ use crate::observability::event_log::EventType;
 use crate::observability::trace::TraceRecord;
 use crate::runtime::run_context::RunContext;
 use crate::volition::{
-    Mode, ModeArbitrationResult, SalienceGoalSelectionResult, VolitionEvent, VolitionState, apply,
-    arbitrate_with_mode, select_goals_with_salience, static_fixture,
+    Mode, ModeArbitrationResult, SalienceGoalSelectionResult, VolitionEvent, VolitionFixture,
+    VolitionState, apply, arbitrate_with_mode, select_goals_with_salience, static_fixture,
 };
 
 use super::registry::{Experiment, ExperimentName, ExperimentOutcome};
@@ -79,6 +79,7 @@ impl Experiment for VolitionModeBiasExperiment {
 
         let turn1_id = record_conflict_turn(
             context,
+            &fixture,
             1,
             "neutral_baseline",
             &state,
@@ -143,6 +144,7 @@ impl Experiment for VolitionModeBiasExperiment {
 
         let turn2_id = record_conflict_turn(
             context,
+            &fixture,
             2,
             "exploratory_flip",
             &state,
@@ -223,6 +225,7 @@ impl Experiment for VolitionModeBiasExperiment {
 
         let turn3_id = record_conflict_turn(
             context,
+            &fixture,
             3,
             "floor_immunity",
             &state,
@@ -304,6 +307,7 @@ impl Experiment for VolitionModeBiasExperiment {
 
         let turn4_id = record_conflict_turn(
             context,
+            &fixture,
             4,
             "focused_suppress",
             &state,
@@ -359,7 +363,7 @@ impl Experiment for VolitionModeBiasExperiment {
                 arb4.winner.goal.id,
             ),
             observations: vec![
-                "Mode::Neutral.bias_vector() is empty; arbitrate_with_mode(.., Neutral) matches arbitrate().".to_string(),
+                "Mode::Neutral.tension_delta() is 0 for every tension; arbitrate_with_mode(.., Neutral) matches arbitrate().".to_string(),
                 "ModeChanged event is applied once per turn; state.mode is always event-sourced.".to_string(),
                 "Exploratory promotes curiosity and demotes continuity, flipping the band winner.".to_string(),
                 "Floor goal (tier 1, protected) wins under every mode — bias cannot enter the floor.".to_string(),
@@ -378,7 +382,7 @@ impl Experiment for VolitionModeBiasExperiment {
                 "Should the active mode persist across sessions?".to_string(),
             ],
             decision_candidates: vec![
-                "Promote the rule 'mode bias may reorder only within the biasable band; protected tiers are immune by construction' to DecisionLog.".to_string(),
+                "Promote the rule 'mode bias is per-tension data (Tension::focused_bias / exploratory_bias), not a hardcoded per-mode vector; mode bias may reorder only within the biasable band, and protected tiers are immune by construction' to DecisionLog.".to_string(),
             ],
             extra_artifacts: vec!["volition-mode-bias-report.md".to_string()],
         })
@@ -388,6 +392,7 @@ impl Experiment for VolitionModeBiasExperiment {
 #[allow(clippy::too_many_arguments)]
 fn record_conflict_turn(
     context: &mut RunContext,
+    fixture: &VolitionFixture,
     turn: u64,
     phase: &str,
     state: &VolitionState,
@@ -427,7 +432,15 @@ fn record_conflict_turn(
         "input": input,
         "events_applied": [{"kind": "mode_changed", "mode": mode.to_string().to_lowercase(), "tick": turn}],
         "active_mode": mode.to_string().to_lowercase(),
-        "mode_bias_vector": serde_json::to_value(mode.bias_vector()).unwrap_or_default(),
+        "mode_bias_vector": serde_json::to_value(
+            fixture
+                .tensions
+                .iter()
+                .map(|t| (t.id.clone(), mode.tension_delta(t)))
+                .filter(|(_, delta)| *delta != 0)
+                .collect::<std::collections::BTreeMap<String, i8>>(),
+        )
+        .unwrap_or_default(),
         "selector_output": {
             "selected_ids": selection.selected.iter().map(|s| &s.goal.id).collect::<Vec<_>>(),
             "omitted_ids": selection.omitted.iter().map(|o| &o.goal.id).collect::<Vec<_>>(),
@@ -489,16 +502,19 @@ fn write_mode_bias_report(
     md.push_str("| Mode | `research-curiosity` | `continuity-preservation` | Effect |\n");
     md.push_str("|---|---:|---:|---|\n");
     for mode in [Mode::Neutral, Mode::Focused, Mode::Exploratory] {
-        let v = mode.bias_vector();
+        let delta_for = |tid: &str| {
+            fixture
+                .tensions
+                .iter()
+                .find(|t| t.id == tid)
+                .map(|t| mode.tension_delta(t))
+                .unwrap_or(0)
+        };
         md.push_str(&format!(
             "| **{}** | {} | {} | {} |\n",
             mode,
-            v.get("research-curiosity")
-                .map(|x| x.to_string())
-                .unwrap_or_else(|| "0".to_string()),
-            v.get("continuity-preservation")
-                .map(|x| x.to_string())
-                .unwrap_or_else(|| "0".to_string()),
+            delta_for("research-curiosity"),
+            delta_for("continuity-preservation"),
             match mode {
                 Mode::Neutral => "identical to `arbitrate()`",
                 Mode::Focused => "suppress tangents; favor continuity",

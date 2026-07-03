@@ -19,6 +19,8 @@ pub fn realtime_seed_fixture() -> VolitionFixture {
         summary: "Honor what the user is explicitly requesting in this turn.".to_string(),
         priority_bias: TensionPriority::Highest,
         arbitration_tier: 2,
+        focused_bias: 0,
+        exploratory_bias: 0,
     });
     tensions.push(Tension {
         id: "current-task-completion".to_string(),
@@ -26,6 +28,8 @@ pub fn realtime_seed_fixture() -> VolitionFixture {
         summary: "Keep focus on completing the task that is currently in progress.".to_string(),
         priority_bias: TensionPriority::High,
         arbitration_tier: 3,
+        focused_bias: 0,
+        exploratory_bias: 0,
     });
 
     goals.push(Goal {
@@ -98,6 +102,8 @@ pub fn static_fixture() -> VolitionFixture {
                 summary: "Keep unresolved technical questions visible long enough to compare candidate designs.".to_string(),
                 priority_bias: TensionPriority::Medium,
                 arbitration_tier: 7,
+                focused_bias: 3,
+                exploratory_bias: -2,
             },
             Tension {
                 id: "coherence-maintenance".to_string(),
@@ -105,6 +111,8 @@ pub fn static_fixture() -> VolitionFixture {
                 summary: "Avoid overstating implementation status or blending speculative ideas into current fact.".to_string(),
                 priority_bias: TensionPriority::High,
                 arbitration_tier: 4,
+                focused_bias: 0,
+                exploratory_bias: 0,
             },
             Tension {
                 id: "continuity-preservation".to_string(),
@@ -112,6 +120,8 @@ pub fn static_fixture() -> VolitionFixture {
                 summary: "Keep open threads and unresolved context available across turns.".to_string(),
                 priority_bias: TensionPriority::High,
                 arbitration_tier: 5,
+                focused_bias: -1,
+                exploratory_bias: 1,
             },
             Tension {
                 id: "boundary-preservation".to_string(),
@@ -119,6 +129,8 @@ pub fn static_fixture() -> VolitionFixture {
                 summary: "Protect the distinction between current code, future experiments, and out-of-scope ideas.".to_string(),
                 priority_bias: TensionPriority::Highest,
                 arbitration_tier: 1,
+                focused_bias: 0,
+                exploratory_bias: 0,
             },
         ],
         goals: vec![

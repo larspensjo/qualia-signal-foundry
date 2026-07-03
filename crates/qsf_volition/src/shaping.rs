@@ -211,6 +211,8 @@ mod tests {
                 summary: "topic".to_string(),
                 priority_bias: crate::TensionPriority::Medium,
                 arbitration_tier: 6,
+                focused_bias: 0,
+                exploratory_bias: 0,
             }],
             goals: vec![crate::Goal {
                 id: "go-a".to_string(),

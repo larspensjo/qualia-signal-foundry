@@ -1152,6 +1152,8 @@ mod tests {
             summary: "test".to_string(),
             priority_bias: TensionPriority::Medium,
             arbitration_tier: tier,
+            focused_bias: 0,
+            exploratory_bias: 0,
         }
     }
 
@@ -2048,24 +2050,44 @@ mod tests {
     use super::{BiasOutcome, Mode, PROTECTED_TIER_FLOOR, arbitrate_with_mode};
 
     #[test]
-    fn mode_neutral_bias_vector_is_empty() {
-        assert!(Mode::Neutral.bias_vector().is_empty());
+    fn mode_neutral_tension_delta_is_zero_for_all() {
+        let fixture = static_fixture();
+        assert!(
+            fixture
+                .tensions
+                .iter()
+                .all(|t| Mode::Neutral.tension_delta(t) == 0)
+        );
     }
 
     #[test]
-    fn mode_focused_bias_vector_matches_spec() {
-        let vec = Mode::Focused.bias_vector();
-        assert_eq!(vec.get("research-curiosity"), Some(&3i8));
-        assert_eq!(vec.get("continuity-preservation"), Some(&-1i8));
-        assert_eq!(vec.len(), 2);
+    fn mode_focused_tension_delta_matches_migrated_data() {
+        let fixture = static_fixture();
+        let delta = |id: &str| {
+            fixture
+                .tensions
+                .iter()
+                .find(|t| t.id == id)
+                .map(|t| Mode::Focused.tension_delta(t))
+                .unwrap()
+        };
+        assert_eq!(delta("research-curiosity"), 3);
+        assert_eq!(delta("continuity-preservation"), -1);
     }
 
     #[test]
-    fn mode_exploratory_bias_vector_matches_spec() {
-        let vec = Mode::Exploratory.bias_vector();
-        assert_eq!(vec.get("research-curiosity"), Some(&-2i8));
-        assert_eq!(vec.get("continuity-preservation"), Some(&1i8));
-        assert_eq!(vec.len(), 2);
+    fn mode_exploratory_tension_delta_matches_migrated_data() {
+        let fixture = static_fixture();
+        let delta = |id: &str| {
+            fixture
+                .tensions
+                .iter()
+                .find(|t| t.id == id)
+                .map(|t| Mode::Exploratory.tension_delta(t))
+                .unwrap()
+        };
+        assert_eq!(delta("research-curiosity"), -2);
+        assert_eq!(delta("continuity-preservation"), 1);
     }
 
     #[test]

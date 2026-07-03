@@ -707,6 +707,8 @@ mod tests {
             summary: "test".to_string(),
             priority_bias: TensionPriority::Medium,
             arbitration_tier: 7,
+            focused_bias: 0,
+            exploratory_bias: 0,
         };
         let goals: Vec<Goal> = (0..20)
             .map(|i| Goal {
@@ -781,6 +783,8 @@ mod tests {
             summary: "test".to_string(),
             priority_bias: TensionPriority::Medium,
             arbitration_tier: 7,
+            focused_bias: 0,
+            exploratory_bias: 0,
         };
         let goals: Vec<Goal> = (0..12)
             .map(|i| Goal {
@@ -846,6 +850,8 @@ mod tests {
             summary: "test".to_string(),
             priority_bias: TensionPriority::Medium,
             arbitration_tier: 7,
+            focused_bias: 0,
+            exploratory_bias: 0,
         };
         let goals: Vec<Goal> = (0..10)
             .map(|i| Goal {

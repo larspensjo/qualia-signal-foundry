@@ -1,4 +1,3 @@
-use std::collections::BTreeMap;
 use std::fmt;
 
 use serde::{Deserialize, Serialize};
@@ -40,7 +39,7 @@ pub struct ArbitrationResult {
 /// Tiers 1..=PROTECTED_TIER_FLOOR are immune to mode bias.
 pub const PROTECTED_TIER_FLOOR: u8 = 3;
 
-/// An inspectable arbitration bias. Its meaning is its declared `bias_vector()`; the
+/// An inspectable arbitration bias. Its meaning is its declared `tension_delta()`; the
 /// label is only a handle. Default = Neutral (zero bias).
 #[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -52,23 +51,13 @@ pub enum Mode {
 }
 
 impl Mode {
-    /// Declared bias over tension ids. Negative promotes (lower tier), positive demotes.
-    /// Source of truth for the bias; empty for Neutral.
-    pub fn bias_vector(self) -> BTreeMap<String, i8> {
+    /// Bias delta this mode applies to the given tension's effective tier. Neutral applies
+    /// none. Source of truth for mode bias is the tension's own data, not a hardcoded vector.
+    pub fn tension_delta(self, tension: &Tension) -> i8 {
         match self {
-            Self::Neutral => BTreeMap::new(),
-            Self::Focused => {
-                let mut map = BTreeMap::new();
-                map.insert("research-curiosity".to_string(), 3i8);
-                map.insert("continuity-preservation".to_string(), -1i8);
-                map
-            }
-            Self::Exploratory => {
-                let mut map = BTreeMap::new();
-                map.insert("research-curiosity".to_string(), -2i8);
-                map.insert("continuity-preservation".to_string(), 1i8);
-                map
-            }
+            Self::Neutral => 0,
+            Self::Focused => tension.focused_bias,
+            Self::Exploratory => tension.exploratory_bias,
         }
     }
 }
@@ -193,12 +182,9 @@ fn effective_tension_for_goal(goal: &Goal, fixture: &VolitionFixture) -> (u8, St
     (min_tier, effective.id.clone(), effective.title.clone())
 }
 
-/// Compute the `BiasOutcome` for one goal given its effective tier and the active bias vector.
-fn compute_bias_outcome(
-    effective_tier: u8,
-    tension_id: &str,
-    bias_vector: &BTreeMap<String, i8>,
-) -> BiasOutcome {
+/// Compute the `BiasOutcome` for one goal given its effective tier and the mode-bias delta
+/// of its effective tension. Protected tiers (≤ `PROTECTED_TIER_FLOOR`) always receive 0.
+fn compute_bias_outcome(effective_tier: u8, bias_delta: i8) -> BiasOutcome {
     if effective_tier <= PROTECTED_TIER_FLOOR {
         BiasOutcome {
             effective_tier,
@@ -207,12 +193,11 @@ fn compute_bias_outcome(
             protected: true,
         }
     } else {
-        let bias_applied = bias_vector.get(tension_id).copied().unwrap_or(0);
-        let raw = effective_tier as i16 + bias_applied as i16;
+        let raw = effective_tier as i16 + bias_delta as i16;
         let biased_tier = raw.clamp(PROTECTED_TIER_FLOOR as i16 + 1, u8::MAX as i16) as u8;
         BiasOutcome {
             effective_tier,
-            bias_applied,
+            bias_applied: bias_delta,
             biased_tier,
             protected: false,
         }
@@ -232,14 +217,18 @@ pub fn arbitrate_with_mode(
         return None;
     }
 
-    let bias_vector = mode.bias_vector();
-
     let mut with_bias: Vec<(GoalSelection, String, String, BiasOutcome)> = selections
         .into_iter()
         .map(|selection| {
             let (effective_tier, tension_id, tension_title) =
                 effective_tension_for_goal(&selection.goal, fixture);
-            let bias = compute_bias_outcome(effective_tier, &tension_id, &bias_vector);
+            let bias_delta = fixture
+                .tensions
+                .iter()
+                .find(|tension| tension.id == tension_id)
+                .map(|tension| mode.tension_delta(tension))
+                .unwrap_or(0);
+            let bias = compute_bias_outcome(effective_tier, bias_delta);
             (selection, tension_id, tension_title, bias)
         })
         .collect();
@@ -333,6 +322,8 @@ mod tests {
             summary: "test".to_string(),
             priority_bias: TensionPriority::Medium,
             arbitration_tier: tier,
+            focused_bias: 0,
+            exploratory_bias: 0,
         }
     }
 
@@ -471,27 +462,36 @@ mod tests {
         }
     }
 
-    // ── Mode bias vectors ───────────────────────────────────────────────────
+    // ── Mode tension deltas ─────────────────────────────────────────────────
 
-    #[test]
-    fn mode_neutral_bias_vector_is_empty() {
-        assert!(Mode::Neutral.bias_vector().is_empty());
+    fn biased_tension(focused: i8, exploratory: i8) -> Tension {
+        Tension {
+            id: "t".to_string(),
+            title: "T".to_string(),
+            summary: "test".to_string(),
+            priority_bias: TensionPriority::Medium,
+            arbitration_tier: 5,
+            focused_bias: focused,
+            exploratory_bias: exploratory,
+        }
     }
 
     #[test]
-    fn mode_focused_bias_vector_matches_spec() {
-        let vec = Mode::Focused.bias_vector();
-        assert_eq!(vec.get("research-curiosity"), Some(&3i8));
-        assert_eq!(vec.get("continuity-preservation"), Some(&-1i8));
-        assert_eq!(vec.len(), 2);
+    fn mode_neutral_tension_delta_is_zero() {
+        let t = biased_tension(3, -2);
+        assert_eq!(Mode::Neutral.tension_delta(&t), 0);
     }
 
     #[test]
-    fn mode_exploratory_bias_vector_matches_spec() {
-        let vec = Mode::Exploratory.bias_vector();
-        assert_eq!(vec.get("research-curiosity"), Some(&-2i8));
-        assert_eq!(vec.get("continuity-preservation"), Some(&1i8));
-        assert_eq!(vec.len(), 2);
+    fn mode_focused_reads_focused_bias() {
+        let t = biased_tension(3, -2);
+        assert_eq!(Mode::Focused.tension_delta(&t), 3);
+    }
+
+    #[test]
+    fn mode_exploratory_reads_exploratory_bias() {
+        let t = biased_tension(3, -2);
+        assert_eq!(Mode::Exploratory.tension_delta(&t), -2);
     }
 
     #[test]

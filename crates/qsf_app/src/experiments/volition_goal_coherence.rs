@@ -224,6 +224,8 @@ fn coherence_fixture() -> VolitionFixture {
             summary: "Protects boundary integrity of the system.".to_string(),
             priority_bias: TensionPriority::Highest,
             arbitration_tier: 1,
+            focused_bias: 0,
+            exploratory_bias: 0,
         },
         Tension {
             id: "operational-safety".to_string(),
@@ -231,6 +233,8 @@ fn coherence_fixture() -> VolitionFixture {
             summary: "Protects operational safety guarantees.".to_string(),
             priority_bias: TensionPriority::Highest,
             arbitration_tier: 3,
+            focused_bias: 0,
+            exploratory_bias: 0,
         },
         Tension {
             id: "coherence-maintenance".to_string(),
@@ -238,6 +242,8 @@ fn coherence_fixture() -> VolitionFixture {
             summary: "Maintains coherence between claims.".to_string(),
             priority_bias: TensionPriority::High,
             arbitration_tier: 4,
+            focused_bias: 0,
+            exploratory_bias: 0,
         },
         Tension {
             id: "continuity-preservation".to_string(),
@@ -245,6 +251,8 @@ fn coherence_fixture() -> VolitionFixture {
             summary: "Preserves continuity across turns.".to_string(),
             priority_bias: TensionPriority::High,
             arbitration_tier: 5,
+            focused_bias: 0,
+            exploratory_bias: 0,
         },
         Tension {
             id: "research-curiosity".to_string(),
@@ -252,6 +260,8 @@ fn coherence_fixture() -> VolitionFixture {
             summary: "Surfaces open research curiosity.".to_string(),
             priority_bias: TensionPriority::Medium,
             arbitration_tier: 7,
+            focused_bias: 0,
+            exploratory_bias: 0,
         },
     ];
 
