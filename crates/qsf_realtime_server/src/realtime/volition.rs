@@ -94,6 +94,18 @@ pub fn events_for_trusted_transcript(
     events
 }
 
+/// A loaded continuity snapshot is compatible with the active fixture only if every Accepted
+/// fixture goal has a dynamic entry in it. After a persona swap (all goal ids change) an old
+/// snapshot fails this check and must be discarded rather than installed, since installing it
+/// would yield a mixed runtime keyed by dead ids with no dynamic state for the new goals.
+pub fn snapshot_is_fixture_compatible(snapshot: &VolitionState, fixture: &VolitionFixture) -> bool {
+    fixture
+        .goals
+        .iter()
+        .filter(|g| g.status == GoalStatus::Accepted)
+        .all(|g| snapshot.goals.contains_key(&g.id))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -413,5 +425,23 @@ mod tests {
             )),
             "protected tier-3 goal must still activate from transcript evidence after idle period"
         );
+    }
+
+    // ── snapshot_is_fixture_compatible ───────────────────────────────────────
+
+    #[test]
+    fn snapshot_from_current_fixture_is_compatible() {
+        let fixture = realtime_seed_fixture();
+        let state = VolitionState::from_fixture(&fixture);
+        assert!(snapshot_is_fixture_compatible(&state, &fixture));
+    }
+
+    #[test]
+    fn snapshot_missing_new_fixture_goals_is_incompatible() {
+        let fixture = realtime_seed_fixture();
+        // An "old" snapshot that knows nothing about the current persona's goals.
+        let mut stale = VolitionState::from_fixture(&fixture);
+        stale.goals.clear(); // simulate a snapshot whose goal ids predate this fixture
+        assert!(!snapshot_is_fixture_compatible(&stale, &fixture));
     }
 }

@@ -223,17 +223,34 @@ impl AppState {
             match VolitionContinuitySnapshot::load_or_upgrade(&snapshot_path) {
                 Ok(snapshot) => {
                     let tick = snapshot.state.tick;
-                    runtime.volition.state = snapshot.state;
-                    runtime
-                        .diagnostics
-                        .write(&DiagnosticRecord::VolitionContinuityNote {
-                            qsf_session_id: qsf_session_id.clone(),
-                            recorded_at: OffsetDateTime::now_utc(),
-                            note: format!(
-                                "restored volition state from continuity snapshot (tick={tick})"
-                            ),
-                            artifact_reference: snapshot_path.display().to_string(),
-                        })?;
+                    if crate::realtime::volition::snapshot_is_fixture_compatible(
+                        &snapshot.state,
+                        &runtime.volition.fixture,
+                    ) {
+                        runtime.volition.state = snapshot.state;
+                        runtime
+                            .diagnostics
+                            .write(&DiagnosticRecord::VolitionContinuityNote {
+                                qsf_session_id: qsf_session_id.clone(),
+                                recorded_at: OffsetDateTime::now_utc(),
+                                note: format!(
+                                    "restored volition state from continuity snapshot (tick={tick})"
+                                ),
+                                artifact_reference: snapshot_path.display().to_string(),
+                            })?;
+                    } else {
+                        runtime
+                            .diagnostics
+                            .write(&DiagnosticRecord::VolitionContinuityNote {
+                                qsf_session_id: qsf_session_id.clone(),
+                                recorded_at: OffsetDateTime::now_utc(),
+                                note: format!(
+                                    "discarded fixture-incompatible continuity snapshot (tick={tick}); \
+                                     starting from the current seed fixture"
+                                ),
+                                artifact_reference: snapshot_path.display().to_string(),
+                            })?;
+                    }
                 }
                 Err(error) => {
                     runtime
