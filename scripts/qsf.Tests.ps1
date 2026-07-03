@@ -116,6 +116,25 @@ Describe "qsf.ps1 realtime launcher" {
         { Get-UiTarget -Target "bogus" } | Should -Throw "*Unknown ui target*"
     }
 
+    It "pins the model provider to openai for the realtime server" {
+        $delta = Get-RealtimeEnvironmentDelta
+
+        $delta.Sets["QSF_MODEL_PROVIDER"] | Should -Be "openai"
+        $delta.Clears | Should -Not -Contain "QSF_MODEL_PROVIDER"
+    }
+
+    It "clears ambient non-secret QSF variables for the realtime server" {
+        [System.Environment]::SetEnvironmentVariable("QSF_SESSION_MAX_TURNS", "2", "Process")
+        try {
+            $delta = Get-RealtimeEnvironmentDelta
+
+            $delta.Clears | Should -Contain "QSF_SESSION_MAX_TURNS"
+        }
+        finally {
+            [System.Environment]::SetEnvironmentVariable("QSF_SESSION_MAX_TURNS", $null, "Process")
+        }
+    }
+
     It "fails fast when the required secret is absent" {
         { Test-RequiredSecret -Name "OPENAI_API_KEY" } | Should -Throw "*OPENAI_API_KEY is not set*"
     }

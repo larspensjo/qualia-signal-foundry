@@ -357,6 +357,25 @@ function Get-ProfileEnvironmentDelta {
     }
 }
 
+function Get-RealtimeEnvironmentDelta {
+    # The realtime server is OpenAI-backed (the command already requires OPENAI_API_KEY), so
+    # the launcher pins QSF_MODEL_PROVIDER instead of letting sideband model roles (e.g. the
+    # live goal-formation judge) silently fall back to the mock client when it is unset.
+    $envSets = [ordered]@{
+        "QSF_MODEL_PROVIDER" = "openai"
+    }
+    $clearEnv = @(
+        Get-ManagedQsfEnvironmentVariableNames |
+        Where-Object { -not $envSets.Contains($_) } |
+        Sort-Object -Unique
+    )
+
+    return [pscustomobject]@{
+        Sets   = $envSets
+        Clears = $clearEnv
+    }
+}
+
 function Show-EnvironmentDelta {
     param(
         [Parameter(Mandatory = $true)]
@@ -492,6 +511,7 @@ Defaults:
   Text-loop session limit through launcher: allow over limit
   UI directory:  crates/qsf_browser_server/ui
   Realtime server: 127.0.0.1:$realtimeServerPort (state/realtime); requires OPENAI_API_KEY
+    Realtime environment: sets QSF_MODEL_PROVIDER=openai and clears other non-secret QSF_* values
   Realtime UI:     crates/qsf_realtime_server/ui (Vite on $realtimeUiUrl)
 
 Examples:
@@ -1043,7 +1063,12 @@ function Invoke-Realtime {
     $uiProcess = $null
     $browserOpened = $false
     try {
-        $serverProcess = Start-RealtimeServerProcess
+        # The child process copies its environment at creation, so applying the delta
+        # around the start (and restoring afterwards) pins the server's provider settings
+        # without leaking them into the launcher's own session.
+        $serverProcess = Invoke-WithEnvironmentDelta -Delta (Get-RealtimeEnvironmentDelta) -ScriptBlock {
+            Start-RealtimeServerProcess
+        }
         $uiProcess = Start-RealtimeUiProcess -PortNumber $uiPort
 
         # Supervise both children: report the first unexpected exit, open the browser only

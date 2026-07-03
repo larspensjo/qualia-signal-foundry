@@ -1622,5 +1622,23 @@ persona did. This is accepted as a known consequence to be tuned after the live 
 near-universal `i`/`my`/`me` keyword tuning already flagged in
 `Experiment.CuriosityPersonaSeed.md`'s Open Items — not a bug to fix now.
 
-Refs: crates/qsf_volition/src/fixture.rs, crates/qsf_volition/src/model.rs,
-crates/qsf_volition/src/arbitration.rs, docs/Experiments/Experiment.CuriosityPersonaSeed.md
+## 2026-07-03 - `realtime` launcher manages the server environment and pins `QSF_MODEL_PROVIDER=openai`
+
+Decision: `qsf.ps1 realtime` applies a managed environment delta around the server start, the same
+mechanism `app` launches use: it sets `QSF_MODEL_PROVIDER=openai` and clears every other non-secret
+`QSF_*` variable for the child process, restoring the launcher's own session afterwards. The
+realtime command is inherently OpenAI-backed (it already refuses to start without
+`OPENAI_API_KEY`), so the provider is launcher-managed rather than user-remembered.
+Context: The first curiosity-observer voice session ran with `QSF_MODEL_PROVIDER` unset. The
+sideband model roles fall back to the mock client in that case, and the mock live-goal-formation
+judge always returns "no candidate" — so live goal formation silently ran as a no-op for the whole
+session (sub-millisecond `live_goal_formation_performed` records, nothing proposed), voiding the
+formation half of the voice test. The launcher's stated principle — it controls all non-secret
+`QSF_*` variables for deterministic behavior — already applied to `app` launches but not to
+`realtime`, which inherited whatever was ambient.
+Consequences: A plain `.\scripts\qsf.ps1 realtime` now runs the formation/coherence judges against
+the real provider with no manual environment setup, and ambient `QSF_*` leftovers cannot leak into
+a live session. Anyone needing a mock-judged realtime session must launch the server directly
+rather than through the launcher. This refines the 2026-06-28 `realtime` supervision decision and
+narrows the 2026-07-02 observation that the mock default exercises the sleep path end to end: that
+default remains right for offline runs, but a live voice session must not inherit it silently.
