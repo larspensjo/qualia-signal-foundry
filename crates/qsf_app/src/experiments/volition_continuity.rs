@@ -635,6 +635,103 @@ mod tests {
         assert!(VolitionContinuitySnapshot::load_or_upgrade(&snapshot_path).is_ok());
     }
 
+    /// A judge client whose formation response depends on whether the request actually contains
+    /// `marker` - used to prove `run_sleep_volition_goal_maintenance` forms a candidate from
+    /// whatever text it is given, so the caller passing a summary (which may omit a durable goal
+    /// signal) instead of the raw session transcript is a caller-side bug, not a judge limitation.
+    struct MarkerConditionedFormationClient {
+        marker: &'static str,
+    }
+
+    impl qsf_models::ModelClient for MarkerConditionedFormationClient {
+        fn client_name(&self) -> &str {
+            "marker-conditioned-formation-client"
+        }
+
+        fn complete(
+            &self,
+            request: &qsf_models::ModelRequest,
+        ) -> anyhow::Result<qsf_models::ModelResponse> {
+            let saw_marker = request
+                .messages
+                .iter()
+                .any(|message| message.content.contains(self.marker));
+            let body = if saw_marker {
+                json!({
+                    "proposed_candidate": {
+                        "id": "durable-goal-from-history",
+                        "title": "Durable goal from history",
+                        "summary": "Formed from the whole-history transcript.",
+                        "tension_ids": [],
+                        "scope": "session",
+                        "base_priority": 5,
+                        "allowed_effects": ["reflect"],
+                        "satisfaction_condition_summary": "satisfied when honored",
+                        "proposal_evidence": ["whole-history transcript"],
+                        "source_description": "formed from sleep whole-history formation",
+                        "activation_keywords": []
+                    },
+                    "contradictions": []
+                })
+            } else {
+                json!({ "proposed_candidate": null, "contradictions": [] })
+            };
+            Ok(qsf_models::ModelResponse::from_text(
+                request,
+                self.client_name(),
+                request.model_name.clone(),
+                body.to_string(),
+            ))
+        }
+    }
+
+    #[test]
+    fn sleep_whole_history_formation_proposes_a_candidate_omitted_from_a_summary() {
+        let state_root = TempDir::new().unwrap();
+        write_snapshot_fixture(state_root.path(), "session-1").unwrap();
+        let marker = "always double-check the backups before deploying";
+
+        let mut context =
+            RunContext::create_in(state_root.path().join("runs"), "sleep-whole-history-test")
+                .unwrap();
+        let client = MarkerConditionedFormationClient { marker };
+
+        // A generic summary (as a lossy summarizer might produce) does not contain the marker,
+        // so formation over the summary alone would see nothing durable to propose.
+        let summary_only = run_sleep_volition_goal_maintenance(
+            &mut context,
+            &client,
+            state_root.path(),
+            "session-1",
+            "Nothing of particular note happened this session.",
+        )
+        .unwrap()
+        .expect("maintenance runs when a snapshot exists");
+        assert!(summary_only.admitted_goal_id.is_none());
+
+        // Reset the snapshot so the second call starts from the same state as the first.
+        write_snapshot_fixture(state_root.path(), "session-1").unwrap();
+
+        // The raw session transcript carries the durable goal signal the summary dropped.
+        let whole_history = format!(
+            "Turn 0:\nUser: Please {marker}.\nAssistant: Understood, I will keep that in mind."
+        );
+        let from_whole_history = run_sleep_volition_goal_maintenance(
+            &mut context,
+            &client,
+            state_root.path(),
+            "session-1",
+            &whole_history,
+        )
+        .unwrap()
+        .expect("maintenance runs when a snapshot exists");
+
+        assert_eq!(
+            from_whole_history.admitted_goal_id.as_deref(),
+            Some("durable-goal-from-history")
+        );
+    }
+
     #[test]
     fn sleep_goal_maintenance_returns_none_without_a_snapshot() {
         let state_root = TempDir::new().unwrap();

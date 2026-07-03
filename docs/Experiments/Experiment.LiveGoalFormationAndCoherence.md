@@ -162,8 +162,8 @@ as durable session context — with turn latency unaffected and every form / adm
 5. **Off-hot-path ordering (artifact-verified):** each `live_formation` record carries
    `response_dispatched_at` and `formation_started_at`; the harness asserts
    `formation_started_at >= response_dispatched_at`, so the model call provably follows response
-   dispatch. It also asserts the turn's response latency (from the existing `LatencyObservation`
-   records) matches a no-formation baseline turn within tolerance.
+   dispatch. Latency parity with a no-formation baseline is not asserted by the harness; it is a
+   human test step (below).
 6. **No goal formed:** a fixture turn whose formation proposes nothing emits no lifecycle events
    and records an empty `proposed_candidate`.
 7. **Sleep whole-history formation:** a scripted whole-history formation proposes a durable
@@ -275,8 +275,8 @@ Parsing verification:
   distinguishable from prefix-invalidated turns.
 - Assert a formed-but-unadmitted candidate is absent from the arbitration input for its turn.
 - Assert every `live_formation` record satisfies `formation_started_at >= response_dispatched_at`
-  from its own recorded timestamps (not a self-attesting boolean), and that the turn's
-  response-latency observation matches the no-formation baseline within tolerance.
+  from its own recorded timestamps (not a self-attesting boolean). Response-latency parity with a
+  no-formation baseline is checked manually (see Human Test Steps), not by this parser.
 - Assert the sleep sweep followed the same cancel-less-fundamental / floor-never-cancelled rules as
   the offline coherence experiment.
 

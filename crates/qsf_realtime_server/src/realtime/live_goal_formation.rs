@@ -67,11 +67,24 @@ fn shared_model_client() -> anyhow::Result<Arc<dyn ModelClient>> {
     Ok(Arc::clone(CLIENT.get_or_init(|| client)))
 }
 
-/// Dispatches the formation+detection call as a background task, so the caller (the sideband's
-/// `response.done` handler) does not wait on it. Failures are logged and recorded as a
-/// `LiveGoalFormationFailed` diagnostic, never propagated - this runs after the turn has already
-/// completed. Skips the spawn entirely (rather than racing it) when a formation task is already
-/// in flight for this session.
+/// One trusted turn awaiting live goal formation, queued by `spawn_live_goal_formation` and
+/// drained in order by the per-session worker loop.
+pub(crate) struct PendingLiveGoalFormation {
+    exchange_index: usize,
+    turn_transcript: String,
+    response_dispatched_at: Option<OffsetDateTime>,
+}
+
+/// Builds the model client used for one formation call. Boxed so the per-item worker loop can
+/// call it repeatedly (once per queued turn) without needing to know whether it came from the
+/// process-wide `shared_model_client` or, in tests, a client that drives specific timing.
+type ClientBuilder = Arc<dyn Fn() -> anyhow::Result<Arc<dyn ModelClient>> + Send + Sync>;
+
+/// Enqueues the formation+detection call for a completed trusted turn and, if no worker is
+/// already draining this session's queue, spawns one. The caller (the sideband's `response.done`
+/// handler) never awaits this - formation runs off the hot path. Every eligible turn is processed,
+/// in order: a turn completing while a formation call is already in flight is queued rather than
+/// dropped, so a live voice session's cadence never silently skips a turn's formation/detection.
 pub(crate) fn spawn_live_goal_formation(
     session: Arc<Mutex<SessionRuntime>>,
     qsf_session_id: String,
@@ -79,46 +92,85 @@ pub(crate) fn spawn_live_goal_formation(
     turn_transcript: String,
     response_dispatched_at: Option<OffsetDateTime>,
 ) {
-    tokio::spawn(async move {
-        {
-            let mut guard = session.lock().await;
-            if guard.live_goal_formation_in_flight {
-                log::info!(
-                    "skipping live goal formation for session `{qsf_session_id}` exchange \
-                     `{exchange_index}`: a formation task is already in flight for this session"
-                );
-                if let Err(write_error) =
-                    guard
-                        .diagnostics
-                        .write(&DiagnosticRecord::LiveGoalFormationSkipped {
-                            qsf_session_id: qsf_session_id.clone(),
-                            exchange_index,
-                            recorded_at: OffsetDateTime::now_utc(),
-                            reason: "formation task already in flight".to_string(),
-                        })
-                {
-                    log::warn!(
-                        "failed to record live goal formation skip diagnostic for session \
-                         `{qsf_session_id}` exchange `{exchange_index}`: {write_error:#}"
-                    );
-                }
-                return;
-            }
-            guard.live_goal_formation_in_flight = true;
-        }
-        let _in_flight_reset = LiveGoalFormationInFlightReset::new(session.clone());
+    spawn_live_goal_formation_with_client_builder(
+        session,
+        qsf_session_id,
+        exchange_index,
+        turn_transcript,
+        response_dispatched_at,
+        Arc::new(shared_model_client),
+    );
+}
 
+fn spawn_live_goal_formation_with_client_builder(
+    session: Arc<Mutex<SessionRuntime>>,
+    qsf_session_id: String,
+    exchange_index: usize,
+    turn_transcript: String,
+    response_dispatched_at: Option<OffsetDateTime>,
+    build_client: ClientBuilder,
+) {
+    tokio::spawn(async move {
+        let should_spawn_worker = {
+            let mut guard = session.lock().await;
+            guard
+                .live_goal_formation_queue
+                .push_back(PendingLiveGoalFormation {
+                    exchange_index,
+                    turn_transcript,
+                    response_dispatched_at,
+                });
+            if guard.live_goal_formation_in_flight {
+                false
+            } else {
+                guard.live_goal_formation_in_flight = true;
+                true
+            }
+        };
+        if should_spawn_worker {
+            drain_live_goal_formation_queue(session, qsf_session_id, build_client).await;
+        }
+    });
+}
+
+/// Pops and processes queued turns one at a time, in FIFO order, until the queue is empty. Popping
+/// and the empty-queue in-flight reset both happen under the same session-lock acquisition, so a
+/// concurrently enqueuing call can never observe `live_goal_formation_in_flight = false` while an
+/// item this worker hasn't processed yet is still sitting in the queue.
+async fn drain_live_goal_formation_queue(
+    session: Arc<Mutex<SessionRuntime>>,
+    qsf_session_id: String,
+    build_client: ClientBuilder,
+) {
+    let in_flight_guard = LiveGoalFormationInFlightGuard::new(session.clone());
+    loop {
+        let next = {
+            let mut guard = session.lock().await;
+            match guard.live_goal_formation_queue.pop_front() {
+                Some(pending) => Some(pending),
+                None => {
+                    guard.live_goal_formation_in_flight = false;
+                    None
+                }
+            }
+        };
+        let Some(pending) = next else {
+            break;
+        };
+
+        let client_builder = Arc::clone(&build_client);
         let result = run_live_goal_formation(
             session.clone(),
             &qsf_session_id,
-            exchange_index,
-            turn_transcript,
-            response_dispatched_at,
-            shared_model_client,
+            pending.exchange_index,
+            pending.turn_transcript,
+            pending.response_dispatched_at,
+            move || client_builder(),
         )
         .await;
 
         if let Err(error) = result {
+            let exchange_index = pending.exchange_index;
             log::warn!(
                 "live goal formation failed for session `{qsf_session_id}` exchange \
                  `{exchange_index}`: {error:#}"
@@ -140,21 +192,38 @@ pub(crate) fn spawn_live_goal_formation(
                 );
             }
         }
-    });
+    }
+    in_flight_guard.disarm();
 }
 
-struct LiveGoalFormationInFlightReset {
+/// Best-effort panic safety net for the worker loop: `drain_live_goal_formation_queue` clears
+/// `live_goal_formation_in_flight` itself on every normal exit and calls `disarm()` right after,
+/// so `drop` is a no-op on that path. If the loop unwinds instead (a panic inside a queued item's
+/// processing), `disarm` is never reached and `drop` resets the flag so a panic cannot
+/// permanently wedge formation for this session.
+struct LiveGoalFormationInFlightGuard {
     session: Arc<Mutex<SessionRuntime>>,
+    disarmed: bool,
 }
 
-impl LiveGoalFormationInFlightReset {
+impl LiveGoalFormationInFlightGuard {
     fn new(session: Arc<Mutex<SessionRuntime>>) -> Self {
-        Self { session }
+        Self {
+            session,
+            disarmed: false,
+        }
+    }
+
+    fn disarm(mut self) {
+        self.disarmed = true;
     }
 }
 
-impl Drop for LiveGoalFormationInFlightReset {
+impl Drop for LiveGoalFormationInFlightGuard {
     fn drop(&mut self) {
+        if self.disarmed {
+            return;
+        }
         let session = Arc::clone(&self.session);
         tokio::spawn(async move {
             session.lock().await.live_goal_formation_in_flight = false;
@@ -315,6 +384,131 @@ mod tests {
 
     fn always_fails_client() -> anyhow::Result<Arc<dyn ModelClient>> {
         Err(anyhow::anyhow!("provider unavailable"))
+    }
+
+    /// A judge client whose first `complete` call signals `started_tx` and then blocks on
+    /// `release_rx` until the test releases it; every subsequent call returns immediately. Lets a
+    /// test drive a second turn's `spawn_live_goal_formation` call while the first turn's model
+    /// call is genuinely in flight, rather than merely racing two async tasks.
+    struct BlockOnFirstCallClient {
+        started_tx: std::sync::Mutex<Option<tokio::sync::oneshot::Sender<()>>>,
+        release_rx: std::sync::Mutex<Option<std::sync::mpsc::Receiver<()>>>,
+    }
+
+    impl ModelClient for BlockOnFirstCallClient {
+        fn client_name(&self) -> &str {
+            "block-on-first-call-client"
+        }
+
+        fn complete(
+            &self,
+            request: &qsf_models::ModelRequest,
+        ) -> anyhow::Result<qsf_models::ModelResponse> {
+            if let Some(started_tx) = self.started_tx.lock().unwrap().take() {
+                let _ = started_tx.send(());
+                if let Some(release_rx) = self.release_rx.lock().unwrap().take() {
+                    let _ = release_rx.recv();
+                }
+            }
+            Ok(qsf_models::ModelResponse::from_text(
+                request,
+                self.client_name(),
+                request.model_name.clone(),
+                serde_json::json!({ "proposed_candidate": null, "contradictions": [] }).to_string(),
+            ))
+        }
+    }
+
+    #[tokio::test]
+    async fn two_turns_completing_while_the_first_formation_call_blocks_are_both_processed_in_order()
+     {
+        let tempdir = TempDir::new().unwrap();
+        let app_state = state(&tempdir);
+        let allocation = app_state.create_session().await.unwrap();
+        let session = app_state
+            .session_runtime(&allocation.qsf_session_id)
+            .await
+            .unwrap();
+
+        let (started_tx, started_rx) = tokio::sync::oneshot::channel();
+        let (release_tx, release_rx) = std::sync::mpsc::channel();
+        let client: Arc<dyn ModelClient> = Arc::new(BlockOnFirstCallClient {
+            started_tx: std::sync::Mutex::new(Some(started_tx)),
+            release_rx: std::sync::Mutex::new(Some(release_rx)),
+        });
+        let build_client: ClientBuilder = {
+            let client = Arc::clone(&client);
+            Arc::new(move || Ok(Arc::clone(&client)))
+        };
+
+        spawn_live_goal_formation_with_client_builder(
+            session.clone(),
+            allocation.qsf_session_id.clone(),
+            0,
+            "first turn".to_string(),
+            None,
+            Arc::clone(&build_client),
+        );
+
+        // Wait until the first call is genuinely blocked inside its model call before enqueuing
+        // the second turn, so this exercises the queue rather than a race between two spawns.
+        started_rx.await.expect("first call must start");
+
+        spawn_live_goal_formation_with_client_builder(
+            session.clone(),
+            allocation.qsf_session_id.clone(),
+            1,
+            "second turn".to_string(),
+            None,
+            Arc::clone(&build_client),
+        );
+
+        // The second turn must land in the queue (not spawn its own concurrent worker) while the
+        // first call is still blocked.
+        tokio::time::timeout(std::time::Duration::from_secs(5), async {
+            loop {
+                if session.lock().await.live_goal_formation_queue.len() == 1 {
+                    return;
+                }
+                tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+            }
+        })
+        .await
+        .expect("the second turn must be queued while the first call is in flight");
+
+        release_tx.send(()).expect("release the first call");
+
+        let performed_exchange_indices =
+            tokio::time::timeout(std::time::Duration::from_secs(5), async {
+                loop {
+                    let diagnostics_content = std::fs::read_to_string(
+                        app_state
+                            .diagnostics_dir()
+                            .join(format!("{}.jsonl", allocation.qsf_session_id)),
+                    )
+                    .unwrap();
+                    let indices: Vec<usize> = diagnostics_content
+                        .lines()
+                        .map(|line| serde_json::from_str::<serde_json::Value>(line).unwrap())
+                        .filter(|value| value["kind"] == "live_goal_formation_performed")
+                        .map(|value| value["exchange_index"].as_u64().unwrap() as usize)
+                        .collect();
+                    if indices.len() >= 2 {
+                        return indices;
+                    }
+                    tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+                }
+            })
+            .await
+            .expect("both queued turns must produce a live_goal_formation_performed diagnostic");
+
+        assert_eq!(
+            performed_exchange_indices,
+            vec![0, 1],
+            "queued turns must be processed in FIFO order"
+        );
+        assert!(!session.lock().await.live_goal_formation_in_flight);
+        assert!(session.lock().await.live_goal_formation_queue.is_empty());
     }
 
     #[tokio::test]

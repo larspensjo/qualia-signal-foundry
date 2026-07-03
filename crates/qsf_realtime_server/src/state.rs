@@ -1,4 +1,4 @@
-use std::collections::{HashMap, HashSet};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
@@ -14,6 +14,7 @@ use uuid::Uuid;
 
 use crate::cli::Args;
 use crate::diagnostics::{DiagnosticRecord, DiagnosticTrust, DiagnosticWriter};
+use crate::realtime::live_goal_formation::PendingLiveGoalFormation;
 use crate::realtime::turn_context::TurnContextCapture;
 use crate::realtime::volition_injection::build_stable_baseline_instructions;
 use crate::realtime::volition_inspection_capture::VolitionInspectionCapture;
@@ -487,10 +488,15 @@ pub struct SessionRuntime {
     pub degraded: bool,
     pub sideband: Option<crate::realtime::sideband::SidebandHandle>,
     pub volition: crate::realtime::volition::VolitionRuntimeState,
-    /// Set while a `live_goal_formation` task is running for this session, so a second trusted
-    /// turn completing before the first task finishes skips spawning another one rather than
-    /// racing it on a stale goal-set snapshot.
+    /// Set while a worker task is draining `live_goal_formation_queue` for this session, so a
+    /// trusted turn completing while formation is already running enqueues rather than spawning
+    /// a second concurrent worker racing the first on a stale goal-set snapshot.
     pub live_goal_formation_in_flight: bool,
+    /// FIFO queue of trusted turns awaiting live goal formation. Every eligible turn is pushed
+    /// here and drained in order by a single per-session worker, so a turn completing while
+    /// formation is in flight is queued rather than dropped (see
+    /// `crate::realtime::live_goal_formation`).
+    pub(crate) live_goal_formation_queue: VecDeque<PendingLiveGoalFormation>,
     status_tx: watch::Sender<SidebandStatus>,
     turn_context_tx: watch::Sender<Option<TurnContextCapture>>,
     volition_inspection_tx: watch::Sender<Option<VolitionInspectionCapture>>,
@@ -526,6 +532,7 @@ impl SessionRuntime {
             sideband: None,
             volition: crate::realtime::volition::VolitionRuntimeState::new(),
             live_goal_formation_in_flight: false,
+            live_goal_formation_queue: VecDeque::new(),
             status_tx: watch::channel(SidebandStatus::default()).0,
             turn_context_tx: watch::channel(None).0,
             volition_inspection_tx: watch::channel(None).0,

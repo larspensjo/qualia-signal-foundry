@@ -274,13 +274,17 @@ pub(crate) fn commit_cross_session_sleep(
     // Run the sleep volition goal-maintenance pass (whole-history formation + whole-set sweep)
     // before writing the consumed-session commit marker. If the model-backed maintenance pass
     // fails, the next sleep run must still retry this session instead of treating it as consumed.
+    // The judge sees the raw session transcript (the same source `session_sleep_input` built for
+    // summarization), not the generated summary, so a durable goal signal present in the session
+    // but flattened out of the summary is still visible to formation.
+    let whole_history_input = session_sleep_input(&session).session_text;
     let maintenance_client = qsf_models::build_client_from_env()?;
     if let Some(maintenance) = super::volition_continuity::run_sleep_volition_goal_maintenance(
         context,
         maintenance_client.as_ref(),
         state_dir,
         &session.session_id,
-        &report.session_summary,
+        &whole_history_input,
     )? {
         if let Some(admitted) = maintenance.admitted_goal_id {
             outcome.observations.push(format!(
