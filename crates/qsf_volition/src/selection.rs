@@ -55,12 +55,29 @@ pub fn compute_relevance_with_salience(
     compute_relevance(goal, fixture, terms) + salience as f64
 }
 
-pub fn initiative_for_goal(goal: &Goal, matched_terms: &[String]) -> InitiativeProposal {
-    let effect = goal
+/// Number of distinct matched activation keywords at which a goal that allows
+/// `ProposeExperiment` treats the match as a strong thematic hit and proposes rather than
+/// reflects. Generic infrastructure — no persona-specific terms live in code.
+pub const STRONG_MATCH_EFFECT_THRESHOLD: usize = 2;
+
+/// Choose which allowed effect a goal fires for this match. A goal that permits
+/// `ProposeExperiment` and matched at least `STRONG_MATCH_EFFECT_THRESHOLD` of its keywords
+/// proposes; otherwise the goal takes its first allowed effect (`Reflect` by convention).
+pub fn select_effect_for_goal(goal: &Goal, matched_terms: &[String]) -> AllowedEffect {
+    let allows_propose = goal
         .allowed_effects
+        .contains(&AllowedEffect::ProposeExperiment);
+    if allows_propose && matched_terms.len() >= STRONG_MATCH_EFFECT_THRESHOLD {
+        return AllowedEffect::ProposeExperiment;
+    }
+    goal.allowed_effects
         .first()
         .copied()
-        .unwrap_or(AllowedEffect::Reflect);
+        .unwrap_or(AllowedEffect::Reflect)
+}
+
+pub fn initiative_for_goal(goal: &Goal, matched_terms: &[String]) -> InitiativeProposal {
+    let effect = select_effect_for_goal(goal, matched_terms);
     initiative_for_effect(goal, effect, matched_terms)
 }
 
@@ -376,7 +393,7 @@ mod tests {
     }
 
     #[test]
-    fn initiative_for_goal_uses_first_allowed_effect() {
+    fn initiative_for_goal_takes_first_effect_on_thin_match() {
         let fixture = static_fixture();
         let goal = fixture
             .goals
@@ -388,6 +405,61 @@ mod tests {
         assert_eq!(proposal.effect, goal.allowed_effects[0]);
         assert_eq!(proposal.goal_id, goal.id);
         assert_eq!(proposal.matched_terms, terms);
+    }
+
+    #[test]
+    fn track_ai_transition_proposes_experiment_on_rich_transition_match() {
+        let fixture = realtime_seed_fixture();
+        let goal = fixture
+            .goals
+            .iter()
+            .find(|g| g.id == "track-the-ai-transition")
+            .unwrap();
+        let rich = vec![
+            "automation".to_string(),
+            "job".to_string(),
+            "economy".to_string(),
+        ];
+        assert_eq!(
+            select_effect_for_goal(goal, &rich),
+            AllowedEffect::ProposeExperiment
+        );
+
+        let thin = vec!["future".to_string()];
+        assert_eq!(select_effect_for_goal(goal, &thin), AllowedEffect::Reflect);
+    }
+
+    #[test]
+    fn reflect_only_goal_always_reflects() {
+        let fixture = realtime_seed_fixture();
+        let goal = fixture
+            .goals
+            .iter()
+            .find(|g| g.id == "serve-the-present-person")
+            .unwrap();
+        let terms = vec!["how".to_string(), "help".to_string(), "explain".to_string()];
+        assert_eq!(select_effect_for_goal(goal, &terms), AllowedEffect::Reflect);
+    }
+
+    #[test]
+    fn static_fixture_clarify_goal_proposes_on_strong_match_reflects_on_thin() {
+        // Deliberate behavior change: `clarify-weak-evidence-topic` (static_fixture) allows
+        // [Reflect, ProposeExperiment], so the generic selector proposes on a
+        // >= STRONG_MATCH_EFFECT_THRESHOLD keyword match and only reflects on a thin match.
+        // Pinned here so the static-fixture change is explicit, not accidental.
+        let fixture = static_fixture();
+        let goal = fixture
+            .goals
+            .iter()
+            .find(|g| g.id == "clarify-weak-evidence-topic")
+            .unwrap();
+        let strong = vec!["voice".to_string(), "memory".to_string()];
+        assert_eq!(
+            select_effect_for_goal(goal, &strong),
+            AllowedEffect::ProposeExperiment
+        );
+        let thin = vec!["memory".to_string()];
+        assert_eq!(select_effect_for_goal(goal, &thin), AllowedEffect::Reflect);
     }
 
     #[test]
