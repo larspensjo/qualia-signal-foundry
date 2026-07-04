@@ -11,6 +11,7 @@ import {
   parseVolitionStateMessage,
   providerTypeToRelayKind,
   reduceConversationState,
+  selectMuteButton,
   selectVolitionPanelModel,
 } from "./realtime";
 
@@ -380,6 +381,44 @@ describe("conversation reducer", () => {
       detail: "late degraded status",
     });
     expect(afterStop.warning).toBeNull();
+  });
+});
+
+describe("microphone mute", () => {
+  it("toggles the muted gate on and off", () => {
+    const muted = reduceConversationState(INITIAL_STATE, { type: "mute_toggled" });
+    expect(muted.muted).toBe(true);
+
+    const unmuted = reduceConversationState(muted, { type: "mute_toggled" });
+    expect(unmuted.muted).toBe(false);
+  });
+
+  it("preserves a pre-armed mute across a stop", () => {
+    const muted = reduceConversationState(INITIAL_STATE, { type: "mute_toggled" });
+    const stopped = reduceConversationState(muted, { type: "stopped" });
+    expect(stopped.muted).toBe(true);
+
+    // A provider-driven session close must also leave the gate armed.
+    const active = reduceConversationState(muted, {
+      type: "session_allocated",
+      sessionId: "session_1",
+    });
+    const closed = reduceConversationState(active, {
+      type: "provider_envelope",
+      envelope: {
+        qsf_session_id: "session_1",
+        event_id: "evt_close",
+        kind: "session_stopped",
+      },
+    });
+    expect(closed.muted).toBe(true);
+  });
+
+  it("derives an action label and pressed state for the button", () => {
+    expect(selectMuteButton(INITIAL_STATE)).toEqual({ label: "Mute", pressed: false });
+
+    const muted = reduceConversationState(INITIAL_STATE, { type: "mute_toggled" });
+    expect(selectMuteButton(muted)).toEqual({ label: "Unmute", pressed: true });
   });
 });
 

@@ -1662,3 +1662,25 @@ homes (experiment Results, `Architecture.VolitionSystem.md`, `Experiment.Backlog
 plan) and the file is deleted. Events that change no recommendation (e.g. a negative test with
 nothing new) do not touch the handoff. The handoff is never authoritative for anything — readers
 follow its links; other documents must not cite it as evidence.
+
+## 2026-07-04 - Experiment documents are scoped to consciousness-simulation mechanisms
+
+Decision: An `Experiment.*.md` is reserved for reducing uncertainty about a
+consciousness-simulation mechanism (memory, volition, continuity, presence, context
+assembly, arbitration, and the like). Routine engineering work — UI controls, refactors,
+build tooling, launcher flags, dependency bumps — does not earn an experiment even when it
+is a self-contained testable slice; it is carried by its code, its tests, and its commit,
+and promoted to a plan, architecture note, or decision only if it affects those.
+
+Context: The workflow's "single self-contained, testable slice → an Experiment" rule of
+thumb read as scope-neutral, inviting experiment documents for ordinary feature work whose
+outcome was never in doubt. That dilutes the validation track, which exists to make the
+project's research legible, and buries genuine mechanism experiments among engineering
+chores. The trigger was a browser-UI mute control that is plainly engineering, not research.
+
+Consequences: The test for an experiment is now "does this probe a simulation mechanism
+whose behavior is uncertain?", not merely "is this a testable slice?". `ProjectWorkflow.md`
+(Document Tracks, the `docs/Experiments/` responsibility, and Experiment Discipline) states
+the scope. Engineering slices proceed without an experiment document; if such a slice raises
+a real question about how a mechanism behaves, that question — not the feature — becomes the
+experiment.
