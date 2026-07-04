@@ -1,7 +1,7 @@
 # Handoff — Resume Here
 
-**Updated:** 2026-07-04 — weighted-goal-activation design approved (arbitration was won by
-stopwords in the live session); implementation plan created.
+**Updated:** 2026-07-04 — weighted goal activation implemented (weight classes + qualification
+threshold gate arbitration wins); all automated verification passes; awaiting the voice retest.
 
 <!--
 Rules (see ProjectWorkflow.md, "Handoff Discipline"):
@@ -15,21 +15,24 @@ Rules (see ProjectWorkflow.md, "Handoff Discipline"):
 
 ## Now — immediate action
 
-**Implement the first phase (weighted keyword schema + pure scoring) of
-[Plan.WeightedGoalActivation.md](Plans/Plan.WeightedGoalActivation.md)**.
-Why: the 2026-07-04 session showed stopwords winning arbitration
-([Design.WeightedGoalActivation.md](Plans/Design.WeightedGoalActivation.md)); the pending voice
-retests are phrase-engineering exercises until match strength gates the win.
-Alternate: re-run the formation voice test first
+**Run the voice protocol in
+[Experiment.WeightedGoalActivation.md](Experiments/Experiment.WeightedGoalActivation.md)**
+(~two minutes: natural step-2 AI-transition probe should let `track-the-ai-transition` win and
+fire `ProposeExperiment`; "for what it's worth, thanks" should record a
+`below_qualification_threshold` suppression with no initiative; injection latency unchanged at
+0 ms).
+Why: the weighted-activation mechanics and all automated checks are in; the retest is the
+remaining gate and decides whether the threshold default of 4 survives.
+Alternate: re-run the formation voice test
 ([Experiment.LiveGoalFormationAndCoherence.md](Experiments/Experiment.LiveGoalFormationAndCoherence.md))
-if a live session is wanted before selection mechanics change under it.
+in the same session, since selection mechanics have now changed under it.
 
 ## Next — active plan
 
-**Complete [Plan.WeightedGoalActivation.md](Plans/Plan.WeightedGoalActivation.md)** through its
-arbitration/traces phase, then run the
-[Experiment.WeightedGoalActivation.md](Experiments/Experiment.WeightedGoalActivation.md) voice
-gate (created by the plan's first task).
+**Record the voice retest results in
+[Experiment.WeightedGoalActivation.md](Experiments/Experiment.WeightedGoalActivation.md)** and,
+if the threshold default holds, promote it in the decision log; the implementation is
+code-complete and the plan retires once the gate passes.
 Why: it unblocks honest persona retests, including the curiosity-persona step-2 gate.
 Alternate: [Plan.RealtimeVoiceConversation.md](Plans/Plan.RealtimeVoiceConversation.md) Phase 5
 (live memory extraction), independent of the volition gate.
