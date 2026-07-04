@@ -2,10 +2,10 @@
 
 ## Status
 
-Planned. The deterministic lexical layer (coarse keyword weight classes plus a global
-qualification threshold) is being implemented; this doc is its durable validation gate. The
-automated trace-contract criteria are carried by the Rust suite; the human voice retest is the
-remaining gate.
+Completed (2026-07-04). The deterministic lexical layer (coarse keyword weight classes plus a
+global qualification threshold) is implemented; all automated verification passes and the human
+voice retest confirmed every success criterion. The threshold default of 4 survived. See
+Results.
 
 ## Summary
 
@@ -206,30 +206,63 @@ and injection latency shows no regression.
 
 ## Results
 
-_To be filled in after the voice retest._
+One voice session (2026-07-04, `state/realtime/diagnostics/default.jsonl`, exchanges recorded
+17:28–17:29). The session ran against carried-over continuity state from an earlier run, which
+incidentally strengthened the evidence (see Surprises).
 
 ### What Happened
 
+- **Step-2 AI-transition probe** (natural phrasing about machines replacing jobs and the
+  economy): `track-the-ai-transition` won at `match_strength` **16** (tier 5), over
+  `serve-the-present-person` at strength **2** (recorded `below_qualification_threshold`). The
+  rich match fired `propose_experiment`, which surfaced.
+- **Deliberately weak turn** ("For what it's worth, thanks."): **no goal qualified** — the turn
+  decision recorded `arbitration_result: null` with `serve-the-present-person` at strength 1 in
+  `below_threshold_candidates`, and no bounded initiative fired.
+
 ### Measurements
+
+- `final_transcript_received_to_volition_context_injected`: **0 ms** on both traced turns (no
+  regression).
+- `selected_match_details` on the probe turn: `track-the-ai-transition=16`,
+  `maintain-healthcare-ai-job-thesis=4`, `learn-what-drives-this-person=4`,
+  `serve-the-present-person=2`.
 
 ### Observations
 
+- The intended reversal held: a five-term on-topic match now beats the protected present-person
+  goal, which previously won the initiative line on a stopword.
+- The no-qualifier turn was visibly quiet, with a legible `below_qualification_threshold`
+  suppression in the diagnostics chain.
+
 ### Surprises
+
+- A live-formed goal carried over from the prior session (`maintain-healthcare-ai-job-thesis`)
+  qualified at strength **4** on its Normal-default keywords and lost to `track-the-ai-transition`
+  on tier — an unplanned but welcome end-to-end confirmation of the live-formed-goal Normal-default
+  compatibility contract.
+- The prior run's records (`qualification_threshold: null`, no `selected_match_details`) loaded
+  cleanly alongside the new-schema records, confirming the legacy-compat reader on real data.
 
 ### Failure Modes
 
+None observed. First-audio latency varied (378–2012 ms) across turns, which is model variability
+unrelated to volition injection (injection stayed at 0 ms).
+
 ## Interpretation
 
-_To be filled in after the voice retest._
-
 ```text
-Observed:
-Interpreted:
-Uncertain:
+Observed: On the natural AI-transition probe, track-the-ai-transition won at strength 16 and
+          fired ProposeExperiment; the stopword-only turn recorded a below_qualification_threshold
+          suppression with no initiative; injection latency stayed at 0 ms.
+Interpreted: Coarse keyword weights plus a single global qualification threshold (default 4) are
+          sufficient to make qualification outcomes match intuition on natural phrasing, without
+          the phrase-engineering the pre-weight mechanics required.
+Uncertain: Only one session was run. Broader phrasings and multi-persona fixtures are untested;
+          the threshold value is validated for these two fixtures, not proven optimal.
 ```
 
-Record whether the threshold default of 4 survives (open decision — tune as fixture data if
-not).
+The threshold default of **4 survives** — no fixture-data tuning was warranted by this session.
 
 ## Follow-Up Questions
 
@@ -248,7 +281,9 @@ not).
 
 ## Final Status
 
-Not yet evaluated — awaiting the human voice retest.
+Useful Result. The mechanics work as designed and the threshold default of 4 is confirmed for
+both shipped fixtures. The long-term semantic direction remains open in
+`Idea.SemanticGoalActivation.md`.
 
 ## Notes
 

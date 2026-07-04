@@ -1,7 +1,7 @@
 # Handoff — Resume Here
 
-**Updated:** 2026-07-04 — weighted goal activation implemented (weight classes + qualification
-threshold gate arbitration wins); all automated verification passes; awaiting the voice retest.
+**Updated:** 2026-07-04 — weighted goal activation implemented and voice-retested; the AI-transition
+probe wins on-topic, stopword turns stay quiet, threshold 4 confirmed. Gate passed.
 
 <!--
 Rules (see ProjectWorkflow.md, "Handoff Discipline"):
@@ -15,27 +15,25 @@ Rules (see ProjectWorkflow.md, "Handoff Discipline"):
 
 ## Now — immediate action
 
-**Run the voice protocol in
-[Experiment.WeightedGoalActivation.md](Experiments/Experiment.WeightedGoalActivation.md)**
-(~two minutes: natural step-2 AI-transition probe should let `track-the-ai-transition` win and
-fire `ProposeExperiment`; "for what it's worth, thanks" should record a
-`below_qualification_threshold` suppression with no initiative; injection latency unchanged at
-0 ms).
-Why: the weighted-activation mechanics and all automated checks are in; the retest is the
-remaining gate and decides whether the threshold default of 4 survives.
+**Resume persona/goal experimentation on the live volition system** — the weighted-activation
+gate is closed, so the fixture can now be tuned and felt-tested without stopwords hijacking the
+turn.
+Why: the deterministic activation layer is validated end-to-end
+([Experiment.WeightedGoalActivation.md](Experiments/Experiment.WeightedGoalActivation.md), Useful
+Result); the remaining value is in what the fixture expresses.
 Alternate: re-run the formation voice test
-([Experiment.LiveGoalFormationAndCoherence.md](Experiments/Experiment.LiveGoalFormationAndCoherence.md))
-in the same session, since selection mechanics have now changed under it.
+([Experiment.LiveGoalFormationAndCoherence.md](Experiments/Experiment.LiveGoalFormationAndCoherence.md)),
+since selection mechanics changed under it.
 
 ## Next — active plan
 
-**Record the voice retest results in
-[Experiment.WeightedGoalActivation.md](Experiments/Experiment.WeightedGoalActivation.md)** and,
-if the threshold default holds, promote it in the decision log; the implementation is
-code-complete and the plan retires once the gate passes.
-Why: it unblocks honest persona retests, including the curiosity-persona step-2 gate.
+**Elaborate a persona experiment** (e.g. `Experiment.PersonaTensionVariations` in
+[Experiment.Backlog.md](Experiments/Experiment.Backlog.md)) that exercises the now-validated
+weighted activation — new tensions/keyword-weight mixes and their felt behavior.
+Why: with qualification gating in place, fixture-data changes are the cheapest lever on persona
+behavior and no longer masked by stopword wins.
 Alternate: [Plan.RealtimeVoiceConversation.md](Plans/Plan.RealtimeVoiceConversation.md) Phase 5
-(live memory extraction), independent of the volition gate.
+(live memory extraction), independent of the volition work.
 
 ## Horizon — direction
 

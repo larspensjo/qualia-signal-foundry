@@ -1664,3 +1664,15 @@ whose behavior is uncertain?", not merely "is this a testable slice?". `ProjectW
 the scope. Engineering slices proceed without an experiment document; if such a slice raises
 a real question about how a mechanism behaves, that question — not the feature — becomes the
 experiment.
+
+## 2026-07-04 - Weighted goal activation validated; threshold 4 confirmed
+Decision: The qualification threshold default of 4 is confirmed for both shipped fixtures and
+kept as the shipped value. Weighted goal activation is accepted design, not a candidate.
+Context: The human voice retest (`Experiment.WeightedGoalActivation.md`, session 2026-07-04)
+confirmed every success criterion: the natural AI-transition probe let `track-the-ai-transition`
+win at match strength 16 and fire `ProposeExperiment`, a stopword-only turn recorded a
+below-qualification-threshold suppression with no initiative, and injection latency stayed at
+0 ms. Confirms the 2026-07-04 weighted-goal-activation decision above.
+Consequences: The threshold stays fixture data and can be retuned per persona without code
+changes if later evidence warrants; no per-tier thresholds are introduced. The value is
+validated for these two fixtures, not proven optimal across all personas.
