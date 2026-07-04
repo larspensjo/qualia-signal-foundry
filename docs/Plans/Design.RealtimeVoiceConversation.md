@@ -10,7 +10,7 @@ Candidate; Phase 0 decisions accepted on 2026-06-09.
 > conversation, where `gpt-realtime` owns the *voice* and Qualia Signal Foundry
 > owns the *mind* (memory, continuity, context, tools, observability).
 >
-> Revised 2026-06-09 after `docs/Reviews/Review.RealtimeVoiceConversationDesign.2026-06-08.md`.
+> Revised 2026-06-09 after review.
 > Key changes from that review: the QSF server owns the WebRTC SDP rendezvous and
 > stores the provider `call_id` from Phase 2; browser-relayed events are
 > diagnostic-only until the server sideband is authoritative; a dedicated

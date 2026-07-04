@@ -1010,8 +1010,6 @@ Consequences: The read-only realtime scope proves the tool-loop machinery (permi
 execution records, exchange boundary, credential hygiene) against server-owned
 data only. The generic `qsf_tools` registry core is designed so the later
 full-exposure phase is an additive change.
-Refs: docs/Plans/Plan.RealtimeVoiceConversation.md,
-docs/Plans/Review.RealtimeVoiceConversation.phase4.Plan.codex.json
 
 ## 2026-06-10 - Tool execution records persist onto durable turns
 Decision: Live tool activity is recorded as a `ToolExecutionRecord` (permission
