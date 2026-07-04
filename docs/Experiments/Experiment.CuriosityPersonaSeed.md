@@ -247,9 +247,8 @@ re-run one voice session per the Human Test Steps against the fixed formation pr
   first-person keywords (`i`, `my`, `me`) are intentionally near-universal. First live evidence
   (2026-07-03) showed activation was near-universal but arbitration handled it. The deterministic
   fix is now in place: activation keywords carry coarse weight classes and a global qualification
-  threshold gates arbitration wins (design in
-  [Design.WeightedGoalActivation.md](../Plans/Design.WeightedGoalActivation.md), decision recorded
-  2026-07-04). Broad keywords like `i` / `my` / `me` / `what` / `how` are curated **Weak**, so they
+  threshold gates arbitration wins (weighted goal activation, DecisionLog 2026-07-04). Broad
+  keywords like `i` / `my` / `me` / `what` / `how` are curated **Weak**, so they
   activate but cannot win a turn on their own — the step-2 AI-transition gate and stopword-only
   suppression are retested under the new mechanics via
   [Experiment.WeightedGoalActivation.md](Experiment.WeightedGoalActivation.md).

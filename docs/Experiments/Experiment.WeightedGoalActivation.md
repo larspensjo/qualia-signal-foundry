@@ -36,12 +36,11 @@ phrasing, and whether the threshold default of 4 survives a live retest.
 ## Related Documents
 
 ```text
-docs/Plans/Design.WeightedGoalActivation.md
+docs/DecisionLog.md (weighted goal activation, 2026-07-04 — the durable design record)
 docs/Plans/Idea.SemanticGoalActivation.md
 docs/Architecture/Architecture.VolitionSystem.md
 docs/Experiments/Experiment.CuriosityPersonaSeed.md
 docs/Experiments/Experiment.LiveGoalFormationAndCoherence.md
-docs/DecisionLog.md
 crates/qsf_volition/src/fixture.rs
 crates/qsf_volition/src/selection.rs
 crates/qsf_volition/src/arbitration.rs
