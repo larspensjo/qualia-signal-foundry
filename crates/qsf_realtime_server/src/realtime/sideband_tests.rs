@@ -293,7 +293,13 @@ async fn trusted_selection_turn_publishes_volition_capture_and_cross_links_diagn
         .decision
         .as_ref()
         .expect("selection turn must include a decision");
-    assert!(decision.protected_tier_active);
+    assert!(
+        decision
+            .winner
+            .as_ref()
+            .expect("qualified winner")
+            .protected_tier_active
+    );
     assert_eq!(
         turn_context_capture.request_hash,
         volition_capture.response_create_event_ref

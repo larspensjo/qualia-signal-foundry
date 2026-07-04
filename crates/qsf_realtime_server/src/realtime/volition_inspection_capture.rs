@@ -1,6 +1,6 @@
 use qsf_volition::{
-    InitiativeOutput, ModeArbitrationResult, RankedSelectionResult, ShapingIntensity,
-    VolitionStateInspection, VolitionSuppressionReason,
+    ActivationKeyword, InitiativeOutput, ModeArbitrationOutcome, RankedSelectionResult,
+    ShapingIntensity, VolitionStateInspection, VolitionSuppressionReason,
 };
 use serde::{Deserialize, Serialize};
 use time::OffsetDateTime;
@@ -8,12 +8,28 @@ use time::OffsetDateTime;
 use crate::realtime::volition_injection::{VolitionModeBiasOutcome, build_mode_bias_outcomes};
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
-pub struct VolitionTurnDecisionSummary {
+pub struct VolitionTurnWinnerSummary {
     pub winner_goal_id: String,
     pub winner_goal_title: String,
     pub winner_effective_tier: u8,
     pub winner_biased_tier: u8,
     pub protected_tier_active: bool,
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+pub struct VolitionBelowThresholdSummary {
+    pub goal_id: String,
+    pub goal_title: String,
+    pub matched_keywords: Vec<ActivationKeyword>,
+    pub match_strength: u32,
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+pub struct VolitionTurnDecisionSummary {
+    /// `None` on a no-qualifier turn — the dedicated no-winner turn-decision outcome.
+    pub winner: Option<VolitionTurnWinnerSummary>,
+    pub qualification_threshold: u32,
+    pub below_threshold: Vec<VolitionBelowThresholdSummary>,
     pub mode_bias_outcomes: Vec<VolitionModeBiasOutcome>,
     pub selected_goal_ids: Vec<String>,
     pub omitted_or_suppressed_goal_ids: Vec<String>,
@@ -38,20 +54,47 @@ pub struct VolitionInspectionCapture {
 #[allow(clippy::too_many_arguments)]
 pub fn build_volition_turn_decision_summary(
     ranked: &RankedSelectionResult,
-    arbitration: &ModeArbitrationResult,
-    initiative_output: &InitiativeOutput,
+    outcome: &ModeArbitrationOutcome,
+    initiative_output: Option<&InitiativeOutput>,
     surfaced: bool,
     suppression_reason: Option<VolitionSuppressionReason>,
     rendered_line_present: bool,
     shaping_intensity: ShapingIntensity,
 ) -> VolitionTurnDecisionSummary {
+    // The winner block and mode-bias outcomes derive from the qualified result; on a
+    // no-qualifier turn there is no `ModeArbitrationResult` (below-threshold candidates never
+    // entered the sort), so both are absent/empty and the winner is `None`.
+    let winner = outcome
+        .qualified
+        .as_ref()
+        .map(|arbitration| VolitionTurnWinnerSummary {
+            winner_goal_id: arbitration.winner.goal.id.clone(),
+            winner_goal_title: arbitration.winner.goal.title.clone(),
+            winner_effective_tier: arbitration.winner_bias.effective_tier,
+            winner_biased_tier: arbitration.winner_bias.biased_tier,
+            protected_tier_active: arbitration.winner_bias.protected,
+        });
+    let mode_bias_outcomes = outcome
+        .qualified
+        .as_ref()
+        .map(build_mode_bias_outcomes)
+        .unwrap_or_default();
+    let below_threshold = outcome
+        .below_threshold
+        .iter()
+        .map(|candidate| VolitionBelowThresholdSummary {
+            goal_id: candidate.selection.goal.id.clone(),
+            goal_title: candidate.selection.goal.title.clone(),
+            matched_keywords: candidate.selection.matched_keywords.clone(),
+            match_strength: candidate.match_strength,
+        })
+        .collect();
+
     VolitionTurnDecisionSummary {
-        winner_goal_id: arbitration.winner.goal.id.clone(),
-        winner_goal_title: arbitration.winner.goal.title.clone(),
-        winner_effective_tier: arbitration.winner_bias.effective_tier,
-        winner_biased_tier: arbitration.winner_bias.biased_tier,
-        protected_tier_active: arbitration.winner_bias.protected,
-        mode_bias_outcomes: build_mode_bias_outcomes(arbitration),
+        winner,
+        qualification_threshold: outcome.qualification_threshold,
+        below_threshold,
+        mode_bias_outcomes,
         selected_goal_ids: ranked
             .selected
             .iter()
@@ -59,7 +102,8 @@ pub fn build_volition_turn_decision_summary(
             .collect(),
         omitted_or_suppressed_goal_ids: build_omitted_or_suppressed_goal_ids(ranked),
         shaping_intensity,
-        last_initiative_output_kind: Some(initiative_output_kind(initiative_output).to_string()),
+        last_initiative_output_kind: initiative_output
+            .map(|output| initiative_output_kind(output).to_string()),
         last_initiative_surfaced: surfaced,
         last_initiative_suppression_reason: suppression_reason,
         last_initiative_rendered_line_present: rendered_line_present,
@@ -115,32 +159,29 @@ mod tests {
 
     fn selection_decision() -> (
         qsf_volition::RankedSelectionResult,
-        ModeArbitrationResult,
+        ModeArbitrationOutcome,
         InitiativeOutput,
         ShapingIntensity,
     ) {
         let fixture = realtime_seed_fixture();
         let state = VolitionState::from_fixture(&fixture);
         let ranked = select_goals_ranked("how can you help me", &state, &fixture);
-        let arbitration = arbitrate_with_mode(ranked.selected.clone(), &fixture, Mode::Neutral)
-            .expect("expected selection")
-            .qualified
-            .expect("qualified winner");
+        let outcome = arbitrate_with_mode(ranked.selected.clone(), &fixture, Mode::Neutral)
+            .expect("expected selection");
+        let winner = outcome.qualified.as_ref().expect("qualified winner");
         let opportunities = detect_opportunities(
             &grounded_terms_from_text("how can you help me"),
             &state,
             &fixture,
         );
         let intensity = qsf_volition::choose_shaping_intensity(
-            &arbitration,
+            winner,
             &opportunities,
             ReceptivenessHint::Neutral,
         );
-        let output = qsf_volition::execute_initiative(
-            &arbitration.winner.initiative,
-            &arbitration.winner.goal,
-        );
-        (ranked, arbitration, output, intensity)
+        let output =
+            qsf_volition::execute_initiative(&winner.winner.initiative, &winner.winner.goal);
+        (ranked, outcome, output, intensity)
     }
 
     #[test]
@@ -166,11 +207,11 @@ mod tests {
         let fixture = realtime_seed_fixture();
         let state = VolitionState::from_fixture(&fixture);
         let inspection = build_state_inspection(&state, &fixture);
-        let (ranked, arbitration, output, intensity) = selection_decision();
+        let (ranked, outcome, output, intensity) = selection_decision();
         let decision = build_volition_turn_decision_summary(
             &ranked,
-            &arbitration,
-            &output,
+            &outcome,
+            Some(&output),
             false,
             Some(VolitionSuppressionReason::Intensity),
             false,
@@ -190,7 +231,13 @@ mod tests {
         assert_eq!(capture.response_create_event_ref, "request-ref");
         assert!(capture.decision.is_some());
         let decision = capture.decision.expect("decision");
-        assert!(decision.protected_tier_active);
+        assert!(
+            decision
+                .winner
+                .as_ref()
+                .expect("winner")
+                .protected_tier_active
+        );
         assert!(!decision.mode_bias_outcomes.is_empty());
         assert!(
             decision
@@ -235,11 +282,11 @@ mod tests {
         let fixture = realtime_seed_fixture();
         let state = VolitionState::from_fixture(&fixture);
         let inspection = build_state_inspection(&state, &fixture);
-        let (ranked, arbitration, output, intensity) = selection_decision();
+        let (ranked, outcome, output, intensity) = selection_decision();
         let decision = build_volition_turn_decision_summary(
             &ranked,
-            &arbitration,
-            &output,
+            &outcome,
+            Some(&output),
             false,
             Some(VolitionSuppressionReason::Intensity),
             false,
@@ -268,14 +315,11 @@ mod tests {
         let fixture = realtime_seed_fixture();
         let state = VolitionState::from_fixture(&fixture);
         let ranked = select_goals_ranked("how can you help me", &state, &fixture);
-        let arbitration = arbitrate_with_mode(ranked.selected.clone(), &fixture, Mode::Neutral)
-            .expect("expected selection")
-            .qualified
-            .expect("qualified winner");
-        let output = qsf_volition::execute_initiative(
-            &arbitration.winner.initiative,
-            &arbitration.winner.goal,
-        );
+        let outcome = arbitrate_with_mode(ranked.selected.clone(), &fixture, Mode::Neutral)
+            .expect("expected selection");
+        let winner = outcome.qualified.as_ref().expect("qualified winner");
+        let output =
+            qsf_volition::execute_initiative(&winner.winner.initiative, &winner.winner.goal);
         let capture = build_volition_inspection_capture(
             "session-123".to_string(),
             7,
@@ -284,8 +328,8 @@ mod tests {
             build_state_inspection(&state, &fixture),
             Some(build_volition_turn_decision_summary(
                 &ranked,
-                &arbitration,
-                &output,
+                &outcome,
+                Some(&output),
                 false,
                 Some(VolitionSuppressionReason::Intensity),
                 false,
@@ -300,5 +344,53 @@ mod tests {
         );
         assert!(!decision.last_initiative_surfaced);
         assert!(!decision.last_initiative_rendered_line_present);
+    }
+
+    #[test]
+    fn no_qualifier_turn_builds_no_winner_decision_with_reason_and_threshold() {
+        let fixture = realtime_seed_fixture();
+        let state = VolitionState::from_fixture(&fixture);
+        let ranked = select_goals_ranked("for what it's worth, thanks", &state, &fixture);
+        let outcome =
+            arbitrate_with_mode(ranked.selected.clone(), &fixture, Mode::Neutral).unwrap();
+        assert!(outcome.qualified.is_none());
+        let decision = build_volition_turn_decision_summary(
+            &ranked,
+            &outcome,
+            None,
+            false,
+            Some(VolitionSuppressionReason::BelowQualificationThreshold),
+            false,
+            ShapingIntensity::None,
+        );
+        assert!(decision.winner.is_none());
+        assert_eq!(
+            decision.qualification_threshold,
+            fixture.arbitration_qualification_threshold
+        );
+        assert!(!decision.below_threshold.is_empty());
+        for below in &decision.below_threshold {
+            assert_eq!(
+                below.match_strength,
+                below
+                    .matched_keywords
+                    .iter()
+                    .map(|k| k.weight())
+                    .sum::<u32>()
+            );
+        }
+        assert!(decision.mode_bias_outcomes.is_empty());
+        assert_eq!(
+            decision.last_initiative_suppression_reason,
+            Some(VolitionSuppressionReason::BelowQualificationThreshold)
+        );
+        assert!(decision.last_initiative_output_kind.is_none());
+    }
+
+    #[test]
+    fn below_qualification_threshold_reason_serializes_to_wire_string() {
+        let json = serde_json::to_string(&VolitionSuppressionReason::BelowQualificationThreshold)
+            .expect("json");
+        assert_eq!(json, "\"below_qualification_threshold\"");
     }
 }

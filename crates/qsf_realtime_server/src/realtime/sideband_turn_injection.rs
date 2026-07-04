@@ -360,25 +360,38 @@ pub(crate) async fn inject_trusted_turn_context_and_response(
         let volition_inspection_capture = {
             let guard = session.lock().await;
             let inspection = build_state_inspection(&guard.volition.state, &guard.volition.fixture);
+            // The turn decision is recorded whenever arbitration ran (a qualified winner or a
+            // below-threshold no-qualifier turn). The qualified path keeps today's winner block
+            // and suppression; the no-qualifier path records winner = none plus the dedicated
+            // `below_qualification_threshold` suppression, with no initiative output.
+            let decision = arbitration_outcome.as_ref().and_then(|outcome| {
+                let is_no_qualifier =
+                    outcome.qualified.is_none() && !outcome.below_threshold.is_empty();
+                if outcome.qualified.is_none() && !is_no_qualifier {
+                    return None;
+                }
+                let decision_suppression = if is_no_qualifier {
+                    Some(qsf_volition::VolitionSuppressionReason::BelowQualificationThreshold)
+                } else {
+                    suppression_reason
+                };
+                Some(build_volition_turn_decision_summary(
+                    &ranked,
+                    outcome,
+                    initiative_output.as_ref(),
+                    surfaced,
+                    decision_suppression,
+                    rendered_line_present,
+                    intensity,
+                ))
+            });
             build_volition_inspection_capture(
                 qsf_session_id.to_string(),
                 exchange_index,
                 OffsetDateTime::now_utc(),
                 request_hash.to_string(),
                 inspection,
-                arbitration.as_ref().and_then(|arbitration| {
-                    initiative_output.as_ref().map(|output| {
-                        build_volition_turn_decision_summary(
-                            &ranked,
-                            arbitration,
-                            output,
-                            surfaced,
-                            suppression_reason,
-                            rendered_line_present,
-                            intensity,
-                        )
-                    })
-                }),
+                decision,
             )
         };
         return send_response_create_and_capture(
