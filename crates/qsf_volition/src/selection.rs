@@ -205,8 +205,7 @@ pub fn select_goals_ranked(
 
         let salience = dynamic.map(|entry| entry.salience).unwrap_or(0);
         let strength = match_strength(&matched);
-        let relevance_score =
-            compute_relevance_with_salience(&goal, fixture, &matched, salience);
+        let relevance_score = compute_relevance_with_salience(&goal, fixture, &matched, salience);
         selected_candidates.push((goal, matched, strength, relevance_score));
     }
 
@@ -214,13 +213,15 @@ pub fn select_goals_ranked(
 
     let selected = selected_candidates
         .into_iter()
-        .map(|(goal, matched, match_strength, relevance_score)| GoalSelection {
-            initiative: initiative_for_goal(&goal, &matched),
-            matched_keywords: matched,
-            match_strength,
-            relevance_score,
-            goal,
-        })
+        .map(
+            |(goal, matched, match_strength, relevance_score)| GoalSelection {
+                initiative: initiative_for_goal(&goal, &matched),
+                matched_keywords: matched,
+                match_strength,
+                relevance_score,
+                goal,
+            },
+        )
         .collect();
 
     RankedSelectionResult {

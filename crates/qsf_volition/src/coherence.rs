@@ -394,8 +394,8 @@ pub fn resolve_sweep(
 mod tests {
     use super::*;
     use crate::{
-        ActivationKeyword, AllowedEffect, Goal, GoalScope, GoalStatus, Tension, TensionPriority,
-        apply,
+        ActivationKeyword, AllowedEffect, DEFAULT_ARBITRATION_QUALIFICATION_THRESHOLD, Goal,
+        GoalScope, GoalStatus, Tension, TensionPriority, apply,
     };
 
     fn make_tension(id: &str, tier: u8) -> Tension {
@@ -470,6 +470,7 @@ mod tests {
         let fixture = VolitionFixture {
             tensions: vec![make_tension("floor-tension", 2)],
             goals: vec![],
+            arbitration_qualification_threshold: DEFAULT_ARBITRATION_QUALIFICATION_THRESHOLD,
         };
         let candidate = make_candidate("floor-candidate", vec!["floor-tension".to_string()]);
         assert!(candidate_hard_tier_floor_rejected(&candidate, &fixture));
@@ -480,6 +481,7 @@ mod tests {
         let fixture = VolitionFixture {
             tensions: vec![make_tension("band-tension", 7)],
             goals: vec![],
+            arbitration_qualification_threshold: DEFAULT_ARBITRATION_QUALIFICATION_THRESHOLD,
         };
         let candidate = make_candidate("band-candidate", vec!["band-tension".to_string()]);
         assert!(!candidate_hard_tier_floor_rejected(&candidate, &fixture));
@@ -515,6 +517,7 @@ mod tests {
         let fixture = VolitionFixture {
             tensions: vec![make_tension("band-tension", 7)],
             goals: vec![],
+            arbitration_qualification_threshold: DEFAULT_ARBITRATION_QUALIFICATION_THRESHOLD,
         };
         let state = VolitionState::from_fixture(&fixture);
         let candidate = make_candidate("new-candidate", vec!["band-tension".to_string()]);
@@ -547,6 +550,7 @@ mod tests {
                 make_tension("band-tension", 7),
             ],
             goals: vec![make_goal("core-goal", vec!["core-tension".to_string()], 90)],
+            arbitration_qualification_threshold: DEFAULT_ARBITRATION_QUALIFICATION_THRESHOLD,
         };
         let state = VolitionState::from_fixture(&fixture);
         let candidate = make_candidate("tangent-candidate", vec!["band-tension".to_string()]);
@@ -588,6 +592,7 @@ mod tests {
                 vec!["shared-tension".to_string()],
                 80,
             )],
+            arbitration_qualification_threshold: DEFAULT_ARBITRATION_QUALIFICATION_THRESHOLD,
         };
         let state = VolitionState::from_fixture(&fixture);
         let candidate = make_candidate("equal-candidate", vec!["shared-tension".to_string()]);
@@ -616,6 +621,7 @@ mod tests {
                 vec!["band-tension".to_string()],
                 60,
             )],
+            arbitration_qualification_threshold: DEFAULT_ARBITRATION_QUALIFICATION_THRESHOLD,
         };
         let state = VolitionState::from_fixture(&fixture);
         let candidate = make_candidate("core-candidate", vec!["core-tension".to_string()]);
@@ -664,6 +670,7 @@ mod tests {
                 make_goal("core-goal", vec!["core-tension".to_string()], 90),
                 make_goal("stale-goal", vec!["band-tension".to_string()], 60),
             ],
+            arbitration_qualification_threshold: DEFAULT_ARBITRATION_QUALIFICATION_THRESHOLD,
         };
         let state = VolitionState::from_fixture(&fixture);
         let candidate = make_candidate("mixed-candidate", vec!["mid-tension".to_string()]);
@@ -713,6 +720,7 @@ mod tests {
                 make_goal("core-goal", vec!["core-tension".to_string()], 90),
                 make_goal("band-goal", vec!["band-tension".to_string()], 60),
             ],
+            arbitration_qualification_threshold: DEFAULT_ARBITRATION_QUALIFICATION_THRESHOLD,
         };
         let state = VolitionState::from_fixture(&fixture);
         let verdict = verdict(vec![contradiction("core-goal", "band-goal")]);
@@ -745,6 +753,7 @@ mod tests {
                 make_goal("goal-a", vec!["shared-tension".to_string()], 80),
                 make_goal("goal-b", vec!["shared-tension".to_string()], 80),
             ],
+            arbitration_qualification_threshold: DEFAULT_ARBITRATION_QUALIFICATION_THRESHOLD,
         };
         let mut state = VolitionState::from_fixture(&fixture);
         state = apply(
@@ -790,6 +799,7 @@ mod tests {
                 make_goal("goal-alpha", vec!["shared-tension".to_string()], 80),
                 make_goal("goal-beta", vec!["shared-tension".to_string()], 80),
             ],
+            arbitration_qualification_threshold: DEFAULT_ARBITRATION_QUALIFICATION_THRESHOLD,
         };
         // Neither goal is activated, so both default to last_activated_tick=0 — a tick tie.
         let state = VolitionState::from_fixture(&fixture);
@@ -818,6 +828,7 @@ mod tests {
                 make_goal("floor-goal-a", vec!["floor-tension-a".to_string()], 90),
                 make_goal("floor-goal-b", vec!["floor-tension-b".to_string()], 90),
             ],
+            arbitration_qualification_threshold: DEFAULT_ARBITRATION_QUALIFICATION_THRESHOLD,
         };
         let state = VolitionState::from_fixture(&fixture);
         let verdict = verdict(vec![contradiction("floor-goal-a", "floor-goal-b")]);
@@ -843,6 +854,7 @@ mod tests {
                 make_tension("band-tension", 7),
             ],
             goals: vec![make_goal("core-goal", vec!["core-tension".to_string()], 90)],
+            arbitration_qualification_threshold: DEFAULT_ARBITRATION_QUALIFICATION_THRESHOLD,
         };
         let mut state = VolitionState::from_fixture(&fixture);
         let candidate = make_candidate("accepted-band-candidate", vec!["band-tension".to_string()]);

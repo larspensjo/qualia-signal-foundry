@@ -276,9 +276,9 @@ pub fn arbitrate_with_mode(
 mod tests {
     use super::*;
     use crate::{
-        ActivationKeyword, AllowedEffect, Goal, GoalScope, GoalSelection, GoalStatus,
-        InitiativeProposal, Tension, TensionPriority, VolitionEvent, VolitionFixture, VolitionState,
-        apply, static_fixture,
+        ActivationKeyword, AllowedEffect, DEFAULT_ARBITRATION_QUALIFICATION_THRESHOLD, Goal,
+        GoalScope, GoalSelection, GoalStatus, InitiativeProposal, Tension, TensionPriority,
+        VolitionEvent, VolitionFixture, VolitionState, apply, static_fixture,
     };
 
     fn make_goal_for_arbitration(
@@ -342,6 +342,7 @@ mod tests {
         let fixture = VolitionFixture {
             tensions: vec![make_tension("test-tension", 5)],
             goals: vec![],
+            arbitration_qualification_threshold: DEFAULT_ARBITRATION_QUALIFICATION_THRESHOLD,
         };
         // "goal-a" < "goal-b" lexicographically; same tier and priority
         let sel_b = make_goal_for_arbitration("goal-b", vec!["test-tension".to_string()], 80);
@@ -359,6 +360,7 @@ mod tests {
                 make_tension("alpha-tension", 3),
             ],
             goals: vec![],
+            arbitration_qualification_threshold: DEFAULT_ARBITRATION_QUALIFICATION_THRESHOLD,
         };
         // Goal backed by both tensions at tier 3; alpha < beta lexicographically
         let sel = make_goal_for_arbitration(
@@ -381,6 +383,7 @@ mod tests {
                 make_tension("tier-7-tension", 7),
             ],
             goals: vec![],
+            arbitration_qualification_threshold: DEFAULT_ARBITRATION_QUALIFICATION_THRESHOLD,
         };
         let sel_tier7 =
             make_goal_for_arbitration("goal-z-tier7", vec!["tier-7-tension".to_string()], 80);
@@ -409,6 +412,7 @@ mod tests {
                 make_tension("band-tension", 7),
             ],
             goals: vec![],
+            arbitration_qualification_threshold: DEFAULT_ARBITRATION_QUALIFICATION_THRESHOLD,
         };
         let floor_goal =
             make_goal_for_arbitration("floor-goal", vec!["floor-tension".to_string()], 80);
@@ -443,6 +447,7 @@ mod tests {
                 make_tension("tier-7-tension", 7),
             ],
             goals: vec![],
+            arbitration_qualification_threshold: DEFAULT_ARBITRATION_QUALIFICATION_THRESHOLD,
         };
         let floor_goal =
             make_goal_for_arbitration("floor-goal", vec!["tier-2-tension".to_string()], 70);
@@ -576,6 +581,7 @@ mod tests {
         let fixture = VolitionFixture {
             tensions: vec![],
             goals: vec![],
+            arbitration_qualification_threshold: DEFAULT_ARBITRATION_QUALIFICATION_THRESHOLD,
         };
         let sel = make_goal_for_arbitration("no-tension-goal", vec![], 80);
         let result = arbitrate_with_mode(vec![sel], &fixture, Mode::Focused).unwrap();

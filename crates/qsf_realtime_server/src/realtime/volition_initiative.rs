@@ -117,9 +117,10 @@ fn bounded_line(line: String) -> String {
 mod tests {
     use super::*;
     use qsf_volition::{
-        ActivationKeyword, AllowedEffect, Goal, GoalScope, GoalSelection, GoalStatus,
-        InitiativeOutput, InitiativeProposal, ShapingIntensity, Tension, TensionPriority,
-        VolitionFixture, VolitionState, build_state_inspection,
+        ActivationKeyword, AllowedEffect, DEFAULT_ARBITRATION_QUALIFICATION_THRESHOLD, Goal,
+        GoalScope, GoalSelection, GoalStatus, InitiativeOutput, InitiativeProposal,
+        ShapingIntensity, Tension, TensionPriority, VolitionFixture, VolitionState,
+        build_state_inspection,
     };
 
     fn goal_selection(effect: AllowedEffect) -> GoalSelection {
@@ -230,6 +231,7 @@ mod tests {
                 exploratory_bias: 0,
             }],
             goals: vec![selection.goal.clone()],
+            arbitration_qualification_threshold: DEFAULT_ARBITRATION_QUALIFICATION_THRESHOLD,
         };
         let state = VolitionState::from_fixture(&fixture);
         let snapshot_before = build_state_inspection(&state, &fixture);

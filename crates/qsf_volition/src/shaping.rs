@@ -141,9 +141,10 @@ pub fn shaping_intensity_inputs(
 mod tests {
     use super::*;
     use crate::{
-        ActivationKeyword, GroundingRef, Mode, OpportunitySignal, OpportunitySignalKind,
-        VolitionFixture, VolitionState, arbitrate_with_mode, detect_opportunities,
-        grounded_terms_from_text, realtime_seed_fixture, select_goals_ranked,
+        ActivationKeyword, DEFAULT_ARBITRATION_QUALIFICATION_THRESHOLD, GroundingRef, Mode,
+        OpportunitySignal, OpportunitySignalKind, VolitionFixture, VolitionState,
+        arbitrate_with_mode, detect_opportunities, grounded_terms_from_text, realtime_seed_fixture,
+        select_goals_ranked,
     };
 
     fn opportunity(kind: OpportunitySignalKind) -> OpportunitySignal {
@@ -232,6 +233,7 @@ mod tests {
                 estimated_tokens: 10,
                 source_reference: "test".to_string(),
             }],
+            arbitration_qualification_threshold: DEFAULT_ARBITRATION_QUALIFICATION_THRESHOLD,
         };
         let state = VolitionState::from_fixture(&fixture);
         let ranked = select_goals_ranked("help maybe however thread", &state, &fixture);

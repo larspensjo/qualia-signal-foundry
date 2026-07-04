@@ -7,11 +7,10 @@ use serde_json::json;
 use crate::observability::event_log::EventType;
 use crate::runtime::run_context::RunContext;
 use crate::volition::{
-    ActivationKeyword, AllowedEffect, Goal, GoalScope, GoalStatus, ProposedGoalCandidate, Tension,
-    TensionPriority,
-    VolitionEvent, VolitionFixture, VolitionState, apply, candidate_hard_tier_floor_rejected,
-    effective_tier_from_tension_ids, propose_goal_candidates, resolve_admission,
-    resolve_protected_floor_rejection, resolve_sweep,
+    ActivationKeyword, AllowedEffect, DEFAULT_ARBITRATION_QUALIFICATION_THRESHOLD, Goal, GoalScope,
+    GoalStatus, ProposedGoalCandidate, Tension, TensionPriority, VolitionEvent, VolitionFixture,
+    VolitionState, apply, candidate_hard_tier_floor_rejected, effective_tier_from_tension_ids,
+    propose_goal_candidates, resolve_admission, resolve_protected_floor_rejection, resolve_sweep,
 };
 use qsf_models::{CoherenceJudge, CoherenceJudgeGoalRef, ScriptedCoherenceJudge};
 
@@ -278,7 +277,11 @@ fn coherence_fixture() -> VolitionFixture {
         goal("note-emerging-pattern-beta", "continuity-preservation", 80),
     ];
 
-    VolitionFixture { tensions, goals }
+    VolitionFixture {
+        tensions,
+        goals,
+        arbitration_qualification_threshold: DEFAULT_ARBITRATION_QUALIFICATION_THRESHOLD,
+    }
 }
 
 fn goal(id: &str, tension_id: &str, base_priority: u8) -> Goal {

@@ -14,8 +14,8 @@ use crate::observability::event_log::EventType;
 use crate::observability::trace::TraceRecord;
 use crate::runtime::run_context::RunContext;
 use crate::volition::{
-    ActivationKeyword, AdmissionResolution, AllowedEffect, DeclinedCandidate, EvidenceRef, Goal,
-    GoalScope,
+    ActivationKeyword, AdmissionResolution, AllowedEffect,
+    DEFAULT_ARBITRATION_QUALIFICATION_THRESHOLD, DeclinedCandidate, EvidenceRef, Goal, GoalScope,
     GoalStatus, ProposedGoalCandidate, Tension, TensionPriority, VolitionEvent, VolitionFixture,
     VolitionState, apply, effective_tier_from_tension_ids, newly_declined_candidate,
     resolve_formed_candidate, resolve_sweep,
@@ -302,7 +302,11 @@ fn live_formation_fixture() -> VolitionFixture {
         goal("sustain-current-focus", "continuity-preservation", 80),
     ];
 
-    VolitionFixture { tensions, goals }
+    VolitionFixture {
+        tensions,
+        goals,
+        arbitration_qualification_threshold: DEFAULT_ARBITRATION_QUALIFICATION_THRESHOLD,
+    }
 }
 
 fn goal(id: &str, tension_id: &str, base_priority: u8) -> Goal {

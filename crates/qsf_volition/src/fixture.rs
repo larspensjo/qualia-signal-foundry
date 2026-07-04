@@ -1,6 +1,6 @@
 use crate::{
-    ActivationKeyword, AllowedEffect, Goal, GoalScope, GoalStatus, Tension, TensionPriority,
-    VolitionFixture,
+    ActivationKeyword, AllowedEffect, DEFAULT_ARBITRATION_QUALIFICATION_THRESHOLD, Goal, GoalScope,
+    GoalStatus, Tension, TensionPriority, VolitionFixture,
 };
 
 const SEED_EVIDENCE: &str = "docs/Experiments/Experiment.CuriosityPersonaSeed.md";
@@ -87,16 +87,16 @@ pub fn realtime_seed_fixture() -> VolitionFixture {
                 scope: GoalScope::Session,
                 base_priority: 100,
                 activation_keywords: vec![
-                    ActivationKeyword::normal("he"),
-                    ActivationKeyword::normal("she"),
-                    ActivationKeyword::normal("they"),
+                    ActivationKeyword::weak("he"),
+                    ActivationKeyword::weak("she"),
+                    ActivationKeyword::weak("they"),
                     ActivationKeyword::normal("friend"),
                     ActivationKeyword::normal("boss"),
                     ActivationKeyword::normal("colleague"),
                     ActivationKeyword::normal("family"),
                     ActivationKeyword::normal("private"),
                     ActivationKeyword::normal("personal"),
-                    ActivationKeyword::normal("secret"),
+                    ActivationKeyword::strong("secret"),
                 ],
                 allowed_effects: vec![AllowedEffect::Reflect],
                 satisfaction_condition_summary: "Interest has stayed within what was willingly shared; absent people were discussed through their ideas.".to_string(),
@@ -113,16 +113,16 @@ pub fn realtime_seed_fixture() -> VolitionFixture {
                 scope: GoalScope::Project,
                 base_priority: 96,
                 activation_keywords: vec![
-                    ActivationKeyword::normal("sure"),
+                    ActivationKeyword::weak("sure"),
                     ActivationKeyword::normal("certain"),
                     ActivationKeyword::normal("true"),
                     ActivationKeyword::normal("fact"),
-                    ActivationKeyword::normal("really"),
-                    ActivationKeyword::normal("actually"),
-                    ActivationKeyword::normal("know"),
-                    ActivationKeyword::normal("prove"),
-                    ActivationKeyword::normal("evidence"),
-                    ActivationKeyword::normal("why"),
+                    ActivationKeyword::weak("really"),
+                    ActivationKeyword::weak("actually"),
+                    ActivationKeyword::weak("know"),
+                    ActivationKeyword::strong("prove"),
+                    ActivationKeyword::strong("evidence"),
+                    ActivationKeyword::weak("why"),
                 ],
                 allowed_effects: vec![AllowedEffect::Reflect],
                 satisfaction_condition_summary: "Claims in the response carry the right confidence level.".to_string(),
@@ -139,18 +139,18 @@ pub fn realtime_seed_fixture() -> VolitionFixture {
                 scope: GoalScope::Input,
                 base_priority: 100,
                 activation_keywords: vec![
-                    ActivationKeyword::normal("what"),
-                    ActivationKeyword::normal("how"),
-                    ActivationKeyword::normal("can"),
+                    ActivationKeyword::weak("what"),
+                    ActivationKeyword::weak("how"),
+                    ActivationKeyword::weak("can"),
                     ActivationKeyword::normal("please"),
                     ActivationKeyword::normal("help"),
-                    ActivationKeyword::normal("want"),
-                    ActivationKeyword::normal("need"),
-                    ActivationKeyword::normal("do"),
-                    ActivationKeyword::normal("tell"),
-                    ActivationKeyword::normal("show"),
+                    ActivationKeyword::weak("want"),
+                    ActivationKeyword::weak("need"),
+                    ActivationKeyword::weak("do"),
+                    ActivationKeyword::weak("tell"),
+                    ActivationKeyword::weak("show"),
                     ActivationKeyword::normal("explain"),
-                    ActivationKeyword::normal("make"),
+                    ActivationKeyword::weak("make"),
                 ],
                 allowed_effects: vec![AllowedEffect::Reflect],
                 satisfaction_condition_summary: "The explicit request has been addressed directly.".to_string(),
@@ -169,11 +169,11 @@ pub fn realtime_seed_fixture() -> VolitionFixture {
                 activation_keywords: vec![
                     ActivationKeyword::normal("remember"),
                     ActivationKeyword::normal("learned"),
-                    ActivationKeyword::normal("earlier"),
-                    ActivationKeyword::normal("before"),
+                    ActivationKeyword::weak("earlier"),
+                    ActivationKeyword::weak("before"),
                     ActivationKeyword::normal("theory"),
-                    ActivationKeyword::normal("thesis"),
-                    ActivationKeyword::normal("idea"),
+                    ActivationKeyword::strong("thesis"),
+                    ActivationKeyword::weak("idea"),
                     ActivationKeyword::normal("notice"),
                     ActivationKeyword::normal("pattern"),
                 ],
@@ -196,12 +196,12 @@ pub fn realtime_seed_fixture() -> VolitionFixture {
                 scope: GoalScope::Session,
                 base_priority: 92,
                 activation_keywords: vec![
-                    ActivationKeyword::normal("i"),
-                    ActivationKeyword::normal("my"),
-                    ActivationKeyword::normal("me"),
+                    ActivationKeyword::weak("i"),
+                    ActivationKeyword::weak("my"),
+                    ActivationKeyword::weak("me"),
                     ActivationKeyword::normal("work"),
                     ActivationKeyword::normal("job"),
-                    ActivationKeyword::normal("think"),
+                    ActivationKeyword::weak("think"),
                     ActivationKeyword::normal("believe"),
                     ActivationKeyword::normal("feel"),
                     ActivationKeyword::normal("hope"),
@@ -227,15 +227,15 @@ pub fn realtime_seed_fixture() -> VolitionFixture {
                 scope: GoalScope::Project,
                 base_priority: 94,
                 activation_keywords: vec![
-                    ActivationKeyword::normal("ai"),
+                    ActivationKeyword::strong("ai"),
                     ActivationKeyword::normal("job"),
                     ActivationKeyword::normal("jobs"),
-                    ActivationKeyword::normal("economy"),
+                    ActivationKeyword::strong("economy"),
                     ActivationKeyword::normal("money"),
-                    ActivationKeyword::normal("automation"),
-                    ActivationKeyword::normal("future"),
+                    ActivationKeyword::strong("automation"),
+                    ActivationKeyword::weak("future"),
                     ActivationKeyword::normal("country"),
-                    ActivationKeyword::normal("power"),
+                    ActivationKeyword::weak("power"),
                     ActivationKeyword::normal("technology"),
                     ActivationKeyword::normal("replace"),
                 ],
@@ -262,10 +262,10 @@ pub fn realtime_seed_fixture() -> VolitionFixture {
                     ActivationKeyword::normal("history"),
                     ActivationKeyword::normal("society"),
                     ActivationKeyword::normal("politics"),
-                    ActivationKeyword::normal("system"),
-                    ActivationKeyword::normal("change"),
+                    ActivationKeyword::weak("system"),
+                    ActivationKeyword::weak("change"),
                     ActivationKeyword::normal("trend"),
-                    ActivationKeyword::normal("happen"),
+                    ActivationKeyword::weak("happen"),
                 ],
                 allowed_effects: vec![AllowedEffect::Reflect, AllowedEffect::SurfaceOpenThread],
                 satisfaction_condition_summary: "Something was connected into a larger explanation, or a sharp open question about it was named.".to_string(),
@@ -274,6 +274,7 @@ pub fn realtime_seed_fixture() -> VolitionFixture {
                 source_reference: SEED_EVIDENCE.to_string(),
             },
         ],
+        arbitration_qualification_threshold: DEFAULT_ARBITRATION_QUALIFICATION_THRESHOLD,
     }
 }
 
@@ -357,8 +358,8 @@ pub fn static_fixture() -> VolitionFixture {
                     ActivationKeyword::normal("implemented"),
                     ActivationKeyword::normal("status"),
                     ActivationKeyword::normal("complete"),
-                    ActivationKeyword::normal("done"),
-                    ActivationKeyword::normal("ready"),
+                    ActivationKeyword::weak("done"),
+                    ActivationKeyword::weak("ready"),
                 ],
                 allowed_effects: vec![AllowedEffect::Reflect],
                 satisfaction_condition_summary: "The response avoids claiming completion that the current repository state does not support.".to_string(),
@@ -378,10 +379,10 @@ pub fn static_fixture() -> VolitionFixture {
                 scope: GoalScope::Session,
                 base_priority: 98,
                 activation_keywords: vec![
-                    ActivationKeyword::normal("continuity"),
+                    ActivationKeyword::strong("continuity"),
                     ActivationKeyword::normal("thread"),
                     ActivationKeyword::normal("revisit"),
-                    ActivationKeyword::normal("open"),
+                    ActivationKeyword::weak("open"),
                     ActivationKeyword::normal("unresolved"),
                 ],
                 allowed_effects: vec![AllowedEffect::RetrieveContext, AllowedEffect::SurfaceOpenThread],
@@ -404,7 +405,7 @@ pub fn static_fixture() -> VolitionFixture {
                 activation_keywords: vec![
                     ActivationKeyword::normal("experiment"),
                     ActivationKeyword::normal("compare"),
-                    ActivationKeyword::normal("perturbation"),
+                    ActivationKeyword::strong("perturbation"),
                     ActivationKeyword::normal("fixture"),
                     ActivationKeyword::normal("prototype"),
                 ],
@@ -418,13 +419,56 @@ pub fn static_fixture() -> VolitionFixture {
                 source_reference: "docs/Experiments/Experiment.VolitionGoalFixture.md".to_string(),
             },
         ],
+        arbitration_qualification_threshold: DEFAULT_ARBITRATION_QUALIFICATION_THRESHOLD,
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{GoalStatus, PROTECTED_TIER_FLOOR};
+    use crate::{GoalStatus, PROTECTED_TIER_FLOOR, VolitionState, select_goals_ranked};
+
+    #[test]
+    fn fixture_qualification_thresholds_are_positive_and_default() {
+        for fixture in [realtime_seed_fixture(), static_fixture()] {
+            assert_eq!(
+                fixture.arbitration_qualification_threshold,
+                DEFAULT_ARBITRATION_QUALIFICATION_THRESHOLD
+            );
+            assert!(fixture.arbitration_qualification_threshold > 0);
+        }
+    }
+
+    #[test]
+    fn design_probe_strengths_come_out_as_specified() {
+        let fixture = realtime_seed_fixture();
+        let state = VolitionState::from_fixture(&fixture);
+        let probe =
+            "Do you believe machines will replace many jobs, and what does that do to the economy?";
+        let ranked = select_goals_ranked(probe, &state, &fixture);
+        let strength_of = |id: &str| {
+            ranked
+                .selected
+                .iter()
+                .find(|s| s.goal.id == id)
+                .map(|s| s.match_strength)
+                .unwrap_or(0)
+        };
+        assert!(
+            strength_of("serve-the-present-person") < fixture.arbitration_qualification_threshold
+        );
+        assert!(
+            strength_of("track-the-ai-transition") >= fixture.arbitration_qualification_threshold
+        );
+        // Idiom stopword: "for what it's worth" alone leaves the protected goal unqualified.
+        let idiom = select_goals_ranked("for what it's worth, thanks", &state, &fixture);
+        assert!(
+            idiom
+                .selected
+                .iter()
+                .all(|s| s.match_strength < fixture.arbitration_qualification_threshold)
+        );
+    }
 
     #[test]
     fn static_fixture_loads_and_is_deterministic() {

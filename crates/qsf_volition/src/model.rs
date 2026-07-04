@@ -2,10 +2,22 @@ use std::fmt;
 
 use serde::{Deserialize, Serialize};
 
+/// Minimum match strength a selection needs before it may win arbitration: one Normal
+/// keyword qualifies; Weak keywords qualify only in combination (e.g. 4 x Weak).
+/// Fixture-level and global by design; per-tier thresholds are deferred until live
+/// evidence demands them (DecisionLog 2026-07-04).
+pub const DEFAULT_ARBITRATION_QUALIFICATION_THRESHOLD: u32 = 4;
+
+fn default_arbitration_qualification_threshold() -> u32 {
+    DEFAULT_ARBITRATION_QUALIFICATION_THRESHOLD
+}
+
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 pub struct VolitionFixture {
     pub tensions: Vec<Tension>,
     pub goals: Vec<Goal>,
+    #[serde(default = "default_arbitration_qualification_threshold")]
+    pub arbitration_qualification_threshold: u32,
 }
 
 /// Coarse activation-keyword weight class. Coarse on purpose: consistent curation beats

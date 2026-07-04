@@ -698,8 +698,8 @@ mod tests {
     #[test]
     fn select_volition_caps_model_visible_output_at_6_selected() {
         use qsf_volition::{
-            ActivationKeyword, AllowedEffect, Goal, GoalScope, GoalStatus, Tension, TensionPriority,
-            VolitionFixture,
+            ActivationKeyword, AllowedEffect, DEFAULT_ARBITRATION_QUALIFICATION_THRESHOLD, Goal,
+            GoalScope, GoalStatus, Tension, TensionPriority, VolitionFixture,
         };
 
         let tension = Tension {
@@ -731,6 +731,7 @@ mod tests {
         let fixture = VolitionFixture {
             tensions: vec![tension],
             goals,
+            arbitration_qualification_threshold: DEFAULT_ARBITRATION_QUALIFICATION_THRESHOLD,
         };
         let vol_state = VolitionState::from_fixture(&fixture);
 
@@ -775,8 +776,8 @@ mod tests {
     #[test]
     fn select_volition_caps_model_visible_output_at_8_omitted() {
         use qsf_volition::{
-            ActivationKeyword, AllowedEffect, Goal, GoalScope, GoalStatus, Tension, TensionPriority,
-            VolitionFixture,
+            ActivationKeyword, AllowedEffect, DEFAULT_ARBITRATION_QUALIFICATION_THRESHOLD, Goal,
+            GoalScope, GoalStatus, Tension, TensionPriority, VolitionFixture,
         };
 
         let tension = Tension {
@@ -812,6 +813,7 @@ mod tests {
         let fixture = VolitionFixture {
             tensions: vec![tension],
             goals,
+            arbitration_qualification_threshold: DEFAULT_ARBITRATION_QUALIFICATION_THRESHOLD,
         };
         let vol_state = VolitionState::from_fixture(&fixture);
 
@@ -843,8 +845,8 @@ mod tests {
     #[test]
     fn select_volition_trace_includes_full_list_when_truncated() {
         use qsf_volition::{
-            ActivationKeyword, AllowedEffect, Goal, GoalScope, GoalStatus, Tension, TensionPriority,
-            VolitionFixture,
+            ActivationKeyword, AllowedEffect, DEFAULT_ARBITRATION_QUALIFICATION_THRESHOLD, Goal,
+            GoalScope, GoalStatus, Tension, TensionPriority, VolitionFixture,
         };
 
         let tension = Tension {
@@ -876,6 +878,7 @@ mod tests {
         let fixture = VolitionFixture {
             tensions: vec![tension],
             goals,
+            arbitration_qualification_threshold: DEFAULT_ARBITRATION_QUALIFICATION_THRESHOLD,
         };
         let vol_state = VolitionState::from_fixture(&fixture);
 

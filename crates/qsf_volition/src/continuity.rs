@@ -233,8 +233,8 @@ fn persist_json<T: Serialize>(path: impl AsRef<Path>, value: &T) -> anyhow::Resu
 mod tests {
     use super::*;
     use crate::{
-        ActivationKeyword, AllowedEffect, EvidenceRef, Goal, GoalScope, GoalStatus, VolitionFixture,
-        VolitionState, build_state_inspection, realtime_seed_fixture,
+        ActivationKeyword, AllowedEffect, EvidenceRef, Goal, GoalScope, GoalStatus,
+        VolitionFixture, VolitionState, build_state_inspection, realtime_seed_fixture,
     };
     use tempfile::TempDir;
 

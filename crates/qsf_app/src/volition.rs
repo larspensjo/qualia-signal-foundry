@@ -919,14 +919,18 @@ mod tests {
             ContextBudget::new(2, 40),
         );
 
+        // Under weighted activation, `resurface-open-thread` matches `continuity` (curated
+        // Strong = 8), tying the strength `clarify-weak-evidence-topic` gets from two Normal
+        // keywords (voice + memory = 8) while carrying a higher base priority and tension bias,
+        // so it now ranks first and consumes the token budget. Deliberate curation consequence.
         assert_eq!(result.selected.len(), 1);
-        assert_eq!(result.selected[0].goal.id, "clarify-weak-evidence-topic");
+        assert_eq!(result.selected[0].goal.id, "resurface-open-thread");
         assert!(result.assembly.used_estimated_tokens <= 40);
         assert!(
             result
                 .omitted
                 .iter()
-                .any(|omitted| omitted.goal.id == "resurface-open-thread")
+                .any(|omitted| omitted.goal.id == "clarify-weak-evidence-topic")
         );
     }
 
@@ -1136,8 +1140,9 @@ mod tests {
     // ── arbitrate() ─────────────────────────────────────────────────────────
 
     use super::{
-        ActivationKeyword, AllowedEffect, Goal, GoalScope, GoalSelection, InitiativeProposal,
-        Tension, TensionPriority, VolitionFixture, arbitrate,
+        ActivationKeyword, AllowedEffect, DEFAULT_ARBITRATION_QUALIFICATION_THRESHOLD, Goal,
+        GoalScope, GoalSelection, InitiativeProposal, Tension, TensionPriority, VolitionFixture,
+        arbitrate,
     };
 
     fn make_goal_for_arbitration(
@@ -1292,6 +1297,7 @@ mod tests {
         let fixture = VolitionFixture {
             tensions: vec![make_tension("test-tension", 5)],
             goals: vec![],
+            arbitration_qualification_threshold: DEFAULT_ARBITRATION_QUALIFICATION_THRESHOLD,
         };
         // "goal-a" < "goal-b" lexicographically; same tier and priority
         let sel_b = make_goal_for_arbitration("goal-b", vec!["test-tension".to_string()], 80);
@@ -1333,6 +1339,7 @@ mod tests {
                 make_tension("alpha-tension", 3),
             ],
             goals: vec![],
+            arbitration_qualification_threshold: DEFAULT_ARBITRATION_QUALIFICATION_THRESHOLD,
         };
         // Goal backed by both tensions at tier 3; alpha < beta lexicographically
         let sel = make_goal_for_arbitration(
@@ -1355,6 +1362,7 @@ mod tests {
                 make_tension("tier-7-tension", 7),
             ],
             goals: vec![],
+            arbitration_qualification_threshold: DEFAULT_ARBITRATION_QUALIFICATION_THRESHOLD,
         };
         let sel_tier7 =
             make_goal_for_arbitration("goal-z-tier7", vec!["tier-7-tension".to_string()], 80);
@@ -2310,6 +2318,7 @@ mod tests {
         let fixture = VolitionFixture {
             tensions: vec![],
             goals: vec![],
+            arbitration_qualification_threshold: DEFAULT_ARBITRATION_QUALIFICATION_THRESHOLD,
         };
         let sel = make_goal_for_arbitration("no-tension-goal", vec![], 80);
         let result = arbitrate_with_mode(vec![sel], &fixture, Mode::Focused).unwrap();
