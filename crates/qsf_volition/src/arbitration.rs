@@ -108,6 +108,39 @@ pub struct ModeArbitrationResult {
     pub losers: Vec<ModeArbitrationLoser>,
 }
 
+/// A selection that activated but did not reach the qualification threshold. It never
+/// entered the arbitration sort — "activated but not eligible to arbitrate" is a distinct
+/// outcome from "qualified but lost on tier". Tests assert the structured fields, not
+/// `reason`.
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+pub struct BelowThresholdCandidate {
+    pub selection: GoalSelection,
+    pub match_strength: u32,
+    pub threshold: u32,
+    /// Rendered convenience reason, e.g. "match strength 2 below qualification threshold 4".
+    pub reason: String,
+}
+
+/// Full mode-aware arbitration outcome: the qualification partition plus (if any selection
+/// qualified) the existing sorted result. `qualified: None` with non-empty `below_threshold`
+/// is a no-winner turn: volition stays quiet and the trace says why.
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+pub struct ModeArbitrationOutcome {
+    pub mode: Mode,
+    pub qualification_threshold: u32,
+    pub qualified: Option<ModeArbitrationResult>,
+    pub below_threshold: Vec<BelowThresholdCandidate>,
+}
+
+/// Neutral-mode analogue wrapping `ArbitrationResult`; `arbitrate` still delegates to
+/// `arbitrate_with_mode(.., Mode::Neutral)` — one sort implementation.
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+pub struct ArbitrationOutcome {
+    pub qualification_threshold: u32,
+    pub qualified: Option<ArbitrationResult>,
+    pub below_threshold: Vec<BelowThresholdCandidate>,
+}
+
 /// Resolve cross-goal conflict by tension tier. Returns `None` for empty input. For a
 /// single selection, the sole goal is the winner with an empty losers list. Pure and
 /// stateless — reads `fixture` only to resolve tensions for each goal.
@@ -115,35 +148,42 @@ pub struct ModeArbitrationResult {
 pub fn arbitrate(
     selections: Vec<GoalSelection>,
     fixture: &VolitionFixture,
-) -> Option<ArbitrationResult> {
-    arbitrate_with_mode(selections, fixture, Mode::Neutral).map(|mode_result| {
-        let winner_tier = mode_result.winner_bias.effective_tier;
-        let winner_tension_id = mode_result.winner_effective_tension_id.clone();
-        let losers = mode_result
-            .losers
-            .into_iter()
-            .map(|l| {
-                let reason = format!(
-                    "tier {} lost to winner at tier {} ({})",
-                    l.bias.effective_tier, winner_tier, winner_tension_id
-                );
-                ArbitrationLoser {
-                    selection: l.selection,
-                    effective_tier: l.bias.effective_tier,
-                    effective_tension_id: l.effective_tension_id,
-                    effective_tension_title: l.effective_tension_title,
-                    reason,
-                }
-            })
-            .collect();
-        ArbitrationResult {
-            winner: mode_result.winner,
-            winner_effective_tier: winner_tier,
-            winner_effective_tension_id: mode_result.winner_effective_tension_id,
-            winner_effective_tension_title: mode_result.winner_effective_tension_title,
-            losers,
-        }
+) -> Option<ArbitrationOutcome> {
+    arbitrate_with_mode(selections, fixture, Mode::Neutral).map(|outcome| ArbitrationOutcome {
+        qualification_threshold: outcome.qualification_threshold,
+        qualified: outcome.qualified.map(neutral_arbitration_result),
+        below_threshold: outcome.below_threshold,
     })
+}
+
+/// Project a neutral-mode `ModeArbitrationResult` onto the tier-only `ArbitrationResult`.
+fn neutral_arbitration_result(mode_result: ModeArbitrationResult) -> ArbitrationResult {
+    let winner_tier = mode_result.winner_bias.effective_tier;
+    let winner_tension_id = mode_result.winner_effective_tension_id.clone();
+    let losers = mode_result
+        .losers
+        .into_iter()
+        .map(|l| {
+            let reason = format!(
+                "tier {} lost to winner at tier {} ({})",
+                l.bias.effective_tier, winner_tier, winner_tension_id
+            );
+            ArbitrationLoser {
+                selection: l.selection,
+                effective_tier: l.bias.effective_tier,
+                effective_tension_id: l.effective_tension_id,
+                effective_tension_title: l.effective_tension_title,
+                reason,
+            }
+        })
+        .collect();
+    ArbitrationResult {
+        winner: mode_result.winner,
+        winner_effective_tier: winner_tier,
+        winner_effective_tension_id: mode_result.winner_effective_tension_id,
+        winner_effective_tension_title: mode_result.winner_effective_tension_title,
+        losers,
+    }
 }
 
 /// Returns the `(effective_tier, tension_id, tension_title)` for a goal. The effective
@@ -209,6 +249,53 @@ fn compute_bias_outcome(effective_tier: u8, bias_delta: i8) -> BiasOutcome {
 /// ensuring floor goals always sort ahead. Returns `None` for empty input.
 /// `arbitrate` delegates here with `Mode::Neutral`, producing identical results.
 pub fn arbitrate_with_mode(
+    selections: Vec<GoalSelection>,
+    fixture: &VolitionFixture,
+    mode: Mode,
+) -> Option<ModeArbitrationOutcome> {
+    if selections.is_empty() {
+        return None;
+    }
+
+    let threshold = fixture.arbitration_qualification_threshold;
+    let (qualified, sub_threshold): (Vec<GoalSelection>, Vec<GoalSelection>) = selections
+        .into_iter()
+        .partition(|selection| selection.match_strength >= threshold);
+
+    // Below-threshold candidates never enter the sort. Order by match_strength descending,
+    // then goal_id ascending — stable and legible in traces.
+    let mut below_threshold: Vec<BelowThresholdCandidate> = sub_threshold
+        .into_iter()
+        .map(|selection| {
+            let match_strength = selection.match_strength;
+            BelowThresholdCandidate {
+                reason: format!(
+                    "match strength {match_strength} below qualification threshold {threshold}"
+                ),
+                match_strength,
+                threshold,
+                selection,
+            }
+        })
+        .collect();
+    below_threshold.sort_by(|a, b| {
+        b.match_strength
+            .cmp(&a.match_strength)
+            .then(a.selection.goal.id.cmp(&b.selection.goal.id))
+    });
+
+    Some(ModeArbitrationOutcome {
+        mode,
+        qualification_threshold: threshold,
+        qualified: sort_qualified(qualified, fixture, mode),
+        below_threshold,
+    })
+}
+
+/// Sort qualified selections into a `ModeArbitrationResult`. Returns `None` when no selection
+/// qualified (a no-winner turn). The sort key is unchanged: `(biased_tier asc, base_priority
+/// desc, goal_id asc)`, with band goals clamped so floor goals always sort ahead.
+fn sort_qualified(
     selections: Vec<GoalSelection>,
     fixture: &VolitionFixture,
     mode: Mode,
@@ -317,6 +404,45 @@ mod tests {
         }
     }
 
+    fn make_goal_for_arbitration_with_match(
+        id: &str,
+        tension_ids: Vec<String>,
+        base_priority: u8,
+        matched: Vec<ActivationKeyword>,
+    ) -> GoalSelection {
+        let match_strength = matched.iter().map(|k| k.weight()).sum();
+        let matched_terms: Vec<String> = matched.iter().map(|k| k.term.clone()).collect();
+        let goal = Goal {
+            id: id.to_string(),
+            title: id.to_string(),
+            summary: id.to_string(),
+            tension_ids,
+            status: GoalStatus::Accepted,
+            scope: GoalScope::Session,
+            base_priority,
+            activation_keywords: matched.clone(),
+            allowed_effects: vec![AllowedEffect::Reflect],
+            satisfaction_condition_summary: id.to_string(),
+            evidence_refs: vec![],
+            estimated_tokens: 10,
+            source_reference: id.to_string(),
+        };
+        GoalSelection {
+            goal: goal.clone(),
+            relevance_score: goal.base_priority as f64,
+            matched_keywords: matched,
+            match_strength,
+            initiative: InitiativeProposal {
+                goal_id: goal.id.clone(),
+                goal_title: goal.title.clone(),
+                effect: AllowedEffect::Reflect,
+                rationale: "test".to_string(),
+                matched_terms,
+                scope: GoalScope::Session,
+            },
+        }
+    }
+
     fn make_tension(id: &str, tier: u8) -> Tension {
         Tension {
             id: id.to_string(),
@@ -327,6 +453,124 @@ mod tests {
             focused_bias: 0,
             exploratory_bias: 0,
         }
+    }
+
+    // ── Qualification partition ─────────────────────────────────────────────
+
+    #[test]
+    fn sub_threshold_protected_goal_loses_to_qualified_malleable_goal() {
+        let fixture = VolitionFixture {
+            tensions: vec![
+                make_tension("protected-tension", 1),
+                make_tension("band-tension", 5),
+            ],
+            goals: vec![],
+            arbitration_qualification_threshold: DEFAULT_ARBITRATION_QUALIFICATION_THRESHOLD,
+        };
+        // Protected goal matched only weak evidence (strength 2 < 4).
+        let protected = make_goal_for_arbitration_with_match(
+            "protected-goal",
+            vec!["protected-tension".to_string()],
+            100,
+            vec![
+                ActivationKeyword::weak("what"),
+                ActivationKeyword::weak("do"),
+            ],
+        );
+        // Malleable goal with a qualified match (strength 16).
+        let malleable = make_goal_for_arbitration_with_match(
+            "malleable-goal",
+            vec!["band-tension".to_string()],
+            90,
+            vec![
+                ActivationKeyword::normal("replace"),
+                ActivationKeyword::normal("jobs"),
+                ActivationKeyword::strong("economy"),
+            ],
+        );
+        let outcome =
+            arbitrate_with_mode(vec![protected, malleable], &fixture, Mode::Neutral).unwrap();
+        let result = outcome.qualified.expect("malleable goal qualified");
+        assert_eq!(result.winner.goal.id, "malleable-goal");
+        assert_eq!(outcome.below_threshold.len(), 1);
+        let below = &outcome.below_threshold[0];
+        assert_eq!(below.selection.goal.id, "protected-goal");
+        assert_eq!(below.match_strength, 2);
+        assert_eq!(below.threshold, DEFAULT_ARBITRATION_QUALIFICATION_THRESHOLD);
+        assert!(
+            result.losers.is_empty(),
+            "below-threshold candidates never reach the sort"
+        );
+    }
+
+    #[test]
+    fn qualified_protected_goal_still_wins_on_tier() {
+        let fixture = VolitionFixture {
+            tensions: vec![
+                make_tension("protected-tension", 1),
+                make_tension("band-tension", 5),
+            ],
+            goals: vec![],
+            arbitration_qualification_threshold: DEFAULT_ARBITRATION_QUALIFICATION_THRESHOLD,
+        };
+        // Both goals qualify (strength >= 4); the protected tier-1 goal wins on tier.
+        let protected = make_goal_for_arbitration_with_match(
+            "protected-goal",
+            vec!["protected-tension".to_string()],
+            80,
+            vec![ActivationKeyword::normal("secret")],
+        );
+        let malleable = make_goal_for_arbitration_with_match(
+            "malleable-goal",
+            vec!["band-tension".to_string()],
+            99,
+            vec![
+                ActivationKeyword::strong("economy"),
+                ActivationKeyword::normal("jobs"),
+            ],
+        );
+        let outcome =
+            arbitrate_with_mode(vec![protected, malleable], &fixture, Mode::Neutral).unwrap();
+        assert!(outcome.below_threshold.is_empty());
+        let result = outcome.qualified.expect("a goal qualified");
+        assert_eq!(result.winner.goal.id, "protected-goal");
+        assert_eq!(result.losers.len(), 1);
+        assert_eq!(result.losers[0].selection.goal.id, "malleable-goal");
+    }
+
+    #[test]
+    fn no_qualified_selection_yields_no_winner_with_recorded_partition() {
+        let fixture = VolitionFixture {
+            tensions: vec![
+                make_tension("protected-tension", 1),
+                make_tension("band-tension", 5),
+            ],
+            goals: vec![],
+            arbitration_qualification_threshold: DEFAULT_ARBITRATION_QUALIFICATION_THRESHOLD,
+        };
+        let weak_a = make_goal_for_arbitration_with_match(
+            "goal-a",
+            vec!["protected-tension".to_string()],
+            80,
+            vec![ActivationKeyword::weak("what")],
+        );
+        let weak_b = make_goal_for_arbitration_with_match(
+            "goal-b",
+            vec!["band-tension".to_string()],
+            90,
+            vec![
+                ActivationKeyword::weak("do"),
+                ActivationKeyword::weak("how"),
+            ],
+        );
+        let outcome = arbitrate_with_mode(vec![weak_a, weak_b], &fixture, Mode::Neutral).unwrap();
+        assert!(outcome.qualified.is_none());
+        assert_eq!(outcome.below_threshold.len(), 2);
+        // Ordered by match_strength descending: goal-b (2) before goal-a (1).
+        assert_eq!(outcome.below_threshold[0].selection.goal.id, "goal-b");
+        assert_eq!(outcome.below_threshold[1].selection.goal.id, "goal-a");
+        // Empty input still returns None.
+        assert!(arbitrate_with_mode(vec![], &fixture, Mode::Neutral).is_none());
     }
 
     // ── Arbitration ─────────────────────────────────────────────────────────
@@ -347,7 +591,10 @@ mod tests {
         // "goal-a" < "goal-b" lexicographically; same tier and priority
         let sel_b = make_goal_for_arbitration("goal-b", vec!["test-tension".to_string()], 80);
         let sel_a = make_goal_for_arbitration("goal-a", vec!["test-tension".to_string()], 80);
-        let result = arbitrate(vec![sel_b, sel_a], &fixture).unwrap();
+        let result = arbitrate(vec![sel_b, sel_a], &fixture)
+            .unwrap()
+            .qualified
+            .unwrap();
         assert_eq!(result.winner.goal.id, "goal-a");
         assert_eq!(result.losers[0].selection.goal.id, "goal-b");
     }
@@ -368,7 +615,7 @@ mod tests {
             vec!["alpha-tension".to_string(), "beta-tension".to_string()],
             80,
         );
-        let result = arbitrate(vec![sel], &fixture).unwrap();
+        let result = arbitrate(vec![sel], &fixture).unwrap().qualified.unwrap();
         assert_eq!(result.winner_effective_tier, 3);
         assert_eq!(result.winner_effective_tension_id, "alpha-tension");
         assert_eq!(result.winner_effective_tension_title, "alpha-tension title");
@@ -391,7 +638,10 @@ mod tests {
             make_goal_for_arbitration("goal-a-tier5", vec!["tier-5-tension".to_string()], 90);
         let sel_tier1 =
             make_goal_for_arbitration("goal-m-tier1", vec!["tier-1-tension".to_string()], 95);
-        let result = arbitrate(vec![sel_tier7, sel_tier5, sel_tier1], &fixture).unwrap();
+        let result = arbitrate(vec![sel_tier7, sel_tier5, sel_tier1], &fixture)
+            .unwrap()
+            .qualified
+            .unwrap();
 
         assert_eq!(result.winner.goal.id, "goal-m-tier1");
         assert_eq!(result.winner_effective_tier, 1);
@@ -420,8 +670,10 @@ mod tests {
             make_goal_for_arbitration("band-goal", vec!["band-tension".to_string()], 95);
 
         // Under Exploratory, band-tension would normally be promoted; floor-tension must be immune.
-        let result =
-            arbitrate_with_mode(vec![floor_goal, band_goal], &fixture, Mode::Exploratory).unwrap();
+        let result = arbitrate_with_mode(vec![floor_goal, band_goal], &fixture, Mode::Exploratory)
+            .unwrap()
+            .qualified
+            .unwrap();
 
         assert_eq!(result.winner.goal.id, "floor-goal");
         assert!(result.winner_bias.protected, "floor goal must be protected");
@@ -457,6 +709,8 @@ mod tests {
         for mode in [Mode::Neutral, Mode::Focused, Mode::Exploratory] {
             let result =
                 arbitrate_with_mode(vec![floor_goal.clone(), band_goal.clone()], &fixture, mode)
+                    .unwrap()
+                    .qualified
                     .unwrap();
             assert_eq!(
                 result.winner.goal.id, "floor-goal",
@@ -584,7 +838,10 @@ mod tests {
             arbitration_qualification_threshold: DEFAULT_ARBITRATION_QUALIFICATION_THRESHOLD,
         };
         let sel = make_goal_for_arbitration("no-tension-goal", vec![], 80);
-        let result = arbitrate_with_mode(vec![sel], &fixture, Mode::Focused).unwrap();
+        let result = arbitrate_with_mode(vec![sel], &fixture, Mode::Focused)
+            .unwrap()
+            .qualified
+            .unwrap();
         assert_eq!(result.winner_bias.effective_tier, u8::MAX);
         assert_eq!(result.winner_bias.biased_tier, u8::MAX);
     }

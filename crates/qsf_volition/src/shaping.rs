@@ -161,8 +161,10 @@ mod tests {
         let fixture = realtime_seed_fixture();
         let state = VolitionState::from_fixture(&fixture);
         let ranked = select_goals_ranked("how can you help me with this task", &state, &fixture);
-        let arbitration =
-            arbitrate_with_mode(ranked.selected.clone(), &fixture, Mode::Neutral).unwrap();
+        let arbitration = arbitrate_with_mode(ranked.selected.clone(), &fixture, Mode::Neutral)
+            .unwrap()
+            .qualified
+            .unwrap();
         let opportunities = detect_opportunities(
             &grounded_terms_from_text("maybe however help"),
             &state,
@@ -180,8 +182,10 @@ mod tests {
         let fixture = realtime_seed_fixture();
         let state = VolitionState::from_fixture(&fixture);
         let ranked = select_goals_ranked("how can you help me with this task", &state, &fixture);
-        let arbitration =
-            arbitrate_with_mode(ranked.selected.clone(), &fixture, Mode::Neutral).unwrap();
+        let arbitration = arbitrate_with_mode(ranked.selected.clone(), &fixture, Mode::Neutral)
+            .unwrap()
+            .qualified
+            .unwrap();
         let opportunities = vec![
             opportunity(OpportunitySignalKind::ExpressedUncertainty),
             opportunity(OpportunitySignalKind::IntroducedContradiction),
@@ -189,7 +193,10 @@ mod tests {
         ];
 
         for mode in [Mode::Neutral, Mode::Focused, Mode::Exploratory] {
-            let arbitration = arbitrate_with_mode(ranked.selected.clone(), &fixture, mode).unwrap();
+            let arbitration = arbitrate_with_mode(ranked.selected.clone(), &fixture, mode)
+                .unwrap()
+                .qualified
+                .unwrap();
             let intensity =
                 choose_shaping_intensity(&arbitration, &opportunities, ReceptivenessHint::Open);
             if arbitration.winner_bias.effective_tier <= PROTECTED_TIER_FLOOR {
@@ -238,7 +245,9 @@ mod tests {
         let state = VolitionState::from_fixture(&fixture);
         let ranked = select_goals_ranked("help maybe however thread", &state, &fixture);
         let arbitration = arbitrate_with_mode(ranked.selected.clone(), &fixture, Mode::Neutral)
-            .expect("arbitration");
+            .expect("arbitration")
+            .qualified
+            .expect("qualified winner");
         let opportunities = detect_opportunities(
             &grounded_terms_from_text("help maybe however thread"),
             &state,

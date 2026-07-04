@@ -609,6 +609,8 @@ mod tests {
                 &fixture,
                 mode,
             )
+            .unwrap()
+            .qualified
             .unwrap();
             assert_eq!(result.winner.goal.id, "serve-the-present-person");
         }
