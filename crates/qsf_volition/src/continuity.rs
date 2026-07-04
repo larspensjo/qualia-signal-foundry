@@ -136,6 +136,9 @@ pub enum VolitionSuppressionReason {
     ProtectedNoOpportunity,
     AntiNagRepeat,
     NonRenderableOutput,
+    /// No selection reached the qualification threshold, so no goal led the turn. Distinct
+    /// from a qualified-but-suppressed initiative: nothing qualified to arbitrate.
+    BelowQualificationThreshold,
 }
 
 pub fn persist_volition_continuity_snapshot(

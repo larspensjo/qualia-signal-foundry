@@ -168,14 +168,17 @@ pub(crate) async fn inject_trusted_turn_context_and_response(
         &volition_snapshot.state,
         &volition_snapshot.fixture,
     );
-    // Temporary bridge: this path still consumes only the qualified winner. The no-qualifier
-    // turn decision and its dedicated suppression are wired in by the no-winner sideband work.
-    let arbitration = arbitrate_with_mode(
+    let arbitration_outcome = arbitrate_with_mode(
         ranked.selected.clone(),
         &volition_snapshot.fixture,
         volition_snapshot.state.mode,
-    )
-    .and_then(|outcome| outcome.qualified);
+    );
+    // The initiative path consumes only the qualified winner; a no-qualifier turn skips it and
+    // the packet below records the below-threshold suppression. The no-winner turn *decision*
+    // and its inspection capture are wired in by the no-winner sideband work.
+    let arbitration = arbitration_outcome
+        .as_ref()
+        .and_then(|outcome| outcome.qualified.clone());
     let intensity = arbitration
         .as_ref()
         .map(|arbitration| {
@@ -265,7 +268,7 @@ pub(crate) async fn inject_trusted_turn_context_and_response(
     let volition_packet = build_volition_turn_context_packet(
         volition_snapshot,
         &ranked,
-        arbitration.clone(),
+        arbitration_outcome.clone(),
         &opportunities,
         intensity,
         crate::realtime::volition_injection::stable_baseline_hash(&config.instructions),
