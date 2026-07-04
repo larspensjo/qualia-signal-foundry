@@ -243,13 +243,16 @@ re-run one voice session per the Human Test Steps against the fixed formation pr
 
 ## Open Items
 
-- **Keyword tuning:** `learn-what-drives-this-person`'s activation keywords include `i`, `my`, `me`,
-  which are intentionally near-universal (almost any first-person utterance matches). This is a
-  deliberate starting point, not an oversight — observe how selection scoring and arbitration actually
-  interact with such broad keywords in a live session before narrowing them. **First live evidence
-  (2026-07-03): activation was indeed near-universal, but arbitration handled it** —
-  `serve-the-present-person` and `keep-theses-distinct-from-fact` won whenever they matched, and the
-  conversation did not feel interrogated. No tuning warranted yet; keep watching across sessions.
+- **Keyword tuning (resolved by weighted activation):** `learn-what-drives-this-person`'s broad
+  first-person keywords (`i`, `my`, `me`) are intentionally near-universal. First live evidence
+  (2026-07-03) showed activation was near-universal but arbitration handled it. The deterministic
+  fix is now in place: activation keywords carry coarse weight classes and a global qualification
+  threshold gates arbitration wins (design in
+  [Design.WeightedGoalActivation.md](../Plans/Design.WeightedGoalActivation.md), decision recorded
+  2026-07-04). Broad keywords like `i` / `my` / `me` / `what` / `how` are curated **Weak**, so they
+  activate but cannot win a turn on their own — the step-2 AI-transition gate and stopword-only
+  suppression are retested under the new mechanics via
+  [Experiment.WeightedGoalActivation.md](Experiment.WeightedGoalActivation.md).
 - **Internal-state narration tone:** one unprompted narration in session 1 ("In my simulated internal
   state, I've got a neutral focus on…") — the injected packet voiced verbatim. Tone issue to watch,
   not a defect.

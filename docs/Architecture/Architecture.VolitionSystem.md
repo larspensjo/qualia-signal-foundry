@@ -6,7 +6,7 @@ Candidate
 
 ## Implementation Status
 
-Last reviewed: 2026-07-03
+Last reviewed: 2026-07-04
 
 The volition domain is extracted into a standalone `qsf_volition` crate
 ([crates/qsf_volition/src/lib.rs](../../crates/qsf_volition/src/lib.rs)). It holds
@@ -25,9 +25,32 @@ and—going forward—`qsf_realtime_server`), not in the crate.
   `VolitionEvent`, and `apply()` — the only place lifecycle status changes.
 - Tick-driven lifecycle: salience decay, cooldown elapse, and inactivity retirement via
   `tick_events()`.
-- Context-neutral selection record `GoalSelection` (goal, relevance score, matched terms,
-  proposed initiative) and the deterministic arbitration functions `arbitrate()` and
-  `arbitrate_with_mode()`.
+- Context-neutral selection record `GoalSelection` (goal, relevance score, matched keywords
+  with weight classes, `match_strength`, proposed initiative) and the deterministic
+  arbitration functions `arbitrate()` and `arbitrate_with_mode()`.
+- Weighted goal activation: every activation keyword carries a coarse `KeywordWeightClass`
+  (`Weak = 1`, `Normal = 4`, `Strong = 8`), and a selection's `match_strength` is the summed
+  weight of its matched keywords. `match_strength` is the single scoring quantity — the ranked
+  relevance bonus (`match_strength × RELEVANCE_PER_STRENGTH_POINT`) and the arbitration
+  qualification gate both derive from it, so ranked display and eligibility can never disagree.
+  Weight classes are fixture data, so tuning a persona is a data diff, not a code change.
+- Qualification gating in arbitration: a fixture-level
+  `arbitration_qualification_threshold` (default 4) partitions selections before the tier sort.
+  Only selections at or above the threshold may *win*; sub-threshold selections still activate,
+  bump salience, and appear in ranked selection, but are recorded as below-threshold candidates
+  that never enter the sort. Among qualified goals the tier ordering is unchanged, and there is
+  no exemption for protected tiers — protection still governs cancellation, not speaking, so a
+  protected goal can no longer win the turn on a stopword while a multi-term on-topic match
+  loses. When no selection qualifies, the turn is a no-winner turn: volition stays quiet and the
+  outcome records a dedicated `below_qualification_threshold` suppression instead of promoting a
+  weak winner or falling back to a default goal. The rich-match effect gate
+  (`ProposeExperiment`) requires `match_strength ≥ 8` **and** at least two distinct non-Weak
+  matched terms. `ModeArbitrationOutcome` / `ArbitrationOutcome` wrap the qualification
+  partition (`qualified`, `below_threshold`, `qualification_threshold`) around the existing
+  sorted result. Per-tier thresholds, corpus-derived weights, stemming, and phrase matching are
+  deferred; the long-term semantic direction lives in
+  [Idea.SemanticGoalActivation.md](../Plans/Idea.SemanticGoalActivation.md), and this
+  deterministic lexical layer doubles as its no-GPU fallback and evaluation harness.
 - Mode-aware arbitration: `Mode` (`Neutral` / `Focused` / `Exploratory`) reads its bias
   per goal via `Mode::tension_delta`, sourced from each tension's own `focused_bias` /
   `exploratory_bias` fixture data rather than a hardcoded vector — a persona swap is a
@@ -51,7 +74,8 @@ and—going forward—`qsf_realtime_server`), not in the crate.
   `OpportunitySignalKind`, `OpportunitySignal`, `ShapingIntensity`,
   `ReceptivenessHint`, and `choose_shaping_intensity()`.
 - Context-neutral goal-selection helpers in `qsf_volition::selection`:
-  `matched_keywords`, `compute_relevance`, `compute_relevance_with_salience`,
+  `matched_keywords` (returns weighted `ActivationKeyword`s), `match_strength`,
+  `compute_relevance`, `compute_relevance_with_salience`, `select_effect_for_goal`,
   `initiative_for_goal`, `initiative_for_effect`, and `select_goals_ranked`.
   Re-exported via `pub use selection::*` so both `qsf_app` and
   `qsf_realtime_server` can call them without importing `qsf_app`. The
