@@ -104,8 +104,8 @@ Carried by the Rust suite; listed here so this doc is the index a reader checks 
 
 All six automated criteria are implemented and passing in the Rust suite (the artifact-parsing
 trace contract is `serialized_trace_satisfies_the_weighted_activation_trace_contract` in
-`crates/qsf_realtime_server/src/realtime/volition_injection.rs`). The human-voice criteria below
-remain open until the retest.
+`crates/qsf_realtime_server/src/realtime/volition_injection.rs`). The human-voice retest is
+recorded in Results and confirmed the success criteria.
 
 ### Trace Completeness Contract
 

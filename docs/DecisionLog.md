@@ -1630,8 +1630,7 @@ stemming, and phrase matching are deliberately deferred.
 Context: Live voice evidence (2026-07-04, `Experiment.CuriosityPersonaSeed.md` /
 `Experiment.LiveGoalFormationAndCoherence.md`) showed binary token activation plus
 strength-blind tier sorting letting a protected goal win the initiative line on a stopword
-(`what`/`do`) against a five-term on-topic match. Resolved in the 2026-07-04 brainstorm;
-design in `docs/Plans/Design.WeightedGoalActivation.md`, validated by
+(`what`/`do`) against a five-term on-topic match. Resolved in the 2026-07-04 brainstorm; validated by
 `Experiment.WeightedGoalActivation.md`. The long-term semantic direction is preserved
 separately in `Idea.SemanticGoalActivation.md`; this deterministic lexical layer ships first
 and doubles as its no-GPU fallback and evaluation harness.
