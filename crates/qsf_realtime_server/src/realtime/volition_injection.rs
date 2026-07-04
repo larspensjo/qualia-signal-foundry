@@ -756,6 +756,142 @@ mod tests {
     }
 
     #[test]
+    fn serialized_trace_satisfies_the_weighted_activation_trace_contract() {
+        // Recompute strength here from the wire weight-class strings — deliberately NOT via
+        // KeywordWeightClass — so the artifact boundary is checked, not the Rust types.
+        fn wire_weight(class: &str) -> u32 {
+            match class {
+                "weak" => 1,
+                "normal" => 4,
+                "strong" => 8,
+                other => panic!("unexpected weight_class on the wire: {other}"),
+            }
+        }
+        fn recompute_strength(matched_keywords: &serde_json::Value) -> u32 {
+            matched_keywords
+                .as_array()
+                .expect("matched_keywords is an array")
+                .iter()
+                .map(|keyword| {
+                    wire_weight(
+                        keyword["weight_class"]
+                            .as_str()
+                            .expect("weight_class is a string"),
+                    )
+                })
+                .sum()
+        }
+
+        let (fixture, state) = fixture_state();
+        let snapshot = VolitionStateSnapshot {
+            state: state.clone(),
+            fixture: fixture.clone(),
+        };
+
+        let build_trace = |query: &str| {
+            let ranked = select_goals_ranked(query, &state, &fixture);
+            let outcome = arbitrate_with_mode(ranked.selected.clone(), &fixture, Mode::Neutral);
+            let packet = build_volition_turn_context_packet(
+                &snapshot,
+                &ranked,
+                outcome,
+                &[],
+                ShapingIntensity::None,
+                "stable-baseline-hash".to_string(),
+                None,
+                &[],
+            )
+            .expect("both probes activate at least one goal");
+            let trace = build_volition_context_injection_trace(
+                "session-1",
+                1,
+                "transcript-ref",
+                state.tick,
+                Vec::new(),
+                &packet,
+                "response-create-ref",
+            );
+            serde_json::to_value(&trace).expect("trace serializes")
+        };
+
+        for (query, expect_winner) in [
+            ("how can you help me", true),
+            ("for what it's worth, thanks", false),
+        ] {
+            let trace = build_trace(query);
+
+            // 1. Threshold is a positive integer.
+            let threshold = trace["qualification_threshold"]
+                .as_u64()
+                .expect("qualification_threshold present");
+            assert!(threshold > 0, "query: {query}");
+
+            // 4/5. Winner presence and the lower_arbitration_rank guard.
+            let has_arbitration = !trace["arbitration_result"].is_null();
+            assert_eq!(has_arbitration, expect_winner, "query: {query}");
+
+            let candidates = trace["omitted_or_suppressed_candidates"]
+                .as_array()
+                .expect("candidates array");
+            let mut saw_below_threshold = false;
+            for candidate in candidates {
+                let category = candidate["reason_category"].as_str().unwrap();
+                if category == "below_qualification_threshold" {
+                    saw_below_threshold = true;
+                    // 2. Recomputed strength matches, and is below the threshold.
+                    let recomputed = recompute_strength(&candidate["matched_keywords"]);
+                    assert_eq!(
+                        recomputed,
+                        candidate["match_strength"].as_u64().unwrap() as u32,
+                        "query: {query}"
+                    );
+                    assert!((recomputed as u64) < threshold, "query: {query}");
+                }
+                if category == "lower_arbitration_rank" {
+                    assert!(
+                        has_arbitration,
+                        "lower_arbitration_rank without a winner: {query}"
+                    );
+                }
+            }
+
+            // 3. selected_match_details recompute the same way.
+            for detail in trace["selector_output"]["selected_match_details"]
+                .as_array()
+                .expect("selected_match_details array")
+            {
+                assert_eq!(
+                    recompute_strength(&detail["matched_keywords"]),
+                    detail["match_strength"].as_u64().unwrap() as u32,
+                    "query: {query}"
+                );
+            }
+
+            // 4. On the no-qualifier turn, at least one below-threshold candidate exists.
+            if !expect_winner {
+                assert!(saw_below_threshold, "no-qualifier turn: {query}");
+            }
+        }
+
+        // Contract scope: a trusted turn with no lexical activation at all emits no packet.
+        let ranked = select_goals_ranked("xyzzy frobnicator quux", &state, &fixture);
+        let outcome = arbitrate_with_mode(ranked.selected.clone(), &fixture, Mode::Neutral);
+        assert!(
+            build_volition_turn_context_packet(
+                &snapshot,
+                &ranked,
+                outcome,
+                &[],
+                ShapingIntensity::None,
+                "stable-baseline-hash".to_string(),
+                None,
+                &[],
+            )
+            .is_none()
+        );
+    }
+
+    #[test]
     fn unqualified_turn_emits_packet_with_below_threshold_categorization() {
         let (fixture, state) = fixture_state();
         let snapshot = VolitionStateSnapshot {

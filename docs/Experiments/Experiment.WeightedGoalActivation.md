@@ -103,6 +103,11 @@ Carried by the Rust suite; listed here so this doc is the index a reader checks 
    reparsed, `match_strength` is recomputed from the recorded terms-with-weights, and the
    winner / no-winner outcome is checked against the recorded threshold (see below).
 
+All six automated criteria are implemented and passing in the Rust suite (the artifact-parsing
+trace contract is `serialized_trace_satisfies_the_weighted_activation_trace_contract` in
+`crates/qsf_realtime_server/src/realtime/volition_injection.rs`). The human-voice criteria below
+remain open until the retest.
+
 ### Trace Completeness Contract
 
 Required trace fields, per trusted realtime turn that emits a volition context packet (a
