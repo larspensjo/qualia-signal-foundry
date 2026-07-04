@@ -198,6 +198,32 @@ render` flow:
    `VolitionState` by the pure `apply()` reducer; selectors never mutate lifecycle.
 5. Adapters render traces, reports, or realtime context packets from the results.
 
+## Persona And Fixture Experimentation
+
+A persona is fixture data (DecisionLog 2026-07-03): the tensions and goals in
+[crates/qsf_volition/src/fixture.rs](../../crates/qsf_volition/src/fixture.rs) shape live behavior,
+and adding a new "personality" means adding tensions and goals with the character you want, at the
+right tier. The fixture source is authoritative for the current roster; the curiosity-observer
+roster is also named in the 2026-07-03 decision entry.
+
+**Immediate (current session only):** edit `static_fixture()` or `realtime_seed_fixture()`, add a
+`Tension` + `Goal`, rebuild, and run `qsf.ps1 realtime`. After `cargo build`, the browser volition
+panel shows mode, tick, winning goal, tier/protection status, shaping intensity, and initiative
+outcome live on every trusted turn — so a new goal can be watched winning or losing arbitration in
+real time without inspecting JSONL.
+
+Tier placement guidance:
+
+- Tier 4–6: biasable band — mode bias can reorder these relative to each other.
+- Tier 7+: lowest priority, easily outranked (but still fires when nothing else matches).
+- Tier ≤ 3: protected floor — use only for genuine safety/user-intent constraints; immune to bias
+  and never cancelled.
+
+**Cross-session persistence:** write a `volition-seed.reviewed.json` (the reviewed-seed format from
+`qsf_volition::continuity`) and run `accept-reviewed-volition-seed` to merge it into future
+sessions. New goals in the reviewed seed cannot be admitted at tier ≤ 3 (the `apply_reviewed_seed`
+invariant enforces this). The `volition-continuity` experiment runs the consolidation pass.
+
 ## Related Documents
 
 - [Architecture.ContextManagement.md](Architecture.ContextManagement.md) — context

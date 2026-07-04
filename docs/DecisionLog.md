@@ -1642,3 +1642,25 @@ a live session. Anyone needing a mock-judged realtime session must launch the se
 rather than through the launcher. This refines the 2026-06-28 `realtime` supervision decision and
 narrows the 2026-07-02 observation that the mock default exercises the sleep path end to end: that
 default remains right for offline runs, but a live voice session must not inherit it silently.
+
+## 2026-07-04 - Project-level handoff document with three recommendation levels
+
+Decision: The project keeps one project-level `docs/Handoff.md` as its resume point. It recommends
+the next step at three abstraction levels — Now (immediate action), Next (active plan phase),
+Horizon (direction, e.g. elaborating an idea into a plan) — with one primary recommendation per
+level plus at most one or two alternates. Each entry is a pointer (recommendation + one-line
+rationale + link), never the content itself; it is updated in place only when an event changes a
+recommendation at some level, and stays within a two-minute read. The full rules live in
+`ProjectWorkflow.md` (Handoff Discipline).
+
+Context: The workstream-scoped `Handoff.Volition.md` had grown into a ~320-line mirror of
+experiment findings, plan status, and fixture data — duplicating content that belongs in
+experiment Results, architecture, and the backlog, and going stale between sessions. The three
+levels formalize the hierarchy the document was already reaching for, and a project-level scope
+matches the Horizon level, which is inherently project-wide.
+
+Consequences: Workstream handoffs are retired; `Handoff.Volition.md`'s content moved to its proper
+homes (experiment Results, `Architecture.VolitionSystem.md`, `Experiment.Backlog.md`, the active
+plan) and the file is deleted. Events that change no recommendation (e.g. a negative test with
+nothing new) do not touch the handoff. The handoff is never authoritative for anything — readers
+follow its links; other documents must not cite it as evidence.

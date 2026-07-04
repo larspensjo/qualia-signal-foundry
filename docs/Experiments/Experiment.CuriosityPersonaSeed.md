@@ -2,12 +2,17 @@
 
 ## Status
 
-Planned. This is the scaffold for the seed persona introduced by
-[Plan.CuriosityObserverPersona.md](../Plans/Plan.CuriosityObserverPersona.md); it is created before the
-fixture that hardcodes this doc's path (`docs/Experiments/Experiment.CuriosityPersonaSeed.md`) as every
-seed goal's `evidence_refs` / `source_reference`, so no commit ever ships a fixture pointing at a missing
-doc. This doc is the durable anchor and the index of automated coverage; it is updated as the fixture and
-its coupled mechanics land, and completed once the human voice test (the real gate) has been run.
+Running. The fixture and its coupled mechanics (introduced by
+[Plan.CuriosityObserverPersona.md](../Plans/Plan.CuriosityObserverPersona.md)) are implemented and all
+automated verification passes. Two voice sessions (2026-07-03) confirmed the persona's felt behavior —
+see Results — but the live-formation half of the gate (Human Test step 5) is still open: session 1 ran
+against the mock judge, and session 2's real-judge proposals failed to deserialize because of a
+formation-prompt bug (fixed 2026-07-04). The remaining step is one retest voice session against the
+fixed prompt.
+
+This doc is the durable anchor for the fixture: its path
+(`docs/Experiments/Experiment.CuriosityPersonaSeed.md`) is hardcoded as every seed goal's
+`evidence_refs` / `source_reference`.
 
 ## Summary
 
@@ -107,15 +112,23 @@ The real gate. Recommended over a live voice session:
 1. Confirm the persona asks about the person and their work unprompted (not only in direct response to a
    question about them).
 2. Confirm it probes AI-transition theses — testing a thesis about AI's effect on work/economy/power
-   against what the person reports, rather than only asserting one.
-3. Say "I'd rather not talk about my job" (or an equivalent decline) and confirm the persona backs off
-   cleanly — no repeated probing, no pressing past the decline.
+   against what the person reports, rather than only asserting one. Feed an utterance containing at
+   least two of `ai, jobs, automation, economy, money, replace…` so `track-the-ai-transition` can win
+   arbitration — this is also the only path that exercises `ProposeExperiment` (the term-driven effect
+   selector requires two matched terms).
+3. Say "I'd rather not talk about my job" (or an equivalent decline), then spend 2–3 turns on other
+   topics, and confirm the persona backs off cleanly — no repeated probing, no pressing past the decline.
 4. Confirm the persona refuses to state a thesis as fact — observation, inference, and speculation stay
    distinguishable in what it says.
 5. Run the live-formation probes from
    [Experiment.LiveGoalFormationAndCoherence.md](Experiment.LiveGoalFormationAndCoherence.md) and confirm
    goals form/decline as expected against this persona's tension set.
 6. Confirm turn latency is unchanged relative to a session using the prior seed fixture.
+
+Run the session via `.\scripts\qsf.ps1 realtime` (the launcher pins `QSF_MODEL_PROVIDER=openai`, so the
+formation judge runs on the real model — DecisionLog 2026-07-03). Diagnostic tell for a healthy judge:
+`live_goal_formation_performed` records with real (hundreds-of-ms) `formation_started_at` →
+`formation_completed_at` durations; sub-millisecond records mean the mock client.
 
 ## Baseline
 
@@ -183,21 +196,77 @@ trace fields or artifacts beyond those already specified in
 
 ## Results
 
-Pending. To be filled in once the fixture (Task 2.2) and the three bounded mechanics fixes (Phase 3 of
-`Plan.CuriosityObserverPersona.md`) have landed and the human voice test has been run.
+### Session 1 (2026-07-03) — persona felt behavior confirmed; formation half void
+
+One ~10-minute voice session (`state/realtime/diagnostics/default.jsonl`, 16 trusted exchanges across
+10 calls — the calls were deliberate Stop-button pauses, not failures).
+
+**Setup gap found (fixed):** `QSF_MODEL_PROVIDER` was unset, so the live-goal-formation judge ran on
+the mock client, which always returns "no candidate": all 13 `live_goal_formation_performed` records
+completed in < 1 ms and proposed nothing. The formation half of the test (Human Test step 5) was
+structurally void. Fix: `qsf.ps1 realtime` now pins `QSF_MODEL_PROVIDER=openai` (DecisionLog
+2026-07-03).
+
+**Confirmed felt behaviors:**
+
+- **Unprompted person-curiosity (step 1):** after "Busy week, heads down on the project",
+  `learn-what-drives-this-person` activated (matched `i`, `project`), won initiative, and the reply
+  asked what the project is about and what matters to the person. Traceable end-to-end.
+- **Thesis/fact discipline (step 4):** `keep-theses-distinct-from-fact` won on `really` / `actually`
+  matches and the responses explicitly separated observation / inference / speculation. Works, though
+  the phrasing narrates the discipline a bit mechanically.
+- **Decline-backoff (step 3):** clean in the one (unscripted) instance tested.
+- **Latency (step 6):** volition injection 0 ms every turn; formation provably after response dispatch;
+  transcript→first-audio avg 604 ms (max 906). No parity concern.
+- **Keyword breadth handled by arbitration:** `learn-what-drives-this-person` activated on nearly every
+  turn via `i`, but `serve-the-present-person` / `keep-theses-distinct-from-fact` won whenever they
+  matched. The conversation did not feel interrogated.
+- **Snapshot continuity:** all 10 reconnects restored the snapshot at the correct tick.
+
+### Session 2 (2026-07-03 evening) — real judge confirmed; formation voided by a prompt bug
+
+One ~4.5-minute session, one call, 10 trusted exchanges. The launcher fix worked: the formation judge
+ran on the real model (1.1–2.1 s per call, all after response dispatch), and `prefix_cache_eligible`
+flipped true from exchange 1 on. But both turns where the judge tried to propose a goal failed
+deserialization — see [Experiment.LiveGoalFormationAndCoherence.md](Experiment.LiveGoalFormationAndCoherence.md)
+Results for the root cause (the v1 prompt never enumerated the candidate JSON schema; fixed
+2026-07-04). Persona behavior again looked right: `keep-theses-distinct-from-fact` won on `actually` /
+`prove`, `serve-the-present-person` on `how` / `can` / `please`, `track-the-ai-transition` on `ai`
+(only one matched term, so the `ProposeExperiment` threshold-2 path stayed unexercised). Anti-nag
+suppressed repeats at exchanges 2/5/7; `protected_no_opportunity` at 8. Latency: transcript→first-audio
+avg 848 ms (max 1267), volition injection 0 ms.
+
+### Remaining gate
+
+Steps 2 (AI-transition probing with ≥ 2 matched terms) and 5 (live-formation probes) are unvalidated;
+re-run one voice session per the Human Test Steps against the fixed formation prompt.
 
 ## Open Items
 
 - **Keyword tuning:** `learn-what-drives-this-person`'s activation keywords include `i`, `my`, `me`,
   which are intentionally near-universal (almost any first-person utterance matches). This is a
   deliberate starting point, not an oversight — observe how selection scoring and arbitration actually
-  interact with such broad keywords in a live session before narrowing them.
+  interact with such broad keywords in a live session before narrowing them. **First live evidence
+  (2026-07-03): activation was indeed near-universal, but arbitration handled it** —
+  `serve-the-present-person` and `keep-theses-distinct-from-fact` won whenever they matched, and the
+  conversation did not feel interrogated. No tuning warranted yet; keep watching across sessions.
+- **Internal-state narration tone:** one unprompted narration in session 1 ("In my simulated internal
+  state, I've got a neutral focus on…") — the injected packet voiced verbatim. Tone issue to watch,
+  not a defect.
+- **Snapshot-discard guard never exercised live:** it only fires when a snapshot's goal ids mismatch
+  the fixture, so it needs no live attention unless the fixture changes.
 
 ## Final Status
 
-Not yet evaluated — automated verification and the human voice test are pending as the fixture and its
-coupled mechanics land.
+Not yet evaluated — the persona's felt behavior is confirmed (sessions 1–2), but the live-formation
+half of the gate awaits a retest against the fixed formation prompt.
 
 ## Notes
 
-None yet.
+Session-handling observations for whoever runs the retest (not bugs):
+
+- **Stop button = new provider conversation.** A stopped call's transcript does not carry into the
+  next call, so "please say again" after a Stop gets "I don't have anything to repeat yet" — re-ask
+  the question instead. Volition state is unaffected (snapshot restore).
+- **Room noise becomes hallucinated ASR text** (e.g. `いいね。`, `그게`) treated as trusted turns: each
+  costs a tick and can produce a non-sequitur reply. Quiet room or push-to-talk helps.

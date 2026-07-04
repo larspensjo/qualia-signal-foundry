@@ -8,7 +8,9 @@ Implemented (offline harness + live wiring). Depends on the offline coherence en
 adds the live-loop wiring, off-hot-path admission, the declined-candidate context layer, and the
 sleep formation + sweep. See
 [Plan.VolitionMotivationalTexture.md](../Plans/Plan.VolitionMotivationalTexture.md). Human voice
-testing (the Human Test Steps below) is still pending.
+testing (the Human Test Steps below) is still pending: two attempts on 2026-07-03 were voided — the
+first by a mock judge, the second by a formation-prompt bug (both fixed; see Results) — so a retest
+is the open gate.
 
 ## Summary
 
@@ -196,6 +198,12 @@ pending live-formation voice test are validated together:
 4. **Latency parity.** Confirm turn latency across this session is unchanged relative to a session
    with no formation.
 
+For probes 1–3: admission runs **post-turn**, so judge by the volition panel / next turns, not the
+immediate verbal reply; give each probe 1–2 follow-up turns. Afterwards check
+`live_goal_formation_performed` (real proposals/rejections), the `coherence` injection layer from the
+turn after each rejection, and `latency_observation` parity in
+`state/realtime/diagnostics/<qsf_session_id>.jsonl`.
+
 ## Trace Completeness Contract
 
 Each coherence event writes one `TraceRecord` to `traces.jsonl`. Two operations:
@@ -340,8 +348,36 @@ Live wiring (the realtime post-response hook, the `coherence` injection layer, a
 real sleep/consolidation pass now runs whole-history formation and the whole-set sweep against the
 persisted volition snapshot (`run_sleep_volition_goal_maintenance`, invoked from
 `commit_cross_session_sleep`) through the same shared resolvers, so sleep goal maintenance is no
-longer exercised only by the offline harness. **Human voice testing has not yet been run** and
+longer exercised only by the offline harness. **Human voice testing has not yet passed** and
 remains the recommended next step before this phase is considered fully validated end-to-end.
+
+### Live voice attempts (2026-07-03) — both voided, causes found and fixed
+
+Two voice sessions against the curiosity-observer persona
+(`state/realtime/diagnostics/default.jsonl`; persona-side findings in
+[Experiment.CuriosityPersonaSeed.md](Experiment.CuriosityPersonaSeed.md) Results):
+
+- **Session 1: mock judge.** `QSF_MODEL_PROVIDER` was unset, so the formation judge ran on the mock
+  client (always "no candidate"): 13 sub-millisecond `live_goal_formation_performed` records,
+  nothing proposed. Structurally void. Fixed by the launcher pinning `QSF_MODEL_PROVIDER=openai`
+  (DecisionLog 2026-07-03).
+- **Session 2: real judge, prompt bug.** The judge ran on the real model (1.1–2.1 s per call, all
+  provably after response dispatch — the off-hot-path guarantee held live) and
+  `prefix_cache_eligible` behaved as specified. But both turns where the judge proposed a goal
+  failed deserialization (`live_goal_formation_failed`, exchanges 3 and 6: "goal to create a
+  simulation of a conscious system" → `missing field tension_ids`; "keep a running thesis about how
+  AI works…" → `missing field id`). The eight no-candidate turns parsed fine (`null` is
+  unambiguous). **Root cause was in the prompt, not the model:** the v1 system prompt said
+  `"proposed_candidate": null | {candidate fields}` but never enumerated the candidate fields, so
+  the model invented a shape that strict serde rejected.
+- **Fix applied 2026-07-04:** `ProposedGoalCandidate::json_schema_hint()` now lives next to the
+  struct in `crates/qsf_volition/src/candidate.rs` (single source of truth, drift-guarded by a unit
+  test) and is embedded in the judge prompt (`crates/qsf_models/src/live_goal_formation.rs`,
+  `stable_prefix_request`). Parse failures now also carry the raw model response into the `error`
+  field of the `live_goal_formation_failed` diagnostic, so the next such failure is self-explaining.
+  Changing the prompt changes the stable prefix hash (expected, harmless).
+
+The Human Test Steps remain the open gate; re-run them against the fixed prompt.
 
 One resolved deviation from the original spec text: the "cache-breakpoint boundary" (D2/D6) is
 an application-level `stable_prefix_message_count` / `stable_prefix_hash` marker on `ModelRequest`

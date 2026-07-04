@@ -31,6 +31,7 @@ to the live system.
 | `docs/Experiments/Report.*.md` | Experiment report | Outcome of one specific run | Evidence about that run only; not a generalization |
 | `docs/Reviews/` | Review | Plan or code review at a specific point | Snapshot in time; preferred resolution is in the decision log |
 | `docs/DecisionLog.md` | Decision | Deliberate commitments | Source of truth for accepted project rules |
+| `docs/Handoff.md` | Handoff | Recommended next step at three levels (Now / Next / Horizon) | Ephemeral pointer; never authoritative — follow its links, don't cite it |
 
 ## Maturity Tags
 

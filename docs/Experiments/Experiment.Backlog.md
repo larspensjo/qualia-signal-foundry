@@ -62,6 +62,7 @@ Later
 | `Experiment.RealtimeVolitionBoundedInitiative` | High | Running | Can the live loop produce and explain bounded internal initiative outputs (reflection, context retrieval hints, open threads) without executing external effects? |
 | `Experiment.RealtimeVolitionContinuity` | Medium | Running | Does realtime volition state persist usefully across sessions, and does cross-session consolidation surface recurring goals without making state sticky? |
 | `Experiment.RealtimeVolitionInspectionUi` | Medium | Running | Does a lightweight volition panel in the realtime UI help explain behavior without interrupting the spoken interaction? |
+| `Experiment.PersonaTensionVariations` | Medium | Idea | Which new tensions (depth-seeking, skepticism, acknowledgement) and mode settings produce a felt, inspectable change in live persona behavior? |
 | `Experiment.StreamingTranscriptionMVP` | Medium | Completed | Can live speech be represented as observable partial and final transcript events? |
 | `Experiment.AudioLoopMVP` | Medium | Superseded | Can a minimal audio loop create a stronger sense of presence than text-only interaction? |
 | `Experiment.ToolAsPerceptionCalculator` | Medium | Completed | How should a simple read-only computational tool be represented as perception? |
@@ -521,6 +522,41 @@ Possible success criteria:
 - `ModeChanged` updates `state.mode`; results are deterministic and replay-identical.
 - All prior tests pass; existing `arbitrate`/selector/reducer behaviour is unchanged.
 - No effect is executed (`executed_effects = 0`).
+
+### Experiment.PersonaTensionVariations
+
+**Priority:** Medium
+**Status:** Idea
+
+Extend the live curiosity-observer persona with new fixture tensions and watch each win or lose
+arbitration in the realtime volition panel. Candidate variations (each a small, independent fixture
+edit — see the persona-experimentation guidance in
+[Architecture.VolitionSystem.md](../Architecture/Architecture.VolitionSystem.md)):
+
+- **Depth-seeking tension** (tier 5–6): fire when the conversation stays shallow across turns —
+  pressure toward longer explanations or example requests.
+- **Skepticism tension** (tier 4): activate when claims are made without evidence markers — nudge
+  toward "what's the evidence?" reflection.
+- **Acknowledgement tension** (tier 6): when the user signals effort or frustration, surface a brief
+  acknowledgement line before the answer.
+- **Mode exploration**: switch to `Exploratory` via `VolitionEvent::ModeChanged` at session start and
+  watch `Exploratory`-boosted curiosity goals win over continuity goals within the biasable band,
+  while protected tiers stay immune.
+
+Related documents:
+
+```text
+Architecture/Architecture.VolitionSystem.md
+Experiments/Experiment.CuriosityPersonaSeed.md
+Plans/Plan.VolitionMotivationalTexture.md
+DecisionLog.md  (2026-07-03 "Realtime persona replaced with curiosity-observer; personas are data")
+```
+
+Possible success criteria:
+
+- A new tension/goal visibly wins arbitration on matching input in the live volition panel.
+- The behavioral change is felt in conversation, not only structurally present.
+- No protected-tier invariant is violated.
 
 ### Experiment.StreamingTranscriptionMVP
 

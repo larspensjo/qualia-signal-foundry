@@ -12,8 +12,7 @@ Detailing the next phase is the step after Phase 2's human voice testing is comp
 The realtime volition system is fully built and human-tested: tensions, goals, salience,
 arbitration, mode bias, opportunity detection, shaping-intensity dial, bounded initiative in
 the live loop, cross-session continuity, and a browser volition panel. See
-[Architecture.VolitionSystem.md](../Architecture/Architecture.VolitionSystem.md) and
-[Handoff.Volition.md](../Handoff.Volition.md).
+[Architecture.VolitionSystem.md](../Architecture/Architecture.VolitionSystem.md).
 
 This plan gives volition more **inspectable motivational texture** so the system reads as a
 *distinct, motivated agent* — without reopening the evidence-based, anti-anthropomorphic
@@ -270,6 +269,13 @@ suspend / resume / abandon. The current system is single-turn initiative.
   deliberately — revisit need after earlier phases add texture, and prove offline before the
   live loop.
 - **Verification:** offline Experiment scaffold over the plan lifecycle before any live wiring.
+
+## Parked questions
+
+- **Initiative derivation:** stay rule-based (`execute_initiative`) or add a later model-assisted
+  proposer emitting the same `InitiativeOutput` shape. Default: rule-based only. Revisit if the
+  rule-based outputs feel mechanical after more personality experimentation (a natural checkpoint
+  is Phase 3, which adds texture on top of the same outputs).
 
 ## Documents to update (per ProjectWorkflow.md)
 

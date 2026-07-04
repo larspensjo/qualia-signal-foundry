@@ -537,6 +537,13 @@ filename prefix:
 - `Design.*.md` — focused design decision in support of a plan. Authoritative for
   that decision; cross-reference the decision log.
 
+### `docs/Handoff.md`
+
+Project-level resume point.
+
+Should recommend the next step at three abstraction levels — see Handoff Discipline
+below. It recommends; it never defines. Never authoritative for anything.
+
 ## Build Loop For Adding A Framework Piece
 
 The framework MVP has already shipped. The following loop is the recommended
@@ -670,6 +677,44 @@ Keep research questions visible.
 If the project feels uncertain, that is acceptable. Capture the uncertainty.
 
 Good research questions prevent vague discomfort from becoming hidden design risk.
+
+## Handoff Discipline
+
+`docs/Handoff.md` is the project-level resume point: it tells the next session (human
+or model) what to do first, without re-deriving context. It holds recommendations at
+three abstraction levels:
+
+```text
+Now:
+  The immediate next action — typically running a test or verification that gates
+  current work.
+
+Next:
+  The active plan level — typically implementing the next phase of a current
+  Plan.*.md.
+
+Horizon:
+  The direction level — typically elaborating an Idea.*.md into a plan, picking a
+  backlog experiment, or brainstorming a new idea.
+```
+
+Rules:
+
+- **One primary recommendation per level**, with a one-line rationale and a link.
+  At most one or two one-line alternates when a genuine fork exists.
+- **Pointer, not content.** The handoff never defines a test, records findings, or
+  duplicates plan state. If the detail does not yet exist in its proper home (an
+  experiment's Results, a plan's phase status, an architecture doc), write it there
+  first, then link it.
+- **Update only when an event changes a recommendation at some level.** Typical
+  triggers: a session was run and analyzed with new conclusions, a plan phase was
+  implemented, or an idea discussion changed the direction. A negative test with
+  nothing new, or any event that leaves all three recommendations standing, does not
+  touch the handoff.
+- **Rewrite in place.** The handoff carries no history; git holds the chronology
+  (see Chronology Discipline).
+- **Two-minute read budget** — about one screen. If it grows past that, content is
+  leaking in that belongs elsewhere.
 
 ## Chronology Discipline
 
