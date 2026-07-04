@@ -1662,3 +1662,34 @@ homes (experiment Results, `Architecture.VolitionSystem.md`, `Experiment.Backlog
 plan) and the file is deleted. Events that change no recommendation (e.g. a negative test with
 nothing new) do not touch the handoff. The handoff is never authoritative for anything — readers
 follow its links; other documents must not cite it as evidence.
+
+## 2026-07-04 - Weighted goal activation with a global arbitration qualification threshold
+
+Decision: Activation keywords carry coarse curated weight classes (Weak = 1, Normal = 4,
+Strong = 8) in fixture data; a goal's match strength is the sum of its matched-term weights and
+is the single strength quantity behind both the ranked relevance display and arbitration
+qualification. A goal must reach one global fixture-level qualification threshold (default 4)
+before it can win arbitration; qualification is a pure partition step inside arbitration, before
+the existing tier sort, which is unchanged among qualified goals. Protected tiers get no
+qualification exemption — their protection (never cancelled by coherence, decline-backoff, floor
+semantics) governs cancellation, not speaking. When no goal qualifies, volition stays quiet for
+the turn and records a dedicated below-qualification-threshold suppression instead of promoting a
+weak winner or falling back to a default goal. Per-tier thresholds, corpus-derived weights,
+stemming, and phrase matching are deliberately deferred.
+
+Context: Live voice evidence (2026-07-04, `Experiment.CuriosityPersonaSeed.md` /
+`Experiment.LiveGoalFormationAndCoherence.md`) showed binary token activation plus
+strength-blind tier sorting letting a protected goal win the initiative line on a stopword
+(`what`/`do`) against a five-term on-topic match. Resolved in the 2026-07-04 brainstorm;
+design in `docs/Plans/Design.WeightedGoalActivation.md`, validated by
+`Experiment.WeightedGoalActivation.md`. The long-term semantic direction is preserved
+separately in `Idea.SemanticGoalActivation.md`; this deterministic lexical layer ships first
+and doubles as its no-GPU fallback and evaluation harness.
+
+Consequences: Personas stay data-only — weights and the threshold are fixture data, readable
+and tunable without code changes. Persisted goals (continuity snapshots, reviewed seeds,
+live-formed candidates) need a compatibility reader that accepts legacy plain-string keywords
+as Normal; live-formed goals qualify on a single model-supplied keyword until the formation
+schema is extended. Initiative frequency drops slightly on idle or stopword-only turns, which
+the anti-nag layer already established as acceptable. Traces must record matched terms with
+their weight classes plus the threshold in force so qualification outcomes stay auditable.

@@ -1,7 +1,7 @@
 # Handoff — Resume Here
 
-**Updated:** 2026-07-04 — second voice session analyzed; formation-prompt bug found and fixed;
-session findings recorded in the experiment docs.
+**Updated:** 2026-07-04 — weighted-goal-activation design approved (arbitration was won by
+stopwords in the live session); implementation plan created.
 
 <!--
 Rules (see ProjectWorkflow.md, "Handoff Discipline"):
@@ -15,23 +15,24 @@ Rules (see ProjectWorkflow.md, "Handoff Discipline"):
 
 ## Now — immediate action
 
-**Re-run the curiosity-observer voice test** via `.\scripts\qsf.ps1 realtime`.
-Why: live goal formation is the open gate — sessions 1–2 (2026-07-03) confirmed the persona's
-felt behavior but were voided on the formation half by a mock judge and then a formation-prompt
-bug, both now fixed.
-Protocol and prior findings:
-[Experiment.CuriosityPersonaSeed.md](Experiments/Experiment.CuriosityPersonaSeed.md) and
-[Experiment.LiveGoalFormationAndCoherence.md](Experiments/Experiment.LiveGoalFormationAndCoherence.md)
-(Human Test Steps + Results); record the outcome in their Results sections.
+**Implement the first phase (weighted keyword schema + pure scoring) of
+[Plan.WeightedGoalActivation.md](Plans/Plan.WeightedGoalActivation.md)**.
+Why: the 2026-07-04 session showed stopwords winning arbitration
+([Design.WeightedGoalActivation.md](Plans/Design.WeightedGoalActivation.md)); the pending voice
+retests are phrase-engineering exercises until match strength gates the win.
+Alternate: re-run the formation voice test first
+([Experiment.LiveGoalFormationAndCoherence.md](Experiments/Experiment.LiveGoalFormationAndCoherence.md))
+if a live session is wanted before selection mechanics change under it.
 
 ## Next — active plan
 
-**[Plan.RealtimeVoiceConversation.md](Plans/Plan.RealtimeVoiceConversation.md) Phase 5** — live
-memory extraction + presence/interruption refinement.
-Why: the only fully detailed active plan; independent of the volition gate above.
-Alternate: once the voice test passes, detail the next phase of
-[Plan.VolitionMotivationalTexture.md](Plans/Plan.VolitionMotivationalTexture.md)
-(emotion-like signals, visualization-first).
+**Complete [Plan.WeightedGoalActivation.md](Plans/Plan.WeightedGoalActivation.md)** through its
+arbitration/traces phase, then run the
+[Experiment.WeightedGoalActivation.md](Experiments/Experiment.WeightedGoalActivation.md) voice
+gate (created by the plan's first task).
+Why: it unblocks honest persona retests, including the curiosity-persona step-2 gate.
+Alternate: [Plan.RealtimeVoiceConversation.md](Plans/Plan.RealtimeVoiceConversation.md) Phase 5
+(live memory extraction), independent of the volition gate.
 
 ## Horizon — direction
 
