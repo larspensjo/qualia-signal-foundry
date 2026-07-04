@@ -8,7 +8,7 @@ use qsf_tools::{
     Tool, ToolContext, ToolDefinition, ToolMetadata, ToolRequest, ToolResult, ToolSideEffectLevel,
 };
 use qsf_volition::{
-    GoalSelection, ModeArbitrationResult, arbitrate_with_mode, build_state_inspection,
+    GoalSelection, ModeArbitrationOutcome, arbitrate_with_mode, build_state_inspection,
     select_goals_ranked,
 };
 use serde_json::Value;
@@ -156,11 +156,8 @@ impl Tool for SelectVolitionGoalsTool {
             .context("select_volition_goals requires `query`")?;
 
         let ranked = select_goals_ranked(query, &snap.state, &snap.fixture);
-        // Task 9 bridge: the select tool still reports only the qualified winner. Reporting the
-        // full qualification outcome is wired in by the select-tool outcome work.
         let arbitration =
-            arbitrate_with_mode(ranked.selected.clone(), &snap.fixture, snap.state.mode)
-                .and_then(|outcome| outcome.qualified);
+            arbitrate_with_mode(ranked.selected.clone(), &snap.fixture, snap.state.mode);
         let snapshot_hash = volition_snapshot_hash(snap);
         let input_terms = ranked.input_terms.clone();
 
@@ -285,7 +282,7 @@ fn build_select_observation_summary(
     query: &str,
     snap: &VolitionStateSnapshot,
     ranked: &qsf_volition::RankedSelectionResult,
-    arbitration: &Option<ModeArbitrationResult>,
+    arbitration: &Option<ModeArbitrationOutcome>,
     snapshot_hash: &str,
     exchange_index: usize,
     call_id: &str,
@@ -343,6 +340,8 @@ fn select_model_goal_value(selection: &GoalSelection, snap: &VolitionStateSnapsh
         "salience": salience,
         "relevance_score": selection.relevance_score,
         "matched_terms": selection.matched_terms(),
+        "matched_keywords": &selection.matched_keywords,
+        "match_strength": selection.match_strength,
         "scope": selection.goal.scope,
         "tension_ids": &selection.goal.tension_ids,
     })
@@ -356,26 +355,52 @@ fn omitted_model_goal_value(goal: &qsf_volition::OmittedGoal) -> Value {
     })
 }
 
-fn model_arbitration_value(arbitration: &Option<ModeArbitrationResult>) -> Option<Value> {
-    arbitration.as_ref().map(|value| {
-        serde_json::json!({
+fn below_threshold_value(outcome: &ModeArbitrationOutcome) -> Vec<Value> {
+    outcome
+        .below_threshold
+        .iter()
+        .map(|candidate| {
+            serde_json::json!({
+                "goal_id": &candidate.selection.goal.id,
+                "match_strength": candidate.match_strength,
+                "matched_keywords": &candidate.selection.matched_keywords,
+            })
+        })
+        .collect()
+}
+
+fn model_arbitration_value(arbitration: &Option<ModeArbitrationOutcome>) -> Option<Value> {
+    let outcome = arbitration.as_ref()?;
+    match outcome.qualified.as_ref() {
+        Some(value) => Some(serde_json::json!({
             "winner_id": &value.winner.goal.id,
             "winner_title": &value.winner.goal.title,
             "winner_effective_tier": value.winner_bias.effective_tier,
             "winner_effective_tension_id": &value.winner_effective_tension_id,
             "winner_effective_tension_title": &value.winner_effective_tension_title,
             "loser_count": value.losers.len(),
-        })
-    })
+            "qualification_threshold": outcome.qualification_threshold,
+        })),
+        None => Some(serde_json::json!({
+            "status": "no_qualified_winner",
+            "qualification_threshold": outcome.qualification_threshold,
+            "below_threshold": below_threshold_value(outcome),
+        })),
+    }
 }
 
-fn trace_arbitration_value(arbitration: &Option<ModeArbitrationResult>) -> Option<Value> {
-    arbitration.as_ref().map(|value| {
-        serde_json::json!({
+fn trace_arbitration_value(arbitration: &Option<ModeArbitrationOutcome>) -> Option<Value> {
+    let outcome = arbitration.as_ref()?;
+    match outcome.qualified.as_ref() {
+        Some(value) => Some(serde_json::json!({
             "winner_id": &value.winner.goal.id,
             "winner_effective_tier": value.winner_bias.effective_tier,
-        })
-    })
+        })),
+        None => Some(serde_json::json!({
+            "status": "no_qualified_winner",
+            "qualification_threshold": outcome.qualification_threshold,
+        })),
+    }
 }
 
 fn volition_snapshot_hash(snap: &VolitionStateSnapshot) -> String {
@@ -611,6 +636,37 @@ mod tests {
 
         assert_eq!(json["status"], "no_match");
         assert_eq!(json["arbitration"], Value::Null);
+    }
+
+    #[test]
+    fn select_volition_reports_no_qualified_winner_for_weak_only_query() {
+        let tempdir = TempDir::new().unwrap();
+        let runtime = runtime(&tempdir);
+        let ctx = tool_context_with_volition(&tempdir, &runtime);
+        let tool = SelectVolitionGoalsTool;
+
+        // "for what it's worth, thanks" activates serve-the-present-person on the weak "what"
+        // (strength 1) — below the qualification threshold, so no goal qualifies to win.
+        let weak = tool
+            .execute(&select_request("for what it's worth, thanks"), &ctx)
+            .unwrap();
+        let json: Value = serde_json::from_str(&weak.output_text).unwrap();
+        assert_eq!(json["arbitration"]["status"], "no_qualified_winner");
+        assert!(json["arbitration"]["qualification_threshold"].is_number());
+        assert!(
+            json["arbitration"]["below_threshold"]
+                .as_array()
+                .is_some_and(|list| !list.is_empty())
+        );
+
+        // A qualified query keeps the winner shape.
+        let ctx = tool_context_with_volition(&tempdir, &runtime);
+        let qualified = tool
+            .execute(&select_request("how can you help me"), &ctx)
+            .unwrap();
+        let json: Value = serde_json::from_str(&qualified.output_text).unwrap();
+        assert!(json["arbitration"]["winner_id"].is_string());
+        assert!(json["arbitration"].get("status").is_none());
     }
 
     #[test]
