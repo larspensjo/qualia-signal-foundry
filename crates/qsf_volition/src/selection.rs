@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     ActivationKeyword, AllowedEffect, Goal, GoalSelection, GoalStatus, InitiativeProposal,
-    OmittedGoal, VolitionFixture, VolitionState, normalize_terms,
+    KeywordWeightClass, OmittedGoal, VolitionFixture, VolitionState, normalize_terms,
 };
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
@@ -72,19 +72,34 @@ pub fn compute_relevance_with_salience(
     compute_relevance(goal, fixture, matched) + salience as f64
 }
 
-/// Number of distinct matched activation keywords at which a goal that allows
-/// `ProposeExperiment` treats the match as a strong thematic hit and proposes rather than
-/// reflects. Generic infrastructure — no persona-specific terms live in code.
-pub const STRONG_MATCH_EFFECT_THRESHOLD: usize = 2;
+/// Match strength at which a goal that allows `ProposeExperiment` treats the match as a
+/// strong thematic hit. Strength alone is not the contract — see the distinct-term rule.
+pub const STRONG_MATCH_STRENGTH_THRESHOLD: u32 = 8;
+/// A rich match also needs this many distinct non-Weak matched terms: a single Strong
+/// keyword scores 8 but is not a rich match.
+pub const STRONG_MATCH_MIN_DISTINCT_NON_WEAK_TERMS: usize = 2;
 
 /// Choose which allowed effect a goal fires for this match. A goal that permits
-/// `ProposeExperiment` and matched at least `STRONG_MATCH_EFFECT_THRESHOLD` of its keywords
-/// proposes; otherwise the goal takes its first allowed effect (`Reflect` by convention).
+/// `ProposeExperiment` on a rich match (match strength at or above
+/// `STRONG_MATCH_STRENGTH_THRESHOLD` and at least `STRONG_MATCH_MIN_DISTINCT_NON_WEAK_TERMS`
+/// distinct non-Weak matched terms) proposes; otherwise the goal takes its first allowed
+/// effect (`Reflect` by convention). Generic infrastructure — no persona-specific terms in code.
 pub fn select_effect_for_goal(goal: &Goal, matched: &[ActivationKeyword]) -> AllowedEffect {
     let allows_propose = goal
         .allowed_effects
         .contains(&AllowedEffect::ProposeExperiment);
-    if allows_propose && matched.len() >= STRONG_MATCH_EFFECT_THRESHOLD {
+    // Distinct by term: `matched_keywords` deduplicates fixture matches today, but this
+    // function also takes manually constructed slices, so it must not trust its input.
+    let distinct_non_weak = matched
+        .iter()
+        .filter(|keyword| keyword.weight_class != KeywordWeightClass::Weak)
+        .map(|keyword| keyword.term.as_str())
+        .collect::<std::collections::HashSet<_>>()
+        .len();
+    if allows_propose
+        && match_strength(matched) >= STRONG_MATCH_STRENGTH_THRESHOLD
+        && distinct_non_weak >= STRONG_MATCH_MIN_DISTINCT_NON_WEAK_TERMS
+    {
         return AllowedEffect::ProposeExperiment;
     }
     goal.allowed_effects
@@ -468,6 +483,51 @@ mod tests {
     }
 
     #[test]
+    fn propose_experiment_requires_strength_and_two_distinct_non_weak_terms() {
+        let fixture = realtime_seed_fixture();
+        let goal = fixture
+            .goals
+            .iter()
+            .find(|g| g.id == "track-the-ai-transition")
+            .unwrap();
+        // Two Normal terms: strength 8, two non-Weak — fires.
+        let two_normal = vec![
+            ActivationKeyword::normal("job"),
+            ActivationKeyword::normal("replace"),
+        ];
+        assert_eq!(
+            select_effect_for_goal(goal, &two_normal),
+            AllowedEffect::ProposeExperiment
+        );
+        // A single Strong term scores 8 but is not a rich match — reflects.
+        let single_strong = vec![ActivationKeyword::strong("ai")];
+        assert_eq!(
+            select_effect_for_goal(goal, &single_strong),
+            AllowedEffect::Reflect
+        );
+        // A duplicated Normal term scores 8 but is one distinct term — reflects.
+        let duplicated_normal = vec![
+            ActivationKeyword::normal("job"),
+            ActivationKeyword::normal("job"),
+        ];
+        assert_eq!(
+            select_effect_for_goal(goal, &duplicated_normal),
+            AllowedEffect::Reflect
+        );
+        // Weak-word combinations never fire regardless of count.
+        let weak_pile = vec![
+            ActivationKeyword::weak("future"),
+            ActivationKeyword::weak("power"),
+            ActivationKeyword::weak("what"),
+            ActivationKeyword::weak("do"),
+        ];
+        assert_eq!(
+            select_effect_for_goal(goal, &weak_pile),
+            AllowedEffect::Reflect
+        );
+    }
+
+    #[test]
     fn track_ai_transition_proposes_experiment_on_rich_transition_match() {
         let fixture = realtime_seed_fixture();
         let goal = fixture
@@ -509,7 +569,7 @@ mod tests {
     fn static_fixture_clarify_goal_proposes_on_strong_match_reflects_on_thin() {
         // Deliberate behavior change: `clarify-weak-evidence-topic` (static_fixture) allows
         // [Reflect, ProposeExperiment], so the generic selector proposes on a
-        // >= STRONG_MATCH_EFFECT_THRESHOLD keyword match and only reflects on a thin match.
+        // rich match (strength >= 8, two distinct non-Weak terms) and only reflects on a thin match.
         // Pinned here so the static-fixture change is explicit, not accidental.
         let fixture = static_fixture();
         let goal = fixture
