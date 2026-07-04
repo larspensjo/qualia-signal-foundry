@@ -91,7 +91,8 @@ export type VolitionSuppressionReason =
   | "intensity"
   | "protected_no_opportunity"
   | "anti_nag_repeat"
-  | "non_renderable_output";
+  | "non_renderable_output"
+  | "below_qualification_threshold";
 
 export interface VolitionGoalStatusSummary {
   id: string;
@@ -128,12 +129,27 @@ export interface VolitionModeBiasOutcomeCapture {
   protected: boolean;
 }
 
-export interface VolitionTurnDecisionSummary {
+export interface VolitionTurnWinnerSummary {
   winnerGoalId: string;
   winnerGoalTitle: string;
   winnerEffectiveTier: number;
   winnerBiasedTier: number;
   protectedTierActive: boolean;
+}
+
+export type KeywordWeightClass = "weak" | "normal" | "strong";
+
+export interface VolitionBelowThresholdSummary {
+  goalId: string;
+  goalTitle: string;
+  matchedKeywords: Array<{ term: string; weightClass: KeywordWeightClass }>;
+  matchStrength: number;
+}
+
+export interface VolitionTurnDecisionSummary {
+  winner: VolitionTurnWinnerSummary | null;
+  qualificationThreshold: number;
+  belowThreshold: VolitionBelowThresholdSummary[];
   modeBiasOutcomes: VolitionModeBiasOutcomeCapture[];
   selectedGoalIds: string[];
   omittedOrSuppressedGoalIds: string[];
@@ -546,11 +562,20 @@ function convertVolitionTurnDecisionSummary(value: unknown): VolitionTurnDecisio
     return null;
   }
   const wire = value as {
-    winner_goal_id: string;
-    winner_goal_title: string;
-    winner_effective_tier: number;
-    winner_biased_tier: number;
-    protected_tier_active: boolean;
+    winner: {
+      winner_goal_id: string;
+      winner_goal_title: string;
+      winner_effective_tier: number;
+      winner_biased_tier: number;
+      protected_tier_active: boolean;
+    } | null;
+    qualification_threshold: number;
+    below_threshold: Array<{
+      goal_id: string;
+      goal_title: string;
+      matched_keywords: Array<{ term: string; weight_class: KeywordWeightClass }>;
+      match_strength: number;
+    }>;
     mode_bias_outcomes: Array<{
       goal_id: string;
       goal_title: string;
@@ -567,11 +592,26 @@ function convertVolitionTurnDecisionSummary(value: unknown): VolitionTurnDecisio
     last_initiative_rendered_line_present: boolean;
   };
   return {
-    winnerGoalId: wire.winner_goal_id,
-    winnerGoalTitle: wire.winner_goal_title,
-    winnerEffectiveTier: wire.winner_effective_tier,
-    winnerBiasedTier: wire.winner_biased_tier,
-    protectedTierActive: wire.protected_tier_active,
+    winner:
+      wire.winner === null
+        ? null
+        : {
+            winnerGoalId: wire.winner.winner_goal_id,
+            winnerGoalTitle: wire.winner.winner_goal_title,
+            winnerEffectiveTier: wire.winner.winner_effective_tier,
+            winnerBiasedTier: wire.winner.winner_biased_tier,
+            protectedTierActive: wire.winner.protected_tier_active,
+          },
+    qualificationThreshold: wire.qualification_threshold,
+    belowThreshold: wire.below_threshold.map((candidate) => ({
+      goalId: candidate.goal_id,
+      goalTitle: candidate.goal_title,
+      matchedKeywords: candidate.matched_keywords.map((keyword) => ({
+        term: keyword.term,
+        weightClass: keyword.weight_class,
+      })),
+      matchStrength: candidate.match_strength,
+    })),
     modeBiasOutcomes: wire.mode_bias_outcomes.map(convertVolitionModeBiasOutcome),
     selectedGoalIds: wire.selected_goal_ids,
     omittedOrSuppressedGoalIds: wire.omitted_or_suppressed_goal_ids,
@@ -601,7 +641,7 @@ function isVolitionStateInspectionCapture(value: unknown): boolean {
   );
 }
 
-function isVolitionTurnDecisionSummary(value: unknown): boolean {
+function isVolitionTurnWinnerSummary(value: unknown): boolean {
   if (!isRecord(value)) {
     return false;
   }
@@ -610,7 +650,39 @@ function isVolitionTurnDecisionSummary(value: unknown): boolean {
     typeof value.winner_goal_title === "string" &&
     typeof value.winner_effective_tier === "number" &&
     typeof value.winner_biased_tier === "number" &&
-    typeof value.protected_tier_active === "boolean" &&
+    typeof value.protected_tier_active === "boolean"
+  );
+}
+
+function isVolitionBelowThresholdSummary(value: unknown): boolean {
+  if (!isRecord(value)) {
+    return false;
+  }
+  return (
+    typeof value.goal_id === "string" &&
+    typeof value.goal_title === "string" &&
+    typeof value.match_strength === "number" &&
+    Array.isArray(value.matched_keywords) &&
+    value.matched_keywords.every(
+      (keyword) =>
+        isRecord(keyword) &&
+        typeof keyword.term === "string" &&
+        (keyword.weight_class === "weak" ||
+          keyword.weight_class === "normal" ||
+          keyword.weight_class === "strong"),
+    )
+  );
+}
+
+function isVolitionTurnDecisionSummary(value: unknown): boolean {
+  if (!isRecord(value)) {
+    return false;
+  }
+  return (
+    (value.winner === null || isVolitionTurnWinnerSummary(value.winner)) &&
+    typeof value.qualification_threshold === "number" &&
+    Array.isArray(value.below_threshold) &&
+    value.below_threshold.every(isVolitionBelowThresholdSummary) &&
     Array.isArray(value.mode_bias_outcomes) &&
     value.mode_bias_outcomes.every(isVolitionModeBiasOutcome) &&
     Array.isArray(value.selected_goal_ids) &&
@@ -721,7 +793,8 @@ function isVolitionSuppressionReason(value: unknown): value is VolitionSuppressi
     value === "intensity" ||
     value === "protected_no_opportunity" ||
     value === "anti_nag_repeat" ||
-    value === "non_renderable_output"
+    value === "non_renderable_output" ||
+    value === "below_qualification_threshold"
   );
 }
 
@@ -1046,21 +1119,39 @@ export function selectVolitionPanelModel(state: ConversationState): VolitionPane
   }
 
   const decision = capture.decision;
+  const winnerRows: VolitionPanelRow[] =
+    decision.winner === null
+      ? [
+          {
+            label: "Winner",
+            value: `no goal qualified (threshold ${decision.qualificationThreshold})`,
+          },
+          {
+            label: "Below threshold",
+            value: formatBelowThreshold(decision.belowThreshold),
+          },
+        ]
+      : [
+          {
+            label: "Winner",
+            value: `${decision.winner.winnerGoalTitle} [${decision.winner.winnerGoalId}]`,
+          },
+          {
+            label: "Winner tiers",
+            value: `effective ${decision.winner.winnerEffectiveTier}, biased ${decision.winner.winnerBiasedTier}, protected ${yesNo(decision.winner.protectedTierActive)}`,
+          },
+        ];
   return {
     kind: "decision",
     headline: "Volition state",
-    banner: "Decision captured for this trusted turn.",
+    banner:
+      decision.winner === null
+        ? "No goal qualified this turn."
+        : "Decision captured for this trusted turn.",
     sections: snapshotSections.concat({
       title: "Decision detail",
       rows: [
-        {
-          label: "Winner",
-          value: `${decision.winnerGoalTitle} [${decision.winnerGoalId}]`,
-        },
-        {
-          label: "Winner tiers",
-          value: `effective ${decision.winnerEffectiveTier}, biased ${decision.winnerBiasedTier}, protected ${yesNo(decision.protectedTierActive)}`,
-        },
+        ...winnerRows,
         {
           label: "Mode bias outcomes",
           value: formatModeBiasOutcomes(decision.modeBiasOutcomes),
@@ -1104,6 +1195,20 @@ export function selectVolitionPanelModel(state: ConversationState): VolitionPane
       ],
     }),
   };
+}
+
+function formatBelowThreshold(candidates: VolitionBelowThresholdSummary[]): string {
+  if (candidates.length === 0) {
+    return "none";
+  }
+  return candidates
+    .map((candidate) => {
+      const keywords = candidate.matchedKeywords
+        .map((keyword) => `${keyword.term}/${keyword.weightClass}`)
+        .join(", ");
+      return `${candidate.goalId} (strength ${candidate.matchStrength}: ${keywords})`;
+    })
+    .join("; ");
 }
 
 function formatGoalSummaries(goals: VolitionGoalStatusSummary[]): string {

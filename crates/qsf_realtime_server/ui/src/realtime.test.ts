@@ -518,11 +518,15 @@ describe("volition state reducer", () => {
       ],
     },
     decision: {
-      winnerGoalId: "serve-the-present-person",
-      winnerGoalTitle: "Serve the present person",
-      winnerEffectiveTier: 2,
-      winnerBiasedTier: 2,
-      protectedTierActive: true,
+      winner: {
+        winnerGoalId: "serve-the-present-person",
+        winnerGoalTitle: "Serve the present person",
+        winnerEffectiveTier: 2,
+        winnerBiasedTier: 2,
+        protectedTierActive: true,
+      },
+      qualificationThreshold: 4,
+      belowThreshold: [],
       modeBiasOutcomes: [
         {
           goalId: "serve-the-present-person",
@@ -678,11 +682,15 @@ describe("volition state message parsing", () => {
       ],
     },
     decision: {
-      winner_goal_id: "serve-the-present-person",
-      winner_goal_title: "Serve the present person",
-      winner_effective_tier: 2,
-      winner_biased_tier: 2,
-      protected_tier_active: true,
+      winner: {
+        winner_goal_id: "serve-the-present-person",
+        winner_goal_title: "Serve the present person",
+        winner_effective_tier: 2,
+        winner_biased_tier: 2,
+        protected_tier_active: true,
+      },
+      qualification_threshold: 4,
+      below_threshold: [],
       mode_bias_outcomes: [
         {
           goal_id: "serve-the-present-person",
@@ -735,11 +743,15 @@ describe("volition state message parsing", () => {
         ],
       },
       decision: {
-        winnerGoalId: "serve-the-present-person",
-        winnerGoalTitle: "Serve the present person",
-        winnerEffectiveTier: 2,
-        winnerBiasedTier: 2,
-        protectedTierActive: true,
+        winner: {
+          winnerGoalId: "serve-the-present-person",
+          winnerGoalTitle: "Serve the present person",
+          winnerEffectiveTier: 2,
+          winnerBiasedTier: 2,
+          protectedTierActive: true,
+        },
+        qualificationThreshold: 4,
+        belowThreshold: [],
         modeBiasOutcomes: [
           {
             goalId: "serve-the-present-person",
@@ -792,6 +804,44 @@ describe("volition state message parsing", () => {
       },
       decision: null,
     });
+  });
+
+  it("parses a no-winner decision with below-threshold candidates", () => {
+    const noWinner = {
+      ...baseMessage,
+      decision: {
+        winner: null,
+        qualification_threshold: 4,
+        below_threshold: [
+          {
+            goal_id: "serve-the-present-person",
+            goal_title: "Serve the present person",
+            matched_keywords: [{ term: "what", weight_class: "weak" }],
+            match_strength: 1,
+          },
+        ],
+        mode_bias_outcomes: [],
+        selected_goal_ids: ["serve-the-present-person"],
+        omitted_or_suppressed_goal_ids: [],
+        shaping_intensity: "none",
+        last_initiative_output_kind: null,
+        last_initiative_surfaced: false,
+        last_initiative_suppression_reason: "below_qualification_threshold",
+        last_initiative_rendered_line_present: false,
+      },
+    };
+    const parsed = parseVolitionStateMessage(JSON.stringify(noWinner));
+    expect(parsed?.decision?.winner).toBeNull();
+    expect(parsed?.decision?.qualificationThreshold).toBe(4);
+    expect(parsed?.decision?.belowThreshold).toEqual([
+      {
+        goalId: "serve-the-present-person",
+        goalTitle: "Serve the present person",
+        matchedKeywords: [{ term: "what", weightClass: "weak" }],
+        matchStrength: 1,
+      },
+    ]);
+    expect(parsed?.decision?.lastInitiativeSuppressionReason).toBe("below_qualification_threshold");
   });
 
   it("returns null for malformed or wrong-kind messages", () => {
@@ -870,11 +920,15 @@ describe("volition panel selector", () => {
       ],
     },
     decision: {
-      winnerGoalId: "serve-the-present-person",
-      winnerGoalTitle: "Serve the present person",
-      winnerEffectiveTier: 2,
-      winnerBiasedTier: 2,
-      protectedTierActive: true,
+      winner: {
+        winnerGoalId: "serve-the-present-person",
+        winnerGoalTitle: "Serve the present person",
+        winnerEffectiveTier: 2,
+        winnerBiasedTier: 2,
+        protectedTierActive: true,
+      },
+      qualificationThreshold: 4,
+      belowThreshold: [],
       modeBiasOutcomes: [
         {
           goalId: "serve-the-present-person",
@@ -912,6 +966,49 @@ describe("volition panel selector", () => {
     expect(winnerTiers?.value).toContain("biased 2");
     expect(winnerTiers?.value).toContain("protected yes");
     expect(decisionSection.rows.find((row) => row.label === "Trace ref")?.value).toBe("hash-abc");
+  });
+
+  it("renders a no-winner decision with the qualification headline and below-threshold detail", () => {
+    const state = {
+      ...INITIAL_STATE,
+      sessionId: "session_1",
+      latestVolitionState: {
+        ...sampleCapture,
+        decision: {
+          winner: null,
+          qualificationThreshold: 4,
+          belowThreshold: [
+            {
+              goalId: "serve-the-present-person",
+              goalTitle: "Serve the present person",
+              matchedKeywords: [{ term: "what", weightClass: "weak" as const }],
+              matchStrength: 1,
+            },
+          ],
+          modeBiasOutcomes: [],
+          selectedGoalIds: ["serve-the-present-person"],
+          omittedOrSuppressedGoalIds: [],
+          shapingIntensity: "none",
+          lastInitiativeOutputKind: null,
+          lastInitiativeSurfaced: false,
+          lastInitiativeSuppressionReason: "below_qualification_threshold" as const,
+          lastInitiativeRenderedLinePresent: false,
+        },
+      },
+    };
+    const model = selectVolitionPanelModel(state);
+
+    expect(model.kind).toBe("decision");
+    expect(model.banner).toBe("No goal qualified this turn.");
+    const decisionSection = model.sections[1];
+    const winnerRow = decisionSection.rows.find((row) => row.label === "Winner");
+    expect(winnerRow?.value).toBe("no goal qualified (threshold 4)");
+    const belowRow = decisionSection.rows.find((row) => row.label === "Below threshold");
+    expect(belowRow?.value).toContain("serve-the-present-person");
+    expect(belowRow?.value).toContain("strength 1");
+    expect(belowRow?.value).toContain("what/weak");
+    const suppressionRow = decisionSection.rows.find((row) => row.label === "Suppression reason");
+    expect(suppressionRow?.value).toBe("Below Qualification Threshold");
   });
 
   it("renders a no-decision snapshot with an explicit marker", () => {
