@@ -49,12 +49,25 @@ authoritative map of where each kind lives.
   - `Experiment.*.md` — a planned or run experiment (one testable slice).
   - `Report.*.md` — the outcome of one specific run.
 
+Experiments exist to reduce uncertainty about the **consciousness simulation** — memory,
+volition, continuity, presence, context assembly, arbitration, and the other mechanisms
+the project is researching. Routine engineering work whose outcome is not in doubt —
+UI controls, refactors, build tooling, launcher flags, dependency bumps — does *not* earn
+an experiment even when it is a self-contained testable slice. Such work is captured by
+its code, its tests, and its commit message, and is promoted to a plan, architecture note,
+or decision only if it affects those. If a slice raises a genuine question about how a
+simulation mechanism behaves, that question is what the experiment tests, not the feature
+that surfaced it.
+
 Rule of thumb:
 
-- A single self-contained, testable slice → an `Experiment.*.md`.
+- A single self-contained, testable slice that probes a simulation mechanism →
+  an `Experiment.*.md`.
 - A multi-phase effort → a `Plan.*.md` that sequences the phases, with each phase
   validated by an `Experiment.*.md` scaffold. See `Plan.RealtimeVoiceConversation.md`
   for the established pattern.
+- Ordinary engineering with no mechanism question → no experiment; let the code, tests,
+  and commit carry it.
 
 Phase numbers live only inside the `Plan.*.md` (an ephemeral document). Do not cite
 plan phase numbers from durable documents such as experiment specs, architecture, the
@@ -498,9 +511,11 @@ Should capture uncertainty explicitly.
 
 ### `docs/Experiments/`
 
-Practical tests.
+Practical tests of consciousness-simulation mechanisms.
 
-Should turn uncertainty into runnable investigations.
+Should turn uncertainty about a simulation mechanism into a runnable investigation.
+Routine engineering with no mechanism question does not belong here (see Document
+Tracks: Plans vs Experiments).
 
 ### `docs/Architecture/`
 
@@ -639,6 +654,7 @@ Prefer small experiments.
 
 A good experiment:
 
+- probes a consciousness-simulation mechanism whose behavior is genuinely uncertain
 - tests one main idea
 - has a clear baseline
 - produces inspectable output
@@ -646,7 +662,10 @@ A good experiment:
 - records surprises
 - creates follow-up questions
 
-Avoid experiments that try to test the entire consciousness simulation at once.
+Avoid experiments that try to test the entire consciousness simulation at once. Avoid,
+too, dressing routine engineering as an experiment: if the outcome is not in doubt and
+no simulation mechanism is under question, the work needs code, tests, and a commit —
+not an experiment document.
 
 ## Architecture Discipline
 

@@ -68,6 +68,18 @@ button:disabled {
   box-shadow: none;
 }
 
+/* Toggle buttons (e.g. Mute) show their active state with a muted slate fill
+   instead of the accent gradient, so a live gate is visible at a glance. */
+button[aria-pressed="true"] {
+  background: linear-gradient(135deg, #64748b, #475569);
+  color: #f8fafc;
+  box-shadow: none;
+}
+
+button[aria-pressed="true"]:hover:not(:disabled) {
+  box-shadow: 0 12px 28px rgba(71, 85, 105, 0.32);
+}
+
 #app {
   min-height: 100vh;
 }

@@ -14,12 +14,14 @@ import {
   reduceConversationState,
   type SdpExchangeResponse,
   type SessionAllocationResponse,
+  selectMuteButton,
   selectVolitionPanelModel,
 } from "./realtime";
 
 interface UiRefs {
   startButton: HTMLButtonElement;
   stopButton: HTMLButtonElement;
+  muteButton: HTMLButtonElement;
   textForm: HTMLFormElement;
   textInput: HTMLTextAreaElement;
   sendTextButton: HTMLButtonElement;
@@ -86,6 +88,7 @@ root.innerHTML = `
     <section class="controls">
       <button data-role="start" type="button">Start conversation</button>
       <button data-role="stop" type="button" disabled>Stop</button>
+      <button data-role="mute" type="button" aria-pressed="false" title="Stop sending your microphone; the assistant stays live">Mute</button>
       <form data-role="text-form" class="text-turn-form">
         <textarea data-role="text-input" rows="2" placeholder="Type a turn for noisy rooms"></textarea>
         <button data-role="send-text" type="submit">Send text</button>
@@ -147,6 +150,10 @@ refs.startButton.addEventListener("click", () => {
 });
 refs.stopButton.addEventListener("click", () => {
   void stopConversation();
+});
+refs.muteButton.addEventListener("click", () => {
+  dispatch({ type: "mute_toggled" });
+  applyMicrophoneMute(state.muted);
 });
 refs.textForm.addEventListener("submit", (event) => {
   event.preventDefault();
@@ -217,6 +224,9 @@ async function startConversation(options: ConversationStartOptions): Promise<boo
         audio: MICROPHONE_AUDIO_CONSTRAINTS,
       });
       for (const track of microphoneStream.getAudioTracks()) {
+        // Honor a pre-armed mute so the call starts silent when the user toggled
+        // Mute before pressing Start.
+        track.enabled = !state.muted;
         const settings = track.getSettings();
         console.info("microphone capture settings", {
           echoCancellation: settings.echoCancellation,
@@ -387,6 +397,19 @@ async function stopConversation() {
   dispatch({ type: "stopped" });
 }
 
+/// Gate the live microphone track(s) to match the `muted` state. Isolated side
+/// effect kept out of the reducer: the mic stream is imperative WebRTC media, not
+/// reducer state. A no-op when there is no active mic (idle, or a text-only turn).
+function applyMicrophoneMute(muted: boolean) {
+  const stream = activeConversation?.microphoneStream;
+  if (!stream) {
+    return;
+  }
+  for (const track of stream.getAudioTracks()) {
+    track.enabled = !muted;
+  }
+}
+
 async function stopActiveConversation(closeRelay: boolean) {
   const conversation = activeConversation;
   activeConversation = null;
@@ -443,6 +466,10 @@ function render() {
     state.connection === "stopping";
   refs.stopButton.disabled = !activeConversation && state.connection !== "stopping";
   refs.sendTextButton.disabled = !canSubmitTextTurn();
+
+  const muteButton = selectMuteButton(state);
+  refs.muteButton.textContent = muteButton.label;
+  refs.muteButton.setAttribute("aria-pressed", String(muteButton.pressed));
 
   refs.transcriptList.replaceChildren(
     ...state.transcript.map((entry) => {
@@ -583,6 +610,7 @@ function collectRefs(container: HTMLElement): UiRefs {
   return {
     startButton: query<HTMLButtonElement>('[data-role="start"]'),
     stopButton: query<HTMLButtonElement>('[data-role="stop"]'),
+    muteButton: query<HTMLButtonElement>('[data-role="mute"]'),
     textForm: query<HTMLFormElement>('[data-role="text-form"]'),
     textInput: query<HTMLTextAreaElement>('[data-role="text-input"]'),
     sendTextButton: query<HTMLButtonElement>('[data-role="send-text"]'),

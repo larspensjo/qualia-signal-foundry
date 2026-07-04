@@ -492,9 +492,6 @@ Consequences: `RetrievalResult.omitted` now includes relevance-gated records wit
 reinforcement events report relevance, over-limit, and no-store skipped ids.
 Profile/identity queries keep a narrow phrase-shaped allowance for identity-tagged
 memories.
-Refs: crates/qsf_app/src/memory/retrieval.rs,
-crates/qsf_app/src/experiments/multi_turn_text_loop.rs,
-docs/Architecture/Architecture.StateAndObservability.md
 
 ## 2026-05-26 - Default sleep runs execute full side effects without synthetic memory
 Decision: `sleep-phase-session-summary` keeps the normal sleep commit path active
@@ -509,8 +506,6 @@ actual prior session.
 Consequences: The default command remains a full sleep-session exercise, while
 the mock provider no longer injects fake memories. Real or custom providers can
 still produce memory candidates that flow through the existing promotion path.
-Refs: crates/qsf_app/src/models/mock_model.rs,
-crates/qsf_app/src/experiments/sleep_phase_session_summary.rs
 
 ## 2026-05-27 - Live/sleep split for association work
 Decision: Mechanical association work — drop-driven and session-end co-retrieval
@@ -528,11 +523,6 @@ waiting for sleep; sleep work focuses on signals the model is actually suited to
 provide. New proposer ideas must enter through `Ideas.AssociationProposers.md`
 with a measurable signal before promotion. The sleep prompt rewording is part of
 this same commitment, not a separate decision.
-Refs: crates/qsf_app/src/sleep/proposers/llm_candidate.rs,
-crates/qsf_app/src/sleep/proposers/safety_net_co_retrieval.rs,
-docs/Architecture/Architecture.SleepPhase.md,
-docs/Plans/Plan.AssociativeRecallAndDropDrivenAssociations.md,
-docs/Plans/Ideas.AssociationProposers.md
 
 ## 2026-06-03 - Shared session directory is the continuity root
 Type: Decision
@@ -546,11 +536,6 @@ continuity universes.
 Consequences: New cross-session state should land in `state/session/`; any future
 directory change needs explicit compatibility handling and a read-only fallback
 story for existing `state/text-loop/` artifacts.
-Refs: crates/qsf_app/src/session/state_directory.rs,
-crates/qsf_app/src/session/resume.rs,
-crates/qsf_app/src/experiments/multi_turn_text_loop.rs,
-crates/qsf_app/src/experiments/text_owned_voice_loop.rs,
-crates/qsf_app/src/experiments/voice_loop.rs
 
 ## 2026-06-06 - Provider preambles stay out of promotable sleep memory
 Decision: Realtime provider preambles and provider lifecycle metadata may be persisted
@@ -566,10 +551,6 @@ Consequences: Finalized user transcripts and completed responses can be consolid
 through sleep, but provider-authored preamble text remains diagnostic-only. Future
 provider-owned cognition experiments must opt in explicitly and cannot rely on the
 default shared sleep path to promote provider preambles.
-Refs: crates/qsf_app/src/session/sleep_records.rs,
-crates/qsf_app/src/experiments/sleep_phase_session_summary.rs,
-docs/Architecture/Architecture.AudioLoop.md,
-docs/Architecture/Architecture.SleepPhase.md
 
 ## 2026-06-07 - Experiment runner supplies workspace root
 Decision: Experiments that need repository-relative resources receive the
@@ -585,10 +566,6 @@ Consequences: Launcher-backed app runs pass the script-derived repo root; direct
 CLI runs of workspace-dependent experiments must pass `--workspace-root <path>`.
 Future repo-relative runtime resources should reuse the `RunContext` accessor
 rather than adding ad hoc path resolution.
-Refs: crates/qsf_app/src/cli.rs,
-crates/qsf_app/src/experiments/registry.rs,
-crates/qsf_app/src/runtime/run_context.rs,
-scripts/qsf.ps1
 
 ## 2026-06-07 - Session ageing lives under session
 Decision: Warm-turn summarization retries, token-budget ageing, cross-turn
@@ -601,9 +578,6 @@ Consequences: Ageing policy changes should land in `session/ageing.rs`; the
 experiment should only orchestrate inputs, outputs, and shared ageing calls.
 Future voice or session surfaces that need the same ageing behavior should call
 the shared module instead of copying the text-loop implementation.
-Refs: crates/qsf_app/src/session/ageing.rs,
-crates/qsf_app/src/experiments/multi_turn_text_loop.rs,
-crates/qsf_app/src/experiments/text_owned_voice_loop.rs
 
 ## 2026-06-07 - Project-doc introspection v1 scope
 Decision: Project-doc introspection v1 is framed-self only, exposed to the
@@ -616,8 +590,6 @@ can ground self-questions without broad repository access or autonomous
 development agency.
 Consequences: Active-self, episodic-self, pattern-self, meta-memory, source-code,
 write-capable, and non-live-role introspection are deferred to follow-on designs.
-Refs: docs/Plans/Design.ProjectDocIntrospection.md,
-docs/Plans/Plan.ProjectDocIntrospection.md, config/project-doc-introspection.toml
 
 ## 2026-06-08 - Human inspiration is not a human ceiling
 Decision: Qualia Signal Foundry uses human cognition as an inspiration and
@@ -632,8 +604,6 @@ non-human, or super-human. Super-human capabilities should be represented as
 explicit, inspectable signals, state, tools, model roles, or traceable processes
 rather than hidden shortcuts. Human limitations should be simulated only when
 they create useful presence, continuity, or research contrast.
-Refs: README.md, docs/ProjectFrame/ProjectVision.md,
-docs/ProjectFrame/NonGoals.md
 
 ## 2026-06-08 - Launcher owns non-secret QSF environment
 Decision: `scripts/qsf.ps1` clears all known and ambient non-secret `QSF_*` process
@@ -646,7 +616,6 @@ Consequences: Launcher-backed app runs are deterministic with respect to non-sec
 QSF runtime configuration. New non-secret app environment knobs should be added to the
 launcher-managed list or exposed as launcher flags/profiles; raw Cargo runs remain free
 to use ambient environment variables directly.
-Refs: scripts/qsf.ps1, scripts/qsf.Tests.ps1, README.md
 
 ## 2026-06-09 - Lean session crate owns pure session contracts
 Decision: A lean `qsf_session` crate will own the shared pure session surface:
@@ -661,8 +630,6 @@ Consequences: Session extraction is a behavior-preserving refactor. `qsf_app`
 may re-export the session surface, but provider, memory, tool, and runtime context
 dependencies must cross explicit adapter boundaries. `EventType` remains in
 `qsf_app`; `qsf_session` owns the provider-event records embedded in `Exchange`.
-Refs: docs/Plans/Design.RealtimeVoiceConversation.md,
-docs/Architecture/Architecture.RealtimeSessionServer.md
 
 ## 2026-06-09 - Browser realtime voice uses a dedicated live server
 Decision: Browser-based realtime voice uses a dedicated `qsf_realtime_server`
@@ -676,9 +643,6 @@ provider call binding, reducer access, and later sideband/tool control.
 Consequences: Live realtime routes must not be added to `qsf_browser_server`.
 Browser media can flow directly to the provider, but all credentials and session
 bindings remain server-side and observable through QSF events/traces.
-Refs: docs/Architecture/Architecture.RealtimeSessionServer.md,
-docs/Plans/Design.RealtimeVoiceConversation.md,
-https://developers.openai.com/api/docs/guides/realtime-webrtc
 
 ## 2026-06-09 - Browser-relayed realtime events are diagnostic until sideband authority
 Decision: Browser-relayed realtime provider events are untrusted,
@@ -694,9 +658,6 @@ Consequences: Event records and exchanges need an explicit trust/source marker.
 Sleep and continuity code must filter diagnostic browser-relay records. The
 browser relay can prove UI, media, and reducer wiring without changing durable
 memory.
-Refs: docs/Architecture/Architecture.RealtimeSessionServer.md,
-docs/Plans/Design.RealtimeVoiceConversation.md,
-https://developers.openai.com/api/docs/guides/realtime-server-controls
 
 ## 2026-06-09 - Realtime browser voice MVP defaults
 Decision: The first browser realtime voice MVP uses `gpt-realtime-2`, voice
@@ -713,9 +674,6 @@ realtime voice model, recommend `marin`/`cedar` for voice quality, expose
 Consequences: Browser realtime tests and manual verification should expect these defaults.
 Changing model, voice, VAD mode, or binding lifetime later requires an explicit
 decision or provider-drift note rather than an incidental implementation change.
-Refs: docs/Plans/Design.RealtimeVoiceConversation.md,
-https://developers.openai.com/api/docs/models/gpt-realtime-2,
-https://developers.openai.com/api/reference/resources/realtime/subresources/client_secrets
 
 ## 2026-06-09 - Realtime provider event mapping is identity-explicit
 Decision: In speech-to-speech mode, a QSF exchange is a paired user
@@ -733,9 +691,6 @@ integration. Browser media work must include reducer tests for out-of-order tran
 completion, duplicate provider events, interruption before `response.created`,
 response completion after interruption, and two user turns before the prior
 response finishes.
-Refs: docs/Architecture/Architecture.RealtimeSessionServer.md,
-docs/Plans/Design.RealtimeVoiceConversation.md,
-crates/qsf_app/src/session/live_state.rs
 
 ## 2026-06-09 - Realtime tools are read-only and execution-recorded
 Decision: Tools exposed to live realtime voice sessions are allow-listed and
@@ -749,9 +704,6 @@ path without weakening the QSF permission and observability boundary.
 Consequences: Do not overload `auto_executed` as proof of execution. Realtime tool-loop verification must
 prove both allowed read-only execution and denied non-allow-listed calls, with
 records linked by provider `call_id` or tool-call id.
-Refs: docs/Architecture/Architecture.ToolSystem.md,
-docs/Plans/Design.RealtimeVoiceConversation.md,
-crates/qsf_app/src/audio/voice_session_provider.rs
 
 ## 2026-06-09 - Realtime voice conversation is the target operating mode
 Decision: Realtime voice conversation is the intended primary operating mode of
@@ -1642,7 +1594,6 @@ narrows the 2026-07-02 observation that the mock default exercises the sleep pat
 default remains right for offline runs, but a live voice session must not inherit it silently.
 
 ## 2026-07-04 - Project-level handoff document with three recommendation levels
-
 Decision: The project keeps one project-level `docs/Handoff.md` as its resume point. It recommends
 the next step at three abstraction levels — Now (immediate action), Next (active plan phase),
 Horizon (direction, e.g. elaborating an idea into a plan) — with one primary recommendation per
@@ -1664,7 +1615,6 @@ nothing new) do not touch the handoff. The handoff is never authoritative for an
 follow its links; other documents must not cite it as evidence.
 
 ## 2026-07-04 - Weighted goal activation with a global arbitration qualification threshold
-
 Decision: Activation keywords carry coarse curated weight classes (Weak = 1, Normal = 4,
 Strong = 8) in fixture data; a goal's match strength is the sum of its matched-term weights and
 is the single strength quantity behind both the ranked relevance display and arbitration
@@ -1693,3 +1643,24 @@ as Normal; live-formed goals qualify on a single model-supplied keyword until th
 schema is extended. Initiative frequency drops slightly on idle or stopword-only turns, which
 the anti-nag layer already established as acceptable. Traces must record matched terms with
 their weight classes plus the threshold in force so qualification outcomes stay auditable.
+
+## 2026-07-04 - Experiment documents are scoped to consciousness-simulation mechanisms
+Decision: An `Experiment.*.md` is reserved for reducing uncertainty about a
+consciousness-simulation mechanism (memory, volition, continuity, presence, context
+assembly, arbitration, and the like). Routine engineering work — UI controls, refactors,
+build tooling, launcher flags, dependency bumps — does not earn an experiment even when it
+is a self-contained testable slice; it is carried by its code, its tests, and its commit,
+and promoted to a plan, architecture note, or decision only if it affects those.
+
+Context: The workflow's "single self-contained, testable slice → an Experiment" rule of
+thumb read as scope-neutral, inviting experiment documents for ordinary feature work whose
+outcome was never in doubt. That dilutes the validation track, which exists to make the
+project's research legible, and buries genuine mechanism experiments among engineering
+chores. The trigger was a browser-UI mute control that is plainly engineering, not research.
+
+Consequences: The test for an experiment is now "does this probe a simulation mechanism
+whose behavior is uncertain?", not merely "is this a testable slice?". `ProjectWorkflow.md`
+(Document Tracks, the `docs/Experiments/` responsibility, and Experiment Discipline) states
+the scope. Engineering slices proceed without an experiment document; if such a slice raises
+a real question about how a mechanism behaves, that question — not the feature — becomes the
+experiment.

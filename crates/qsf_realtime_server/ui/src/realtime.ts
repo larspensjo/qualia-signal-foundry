@@ -173,6 +173,11 @@ export interface VolitionPanelModel {
 export interface ConversationState {
   connection: ConnectionPhase;
   phase: RuntimePhase;
+  /// Local microphone gate. When true, the browser stops transmitting the user's
+  /// audio (the mic track is disabled) while the session, the assistant's audio, and
+  /// volition initiative all stay live. Persists across stop so it can be pre-armed
+  /// before a call begins.
+  muted: boolean;
   sessionId: string | null;
   transcript: TranscriptEntry[];
   liveTranscript: string;
@@ -186,6 +191,7 @@ export interface ConversationState {
 
 export type ConversationAction =
   | { type: "session_requested" }
+  | { type: "mute_toggled" }
   | { type: "session_allocated"; sessionId: string }
   | { type: "connection_ready" }
   | { type: "provider_envelope"; envelope: RelayEnvelope }
@@ -249,6 +255,7 @@ export const DEFAULT_SESSION_CONFIG: SessionConfig = {
 export const INITIAL_STATE: ConversationState = {
   connection: "idle",
   phase: "idle",
+  muted: false,
   sessionId: null,
   transcript: [],
   liveTranscript: "",
@@ -271,6 +278,11 @@ export function reduceConversationState(
         connection: "requesting_session",
         error: null,
         warning: null,
+      };
+    case "mute_toggled":
+      return {
+        ...state,
+        muted: !state.muted,
       };
     case "session_allocated":
       return {
@@ -822,6 +834,20 @@ export function describeRuntimePhase(phase: RuntimePhase): string {
     case "speaking":
       return "Speaking";
   }
+}
+
+export interface MuteButtonModel {
+  /// Action-label wording for the toggle: what the click will do.
+  label: string;
+  /// Current gate state, mapped to `aria-pressed` on the button.
+  pressed: boolean;
+}
+
+export function selectMuteButton(state: ConversationState): MuteButtonModel {
+  return {
+    label: state.muted ? "Unmute" : "Mute",
+    pressed: state.muted,
+  };
 }
 
 export function mapProviderMessageToRelayEnvelope(
