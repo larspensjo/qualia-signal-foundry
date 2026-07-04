@@ -95,7 +95,7 @@ pub fn detect_opportunities(
         let matched = goal.activation_keywords.iter().any(|keyword| {
             input_terms
                 .iter()
-                .any(|term| term.normalized_text == *keyword)
+                .any(|term| term.normalized_text == keyword.term)
         });
 
         if matched {

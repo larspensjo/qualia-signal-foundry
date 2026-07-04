@@ -63,7 +63,7 @@ pub fn events_for_trusted_transcript(
         if goal
             .activation_keywords
             .iter()
-            .any(|kw| input_terms.contains(kw))
+            .any(|kw| input_terms.contains(&kw.term))
         {
             events.push(VolitionEvent::GoalActivated {
                 goal_id: goal.id.clone(),
@@ -82,7 +82,7 @@ pub fn events_for_trusted_transcript(
         if goal
             .activation_keywords
             .iter()
-            .any(|kw| input_terms.contains(kw))
+            .any(|kw| input_terms.contains(&kw.term))
         {
             events.push(VolitionEvent::GoalActivated {
                 goal_id: goal_id.clone(),

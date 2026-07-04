@@ -141,9 +141,9 @@ pub fn shaping_intensity_inputs(
 mod tests {
     use super::*;
     use crate::{
-        GroundingRef, Mode, OpportunitySignal, OpportunitySignalKind, VolitionFixture,
-        VolitionState, arbitrate_with_mode, detect_opportunities, grounded_terms_from_text,
-        realtime_seed_fixture, select_goals_ranked,
+        ActivationKeyword, GroundingRef, Mode, OpportunitySignal, OpportunitySignalKind,
+        VolitionFixture, VolitionState, arbitrate_with_mode, detect_opportunities,
+        grounded_terms_from_text, realtime_seed_fixture, select_goals_ranked,
     };
 
     fn opportunity(kind: OpportunitySignalKind) -> OpportunitySignal {
@@ -222,7 +222,10 @@ mod tests {
                 status: crate::GoalStatus::Accepted,
                 scope: crate::GoalScope::Session,
                 base_priority: 100,
-                activation_keywords: vec!["help".to_string(), "thread".to_string()],
+                activation_keywords: vec![
+                    ActivationKeyword::normal("help"),
+                    ActivationKeyword::normal("thread"),
+                ],
                 allowed_effects: vec![crate::AllowedEffect::Reflect],
                 satisfaction_condition_summary: "done".to_string(),
                 evidence_refs: vec![],

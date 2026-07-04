@@ -276,8 +276,9 @@ pub fn arbitrate_with_mode(
 mod tests {
     use super::*;
     use crate::{
-        AllowedEffect, Goal, GoalScope, GoalSelection, GoalStatus, InitiativeProposal, Tension,
-        TensionPriority, VolitionEvent, VolitionFixture, VolitionState, apply, static_fixture,
+        ActivationKeyword, AllowedEffect, Goal, GoalScope, GoalSelection, GoalStatus,
+        InitiativeProposal, Tension, TensionPriority, VolitionEvent, VolitionFixture, VolitionState,
+        apply, static_fixture,
     };
 
     fn make_goal_for_arbitration(
@@ -293,7 +294,7 @@ mod tests {
             status: GoalStatus::Accepted,
             scope: GoalScope::Session,
             base_priority,
-            activation_keywords: vec!["test".to_string()],
+            activation_keywords: vec![ActivationKeyword::normal("test")],
             allowed_effects: vec![AllowedEffect::Reflect],
             satisfaction_condition_summary: id.to_string(),
             evidence_refs: vec![],

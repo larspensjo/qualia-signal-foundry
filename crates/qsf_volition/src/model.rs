@@ -154,7 +154,7 @@ pub struct Goal {
     pub status: GoalStatus,
     pub scope: GoalScope,
     pub base_priority: u8,
-    pub activation_keywords: Vec<String>,
+    pub activation_keywords: Vec<ActivationKeyword>,
     pub allowed_effects: Vec<AllowedEffect>,
     pub satisfaction_condition_summary: String,
     pub evidence_refs: Vec<String>,

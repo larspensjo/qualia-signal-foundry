@@ -420,9 +420,9 @@ impl GoalAccumulator {
 mod tests {
     use super::*;
     use crate::{
-        AllowedEffect, EvidenceRef, Goal, GoalScope, GoalStatus, InitiativeOutput, Mode,
-        ProposedGoalCandidate, VolitionContinuitySnapshot, VolitionFixture, VolitionState,
-        build_state_inspection, realtime_seed_fixture,
+        ActivationKeyword, AllowedEffect, EvidenceRef, Goal, GoalScope, GoalStatus,
+        InitiativeOutput, Mode, ProposedGoalCandidate, VolitionContinuitySnapshot, VolitionFixture,
+        VolitionState, build_state_inspection, realtime_seed_fixture,
     };
 
     fn snapshot_record(
@@ -497,7 +497,7 @@ mod tests {
             status: GoalStatus::Accepted,
             scope: GoalScope::Session,
             base_priority: 75,
-            activation_keywords: vec!["continuity".to_string()],
+            activation_keywords: vec![ActivationKeyword::normal("continuity")],
             allowed_effects: vec![AllowedEffect::Reflect],
             satisfaction_condition_summary: "done".to_string(),
             evidence_refs: vec!["tests".to_string()],

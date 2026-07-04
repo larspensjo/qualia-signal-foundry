@@ -257,7 +257,11 @@ fn no_delta_reason(result: &GoalSelectionResult) -> String {
 }
 
 fn build_fragment(goal: &Goal, relevance_score: f64, matched_terms: &[String]) -> ContextFragment {
-    let mut tags = goal.activation_keywords.clone();
+    let mut tags: Vec<String> = goal
+        .activation_keywords
+        .iter()
+        .map(|keyword| keyword.term.clone())
+        .collect();
     tags.extend(goal.tension_ids.iter().cloned());
     tags.push(goal.scope.to_string());
 
@@ -942,7 +946,7 @@ mod tests {
             .find(|goal| goal.id == "resurface-open-thread")
             .unwrap();
         goal.activation_keywords
-            .retain(|keyword| keyword != "continuity");
+            .retain(|keyword| keyword.term != "continuity");
 
         let changed = select_goals(
             "We never settled how voice memory affects continuity.",
@@ -1132,8 +1136,8 @@ mod tests {
     // ── arbitrate() ─────────────────────────────────────────────────────────
 
     use super::{
-        AllowedEffect, Goal, GoalScope, GoalSelection, InitiativeProposal, Tension,
-        TensionPriority, VolitionFixture, arbitrate,
+        ActivationKeyword, AllowedEffect, Goal, GoalScope, GoalSelection, InitiativeProposal,
+        Tension, TensionPriority, VolitionFixture, arbitrate,
     };
 
     fn make_goal_for_arbitration(
@@ -1149,7 +1153,7 @@ mod tests {
             status: GoalStatus::Accepted,
             scope: GoalScope::Session,
             base_priority,
-            activation_keywords: vec!["test".to_string()],
+            activation_keywords: vec![ActivationKeyword::normal("test")],
             allowed_effects: vec![AllowedEffect::Reflect],
             satisfaction_condition_summary: id.to_string(),
             evidence_refs: vec![],

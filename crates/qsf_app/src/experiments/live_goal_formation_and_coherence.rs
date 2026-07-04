@@ -14,7 +14,8 @@ use crate::observability::event_log::EventType;
 use crate::observability::trace::TraceRecord;
 use crate::runtime::run_context::RunContext;
 use crate::volition::{
-    AdmissionResolution, AllowedEffect, DeclinedCandidate, EvidenceRef, Goal, GoalScope,
+    ActivationKeyword, AdmissionResolution, AllowedEffect, DeclinedCandidate, EvidenceRef, Goal,
+    GoalScope,
     GoalStatus, ProposedGoalCandidate, Tension, TensionPriority, VolitionEvent, VolitionFixture,
     VolitionState, apply, effective_tier_from_tension_ids, newly_declined_candidate,
     resolve_formed_candidate, resolve_sweep,
@@ -313,7 +314,7 @@ fn goal(id: &str, tension_id: &str, base_priority: u8) -> Goal {
         status: GoalStatus::Accepted,
         scope: GoalScope::Session,
         base_priority,
-        activation_keywords: vec!["test".to_string()],
+        activation_keywords: vec![ActivationKeyword::normal("test")],
         allowed_effects: vec![AllowedEffect::Reflect],
         satisfaction_condition_summary: id.to_string(),
         evidence_refs: vec![

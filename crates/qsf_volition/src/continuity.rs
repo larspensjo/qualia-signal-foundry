@@ -233,8 +233,8 @@ fn persist_json<T: Serialize>(path: impl AsRef<Path>, value: &T) -> anyhow::Resu
 mod tests {
     use super::*;
     use crate::{
-        AllowedEffect, EvidenceRef, Goal, GoalScope, GoalStatus, VolitionFixture, VolitionState,
-        build_state_inspection, realtime_seed_fixture,
+        ActivationKeyword, AllowedEffect, EvidenceRef, Goal, GoalScope, GoalStatus, VolitionFixture,
+        VolitionState, build_state_inspection, realtime_seed_fixture,
     };
     use tempfile::TempDir;
 
@@ -300,7 +300,7 @@ mod tests {
             status: GoalStatus::Accepted,
             scope: GoalScope::Session,
             base_priority: 77,
-            activation_keywords: vec!["continuity".to_string()],
+            activation_keywords: vec![ActivationKeyword::normal("continuity")],
             allowed_effects: vec![AllowedEffect::Reflect],
             satisfaction_condition_summary: "Test review seed".to_string(),
             evidence_refs: vec!["tests".to_string()],
@@ -343,7 +343,7 @@ mod tests {
             status: GoalStatus::Accepted,
             scope: GoalScope::Input,
             base_priority: 99,
-            activation_keywords: vec!["protected".to_string()],
+            activation_keywords: vec![ActivationKeyword::normal("protected")],
             allowed_effects: vec![AllowedEffect::Reflect],
             satisfaction_condition_summary: "Should fail".to_string(),
             evidence_refs: vec!["tests".to_string()],
@@ -380,7 +380,7 @@ mod tests {
             status: GoalStatus::Accepted,
             scope: GoalScope::Session,
             base_priority: 70,
-            activation_keywords: vec!["alpha".to_string()],
+            activation_keywords: vec![ActivationKeyword::normal("alpha")],
             allowed_effects: vec![AllowedEffect::Reflect],
             satisfaction_condition_summary: "Alpha done".to_string(),
             evidence_refs: vec!["tests".to_string()],
@@ -395,7 +395,7 @@ mod tests {
             status: GoalStatus::Accepted,
             scope: GoalScope::Session,
             base_priority: 69,
-            activation_keywords: vec!["beta".to_string()],
+            activation_keywords: vec![ActivationKeyword::normal("beta")],
             allowed_effects: vec![AllowedEffect::Reflect],
             satisfaction_condition_summary: "Beta done".to_string(),
             evidence_refs: vec!["tests".to_string()],
@@ -507,7 +507,7 @@ mod tests {
             status: GoalStatus::Accepted,
             scope: GoalScope::Input,
             base_priority: 90,
-            activation_keywords: vec!["weak".to_string()],
+            activation_keywords: vec![ActivationKeyword::normal("weak")],
             allowed_effects: vec![AllowedEffect::Reflect],
             satisfaction_condition_summary: "Should fail".to_string(),
             evidence_refs: vec![EvidenceRef::try_new("tests").unwrap().to_string()],

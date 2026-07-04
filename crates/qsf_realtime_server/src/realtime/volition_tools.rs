@@ -698,7 +698,8 @@ mod tests {
     #[test]
     fn select_volition_caps_model_visible_output_at_6_selected() {
         use qsf_volition::{
-            AllowedEffect, Goal, GoalScope, GoalStatus, Tension, TensionPriority, VolitionFixture,
+            ActivationKeyword, AllowedEffect, Goal, GoalScope, GoalStatus, Tension, TensionPriority,
+            VolitionFixture,
         };
 
         let tension = Tension {
@@ -719,7 +720,7 @@ mod tests {
                 status: GoalStatus::Accepted,
                 scope: GoalScope::Session,
                 base_priority: 70,
-                activation_keywords: vec!["test".to_string()],
+                activation_keywords: vec![ActivationKeyword::normal("test")],
                 allowed_effects: vec![AllowedEffect::Reflect],
                 satisfaction_condition_summary: "done".to_string(),
                 evidence_refs: vec![],
@@ -774,7 +775,8 @@ mod tests {
     #[test]
     fn select_volition_caps_model_visible_output_at_8_omitted() {
         use qsf_volition::{
-            AllowedEffect, Goal, GoalScope, GoalStatus, Tension, TensionPriority, VolitionFixture,
+            ActivationKeyword, AllowedEffect, Goal, GoalScope, GoalStatus, Tension, TensionPriority,
+            VolitionFixture,
         };
 
         let tension = Tension {
@@ -799,7 +801,7 @@ mod tests {
                 },
                 scope: GoalScope::Session,
                 base_priority: 70,
-                activation_keywords: vec!["test".to_string()],
+                activation_keywords: vec![ActivationKeyword::normal("test")],
                 allowed_effects: vec![AllowedEffect::Reflect],
                 satisfaction_condition_summary: "done".to_string(),
                 evidence_refs: vec![],
@@ -841,7 +843,8 @@ mod tests {
     #[test]
     fn select_volition_trace_includes_full_list_when_truncated() {
         use qsf_volition::{
-            AllowedEffect, Goal, GoalScope, GoalStatus, Tension, TensionPriority, VolitionFixture,
+            ActivationKeyword, AllowedEffect, Goal, GoalScope, GoalStatus, Tension, TensionPriority,
+            VolitionFixture,
         };
 
         let tension = Tension {
@@ -862,7 +865,7 @@ mod tests {
                 status: GoalStatus::Accepted,
                 scope: GoalScope::Session,
                 base_priority: 70,
-                activation_keywords: vec!["test".to_string()],
+                activation_keywords: vec![ActivationKeyword::normal("test")],
                 allowed_effects: vec![AllowedEffect::Reflect],
                 satisfaction_condition_summary: "done".to_string(),
                 evidence_refs: vec![],

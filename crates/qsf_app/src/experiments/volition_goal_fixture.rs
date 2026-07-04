@@ -67,7 +67,7 @@ impl Experiment for VolitionGoalFixtureExperiment {
             .expect("fixture must contain the continuity goal");
         perturbed_goal
             .activation_keywords
-            .retain(|keyword| keyword != "continuity");
+            .retain(|keyword| keyword.term != "continuity");
 
         context.record_event(
             EventType::InputReceived,

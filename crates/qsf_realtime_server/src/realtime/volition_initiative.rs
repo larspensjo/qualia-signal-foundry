@@ -117,9 +117,9 @@ fn bounded_line(line: String) -> String {
 mod tests {
     use super::*;
     use qsf_volition::{
-        AllowedEffect, Goal, GoalScope, GoalSelection, GoalStatus, InitiativeOutput,
-        InitiativeProposal, ShapingIntensity, Tension, TensionPriority, VolitionFixture,
-        VolitionState, build_state_inspection,
+        ActivationKeyword, AllowedEffect, Goal, GoalScope, GoalSelection, GoalStatus,
+        InitiativeOutput, InitiativeProposal, ShapingIntensity, Tension, TensionPriority,
+        VolitionFixture, VolitionState, build_state_inspection,
     };
 
     fn goal_selection(effect: AllowedEffect) -> GoalSelection {
@@ -131,7 +131,7 @@ mod tests {
             status: GoalStatus::Accepted,
             scope: GoalScope::Session,
             base_priority: 10,
-            activation_keywords: vec!["goal".to_string()],
+            activation_keywords: vec![ActivationKeyword::normal("goal")],
             allowed_effects: vec![effect],
             satisfaction_condition_summary: "done".to_string(),
             evidence_refs: vec![],

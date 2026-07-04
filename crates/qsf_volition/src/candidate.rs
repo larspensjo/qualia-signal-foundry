@@ -1,8 +1,8 @@
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    AllowedEffect, EvidenceRef, Goal, GoalScope, GoalStatus, Tension, VolitionFixture,
-    normalize_terms,
+    ActivationKeyword, AllowedEffect, EvidenceRef, Goal, GoalScope, GoalStatus, Tension,
+    VolitionFixture, normalize_terms,
 };
 
 /// A goal candidate proposed by a reflection step. Stays in `VolitionState::pending_candidates`
@@ -124,7 +124,11 @@ impl ProposedGoalCandidate {
             status: GoalStatus::Accepted,
             scope: self.scope,
             base_priority: self.base_priority,
-            activation_keywords: self.activation_keywords,
+            activation_keywords: self
+                .activation_keywords
+                .into_iter()
+                .map(ActivationKeyword::normal)
+                .collect(),
             allowed_effects: self.allowed_effects,
             satisfaction_condition_summary: self.satisfaction_condition_summary,
             evidence_refs,

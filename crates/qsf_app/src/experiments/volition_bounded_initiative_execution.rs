@@ -505,7 +505,7 @@ fn write_execution_report(
             "- **activation_keywords**: {}\n",
             goal.activation_keywords
                 .iter()
-                .map(|k| format!("`{k}`"))
+                .map(|k| format!("`{}`", k.term))
                 .collect::<Vec<_>>()
                 .join(", ")
         ));

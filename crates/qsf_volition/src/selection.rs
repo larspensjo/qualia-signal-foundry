@@ -19,10 +19,10 @@ pub struct RankedSelectionResult {
 pub fn matched_keywords(goal: &Goal, input_terms: &[String]) -> Vec<String> {
     let mut matched = Vec::new();
     for keyword in &goal.activation_keywords {
-        if input_terms.iter().any(|term| term == keyword)
-            && !matched.iter().any(|term| term == keyword)
+        if input_terms.iter().any(|term| term == &keyword.term)
+            && !matched.iter().any(|term| term == &keyword.term)
         {
-            matched.push(keyword.clone());
+            matched.push(keyword.term.clone());
         }
     }
     matched
@@ -357,7 +357,7 @@ mod tests {
         assert!(
             matched
                 .iter()
-                .all(|kw| goal.activation_keywords.contains(kw))
+                .all(|kw| goal.activation_keywords.iter().any(|k| &k.term == kw))
         );
     }
 
