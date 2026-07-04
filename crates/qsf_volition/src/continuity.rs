@@ -12,8 +12,8 @@ use crate::{
 };
 
 pub const REALTIME_SEED_FIXTURE_ID: &str = "realtime_seed_fixture";
-pub const VOLITION_CONTINUITY_SNAPSHOT_SCHEMA_VERSION: u16 = 2;
-pub const REVIEWED_VOLITION_SEED_SCHEMA_VERSION: u16 = 1;
+pub const VOLITION_CONTINUITY_SNAPSHOT_SCHEMA_VERSION: u16 = 3;
+pub const REVIEWED_VOLITION_SEED_SCHEMA_VERSION: u16 = 2;
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 pub struct VolitionContinuitySnapshot {
@@ -78,24 +78,34 @@ pub struct ReviewedVolitionSeed {
 }
 
 impl ReviewedVolitionSeed {
+    pub fn upgrade_schema_version(&mut self) {
+        if self.schema_version < REVIEWED_VOLITION_SEED_SCHEMA_VERSION {
+            self.schema_version = REVIEWED_VOLITION_SEED_SCHEMA_VERSION;
+        }
+    }
+
     pub fn load_or_upgrade(path: impl AsRef<Path>) -> anyhow::Result<Self> {
         let path = path.as_ref();
         let raw = std::fs::read_to_string(path).with_context(|| {
             format!("failed to read reviewed volition seed `{}`", path.display())
         })?;
-        let parsed: Self = serde_json::from_str(&raw).with_context(|| {
+        let mut parsed: Self = serde_json::from_str(&raw).with_context(|| {
             format!(
                 "failed to parse reviewed volition seed `{}`",
                 path.display()
             )
         })?;
-        if parsed.schema_version != REVIEWED_VOLITION_SEED_SCHEMA_VERSION {
+        // Mirror the snapshot loader: older versions upgrade (legacy plain-string
+        // activation_keywords already read as Normal via the compat reader); only a *newer*
+        // version than this build understands is rejected.
+        if parsed.schema_version > REVIEWED_VOLITION_SEED_SCHEMA_VERSION {
             anyhow::bail!(
-                "unsupported reviewed volition seed schema_version: found {} expected {}",
+                "unsupported reviewed volition seed schema_version: found {} expected <= {}",
                 parsed.schema_version,
                 REVIEWED_VOLITION_SEED_SCHEMA_VERSION
             );
         }
+        parsed.upgrade_schema_version();
         Ok(parsed)
     }
 
@@ -234,7 +244,9 @@ mod tests {
     use super::*;
     use crate::{
         ActivationKeyword, AllowedEffect, EvidenceRef, Goal, GoalScope, GoalStatus,
-        VolitionFixture, VolitionState, build_state_inspection, realtime_seed_fixture,
+        KeywordWeightClass, ProposedGoalCandidate, VolitionFixture, VolitionState,
+        build_state_inspection, match_strength, matched_keywords, normalize_terms,
+        realtime_seed_fixture,
     };
     use tempfile::TempDir;
 
@@ -278,6 +290,127 @@ mod tests {
         assert_eq!(
             upgraded.schema_version,
             VOLITION_CONTINUITY_SNAPSHOT_SCHEMA_VERSION
+        );
+    }
+
+    #[test]
+    fn legacy_snapshot_with_string_activation_keywords_loads_and_upgrades() {
+        let dir = TempDir::new().unwrap();
+        let path = dir.path().join("volition-state.json");
+        let mut snapshot = sample_snapshot();
+        // Persisted state carries full Goal values in accepted_candidates; a legacy snapshot
+        // stored their activation_keywords as plain strings.
+        let goal = Goal {
+            id: "legacy-goal".to_string(),
+            title: "Legacy".to_string(),
+            summary: "Legacy".to_string(),
+            tension_ids: vec!["knowledge-stewardship".to_string()],
+            status: GoalStatus::Accepted,
+            scope: GoalScope::Session,
+            base_priority: 70,
+            activation_keywords: vec![ActivationKeyword::normal("legacy")],
+            allowed_effects: vec![AllowedEffect::Reflect],
+            satisfaction_condition_summary: "test".to_string(),
+            evidence_refs: vec!["tests".to_string()],
+            estimated_tokens: 10,
+            source_reference: "tests".to_string(),
+        };
+        snapshot
+            .state
+            .accepted_candidates
+            .insert(goal.id.clone(), goal);
+        let mut value = serde_json::to_value(&snapshot).unwrap();
+        value["schema_version"] = serde_json::json!(2);
+        value["state"]["accepted_candidates"]["legacy-goal"]["activation_keywords"] =
+            serde_json::json!(["legacy", "keywords"]);
+        std::fs::write(&path, serde_json::to_string_pretty(&value).unwrap()).unwrap();
+
+        let loaded = VolitionContinuitySnapshot::load_or_upgrade(&path).unwrap();
+        assert_eq!(
+            loaded.schema_version,
+            VOLITION_CONTINUITY_SNAPSHOT_SCHEMA_VERSION
+        );
+        let upgraded = &loaded.state.accepted_candidates["legacy-goal"].activation_keywords;
+        assert!(
+            upgraded
+                .iter()
+                .all(|k| k.weight_class == KeywordWeightClass::Normal)
+        );
+        assert_eq!(upgraded[0].term, "legacy");
+    }
+
+    #[test]
+    fn legacy_reviewed_seed_with_string_keywords_loads_and_upgrades() {
+        let dir = TempDir::new().unwrap();
+        let path = dir.path().join("reviewed-seed.json");
+        let reviewed_goal = Goal {
+            id: "reviewed-continuity-check".to_string(),
+            title: "Reviewed continuity check".to_string(),
+            summary: "Carry a reviewed continuity candidate forward.".to_string(),
+            tension_ids: vec!["coherence-maintenance".to_string()],
+            status: GoalStatus::Accepted,
+            scope: GoalScope::Session,
+            base_priority: 77,
+            activation_keywords: vec![ActivationKeyword::normal("continuity")],
+            allowed_effects: vec![AllowedEffect::Reflect],
+            satisfaction_condition_summary: "Test review seed".to_string(),
+            evidence_refs: vec!["tests".to_string()],
+            estimated_tokens: 12,
+            source_reference: "tests".to_string(),
+        };
+        let seed = ReviewedVolitionSeed {
+            schema_version: REVIEWED_VOLITION_SEED_SCHEMA_VERSION,
+            promoted_by: "tester".to_string(),
+            promoted_at: "2026-06-30T12:00:00Z".to_string(),
+            source_artifact_reference: "continuity/seed-review.json".to_string(),
+            accepted_goals: BTreeMap::from([(reviewed_goal.id.clone(), reviewed_goal.clone())]),
+        };
+        let mut value = serde_json::to_value(&seed).unwrap();
+        value["schema_version"] = serde_json::json!(1);
+        value["accepted_goals"]["reviewed-continuity-check"]["activation_keywords"] =
+            serde_json::json!(["continuity"]);
+        std::fs::write(&path, serde_json::to_string_pretty(&value).unwrap()).unwrap();
+
+        let loaded = ReviewedVolitionSeed::load_or_upgrade(&path).unwrap();
+        assert_eq!(loaded.schema_version, REVIEWED_VOLITION_SEED_SCHEMA_VERSION);
+        let upgraded = &loaded.accepted_goals["reviewed-continuity-check"].activation_keywords;
+        assert_eq!(upgraded.len(), 1);
+        assert_eq!(upgraded[0].term, "continuity");
+        assert_eq!(upgraded[0].weight_class, KeywordWeightClass::Normal);
+    }
+
+    #[test]
+    fn live_formed_goal_with_one_model_keyword_meets_default_threshold() {
+        // Interim contract from the design's Compatibility Notes: a live-formed candidate's
+        // model-supplied keywords default to Normal (4) through `into_goal`, so one keyword
+        // clears the default threshold (4). Pinned through the real candidate->goal path so a
+        // later formation-schema change is a deliberate break, not an accident.
+        let fixture = realtime_seed_fixture();
+        let candidate: ProposedGoalCandidate = serde_json::from_value(serde_json::json!({
+            "id": "follow-quantum-thread",
+            "title": "Follow the quantum thread",
+            "summary": "Track the person's interest in quantum computing.",
+            "tension_ids": ["person-curiosity"],
+            "scope": "session",
+            "base_priority": 70,
+            "allowed_effects": ["reflect"],
+            "satisfaction_condition_summary": "The thread was followed.",
+            "proposal_evidence": ["turn: mentioned quantum computing"],
+            "source_description": "test",
+            "activation_keywords": ["quantum"]
+        }))
+        .unwrap();
+        // `into_goal` is pub(crate); this test lives in the qsf_volition crate.
+        let goal = candidate.into_goal(EvidenceRef::try_new("test-acceptance").unwrap());
+        let matched = matched_keywords(&goal, &normalize_terms("tell me about quantum computing"));
+        assert!(
+            match_strength(&matched) >= fixture.arbitration_qualification_threshold,
+            "one model-supplied (Normal-default) keyword must qualify at the default threshold"
+        );
+        assert!(
+            matched
+                .iter()
+                .all(|k| k.weight_class == KeywordWeightClass::Normal)
         );
     }
 
