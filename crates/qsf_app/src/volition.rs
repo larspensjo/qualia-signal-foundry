@@ -1211,7 +1211,10 @@ mod tests {
         );
         // Only avoid-overstating-impl-status matches (keywords: status, complete)
         assert_eq!(result.selected.len(), 1);
-        let arbitration = arbitrate(result.selected.clone(), &fixture).unwrap();
+        let arbitration = arbitrate(result.selected.clone(), &fixture)
+            .unwrap()
+            .qualified
+            .unwrap();
         assert_eq!(arbitration.winner.goal.id, "avoid-overstating-impl-status");
         assert!(arbitration.losers.is_empty());
     }
@@ -1230,7 +1233,10 @@ mod tests {
         );
         assert_eq!(result.selected.len(), 2, "expected 2 selected goals");
 
-        let arbitration = arbitrate(result.selected.clone(), &fixture).unwrap();
+        let arbitration = arbitrate(result.selected.clone(), &fixture)
+            .unwrap()
+            .qualified
+            .unwrap();
         assert_eq!(arbitration.winner.goal.id, "avoid-overstating-impl-status");
         assert_eq!(arbitration.winner_effective_tier, 1);
         assert_eq!(
@@ -1276,7 +1282,10 @@ mod tests {
             "selected: {selected_ids:?}"
         );
 
-        let arbitration = arbitrate(result.selected.clone(), &fixture).unwrap();
+        let arbitration = arbitrate(result.selected.clone(), &fixture)
+            .unwrap()
+            .qualified
+            .unwrap();
         // propose-followup-experiment (priority 90) beats clarify-weak-evidence-topic (priority 85)
         assert_eq!(arbitration.winner.goal.id, "propose-followup-experiment");
         assert_eq!(arbitration.winner_effective_tier, 7);
@@ -1302,7 +1311,10 @@ mod tests {
         // "goal-a" < "goal-b" lexicographically; same tier and priority
         let sel_b = make_goal_for_arbitration("goal-b", vec!["test-tension".to_string()], 80);
         let sel_a = make_goal_for_arbitration("goal-a", vec!["test-tension".to_string()], 80);
-        let result = arbitrate(vec![sel_b, sel_a], &fixture).unwrap();
+        let result = arbitrate(vec![sel_b, sel_a], &fixture)
+            .unwrap()
+            .qualified
+            .unwrap();
         assert_eq!(result.winner.goal.id, "goal-a");
         assert_eq!(result.losers[0].selection.goal.id, "goal-b");
     }
@@ -1320,7 +1332,10 @@ mod tests {
             ContextBudget::new(2, 80),
         );
         assert_eq!(result.selected.len(), 1);
-        let arbitration = arbitrate(result.selected, &fixture).unwrap();
+        let arbitration = arbitrate(result.selected, &fixture)
+            .unwrap()
+            .qualified
+            .unwrap();
         assert_eq!(
             arbitration.winner_effective_tier, 1,
             "effective tier must be the minimum among parent tensions"
@@ -1347,7 +1362,7 @@ mod tests {
             vec!["alpha-tension".to_string(), "beta-tension".to_string()],
             80,
         );
-        let result = arbitrate(vec![sel], &fixture).unwrap();
+        let result = arbitrate(vec![sel], &fixture).unwrap().qualified.unwrap();
         assert_eq!(result.winner_effective_tier, 3);
         assert_eq!(result.winner_effective_tension_id, "alpha-tension");
         assert_eq!(result.winner_effective_tension_title, "alpha-tension title");
@@ -1370,7 +1385,10 @@ mod tests {
             make_goal_for_arbitration("goal-a-tier5", vec!["tier-5-tension".to_string()], 90);
         let sel_tier1 =
             make_goal_for_arbitration("goal-m-tier1", vec!["tier-1-tension".to_string()], 95);
-        let result = arbitrate(vec![sel_tier7, sel_tier5, sel_tier1], &fixture).unwrap();
+        let result = arbitrate(vec![sel_tier7, sel_tier5, sel_tier1], &fixture)
+            .unwrap()
+            .qualified
+            .unwrap();
 
         assert_eq!(result.winner.goal.id, "goal-m-tier1");
         assert_eq!(result.winner_effective_tier, 1);
@@ -1410,7 +1428,10 @@ mod tests {
             &state,
             ContextBudget::new(4, 100),
         );
-        let arbitration = arbitrate(result.selected, &fixture).unwrap();
+        let arbitration = arbitrate(result.selected, &fixture)
+            .unwrap()
+            .qualified
+            .unwrap();
         // The winner carries an initiative proposal (not executed), losers likewise.
         // This assertion documents the contract: arbitrate() proposes, never executes.
         assert!(!arbitration.winner.initiative.goal_id.is_empty());
@@ -2139,8 +2160,14 @@ mod tests {
             super::select_goals_with_salience(input, &fixture, &state, ContextBudget::new(4, 100));
         assert_eq!(sel.selected.len(), 2, "expected 2 band-only selections");
 
-        let arb = arbitrate(sel.selected.clone(), &fixture).unwrap();
-        let mode_arb = arbitrate_with_mode(sel.selected, &fixture, Mode::Neutral).unwrap();
+        let arb = arbitrate(sel.selected.clone(), &fixture)
+            .unwrap()
+            .qualified
+            .unwrap();
+        let mode_arb = arbitrate_with_mode(sel.selected, &fixture, Mode::Neutral)
+            .unwrap()
+            .qualified
+            .unwrap();
 
         assert_eq!(arb.winner.goal.id, mode_arb.winner.goal.id);
         assert_eq!(
@@ -2166,8 +2193,14 @@ mod tests {
         let sel =
             super::select_goals_with_salience(input, &fixture, &state, ContextBudget::new(4, 100));
 
-        let neutral = arbitrate_with_mode(sel.selected.clone(), &fixture, Mode::Neutral).unwrap();
-        let exploratory = arbitrate_with_mode(sel.selected, &fixture, Mode::Exploratory).unwrap();
+        let neutral = arbitrate_with_mode(sel.selected.clone(), &fixture, Mode::Neutral)
+            .unwrap()
+            .qualified
+            .unwrap();
+        let exploratory = arbitrate_with_mode(sel.selected, &fixture, Mode::Exploratory)
+            .unwrap()
+            .qualified
+            .unwrap();
 
         // Under Neutral: continuity (tier 5) beats curiosity (tier 7)
         assert_eq!(neutral.winner.goal.id, "resurface-open-thread");
@@ -2192,8 +2225,14 @@ mod tests {
             "floor goal must be selected"
         );
 
-        let neutral = arbitrate_with_mode(sel.selected.clone(), &fixture, Mode::Neutral).unwrap();
-        let exploratory = arbitrate_with_mode(sel.selected, &fixture, Mode::Exploratory).unwrap();
+        let neutral = arbitrate_with_mode(sel.selected.clone(), &fixture, Mode::Neutral)
+            .unwrap()
+            .qualified
+            .unwrap();
+        let exploratory = arbitrate_with_mode(sel.selected, &fixture, Mode::Exploratory)
+            .unwrap()
+            .qualified
+            .unwrap();
 
         // Floor goal wins under both modes
         assert_eq!(neutral.winner.goal.id, "avoid-overstating-impl-status");
@@ -2212,7 +2251,10 @@ mod tests {
         let sel =
             super::select_goals_with_salience(input, &fixture, &state, ContextBudget::new(4, 100));
 
-        let focused = arbitrate_with_mode(sel.selected.clone(), &fixture, Mode::Focused).unwrap();
+        let focused = arbitrate_with_mode(sel.selected.clone(), &fixture, Mode::Focused)
+            .unwrap()
+            .qualified
+            .unwrap();
 
         // Under Focused: continuity biased to 4, curiosity biased to 10 → continuity wins
         assert_eq!(focused.winner.goal.id, "resurface-open-thread");
@@ -2321,7 +2363,10 @@ mod tests {
             arbitration_qualification_threshold: DEFAULT_ARBITRATION_QUALIFICATION_THRESHOLD,
         };
         let sel = make_goal_for_arbitration("no-tension-goal", vec![], 80);
-        let result = arbitrate_with_mode(vec![sel], &fixture, Mode::Focused).unwrap();
+        let result = arbitrate_with_mode(vec![sel], &fixture, Mode::Focused)
+            .unwrap()
+            .qualified
+            .unwrap();
         assert_eq!(result.winner_bias.effective_tier, u8::MAX);
         assert_eq!(result.winner_bias.biased_tier, u8::MAX);
     }
@@ -2338,8 +2383,8 @@ mod tests {
             arbitrate_with_mode(sel.selected, &fixture, Mode::Exploratory)
         };
 
-        let r1 = run().unwrap();
-        let r2 = run().unwrap();
+        let r1 = run().unwrap().qualified.unwrap();
+        let r2 = run().unwrap().qualified.unwrap();
         assert_eq!(r1.winner.goal.id, r2.winner.goal.id);
         assert_eq!(r1.winner_bias.biased_tier, r2.winner_bias.biased_tier);
     }

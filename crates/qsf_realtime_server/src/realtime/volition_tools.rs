@@ -156,8 +156,11 @@ impl Tool for SelectVolitionGoalsTool {
             .context("select_volition_goals requires `query`")?;
 
         let ranked = select_goals_ranked(query, &snap.state, &snap.fixture);
+        // Task 9 bridge: the select tool still reports only the qualified winner. Reporting the
+        // full qualification outcome is wired in by the select-tool outcome work.
         let arbitration =
-            arbitrate_with_mode(ranked.selected.clone(), &snap.fixture, snap.state.mode);
+            arbitrate_with_mode(ranked.selected.clone(), &snap.fixture, snap.state.mode)
+                .and_then(|outcome| outcome.qualified);
         let snapshot_hash = volition_snapshot_hash(snap);
         let input_terms = ranked.input_terms.clone();
 

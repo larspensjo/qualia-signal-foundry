@@ -74,7 +74,10 @@ impl Experiment for VolitionArbitrationConflictExperiment {
             state = apply(state, VolitionEvent::TickAdvanced { tick: new_tick });
 
             let selection = select_goals_with_salience(input, &fixture, &state, BUDGET);
-            let arbitration_result = arbitrate(selection.selected.clone(), &fixture);
+            // This experiment reports only the qualified winner; the qualification partition
+            // itself is exercised by the volition reducer tests.
+            let arbitration_result =
+                arbitrate(selection.selected.clone(), &fixture).and_then(|o| o.qualified);
             let arbitration_status = arbitration_status_label(&arbitration_result);
 
             let turn_detail = json!({
@@ -410,7 +413,10 @@ mod tests {
             1,
             "turn 2 must select exactly one goal"
         );
-        let arb = arbitrate(result.selected, &fixture).unwrap();
+        let arb = arbitrate(result.selected, &fixture)
+            .unwrap()
+            .qualified
+            .unwrap();
         assert!(arb.losers.is_empty(), "single selection has no losers");
         assert_eq!(arb.winner.goal.id, "clarify-weak-evidence-topic");
     }
@@ -430,7 +436,10 @@ mod tests {
             "turn 3 must select at least 2 goals for conflict; got {}",
             result.selected.len()
         );
-        let arb = arbitrate(result.selected, &fixture).unwrap();
+        let arb = arbitrate(result.selected, &fixture)
+            .unwrap()
+            .qualified
+            .unwrap();
         assert!(!arb.losers.is_empty(), "conflict turn must have losers");
         assert_eq!(arb.winner.goal.id, "avoid-overstating-impl-status");
         assert_eq!(arb.winner_effective_tier, 1);

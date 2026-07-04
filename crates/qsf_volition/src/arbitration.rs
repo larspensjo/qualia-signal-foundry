@@ -365,8 +365,62 @@ mod tests {
     use crate::{
         ActivationKeyword, AllowedEffect, DEFAULT_ARBITRATION_QUALIFICATION_THRESHOLD, Goal,
         GoalScope, GoalSelection, GoalStatus, InitiativeProposal, Tension, TensionPriority,
-        VolitionEvent, VolitionFixture, VolitionState, apply, static_fixture,
+        VolitionEvent, VolitionFixture, VolitionState, apply, realtime_seed_fixture,
+        select_goals_ranked, static_fixture,
     };
+
+    // ── Paraphrase robustness (selection + arbitration end-to-end) ───────────
+
+    #[test]
+    fn same_meaning_in_three_wordings_selects_the_same_winner() {
+        let fixture = realtime_seed_fixture();
+        let state = VolitionState::from_fixture(&fixture);
+        for probe in [
+            "Do you believe machines will replace many jobs, and what does that do to the economy?",
+            "Will automation replace jobs and reshape the economy?",
+            "I wonder how many jobs the economy loses when machines replace people.",
+        ] {
+            let ranked = select_goals_ranked(probe, &state, &fixture);
+            let outcome = arbitrate_with_mode(ranked.selected, &fixture, Mode::Neutral).unwrap();
+            assert_eq!(
+                outcome.qualified.expect("qualified winner").winner.goal.id,
+                "track-the-ai-transition",
+                "wording: {probe}"
+            );
+        }
+    }
+
+    #[test]
+    fn stray_idiom_prefix_does_not_flip_the_winner() {
+        let fixture = realtime_seed_fixture();
+        let state = VolitionState::from_fixture(&fixture);
+        let plain = "Will automation replace jobs and reshape the economy?";
+        let prefixed = format!("For what it's worth, {plain}");
+        let winner = |text: &str| {
+            let ranked = select_goals_ranked(text, &state, &fixture);
+            arbitrate_with_mode(ranked.selected, &fixture, Mode::Neutral)
+                .unwrap()
+                .qualified
+                .unwrap()
+                .winner
+                .goal
+                .id
+        };
+        assert_eq!(winner(plain), winner(&prefixed));
+    }
+
+    #[test]
+    fn all_stopword_turn_yields_no_winner_with_recorded_reason() {
+        let fixture = realtime_seed_fixture();
+        let state = VolitionState::from_fixture(&fixture);
+        let ranked = select_goals_ranked("for what it's worth, thanks", &state, &fixture);
+        let outcome = arbitrate_with_mode(ranked.selected, &fixture, Mode::Neutral).unwrap();
+        assert!(outcome.qualified.is_none());
+        assert!(!outcome.below_threshold.is_empty());
+        for below in &outcome.below_threshold {
+            assert!(below.match_strength < outcome.qualification_threshold);
+        }
+    }
 
     fn make_goal_for_arbitration(
         id: &str,

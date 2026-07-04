@@ -123,7 +123,9 @@ mod tests {
         let state = VolitionState::from_fixture(&fixture);
         let ranked = select_goals_ranked("how can you help me", &state, &fixture);
         let arbitration = arbitrate_with_mode(ranked.selected.clone(), &fixture, Mode::Neutral)
-            .expect("expected selection");
+            .expect("expected selection")
+            .qualified
+            .expect("qualified winner");
         let opportunities = detect_opportunities(
             &grounded_terms_from_text("how can you help me"),
             &state,
@@ -267,7 +269,9 @@ mod tests {
         let state = VolitionState::from_fixture(&fixture);
         let ranked = select_goals_ranked("how can you help me", &state, &fixture);
         let arbitration = arbitrate_with_mode(ranked.selected.clone(), &fixture, Mode::Neutral)
-            .expect("expected selection");
+            .expect("expected selection")
+            .qualified
+            .expect("qualified winner");
         let output = qsf_volition::execute_initiative(
             &arbitration.winner.initiative,
             &arbitration.winner.goal,

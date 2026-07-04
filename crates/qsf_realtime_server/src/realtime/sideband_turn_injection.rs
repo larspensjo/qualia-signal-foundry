@@ -168,11 +168,14 @@ pub(crate) async fn inject_trusted_turn_context_and_response(
         &volition_snapshot.state,
         &volition_snapshot.fixture,
     );
+    // Temporary bridge: this path still consumes only the qualified winner. The no-qualifier
+    // turn decision and its dedicated suppression are wired in by the no-winner sideband work.
     let arbitration = arbitrate_with_mode(
         ranked.selected.clone(),
         &volition_snapshot.fixture,
         volition_snapshot.state.mode,
-    );
+    )
+    .and_then(|outcome| outcome.qualified);
     let intensity = arbitration
         .as_ref()
         .map(|arbitration| {

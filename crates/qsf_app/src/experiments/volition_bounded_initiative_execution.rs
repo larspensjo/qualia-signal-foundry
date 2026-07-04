@@ -174,10 +174,11 @@ impl Experiment for VolitionBoundedInitiativeExecutionExperiment {
         )?;
 
         let arb_selection = select_goals_with_salience(arbitration_input, &fixture, &state, BUDGET);
-        let arbitration = arbitrate(arb_selection.selected.clone(), &fixture);
+        let arbitration =
+            arbitrate(arb_selection.selected.clone(), &fixture).and_then(|o| o.qualified);
         assert!(
             arbitration.is_some(),
-            "arbitration must produce a result with multiple selections"
+            "arbitration must produce a qualified winner with multiple selections"
         );
         let arb_result = arbitration.as_ref().unwrap();
 
@@ -666,7 +667,10 @@ mod tests {
             &state,
             ContextBudget::new(4, 200),
         );
-        let arb = arbitrate(sel.selected, &fixture).unwrap();
+        let arb = arbitrate(sel.selected, &fixture)
+            .unwrap()
+            .qualified
+            .unwrap();
         assert_eq!(
             arb.winner.goal.id, "avoid-overstating-impl-status",
             "tier-1 fixture goal must win over tier-5 accepted candidate"

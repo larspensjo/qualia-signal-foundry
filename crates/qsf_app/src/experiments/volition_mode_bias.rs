@@ -71,6 +71,7 @@ impl Experiment for VolitionModeBiasExperiment {
         );
 
         let arb1 = arbitrate_with_mode(sel1.selected.clone(), &fixture, Mode::Neutral)
+            .and_then(|outcome| outcome.qualified)
             .expect("turn 1 must produce an arbitration result");
         let neutral1_winner_id = arb1.winner.goal.id.clone();
 
@@ -126,9 +127,11 @@ impl Experiment for VolitionModeBiasExperiment {
         );
 
         let arb2 = arbitrate_with_mode(sel2.selected.clone(), &fixture, Mode::Exploratory)
+            .and_then(|outcome| outcome.qualified)
             .expect("turn 2 must produce an arbitration result");
         let neutral2_winner_id =
             arbitrate_with_mode(sel2.selected.clone(), &fixture, Mode::Neutral)
+                .and_then(|outcome| outcome.qualified)
                 .map(|r| r.winner.goal.id)
                 .unwrap_or_default();
 
@@ -194,9 +197,11 @@ impl Experiment for VolitionModeBiasExperiment {
         );
 
         let arb3 = arbitrate_with_mode(sel3.selected.clone(), &fixture, Mode::Exploratory)
+            .and_then(|outcome| outcome.qualified)
             .expect("turn 3 must produce an arbitration result");
         let neutral3_winner_id =
             arbitrate_with_mode(sel3.selected.clone(), &fixture, Mode::Neutral)
+                .and_then(|outcome| outcome.qualified)
                 .map(|r| r.winner.goal.id)
                 .unwrap_or_default();
 
@@ -274,9 +279,11 @@ impl Experiment for VolitionModeBiasExperiment {
         );
 
         let arb4 = arbitrate_with_mode(sel4.selected.clone(), &fixture, Mode::Focused)
+            .and_then(|outcome| outcome.qualified)
             .expect("turn 4 must produce an arbitration result");
         let neutral4_winner_id =
             arbitrate_with_mode(sel4.selected.clone(), &fixture, Mode::Neutral)
+                .and_then(|outcome| outcome.qualified)
                 .map(|r| r.winner.goal.id)
                 .unwrap_or_default();
 
@@ -612,7 +619,9 @@ mod tests {
         let state = VolitionState::from_fixture(&fixture);
         let input = "The open thread about voice memory evidence is unresolved.";
         let sel = select_goals_with_salience(input, &fixture, &state, ContextBudget::new(4, 100));
-        let arb = arbitrate_with_mode(sel.selected, &fixture, Mode::Neutral).unwrap();
+        let arb = arbitrate_with_mode(sel.selected, &fixture, Mode::Neutral)
+            .and_then(|outcome| outcome.qualified)
+            .unwrap();
         assert_eq!(arb.winner.goal.id, "resurface-open-thread");
         assert!(!arb.winner_bias.protected);
     }
@@ -624,8 +633,12 @@ mod tests {
         let input = "The open thread about voice memory evidence is unresolved.";
         let sel = select_goals_with_salience(input, &fixture, &state, ContextBudget::new(4, 100));
 
-        let neutral = arbitrate_with_mode(sel.selected.clone(), &fixture, Mode::Neutral).unwrap();
-        let exploratory = arbitrate_with_mode(sel.selected, &fixture, Mode::Exploratory).unwrap();
+        let neutral = arbitrate_with_mode(sel.selected.clone(), &fixture, Mode::Neutral)
+            .and_then(|outcome| outcome.qualified)
+            .unwrap();
+        let exploratory = arbitrate_with_mode(sel.selected, &fixture, Mode::Exploratory)
+            .and_then(|outcome| outcome.qualified)
+            .unwrap();
 
         assert_eq!(neutral.winner.goal.id, "resurface-open-thread");
         assert_eq!(exploratory.winner.goal.id, "clarify-weak-evidence-topic");
@@ -640,7 +653,9 @@ mod tests {
             "Is the voice memory work complete, or is the evidence thread still unresolved?";
         let sel = select_goals_with_salience(input, &fixture, &state, ContextBudget::new(4, 100));
 
-        let arb = arbitrate_with_mode(sel.selected, &fixture, Mode::Exploratory).unwrap();
+        let arb = arbitrate_with_mode(sel.selected, &fixture, Mode::Exploratory)
+            .and_then(|outcome| outcome.qualified)
+            .unwrap();
         assert_eq!(arb.winner.goal.id, "avoid-overstating-impl-status");
         assert!(arb.winner_bias.protected);
         assert_eq!(arb.winner_bias.biased_tier, arb.winner_bias.effective_tier);
@@ -660,8 +675,12 @@ mod tests {
         let input = "The open thread about voice memory evidence is unresolved.";
         let sel = select_goals_with_salience(input, &fixture, &state, ContextBudget::new(4, 100));
 
-        let neutral = arbitrate_with_mode(sel.selected.clone(), &fixture, Mode::Neutral).unwrap();
-        let focused = arbitrate_with_mode(sel.selected, &fixture, Mode::Focused).unwrap();
+        let neutral = arbitrate_with_mode(sel.selected.clone(), &fixture, Mode::Neutral)
+            .and_then(|outcome| outcome.qualified)
+            .unwrap();
+        let focused = arbitrate_with_mode(sel.selected, &fixture, Mode::Focused)
+            .and_then(|outcome| outcome.qualified)
+            .unwrap();
 
         assert_eq!(focused.winner.goal.id, "resurface-open-thread");
         assert_eq!(neutral.winner.goal.id, "resurface-open-thread");

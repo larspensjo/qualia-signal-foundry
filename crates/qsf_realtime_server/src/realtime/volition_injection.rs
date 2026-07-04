@@ -651,7 +651,8 @@ mod tests {
             fixture: fixture.clone(),
         };
         let ranked = select_goals_ranked("how can you help me", &state, &fixture);
-        let arbitration = arbitrate_with_mode(ranked.selected.clone(), &fixture, Mode::Neutral);
+        let arbitration = arbitrate_with_mode(ranked.selected.clone(), &fixture, Mode::Neutral)
+            .and_then(|outcome| outcome.qualified);
         let opportunities = detect_opportunities(
             &grounded_terms_from_text("how can you help me"),
             &state,
@@ -688,7 +689,8 @@ mod tests {
             fixture: fixture.clone(),
         };
         let ranked = select_goals_ranked("how can you help me", &state, &fixture);
-        let arbitration = arbitrate_with_mode(ranked.selected.clone(), &fixture, Mode::Neutral);
+        let arbitration = arbitrate_with_mode(ranked.selected.clone(), &fixture, Mode::Neutral)
+            .and_then(|outcome| outcome.qualified);
         let opportunities = detect_opportunities(
             &grounded_terms_from_text("how can you help me"),
             &state,
@@ -725,7 +727,8 @@ mod tests {
             fixture: fixture.clone(),
         };
         let ranked = select_goals_ranked("how can you help me", &state, &fixture);
-        let arbitration = arbitrate_with_mode(ranked.selected.clone(), &fixture, Mode::Neutral);
+        let arbitration = arbitrate_with_mode(ranked.selected.clone(), &fixture, Mode::Neutral)
+            .and_then(|outcome| outcome.qualified);
         let opportunities = detect_opportunities(
             &grounded_terms_from_text("how can you help me"),
             &state,
@@ -775,7 +778,8 @@ mod tests {
             fixture: fixture.clone(),
         };
         let ranked = select_goals_ranked("how can you help me", &state, &fixture);
-        let arbitration = arbitrate_with_mode(ranked.selected.clone(), &fixture, Mode::Neutral);
+        let arbitration = arbitrate_with_mode(ranked.selected.clone(), &fixture, Mode::Neutral)
+            .and_then(|outcome| outcome.qualified);
         let opportunities = detect_opportunities(
             &grounded_terms_from_text("how can you help me"),
             &state,
