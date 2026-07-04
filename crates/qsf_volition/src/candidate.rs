@@ -60,6 +60,31 @@ impl ProposedGoalCandidate {
         })
     }
 
+    /// Field-by-field description of the JSON a model must emit to propose a candidate, kept in
+    /// this file so it cannot drift from the struct and the `ProposedGoalCandidateRaw`
+    /// deserializer below. Any prompt that asks a model to produce a `ProposedGoalCandidate`
+    /// should embed this rather than restating the shape (a restated shape is what let the live
+    /// judge invent `{candidate fields}` and fail deserialization). Enum values use serde's
+    /// snake_case wire form, not the `Display` (kebab-case) form.
+    pub fn json_schema_hint() -> &'static str {
+        "{\n  \
+         \"id\": string — unique kebab-case slug for the new goal; must NOT equal any existing \
+         goal id in the list,\n  \
+         \"title\": string — short human-readable name,\n  \
+         \"summary\": string — one or two sentences describing the goal,\n  \
+         \"tension_ids\": [string] — ids of existing tensions this goal serves,\n  \
+         \"scope\": string — one of \"input\", \"session\", \"project\",\n  \
+         \"base_priority\": integer 0-255 — higher is more salient,\n  \
+         \"allowed_effects\": [string] — each one of \"reflect\", \"retrieve_context\", \
+         \"propose_experiment\", \"surface_open_thread\",\n  \
+         \"satisfaction_condition_summary\": string — what would make this goal satisfied,\n  \
+         \"proposal_evidence\": [string] — MUST be non-empty; quotes or references from the turn \
+         justifying the goal,\n  \
+         \"source_description\": string — brief note on how the goal was formed,\n  \
+         \"activation_keywords\": [string] — lowercase words that should re-activate this goal\n\
+         }"
+    }
+
     pub fn id(&self) -> &str {
         &self.id
     }
@@ -369,6 +394,32 @@ mod tests {
             keywords.contains(&"preservation".to_string()),
             "expected 'preservation' in keywords, got: {keywords:?}"
         );
+    }
+
+    #[test]
+    fn json_schema_hint_names_every_deserialized_field() {
+        // Guards against the hint drifting from the struct: every field the deserializer reads
+        // must be documented in the hint, or a model prompted with it would omit that field and
+        // fail deserialization (the exact live-judge failure this hint exists to prevent).
+        let hint = ProposedGoalCandidate::json_schema_hint();
+        for field in [
+            "id",
+            "title",
+            "summary",
+            "tension_ids",
+            "scope",
+            "base_priority",
+            "allowed_effects",
+            "satisfaction_condition_summary",
+            "proposal_evidence",
+            "source_description",
+            "activation_keywords",
+        ] {
+            assert!(
+                hint.contains(field),
+                "schema hint must document the `{field}` field"
+            );
+        }
     }
 
     #[test]

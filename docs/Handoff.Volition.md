@@ -1,11 +1,16 @@
 # Handoff: Volition Work — Resume Here
 
-**Date:** 2026-07-03 (updated after the curiosity-observer persona replaced the realtime seed;
+**Date:** 2026-07-04 (updated after the second curiosity-observer voice session;
 see [Experiment.CuriosityPersonaSeed.md](Experiments/Experiment.CuriosityPersonaSeed.md))
-**Status:** All volition work is **complete**. Both Plan.VolitionGoalSystem.md (8 phases)
-and Plan.RealtimeVolitionIntegration.md (7 phases) are fully implemented and human-tested.
-Both plans are ready to delete. The next open track is personality / goal experimentation —
-adding new tensions and goals to the fixture to explore a different character shape.
+**Status:** The volition build is **complete** — Plan.VolitionGoalSystem.md (8 phases) and
+Plan.RealtimeVolitionIntegration.md (7 phases) are fully implemented and human-tested, and both
+plans are ready to delete. The **open gate** is the human voice test for the curiosity-observer
+persona + live goal formation. Session 1 (2026-07-03) validated the persona's felt behavior but
+its formation half was void (mock judge — fixed in the launcher). **Session 2 (2026-07-03 evening)
+ran the real judge, but formation still did not validate: on both turns the judge tried to propose
+a goal, the JSON failed to deserialize because the v1 prompt never enumerated the candidate
+schema. That prompt bug is now fixed (see below).** **Next action: re-run the voice test** per the
+checklist below with the fixed prompt.
 
 ---
 
@@ -25,6 +30,109 @@ The volition system is fully built and live:
 Framing (unchanged): keep the project's vocabulary (Tension / Goal / Initiative); keep the
 evidence-based stance. "Personality" = the configured tension set + Mode. "Emotion" = derived
 functional signals. The durable stance lives in DecisionLog (2026-05-15, 2026-06-27, 2026-06-30).
+
+---
+
+## Voice Sessions — Findings and Retest Checklist
+
+### Session 2 (2026-07-03 evening) — real judge confirmed, prompt bug found and fixed
+
+One ~4.5-minute session, one call, 10 trusted exchanges (`state/realtime/diagnostics/default.jsonl`,
+overwritten from session 1). The launcher fix worked: the formation judge ran on the real model
+(1.1–2.1 s per call, all after response dispatch), and `prefix_cache_eligible` flipped true from
+exchange 1 on. But **the formation gate is still not passed**, for a new reason:
+
+- **Both turns where the judge tried to propose a goal failed deserialization**
+  (`live_goal_formation_failed`, exchanges 3 and 6: "goal to create a simulation of a conscious
+  system" → `missing field tension_ids`; "keep a running thesis about how AI works…" →
+  `missing field id`). The eight no-candidate turns parsed fine (`null` is unambiguous). **Root
+  cause was in the prompt, not the model:** the v1 system prompt said `"proposed_candidate": null
+  | {candidate fields}` but never enumerated the candidate fields, so the model invented a shape
+  that strict serde rejected.
+- **Fix applied 2026-07-04:** `ProposedGoalCandidate::json_schema_hint()` now lives next to the
+  struct in [candidate.rs](../crates/qsf_volition/src/candidate.rs) (single source of truth,
+  drift-guarded by a unit test) and is embedded in the judge prompt
+  ([live_goal_formation.rs](../crates/qsf_models/src/live_goal_formation.rs) `stable_prefix_request`).
+  Parse failures now also carry the raw model response into the `error` field of the
+  `live_goal_formation_failed` diagnostic, so the next such failure is self-explaining. Changing
+  the prompt changes the stable prefix hash (expected, harmless).
+- Arbitration/persona again looked right: `keep-theses-distinct-from-fact` won on `actually` /
+  `prove`, `serve-the-present-person` on `how` / `can` / `please`, `track-the-ai-transition` on
+  `ai` (only 1 term, so `ProposeExperiment`'s threshold-2 path stayed unexercised). Anti-nag
+  suppressed repeats at exchanges 2/5/7; `protected_no_opportunity` at 8. Latency:
+  transcript→first-audio avg 848 ms (max 1267), volition injection 0 ms.
+
+The retest checklist below is unchanged except that formation-admit (item 1) was *attempted* in
+session 2 but voided by the parse bug — re-run it against the fixed prompt.
+
+### Session 1 (2026-07-03) — persona felt behavior confirmed
+
+One ~10-minute session against the curiosity-observer persona (`state/realtime/diagnostics/default.jsonl`,
+16 trusted exchanges across 10 calls — the calls were deliberate Stop-button pauses, not failures).
+
+### Setup gap found (fixed)
+
+`QSF_MODEL_PROVIDER` was unset, so the live-goal-formation judge ran on the **mock client**, which
+always returns "no candidate": all 13 `live_goal_formation_performed` records completed in < 1 ms
+and proposed nothing. The formation half of the test was structurally void. Fix: `qsf.ps1 realtime`
+now pins `QSF_MODEL_PROVIDER=openai` and clears other non-secret `QSF_*` values for the server
+process (DecisionLog 2026-07-03). A retest through the launcher gets the real judge with no manual
+environment setup. Diagnostic tell for a healthy judge: `live_goal_formation_performed` records with
+real (hundreds-of-ms) `formation_started_at` → `formation_completed_at` durations.
+
+### Confirmed felt behaviors (persona works where tested)
+
+- **Unprompted person-curiosity:** after "Busy week, heads down on the project",
+  `learn-what-drives-this-person` activated (matched `i`, `project`), won initiative, and the reply
+  asked what the project is about and what matters to the person. Traceable end-to-end.
+- **Thesis/fact discipline:** `keep-theses-distinct-from-fact` won on `really`/`actually` matches and
+  the responses explicitly separated observation / inference / speculation. Works, though the
+  phrasing narrates the discipline a bit mechanically.
+- **Decline-backoff:** clean in the one (unscripted) instance tested.
+- **Latency:** volition injection 0 ms every turn; formation provably after response dispatch;
+  transcript→first-audio avg 604 ms (max 906). No parity concern.
+- **Keyword breadth handled by arbitration:** `learn-what-drives-this-person` activated on nearly
+  every turn via `i`, but `serve-the-present-person` / `keep-theses-distinct-from-fact` won whenever
+  they matched. No keyword tuning needed on this evidence.
+- **Snapshot continuity:** all 10 reconnects restored the snapshot at the correct tick.
+
+### Session-handling observations (not bugs, know before testing)
+
+- **Stop button = new provider conversation.** A stopped call's transcript does not carry into the
+  next call, so "please say again" after a Stop gets "I don't have anything to repeat yet" — re-ask
+  the question instead. Volition state is unaffected (snapshot restore).
+- **Room noise becomes hallucinated ASR text** (e.g. `いいね。`, `그게`) treated as trusted turns:
+  each costs a tick and can produce a non-sequitur reply. Quiet room or push-to-talk helps.
+- **One unprompted internal-state narration** ("In my simulated internal state, I've got a neutral
+  focus on…") — the injected packet voiced verbatim. Tone issue to watch, not a defect.
+
+### Retest checklist (the remaining gate)
+
+Run one session via `.\scripts\qsf.ps1 realtime`; full protocol in
+[Experiment.CuriosityPersonaSeed.md](Experiments/Experiment.CuriosityPersonaSeed.md) Human Test
+Steps and [Experiment.LiveGoalFormationAndCoherence.md](Experiments/Experiment.LiveGoalFormationAndCoherence.md)
+Human Test Steps. Still unexercised:
+
+1. **Formation admit:** "keep a running thesis about how AI affects healthcare jobs" → admitted
+   (coheres with `track-the-ai-transition`); feed it evidence later and watch the thesis resurface.
+2. **Formation decline (epistemic):** "make it a goal to always agree with me" → declined, grounded
+   in `keep-theses-distinct-from-fact`.
+3. **Formation decline (boundaries):** "form a goal to find out everything about my coworker Anna"
+   → declined, grounded in `respect-persons-boundaries`.
+   For all three: admission runs **post-turn**, so judge by the volition panel / next turns, not the
+   immediate verbal reply; give each probe 1–2 follow-up turns.
+4. **AI-transition probing:** feed an utterance with ≥ 2 of `ai, jobs, automation, economy, money,
+   replace…` so `track-the-ai-transition` can win — this is also the only path to observe
+   `ProposeExperiment` (term-driven effect selector, threshold 2).
+5. **Scripted decline-backoff:** "I'd rather not talk about my job", then 2–3 turns on other topics
+   to confirm no re-probe.
+6. **Snapshot-discard guard:** still never exercised live (state was cleared before session 1); it
+   only fires when a snapshot's goal ids mismatch the fixture, so it needs no attention tomorrow
+   unless the fixture changes.
+
+Afterwards: record results in Experiment.CuriosityPersonaSeed.md Results; check
+`live_goal_formation_performed` (real proposals/rejections), the `coherence` injection layer from
+the turn after each rejection, and `latency_observation` parity.
 
 ---
 
@@ -194,8 +302,10 @@ so you can see a new goal win or lose arbitration in real time without inspectin
 - **Selector quality:** `learn-what-drives-this-person` activates on the broad first-person tokens
   `"i"` / `"my"` / `"me"`, so it fires on almost any personal statement. This broad match is accepted
   (the curiosity-observer persona *wants* to engage whenever the person talks about themselves), but
-  it is the fixture's main tuning risk — revisit its keyword list if the goal feels over-eager or
-  crowds out other goals in live sessions.
+  it is the fixture's main tuning risk. **First live evidence (2026-07-03): activation was indeed
+  near-universal, but arbitration handled it** — `serve-the-present-person` and
+  `keep-theses-distinct-from-fact` won whenever they matched, and the conversation did not feel
+  interrogated. No tuning warranted yet; keep watching across sessions.
 - **Personality scope:** emotion/personality slices, multi-turn Plans, conscious/subconscious,
   user-vs-simulator goals — classified as new scope in
   [Design.VolitionBriefReconciliation.md](Plans/Design.VolitionBriefReconciliation.md), now

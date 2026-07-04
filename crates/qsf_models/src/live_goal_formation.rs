@@ -150,19 +150,22 @@ impl<'a> ModelBackedLiveGoalFormationJudge<'a> {
     /// why callers should not maintain a second one.
     fn stable_prefix_request(goal_set: &[CoherenceJudgeGoalRef]) -> ModelRequest {
         let role = ModelRole::predefined(ModelRoleId::LiveGoalFormationJudge);
+        let system_message = format!(
+            "You review one trusted turn of a live conversation against the simulation's current \
+             goal set. First, decide whether the turn warrants proposing a new durable goal \
+             candidate (or none). Then identify any contradictions among the listed goals plus \
+             your proposed candidate, if any - two goals contradict when pursuing one would \
+             undermine or conflict with the other. Respond only with JSON of the form \
+             {{\"proposed_candidate\": null | <candidate>, \"contradictions\": [{{\"goal_a\": id, \
+             \"goal_b\": id, \"rationale\": text}}]}}, where <candidate> is exactly this shape: \
+             {candidate_schema}. Return null for proposed_candidate and an empty list for \
+             contradictions when nothing is warranted.",
+            candidate_schema = ProposedGoalCandidate::json_schema_hint(),
+        );
         ModelRequest::new(
             role,
             vec![
-                ModelMessage::system(
-                    "You review one trusted turn of a live conversation against the simulation's \
-                     current goal set. First, decide whether the turn warrants proposing a new \
-                     durable goal candidate (or none). Then identify any contradictions among the \
-                     listed goals plus your proposed candidate, if any - two goals contradict when \
-                     pursuing one would undermine or conflict with the other. Respond only with \
-                     JSON: {\"proposed_candidate\": null | {candidate fields}, \"contradictions\": \
-                     [{\"goal_a\": id, \"goal_b\": id, \"rationale\": text}]}. Return null and an \
-                     empty list when nothing is warranted.",
-                ),
+                ModelMessage::system(system_message),
                 ModelMessage::user(
                     serde_json::to_string(&json!({ "goals": goal_set })).unwrap_or_default(),
                 ),
@@ -205,10 +208,13 @@ impl LiveGoalFormationJudge for ModelBackedLiveGoalFormationJudge<'_> {
             .as_ref()
             .context("live goal formation response had no structured output")?;
         let parsed: LiveGoalFormationResponse = serde_json::from_value(structured.clone())
-            .context(
-                "live goal formation response did not match the expected \
-                 {proposed_candidate, contradictions} shape",
-            )?;
+            .with_context(|| {
+                format!(
+                    "live goal formation response did not match the expected \
+                     {{proposed_candidate, contradictions}} shape; raw structured output: \
+                     {structured}"
+                )
+            })?;
 
         validate_candidate_id_is_new(goal_set, &parsed.proposed_candidate)?;
         let known_ids = known_ids_including_candidate(goal_set, &parsed.proposed_candidate);
@@ -352,6 +358,66 @@ mod tests {
             .unwrap_err();
 
         assert!(error.to_string().contains("goal-a"));
+    }
+
+    #[test]
+    fn stable_prefix_prompt_enumerates_the_candidate_schema() {
+        // Regression for the live-judge parse failures: the system prompt must spell out the
+        // candidate fields, not gesture at "{candidate fields}", or the model invents a shape
+        // that fails deserialization. Anchored to the required fields the deserializer reads.
+        let request = ModelBackedLiveGoalFormationJudge::stable_prefix_request(&[goal("goal-a")]);
+        let system = request.messages[0].content.as_str();
+        for field in [
+            "tension_ids",
+            "proposal_evidence",
+            "allowed_effects",
+            "satisfaction_condition_summary",
+            "activation_keywords",
+        ] {
+            assert!(
+                system.contains(field),
+                "system prompt must document the `{field}` candidate field"
+            );
+        }
+        assert!(
+            !system.contains("{candidate fields}"),
+            "the placeholder that caused the live parse failures must not return"
+        );
+    }
+
+    #[test]
+    fn malformed_candidate_error_includes_the_raw_structured_output() {
+        // A candidate missing a required field (here `tension_ids`) is the live failure mode; the
+        // error must carry the raw response so the failure diagnostic can explain what the model
+        // actually returned rather than only naming the missing field.
+        let client = MockModelClient::default().with_fixture(
+            ModelRoleId::LiveGoalFormationJudge,
+            json!({
+                "proposed_candidate": {
+                    "id": "goal-new",
+                    "title": "goal-new title",
+                    "summary": "goal-new summary"
+                },
+                "contradictions": []
+            })
+            .to_string(),
+        );
+        let judge = ModelBackedLiveGoalFormationJudge::new(&client);
+        let mut invoker = DirectModelInvoker;
+
+        let error = judge
+            .form_and_detect(&mut invoker, &[goal("goal-a")], "a live turn transcript")
+            .unwrap_err();
+
+        let rendered = format!("{error:#}");
+        assert!(
+            rendered.contains("raw structured output"),
+            "error must label the raw response: {rendered}"
+        );
+        assert!(
+            rendered.contains("goal-new"),
+            "error must include the raw response body: {rendered}"
+        );
     }
 
     #[test]
