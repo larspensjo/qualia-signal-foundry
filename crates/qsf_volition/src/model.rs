@@ -8,6 +8,80 @@ pub struct VolitionFixture {
     pub goals: Vec<Goal>,
 }
 
+/// Coarse activation-keyword weight class. Coarse on purpose: consistent curation beats
+/// numeric precision at this goal-set size, and the persona stays data-only
+/// (DecisionLog 2026-07-04, weighted goal activation).
+#[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum KeywordWeightClass {
+    Weak,
+    #[default]
+    Normal,
+    Strong,
+}
+
+impl KeywordWeightClass {
+    pub fn weight(self) -> u32 {
+        match self {
+            Self::Weak => 1,
+            Self::Normal => 4,
+            Self::Strong => 8,
+        }
+    }
+}
+
+/// One activation keyword with its curated weight class. Serializes in the weighted form;
+/// deserializes from either the weighted form or a legacy plain string (default Normal) so
+/// pre-weight continuity snapshots, reviewed seeds, and live-formed goals still load.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+pub struct ActivationKeyword {
+    pub term: String,
+    pub weight_class: KeywordWeightClass,
+}
+
+impl ActivationKeyword {
+    pub fn new(term: impl Into<String>, weight_class: KeywordWeightClass) -> Self {
+        Self {
+            term: term.into(),
+            weight_class,
+        }
+    }
+    pub fn weak(term: impl Into<String>) -> Self {
+        Self::new(term, KeywordWeightClass::Weak)
+    }
+    pub fn normal(term: impl Into<String>) -> Self {
+        Self::new(term, KeywordWeightClass::Normal)
+    }
+    pub fn strong(term: impl Into<String>) -> Self {
+        Self::new(term, KeywordWeightClass::Strong)
+    }
+    pub fn weight(&self) -> u32 {
+        self.weight_class.weight()
+    }
+}
+
+#[derive(Deserialize)]
+#[serde(untagged)]
+enum ActivationKeywordCompat {
+    Weighted {
+        term: String,
+        weight_class: KeywordWeightClass,
+    },
+    Legacy(String),
+}
+
+impl<'de> Deserialize<'de> for ActivationKeyword {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        Ok(match ActivationKeywordCompat::deserialize(deserializer)? {
+            ActivationKeywordCompat::Weighted { term, weight_class } => Self { term, weight_class },
+            ActivationKeywordCompat::Legacy(term) => Self::normal(term),
+        })
+    }
+}
+
 /// A persistent pressure that names what the system cares about. Tensions back goals and
 /// determine arbitration precedence when multiple goals compete.
 ///
@@ -161,5 +235,33 @@ impl fmt::Display for TensionPriority {
             Self::High => "high",
             Self::Highest => "highest",
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn activation_keyword_deserializes_from_legacy_plain_string_as_normal() {
+        let keyword: ActivationKeyword = serde_json::from_str("\"economy\"").unwrap();
+        assert_eq!(keyword.term, "economy");
+        assert_eq!(keyword.weight_class, KeywordWeightClass::Normal);
+    }
+
+    #[test]
+    fn activation_keyword_roundtrips_weighted_form() {
+        let original = ActivationKeyword::strong("automation");
+        let json = serde_json::to_string(&original).unwrap();
+        assert_eq!(json, r#"{"term":"automation","weight_class":"strong"}"#);
+        let reparsed: ActivationKeyword = serde_json::from_str(&json).unwrap();
+        assert_eq!(reparsed, original);
+    }
+
+    #[test]
+    fn weight_class_values_are_one_four_eight() {
+        assert_eq!(KeywordWeightClass::Weak.weight(), 1);
+        assert_eq!(KeywordWeightClass::Normal.weight(), 4);
+        assert_eq!(KeywordWeightClass::Strong.weight(), 8);
     }
 }
