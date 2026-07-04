@@ -3,8 +3,8 @@ use std::collections::BTreeMap;
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    AllowedEffect, Goal, GoalSelection, GoalStatus, InitiativeProposal, OmittedGoal,
-    VolitionFixture, VolitionState, normalize_terms,
+    ActivationKeyword, AllowedEffect, Goal, GoalSelection, GoalStatus, InitiativeProposal,
+    OmittedGoal, VolitionFixture, VolitionState, normalize_terms,
 };
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
@@ -16,20 +16,37 @@ pub struct RankedSelectionResult {
     pub visible_blocked: Vec<OmittedGoal>,
 }
 
-pub fn matched_keywords(goal: &Goal, input_terms: &[String]) -> Vec<String> {
-    let mut matched = Vec::new();
+/// The activation keywords that fired for this input, deduplicated by term with fixture order
+/// preserved. Carries each match's weight class so `match_strength` and the relevance bonus
+/// derive from one quantity.
+pub fn matched_keywords(goal: &Goal, input_terms: &[String]) -> Vec<ActivationKeyword> {
+    let mut matched: Vec<ActivationKeyword> = Vec::new();
     for keyword in &goal.activation_keywords {
         if input_terms.iter().any(|term| term == &keyword.term)
-            && !matched.iter().any(|term| term == &keyword.term)
+            && !matched.iter().any(|k| k.term == keyword.term)
         {
-            matched.push(keyword.term.clone());
+            matched.push(keyword.clone());
         }
     }
     matched
 }
 
-pub fn compute_relevance(goal: &Goal, fixture: &VolitionFixture, terms: &[String]) -> f64 {
-    let matched_bonus = terms.len() as f64 * 100.0;
+/// Relevance points contributed per point of match strength. One Normal keyword (strength 4)
+/// scores exactly what one matched term scored before this became the single scoring quantity.
+pub const RELEVANCE_PER_STRENGTH_POINT: f64 = 25.0;
+
+/// The single scoring quantity: the summed weights of the matched keywords. Both the ranked
+/// relevance bonus and the arbitration qualification gate derive from this.
+pub fn match_strength(matched: &[ActivationKeyword]) -> u32 {
+    matched.iter().map(|keyword| keyword.weight()).sum()
+}
+
+pub fn compute_relevance(
+    goal: &Goal,
+    fixture: &VolitionFixture,
+    matched: &[ActivationKeyword],
+) -> f64 {
+    let matched_bonus = match_strength(matched) as f64 * RELEVANCE_PER_STRENGTH_POINT;
     let base_priority = goal.base_priority as f64;
     let tension_bonus = goal
         .tension_ids
@@ -49,10 +66,10 @@ pub fn compute_relevance(goal: &Goal, fixture: &VolitionFixture, terms: &[String
 pub fn compute_relevance_with_salience(
     goal: &Goal,
     fixture: &VolitionFixture,
-    terms: &[String],
+    matched: &[ActivationKeyword],
     salience: i32,
 ) -> f64 {
-    compute_relevance(goal, fixture, terms) + salience as f64
+    compute_relevance(goal, fixture, matched) + salience as f64
 }
 
 /// Number of distinct matched activation keywords at which a goal that allows
@@ -63,11 +80,11 @@ pub const STRONG_MATCH_EFFECT_THRESHOLD: usize = 2;
 /// Choose which allowed effect a goal fires for this match. A goal that permits
 /// `ProposeExperiment` and matched at least `STRONG_MATCH_EFFECT_THRESHOLD` of its keywords
 /// proposes; otherwise the goal takes its first allowed effect (`Reflect` by convention).
-pub fn select_effect_for_goal(goal: &Goal, matched_terms: &[String]) -> AllowedEffect {
+pub fn select_effect_for_goal(goal: &Goal, matched: &[ActivationKeyword]) -> AllowedEffect {
     let allows_propose = goal
         .allowed_effects
         .contains(&AllowedEffect::ProposeExperiment);
-    if allows_propose && matched_terms.len() >= STRONG_MATCH_EFFECT_THRESHOLD {
+    if allows_propose && matched.len() >= STRONG_MATCH_EFFECT_THRESHOLD {
         return AllowedEffect::ProposeExperiment;
     }
     goal.allowed_effects
@@ -76,16 +93,17 @@ pub fn select_effect_for_goal(goal: &Goal, matched_terms: &[String]) -> AllowedE
         .unwrap_or(AllowedEffect::Reflect)
 }
 
-pub fn initiative_for_goal(goal: &Goal, matched_terms: &[String]) -> InitiativeProposal {
-    let effect = select_effect_for_goal(goal, matched_terms);
-    initiative_for_effect(goal, effect, matched_terms)
+pub fn initiative_for_goal(goal: &Goal, matched: &[ActivationKeyword]) -> InitiativeProposal {
+    let effect = select_effect_for_goal(goal, matched);
+    initiative_for_effect(goal, effect, matched)
 }
 
 pub fn initiative_for_effect(
     goal: &Goal,
     effect: AllowedEffect,
-    matched_terms: &[String],
+    matched: &[ActivationKeyword],
 ) -> InitiativeProposal {
+    let matched_terms: Vec<String> = matched.iter().map(|keyword| keyword.term.clone()).collect();
     InitiativeProposal {
         goal_id: goal.id.clone(),
         goal_title: goal.title.clone(),
@@ -96,7 +114,7 @@ pub fn initiative_for_effect(
             matched_terms.join(", "),
             goal.scope
         ),
-        matched_terms: matched_terms.to_vec(),
+        matched_terms,
         scope: goal.scope,
     }
 }
@@ -148,19 +166,19 @@ pub fn select_goals_ranked(
             continue;
         }
 
-        let matched_terms = matched_keywords(&goal, &input_terms);
+        let matched = matched_keywords(&goal, &input_terms);
 
         if matches!(status, GoalStatus::Blocked) {
             visible_blocked.push(OmittedGoal {
                 goal,
                 relevance_score: 0.0,
-                matched_terms,
+                matched_terms: matched.iter().map(|k| k.term.clone()).collect(),
                 reason: "goal status is blocked (visible unresolved tension)".to_string(),
             });
             continue;
         }
 
-        if matched_terms.is_empty() {
+        if matched.is_empty() {
             omitted.push(OmittedGoal {
                 goal,
                 relevance_score: 0.0,
@@ -171,18 +189,20 @@ pub fn select_goals_ranked(
         }
 
         let salience = dynamic.map(|entry| entry.salience).unwrap_or(0);
+        let strength = match_strength(&matched);
         let relevance_score =
-            compute_relevance_with_salience(&goal, fixture, &matched_terms, salience);
-        selected_candidates.push((goal, matched_terms, relevance_score));
+            compute_relevance_with_salience(&goal, fixture, &matched, salience);
+        selected_candidates.push((goal, matched, strength, relevance_score));
     }
 
-    selected_candidates.sort_by(|a, b| b.2.total_cmp(&a.2).then_with(|| a.0.id.cmp(&b.0.id)));
+    selected_candidates.sort_by(|a, b| b.3.total_cmp(&a.3).then_with(|| a.0.id.cmp(&b.0.id)));
 
     let selected = selected_candidates
         .into_iter()
-        .map(|(goal, matched_terms, relevance_score)| GoalSelection {
-            initiative: initiative_for_goal(&goal, &matched_terms),
-            matched_terms,
+        .map(|(goal, matched, match_strength, relevance_score)| GoalSelection {
+            initiative: initiative_for_goal(&goal, &matched),
+            matched_keywords: matched,
+            match_strength,
             relevance_score,
             goal,
         })
@@ -344,6 +364,43 @@ mod tests {
     }
 
     #[test]
+    fn relevance_and_match_strength_derive_from_the_same_quantity() {
+        let fixture = static_fixture();
+        let goal = fixture
+            .goals
+            .iter()
+            .find(|g| g.id == "clarify-weak-evidence-topic")
+            .unwrap();
+        let matched = matched_keywords(goal, &normalize_terms("voice memory evidence"));
+        let strength = match_strength(&matched);
+        assert!(strength > 0);
+        let with_match = compute_relevance(goal, &fixture, &matched);
+        let without_match = compute_relevance(goal, &fixture, &[]);
+        assert_eq!(
+            with_match - without_match,
+            strength as f64 * RELEVANCE_PER_STRENGTH_POINT,
+            "ranked display and qualification must derive from one strength quantity"
+        );
+    }
+
+    #[test]
+    fn goal_selection_carries_matched_keywords_and_strength() {
+        let fixture = realtime_seed_fixture();
+        let state = VolitionState::from_fixture(&fixture);
+        let result = select_goals_ranked("how can you help me", &state, &fixture);
+        let selection = result
+            .selected
+            .iter()
+            .find(|s| s.goal.id == "serve-the-present-person")
+            .unwrap();
+        assert_eq!(
+            selection.match_strength,
+            match_strength(&selection.matched_keywords)
+        );
+        assert!(!selection.matched_keywords.is_empty());
+    }
+
+    #[test]
     fn matched_keywords_returns_intersection_with_activation_keywords() {
         let fixture = static_fixture();
         let goal = fixture
@@ -357,7 +414,7 @@ mod tests {
         assert!(
             matched
                 .iter()
-                .all(|kw| goal.activation_keywords.iter().any(|k| &k.term == kw))
+                .all(|kw| goal.activation_keywords.iter().any(|k| k.term == kw.term))
         );
     }
 
@@ -369,8 +426,11 @@ mod tests {
             .iter()
             .find(|g| g.id == "clarify-weak-evidence-topic")
             .unwrap();
-        let one_term = vec!["memory".to_string()];
-        let two_terms = vec!["memory".to_string(), "evidence".to_string()];
+        let one_term = vec![ActivationKeyword::normal("memory")];
+        let two_terms = vec![
+            ActivationKeyword::normal("memory"),
+            ActivationKeyword::normal("evidence"),
+        ];
         assert!(
             compute_relevance(goal, &fixture, &two_terms)
                 > compute_relevance(goal, &fixture, &one_term),
@@ -386,7 +446,7 @@ mod tests {
             .iter()
             .find(|g| g.id == "clarify-weak-evidence-topic")
             .unwrap();
-        let terms = vec!["memory".to_string()];
+        let terms = vec![ActivationKeyword::normal("memory")];
         let base = compute_relevance(goal, &fixture, &terms);
         let with_salience = compute_relevance_with_salience(goal, &fixture, &terms, 50);
         assert_eq!(with_salience, base + 50.0);
@@ -400,11 +460,11 @@ mod tests {
             .iter()
             .find(|g| g.id == "clarify-weak-evidence-topic")
             .unwrap();
-        let terms = vec!["memory".to_string()];
+        let terms = vec![ActivationKeyword::normal("memory")];
         let proposal = initiative_for_goal(goal, &terms);
         assert_eq!(proposal.effect, goal.allowed_effects[0]);
         assert_eq!(proposal.goal_id, goal.id);
-        assert_eq!(proposal.matched_terms, terms);
+        assert_eq!(proposal.matched_terms, vec!["memory".to_string()]);
     }
 
     #[test]
@@ -416,16 +476,16 @@ mod tests {
             .find(|g| g.id == "track-the-ai-transition")
             .unwrap();
         let rich = vec![
-            "automation".to_string(),
-            "job".to_string(),
-            "economy".to_string(),
+            ActivationKeyword::normal("automation"),
+            ActivationKeyword::normal("job"),
+            ActivationKeyword::normal("economy"),
         ];
         assert_eq!(
             select_effect_for_goal(goal, &rich),
             AllowedEffect::ProposeExperiment
         );
 
-        let thin = vec!["future".to_string()];
+        let thin = vec![ActivationKeyword::normal("future")];
         assert_eq!(select_effect_for_goal(goal, &thin), AllowedEffect::Reflect);
     }
 
@@ -437,7 +497,11 @@ mod tests {
             .iter()
             .find(|g| g.id == "serve-the-present-person")
             .unwrap();
-        let terms = vec!["how".to_string(), "help".to_string(), "explain".to_string()];
+        let terms = vec![
+            ActivationKeyword::normal("how"),
+            ActivationKeyword::normal("help"),
+            ActivationKeyword::normal("explain"),
+        ];
         assert_eq!(select_effect_for_goal(goal, &terms), AllowedEffect::Reflect);
     }
 
@@ -453,12 +517,15 @@ mod tests {
             .iter()
             .find(|g| g.id == "clarify-weak-evidence-topic")
             .unwrap();
-        let strong = vec!["voice".to_string(), "memory".to_string()];
+        let strong = vec![
+            ActivationKeyword::normal("voice"),
+            ActivationKeyword::normal("memory"),
+        ];
         assert_eq!(
             select_effect_for_goal(goal, &strong),
             AllowedEffect::ProposeExperiment
         );
-        let thin = vec!["memory".to_string()];
+        let thin = vec![ActivationKeyword::normal("memory")];
         assert_eq!(select_effect_for_goal(goal, &thin), AllowedEffect::Reflect);
     }
 
@@ -470,7 +537,7 @@ mod tests {
             .iter()
             .find(|g| g.id == "clarify-weak-evidence-topic")
             .unwrap();
-        let terms = vec!["memory".to_string()];
+        let terms = vec![ActivationKeyword::normal("memory")];
         let proposal = initiative_for_effect(goal, AllowedEffect::Reflect, &terms);
         assert_eq!(proposal.effect, AllowedEffect::Reflect);
         assert_eq!(proposal.goal_id, goal.id);

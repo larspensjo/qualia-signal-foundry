@@ -43,7 +43,7 @@ pub fn select_goals(
     let fragments: Vec<ContextFragment> = ranked
         .selected
         .iter()
-        .map(|s| build_fragment(&s.goal, s.relevance_score, &s.matched_terms))
+        .map(|s| build_fragment(&s.goal, s.relevance_score, &s.matched_terms()))
         .collect();
     let assembly = assemble_context(fragments, budget);
 
@@ -67,7 +67,7 @@ pub fn select_goals(
             omitted.push(OmittedGoal {
                 goal: s.goal.clone(),
                 relevance_score: s.relevance_score,
-                matched_terms: s.matched_terms.clone(),
+                matched_terms: s.matched_terms(),
                 reason: omission.reason.clone(),
             });
         }
@@ -97,7 +97,7 @@ pub fn select_goals_with_salience(
     let fragments: Vec<ContextFragment> = ranked
         .selected
         .iter()
-        .map(|s| build_fragment(&s.goal, s.relevance_score, &s.matched_terms))
+        .map(|s| build_fragment(&s.goal, s.relevance_score, &s.matched_terms()))
         .collect();
     let assembly = assemble_context(fragments, budget);
 
@@ -121,7 +121,7 @@ pub fn select_goals_with_salience(
             omitted.push(OmittedGoal {
                 goal: s.goal.clone(),
                 relevance_score: s.relevance_score,
-                matched_terms: s.matched_terms.clone(),
+                matched_terms: s.matched_terms(),
                 reason: omission.reason.clone(),
             });
         }
@@ -178,7 +178,7 @@ fn pre_initiative_trace_for_goal(
 ) -> PreInitiativeTrace {
     let goal = &selection.goal;
     let tensions = tension_provenance(goal, fixture);
-    let choice = initiative_choice(goal, &selection.matched_terms);
+    let choice = initiative_choice(goal, &selection.matched_keywords);
     let allowed_rationale = choice.as_ref().map(|choice| {
         format!(
             "effect '{}' is listed in goal '{}' allowed_effects and is a bounded internal effect (no write-capable external action)",
@@ -194,7 +194,7 @@ fn pre_initiative_trace_for_goal(
         tensions,
         tension_priority_note: TENSION_PRIORITY_NOTE.to_string(),
         delta: DeltaAssessment::Delta(DetectedDelta {
-            matched_evidence: selection.matched_terms.clone(),
+            matched_evidence: selection.matched_terms(),
             goal_concern_summary: goal.satisfaction_condition_summary.clone(),
         }),
         choice,
@@ -220,14 +220,14 @@ fn tension_provenance(goal: &Goal, fixture: &VolitionFixture) -> Vec<TensionProv
         .collect()
 }
 
-fn initiative_choice(goal: &Goal, matched_terms: &[String]) -> Option<InitiativeChoice> {
+fn initiative_choice(goal: &Goal, matched: &[ActivationKeyword]) -> Option<InitiativeChoice> {
     let (chosen_effect, losing_effects) = goal.allowed_effects.split_first()?;
-    let proposed = initiative_for_effect(goal, *chosen_effect, matched_terms);
+    let proposed = initiative_for_effect(goal, *chosen_effect, matched);
 
     let losing = losing_effects
         .iter()
         .map(|effect| LosingCandidate {
-            proposal: initiative_for_effect(goal, *effect, matched_terms),
+            proposal: initiative_for_effect(goal, *effect, matched),
             reason: format!(
                 "not selected: goal '{}' orders '{}' after the chosen effect '{}' in allowed_effects precedence",
                 goal.id, effect, chosen_effect
@@ -1163,7 +1163,8 @@ mod tests {
         GoalSelection {
             goal: goal.clone(),
             relevance_score: goal.base_priority as f64,
-            matched_terms: vec!["test".to_string()],
+            matched_keywords: vec![ActivationKeyword::normal("test")],
+            match_strength: 4,
             initiative: InitiativeProposal {
                 goal_id: goal.id.clone(),
                 goal_title: goal.title.clone(),

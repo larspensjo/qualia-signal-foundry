@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 
-use crate::{AllowedEffect, Goal, GoalScope, TensionPriority};
+use crate::{ActivationKeyword, AllowedEffect, Goal, GoalScope, TensionPriority};
 
 /// The structural output of a bounded internal initiative. Pure and serializable — one variant
 /// per `AllowedEffect`. Records what the runtime *would* do; no external write-capable action.
@@ -43,8 +43,20 @@ pub struct InitiativeProposal {
 pub struct GoalSelection {
     pub goal: Goal,
     pub relevance_score: f64,
-    pub matched_terms: Vec<String>,
+    pub matched_keywords: Vec<ActivationKeyword>,
+    pub match_strength: u32,
     pub initiative: InitiativeProposal,
+}
+
+impl GoalSelection {
+    /// The matched keywords' terms, for readers that only need the strings (e.g. context
+    /// fragment tags, trace evidence). The weighted form lives in `matched_keywords`.
+    pub fn matched_terms(&self) -> Vec<String> {
+        self.matched_keywords
+            .iter()
+            .map(|keyword| keyword.term.clone())
+            .collect()
+    }
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]

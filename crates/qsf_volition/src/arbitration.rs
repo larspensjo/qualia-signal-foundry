@@ -304,7 +304,8 @@ mod tests {
         GoalSelection {
             goal: goal.clone(),
             relevance_score: goal.base_priority as f64,
-            matched_terms: vec!["test".to_string()],
+            matched_keywords: vec![ActivationKeyword::normal("test")],
+            match_strength: 4,
             initiative: InitiativeProposal {
                 goal_id: goal.id.clone(),
                 goal_title: goal.title.clone(),

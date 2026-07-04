@@ -339,7 +339,7 @@ fn select_model_goal_value(selection: &GoalSelection, snap: &VolitionStateSnapsh
         "status": status,
         "salience": salience,
         "relevance_score": selection.relevance_score,
-        "matched_terms": &selection.matched_terms,
+        "matched_terms": selection.matched_terms(),
         "scope": selection.goal.scope,
         "tension_ids": &selection.goal.tension_ids,
     })

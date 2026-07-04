@@ -442,7 +442,8 @@ mod tests {
                             .unwrap()
                             .clone(),
                         relevance_score: 10.0,
-                        matched_terms: vec!["alpha".to_string()],
+                        matched_keywords: vec![ActivationKeyword::normal("alpha")],
+                        match_strength: 4,
                         initiative: crate::InitiativeProposal {
                             goal_id: "reviewed-alpha".to_string(),
                             goal_title: "Reviewed alpha".to_string(),
@@ -460,7 +461,8 @@ mod tests {
                             .unwrap()
                             .clone(),
                         relevance_score: 10.0,
-                        matched_terms: vec!["help".to_string()],
+                        matched_keywords: vec![ActivationKeyword::normal("help")],
+                        match_strength: 4,
                         initiative: crate::InitiativeProposal {
                             goal_id: "serve-the-present-person".to_string(),
                             goal_title: "Serve the present person".to_string(),

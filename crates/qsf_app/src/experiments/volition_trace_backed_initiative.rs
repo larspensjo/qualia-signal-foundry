@@ -143,7 +143,7 @@ fn selector_snapshot(selection: &GoalSelectionResult) -> SelectorSnapshot {
             .map(|selected| SelectedGoalSnapshot {
                 goal_id: selected.goal.id.clone(),
                 relevance_score: selected.relevance_score,
-                matched_terms: selected.matched_terms.clone(),
+                matched_terms: selected.matched_terms(),
             })
             .collect(),
         omitted: selection
