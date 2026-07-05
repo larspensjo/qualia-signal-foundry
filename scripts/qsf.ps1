@@ -519,6 +519,7 @@ Usage:
   .\scripts\qsf.ps1 workbench [<store>] [-Store <path>] [-BindHost <ip>] [-Port <port>]
   .\scripts\qsf.ps1 realtime [-RandomSessionId]
   .\scripts\qsf.ps1 sleep [-StateDir <path>] [-Provider <openai|mock>]
+  .\scripts\qsf.ps1 restore [<backup-name>|latest] [-StateDir <path>]
   .\scripts\qsf.ps1 doctor [-LaunchProfile <name>] [-Workbench]
   .\scripts\qsf.ps1 list experiments
   .\scripts\qsf.ps1 list profiles
@@ -552,6 +553,8 @@ Examples:
   .\scripts\qsf.ps1 realtime -RandomSessionId
   .\scripts\qsf.ps1 sleep
   .\scripts\qsf.ps1 sleep -Provider mock
+  .\scripts\qsf.ps1 restore
+  .\scripts\qsf.ps1 restore latest
   .\scripts\qsf.ps1 workbench $sampleStore
   .\scripts\qsf.ps1 doctor -Workbench
   .\scripts\qsf.ps1 list experiments
@@ -1181,6 +1184,105 @@ function New-QsfStateBackup {
     return $backupPath
 }
 
+function Restore-QsfStateBackup {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$BackupName,
+
+        [Parameter(Mandatory = $true)]
+        [string]$StateDirPath,
+
+        [Parameter(Mandatory = $true)]
+        [string]$BackupRootPath
+    )
+
+    $leaf = Split-Path -Leaf $StateDirPath
+    if ($BackupName -eq "latest") {
+        $newest = @(
+            Get-ChildItem -LiteralPath $BackupRootPath -Directory -Filter "$leaf-*" -ErrorAction SilentlyContinue |
+            Sort-Object CreationTime, Name -Descending
+        ) | Select-Object -First 1
+        if ($null -eq $newest) {
+            Write-Error "No backups found for '$leaf' under $BackupRootPath."
+        }
+        $sourcePath = $newest.FullName
+    }
+    else {
+        $sourcePath = Join-Path $BackupRootPath $BackupName
+        if (-not (Test-Path -LiteralPath $sourcePath -PathType Container)) {
+            Write-Error "No backup named '$BackupName' under $BackupRootPath. Run: .\scripts\qsf.ps1 restore"
+        }
+    }
+
+    # Self-backup without pruning: pruning here could delete the very backup being restored.
+    $selfBackup = New-QsfStateBackup -StateDirPath $StateDirPath -BackupRootPath $BackupRootPath
+    if ($null -ne $selfBackup) {
+        Write-Host "Current state backed up to: $selfBackup"
+    }
+
+    # Stage the restore into a temporary sibling first, then swap. A failed copy
+    # (locked file, disk error, partial backup) must never leave the operator
+    # without a live state directory, so we only remove the live dir once the
+    # staged copy is validated.
+    $parent = Split-Path -Parent $StateDirPath
+    $staging = Join-Path $parent "$leaf.restore-staging-$(Get-Date -Format 'yyyyMMddHHmmssfff')"
+    try {
+        Copy-Item -LiteralPath $sourcePath -Destination $staging -Recurse
+        if (-not (Test-Path -LiteralPath $staging -PathType Container)) {
+            throw "Staged restore copy is missing at $staging."
+        }
+    }
+    catch {
+        Remove-Item -LiteralPath $staging -Recurse -Force -ErrorAction SilentlyContinue
+        throw
+    }
+
+    if (Test-Path -LiteralPath $StateDirPath) {
+        Remove-Item -LiteralPath $StateDirPath -Recurse -Force
+    }
+    Move-Item -LiteralPath $staging -Destination $StateDirPath
+    Write-Host "Restored $StateDirPath from $(Split-Path -Leaf $sourcePath)"
+
+    return $sourcePath
+}
+
+function Show-QsfStateBackups {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$BackupRootPath
+    )
+
+    $backups = @(
+        Get-ChildItem -LiteralPath $BackupRootPath -Directory -ErrorAction SilentlyContinue |
+        Sort-Object CreationTime, Name -Descending
+    )
+    if ($backups.Count -eq 0) {
+        Write-Host "No backups found under $BackupRootPath."
+        Write-Host "Backups are created automatically by: .\scripts\qsf.ps1 sleep"
+        return
+    }
+
+    Write-Host "Available backups (newest first):"
+    foreach ($backup in $backups) {
+        Write-Host ("  {0}  (created {1:yyyy-MM-dd HH:mm:ss})" -f $backup.Name, $backup.CreationTime)
+    }
+    Write-Host ""
+    Write-Host "Restore with: .\scripts\qsf.ps1 restore <name>   (or: restore latest)"
+}
+
+function Invoke-Restore {
+    $backupRootPath = Join-Path $projectRoot $backupRootRelative
+    if ([string]::IsNullOrWhiteSpace($Subject)) {
+        Show-QsfStateBackups -BackupRootPath $backupRootPath
+        return
+    }
+
+    [void](Restore-QsfStateBackup `
+        -BackupName $Subject `
+        -StateDirPath (Join-Path $projectRoot $StateDir) `
+        -BackupRootPath $backupRootPath)
+}
+
 function Invoke-Sleep {
     if ($Provider -eq "openai") {
         Test-RequiredSecret -Name "OPENAI_API_KEY"
@@ -1248,6 +1350,9 @@ if (Test-QsfAutoRunEnabled) {
         }
         "sleep" {
             Invoke-Sleep
+        }
+        "restore" {
+            Invoke-Restore
         }
         "doctor" {
             Invoke-Doctor

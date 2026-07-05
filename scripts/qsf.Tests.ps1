@@ -329,4 +329,61 @@ Describe "qsf.ps1 state backups" {
         { New-QsfStateBackup -StateDirPath $stateRoot -BackupRootPath (Join-Path $stateRoot "backups") } |
             Should -Throw "*must not be inside the state directory*"
     }
+
+    It "restores a named backup into the state dir" {
+        $backupPath = New-QsfStateBackup -StateDirPath $script:TestStateDir -BackupRootPath $script:TestBackupRoot
+        Set-Content -LiteralPath (Join-Path $script:TestStateDir "memory-store.json") -Value '{"records":["changed"]}'
+
+        Restore-QsfStateBackup -BackupName (Split-Path -Leaf $backupPath) -StateDirPath $script:TestStateDir -BackupRootPath $script:TestBackupRoot | Out-Null
+
+        Get-Content -LiteralPath (Join-Path $script:TestStateDir "memory-store.json") -Raw |
+            Should -Match '"records":\[\]'
+    }
+
+    It "restores the newest backup for 'latest'" {
+        Set-Content -LiteralPath (Join-Path $script:TestStateDir "memory-store.json") -Value '{"version":"old"}'
+        New-QsfStateBackup -StateDirPath $script:TestStateDir -BackupRootPath $script:TestBackupRoot | Out-Null
+        Set-Content -LiteralPath (Join-Path $script:TestStateDir "memory-store.json") -Value '{"version":"new"}'
+        New-QsfStateBackup -StateDirPath $script:TestStateDir -BackupRootPath $script:TestBackupRoot | Out-Null
+        Set-Content -LiteralPath (Join-Path $script:TestStateDir "memory-store.json") -Value '{"version":"live"}'
+
+        Restore-QsfStateBackup -BackupName "latest" -StateDirPath $script:TestStateDir -BackupRootPath $script:TestBackupRoot | Out-Null
+
+        Get-Content -LiteralPath (Join-Path $script:TestStateDir "memory-store.json") -Raw |
+            Should -Match '"version":"new"'
+    }
+
+    It "backs up the current state before restoring so a restore is undoable" {
+        $backupPath = New-QsfStateBackup -StateDirPath $script:TestStateDir -BackupRootPath $script:TestBackupRoot
+        Set-Content -LiteralPath (Join-Path $script:TestStateDir "memory-store.json") -Value '{"records":["live-only"]}'
+        $countBefore = @(Get-ChildItem -LiteralPath $script:TestBackupRoot -Directory -Filter "realtime-*").Count
+
+        Restore-QsfStateBackup -BackupName (Split-Path -Leaf $backupPath) -StateDirPath $script:TestStateDir -BackupRootPath $script:TestBackupRoot | Out-Null
+
+        $backups = @(Get-ChildItem -LiteralPath $script:TestBackupRoot -Directory -Filter "realtime-*")
+        $backups.Count | Should -Be ($countBefore + 1)
+        $newest = $backups | Sort-Object CreationTime, Name -Descending | Select-Object -First 1
+        Get-Content -LiteralPath (Join-Path $newest.FullName "memory-store.json") -Raw |
+            Should -Match 'live-only'
+    }
+
+    It "fails on an unknown backup name without touching the state dir" {
+        { Restore-QsfStateBackup -BackupName "realtime-19700101-000000" -StateDirPath $script:TestStateDir -BackupRootPath $script:TestBackupRoot } |
+            Should -Throw "*No backup named*"
+        (Join-Path $script:TestStateDir "memory-store.json") | Should -Exist
+    }
+
+    It "leaves the live state dir intact when the staged restore copy fails" {
+        $backupPath = New-QsfStateBackup -StateDirPath $script:TestStateDir -BackupRootPath $script:TestBackupRoot
+        Set-Content -LiteralPath (Join-Path $script:TestStateDir "memory-store.json") -Value '{"records":["live-only"]}'
+        # Fail only the staging copy, not the self-backup that runs first.
+        Mock -CommandName Copy-Item -ParameterFilter { "$Destination" -like "*restore-staging*" } -MockWith { throw "simulated copy failure" }
+
+        { Restore-QsfStateBackup -BackupName (Split-Path -Leaf $backupPath) -StateDirPath $script:TestStateDir -BackupRootPath $script:TestBackupRoot } |
+            Should -Throw "*simulated copy failure*"
+
+        (Join-Path $script:TestStateDir "memory-store.json") | Should -Exist
+        Get-Content -LiteralPath (Join-Path $script:TestStateDir "memory-store.json") -Raw |
+            Should -Match 'live-only'
+    }
 }
