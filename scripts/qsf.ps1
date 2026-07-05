@@ -16,7 +16,7 @@ param(
     [string]$SessionMemorySource = "auto",
     [string]$SessionMemoryFile = "",
     [switch]$DemoMemory,
-    [string]$Store = "state/text-loop/memory-store.json",
+    [string]$Store = "state/realtime/continuity/default/memory-store.json",
     [string]$StateDir = "state/realtime",
     [ValidateSet("openai", "mock")]
     [string]$Provider = "openai",
@@ -30,7 +30,7 @@ $ErrorActionPreference = "Stop"
 Set-StrictMode -Version Latest
 
 $projectRoot = Split-Path -Parent $PSScriptRoot
-$defaultStore = "state/text-loop/memory-store.json"
+$defaultStore = "state/realtime/continuity/default/memory-store.json"
 $sampleStore = "crates/qsf_browser_server/tests/fixtures/small-store.json"
 $emptySessionMemoryFile = "docs/Experiments/Fixtures/session-memory.empty.json"
 $backupRootRelative = "state/backups"
@@ -43,6 +43,7 @@ $realtimeUiDir = Join-Path $projectRoot "crates/qsf_realtime_server/ui"
 # The Vite UI port is only where the dev server listens; the realtime launcher resolves
 # the first free port at or above this preferred value and opens the browser there.
 $realtimeServerPort = 3940
+$browserUiPort = 5173
 $realtimeUiPort = 5174
 $realtimeUiUrl = "http://localhost:$realtimeUiPort"
 $profilesPath = Join-Path $PSScriptRoot "qsf.profiles.json"
@@ -526,8 +527,9 @@ Usage:
 
 Defaults:
   Browser store: $defaultStore
-  Browser host:  127.0.0.1
-  Browser port:  3939
+  Browser API host:  127.0.0.1
+  Browser API port:  3939
+  Browser UI port:   first free port >= $browserUiPort
   App workspace root: $projectRoot
     App environment: clears non-secret QSF_* values before applying launcher settings
   Text-loop session memory through launcher: empty file source; persisted store wins
@@ -535,6 +537,7 @@ Defaults:
   UI directory:  crates/qsf_browser_server/ui
   Realtime server: 127.0.0.1:$realtimeServerPort (state/realtime); requires OPENAI_API_KEY
     Realtime environment: sets QSF_MODEL_PROVIDER=openai and clears other non-secret QSF_* values
+  Browser UI:      crates/qsf_browser_server/ui (Vite on first free port >= $browserUiPort)
   Realtime UI:     crates/qsf_realtime_server/ui (Vite on $realtimeUiUrl)
   Sleep update:    state/realtime through the $Provider provider; openai requires OPENAI_API_KEY
                    backs up the state dir to state/backups/<name>-<timestamp> first (keeps last 5)
@@ -762,10 +765,10 @@ function Invoke-Doctor {
         Add-DoctorCheck $checks (New-DoctorCheck -Status "ok" -Name "Default memory store" -Message $defaultStore)
     }
     elseif ($Workbench) {
-        Add-DoctorCheck $checks (New-DoctorCheck -Status "fail" -Name "Default memory store" -Message "Missing: $defaultStore. Try sample store: $sampleStore")
+        Add-DoctorCheck $checks (New-DoctorCheck -Status "fail" -Name "Default memory store" -Message "Missing: $defaultStore. Run realtime then sleep, or try sample store: $sampleStore")
     }
     else {
-        Add-DoctorCheck $checks (New-DoctorCheck -Status "warn" -Name "Default memory store" -Message "Missing: $defaultStore. Try sample store: $sampleStore")
+        Add-DoctorCheck $checks (New-DoctorCheck -Status "warn" -Name "Default memory store" -Message "Missing: $defaultStore. Run realtime then sleep, or try sample store: $sampleStore")
     }
 
     if (Test-PortOccupied -HostName "127.0.0.1" -PortNumber 3939) {
@@ -849,7 +852,7 @@ function Test-BrowserStore {
     if ($StorePath -eq $defaultStore) {
         $resolvedDefaultStore = Join-Path $projectRoot $defaultStore
         if (-not (Test-Path -LiteralPath $resolvedDefaultStore -PathType Leaf)) {
-            Write-Error "Default browser store is missing: $defaultStore. Try the sample store: $sampleStore"
+            Write-Error "Default browser store is missing: $defaultStore. Run .\scripts\qsf.ps1 realtime followed by .\scripts\qsf.ps1 sleep, or try the sample store: $sampleStore"
         }
     }
 }
@@ -896,7 +899,7 @@ function Invoke-App {
 function Invoke-Browser {
     $storePath = Get-BrowserStoreArgument
     Test-BrowserStore -StorePath $storePath
-    Invoke-BrowserServer -StorePath $storePath
+    Invoke-BrowserWorkbench -StorePath $storePath
 }
 
 function Invoke-BrowserServer {
@@ -1003,23 +1006,138 @@ function Get-NpmCommandPath {
     Write-Error "npm was not found on PATH."
 }
 
-function Invoke-Workbench {
-    $storePath = Get-BrowserStoreArgument
-    Test-BrowserStore -StorePath $storePath
+function Get-LocalProbeHost {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$HostName
+    )
+
+    if ($HostName -eq "0.0.0.0" -or $HostName -eq "::") {
+        return "127.0.0.1"
+    }
+
+    return $HostName
+}
+
+function Start-BrowserServerProcess {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$StorePath
+    )
+
+    $cargo = (Get-Command "cargo" -ErrorAction Stop).Source
+    $arguments = @(
+        "run",
+        "-p",
+        "qsf_browser_server",
+        "--",
+        "--store",
+        $StorePath,
+        "--host",
+        $BindHost,
+        "--port",
+        $Port.ToString([System.Globalization.CultureInfo]::InvariantCulture)
+    )
+    Write-Host "Starting browser API server: $(Format-Command -Executable $cargo -Arguments $arguments)"
+    $serverProcess = Start-Process -FilePath $cargo -ArgumentList $arguments -WorkingDirectory $projectRoot -NoNewWindow -PassThru
+    Write-Host "Browser API server PID: $($serverProcess.Id)"
+    return $serverProcess
+}
+
+function Start-BrowserUiProcess {
+    param(
+        [Parameter(Mandatory = $true)]
+        [int]$PortNumber,
+
+        [Parameter(Mandatory = $true)]
+        [string]$ApiUrl
+    )
+
+    $npm = Get-NpmCommandPath
+    $arguments = @(
+        "run",
+        "dev",
+        "--",
+        "--host",
+        "127.0.0.1",
+        "--port",
+        $PortNumber.ToString([System.Globalization.CultureInfo]::InvariantCulture),
+        "--strictPort"
+    )
+    Write-Host "Starting browser Vite UI: $(Format-Command -Executable $npm -Arguments $arguments)"
+
+    $previousApiUrl = [System.Environment]::GetEnvironmentVariable("QSF_BROWSER_API_URL", "Process")
+    try {
+        [System.Environment]::SetEnvironmentVariable("QSF_BROWSER_API_URL", $ApiUrl, "Process")
+        $uiProcess = Start-Process -FilePath $npm -ArgumentList $arguments -WorkingDirectory $uiDir -WindowStyle Hidden -PassThru
+        Write-Host "Browser Vite UI PID: $($uiProcess.Id)"
+        return $uiProcess
+    }
+    finally {
+        [System.Environment]::SetEnvironmentVariable("QSF_BROWSER_API_URL", $previousApiUrl, "Process")
+    }
+}
+
+function Invoke-BrowserWorkbench {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$StorePath
+    )
+
     Test-UiDependencies
 
     $apiUrl = "http://${BindHost}:$Port"
-    Write-Host "API: $apiUrl"
-    Write-Host "Health: $apiUrl/api/health"
-    Write-Host "UI (open this in your browser): http://localhost:5173"
+    $apiProbeHost = Get-LocalProbeHost -HostName $BindHost
+    $uiPort = Get-AvailablePort -PreferredPort $browserUiPort
+    $uiUrl = "http://localhost:$uiPort"
 
-    $uiProcess = Start-UiDevProcess -Target "browser"
+    Write-Host "Browser API: $apiUrl"
+    Write-Host "Browser API health: $apiUrl/api/health"
+    Write-Host "Browser UI: $uiUrl"
+    if ($uiPort -ne $browserUiPort) {
+        Write-Host "Preferred browser UI port $browserUiPort was busy; using $uiPort instead."
+    }
+    Write-Host "Press Ctrl+C to stop both the browser API and the Vite dev server."
+
+    $serverProcess = $null
+    $uiProcess = $null
+    $browserOpened = $false
     try {
-        Invoke-BrowserServer -StorePath $storePath
+        $serverProcess = Start-BrowserServerProcess -StorePath $StorePath
+        $uiProcess = Start-BrowserUiProcess -PortNumber $uiPort -ApiUrl $apiUrl
+
+        while ($true) {
+            if ($serverProcess.HasExited) {
+                Write-Host "Browser API server exited with code $($serverProcess.ExitCode) before shutdown was requested; see its log above."
+                $script:QsfExitCode = $serverProcess.ExitCode
+                break
+            }
+            if ($uiProcess.HasExited) {
+                Write-Host "Browser Vite UI exited with code $($uiProcess.ExitCode) before shutdown was requested."
+                $script:QsfExitCode = $uiProcess.ExitCode
+                break
+            }
+            if (-not $browserOpened -and
+                (Test-PortOccupied -HostName $apiProbeHost -PortNumber $Port) -and
+                (Test-PortOccupied -HostName "127.0.0.1" -PortNumber $uiPort)) {
+                Write-Host "Both browser servers are up. Opening browser: $uiUrl"
+                Start-Process $uiUrl
+                $browserOpened = $true
+            }
+            Start-Sleep -Milliseconds 500
+        }
     }
     finally {
-        Stop-SpawnedProcess -Process $uiProcess
+        Write-Host "Stopping browser processes..."
+        Stop-ProcessTree -Process $uiProcess
+        Stop-ProcessTree -Process $serverProcess
     }
+}
+
+function Invoke-Workbench {
+    $storePath = Get-BrowserStoreArgument
+    Test-BrowserStore -StorePath $storePath
+    Invoke-BrowserWorkbench -StorePath $storePath
 }
 
 function Test-RequiredSecret {

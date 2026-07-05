@@ -216,14 +216,17 @@ realtime), the default memory store, ports `3939` and `3940`, and whether
 optional UI or OpenAI prerequisites; `-Workbench` turns workbench requirements into
 failures.
 
-Start the memory browser API with the default store, host, and port:
+Start the memory browser workbench with the default store, API host, and API port:
 
 ```powershell
 .\scripts\qsf.ps1 browser
 ```
 
-The browser defaults are `state/session/memory-store.json`, `127.0.0.1`, and
-`3939`. To use the tracked sample store instead:
+The browser command starts both the Rust API and the Vite UI, resolves the first
+free UI port at or above `5173`, and opens that UI automatically. The API defaults
+are `state/realtime/continuity/default/memory-store.json`, `127.0.0.1`, and `3939`.
+Run `.\scripts\qsf.ps1 realtime` followed by `.\scripts\qsf.ps1 sleep` to create
+the default store, or use the tracked sample store instead:
 
 ```powershell
 .\scripts\qsf.ps1 browser -Store crates/qsf_browser_server/tests/fixtures/small-store.json -BindHost 127.0.0.1 -Port 3939
@@ -250,17 +253,16 @@ cd crates/qsf_browser_server/ui
 npm install
 ```
 
-To start the API in the current terminal and the UI in a separate PowerShell window:
+To start the API and UI together through the workbench alias:
 
 ```powershell
 .\scripts\qsf.ps1 workbench
 .\scripts\qsf.ps1 workbench crates/qsf_browser_server/tests/fixtures/small-store.json
 ```
 
-To stop the workbench, press Ctrl+C in the API terminal. The launcher prints the Vite
-UI process ID and attempts to close that process when the API exits.
-Open the workbench at `http://localhost:5173/`; port `3939` is the backend API and
-its root page only points to the Vite UI and `/api/health`.
+To stop the workbench, press Ctrl+C in the launcher terminal. The launcher opens the
+chosen Vite UI URL automatically once both the UI and API are reachable; port `3939`
+is the default backend API port and its root page is informational.
 
 Start a live realtime voice conversation — the realtime server and its browser UI
 together — in one command:
@@ -343,7 +345,9 @@ Each run writes its artifacts into a fresh directory under `runs/`.
 ### Memory Association Browser
 
 The Memory Association Browser is a read-only local workbench for inspecting a
-persisted memory store through `qsf_browser_server` and the Vite UI.
+persisted memory store through `qsf_browser_server` and the Vite UI. The launcher
+starts both processes, opens the Vite UI, and chooses a free UI port when the
+preferred `5173` is occupied.
 
 Launcher path:
 
@@ -357,12 +361,12 @@ Raw fallback/reference commands:
 
 ```powershell
 # Shell 1: API server on 127.0.0.1:3939
-cargo run -p qsf_browser_server -- --store state/session/memory-store.json --host 127.0.0.1 --port 3939
+cargo run -p qsf_browser_server -- --store state/realtime/continuity/default/memory-store.json --host 127.0.0.1 --port 3939
 
 # Shell 2: Vite UI
 cd crates/qsf_browser_server/ui
 npm install
-npm run dev
+npm run dev -- --port 5173 --strictPort
 ```
 
 The tracked sample store is useful before a local continuity store exists:

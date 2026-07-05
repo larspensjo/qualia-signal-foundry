@@ -22,7 +22,8 @@ async fn root() -> Html<&'static str> {
   <body>
     <h1>QSF Memory Browser API</h1>
     <p>The Rust backend is running on this port.</p>
-    <p>Open the Vite workbench UI at <a href="http://localhost:5173/">http://localhost:5173/</a>.</p>
+    <p>The launcher opens the Vite workbench UI automatically when you run <code>.\scripts\qsf.ps1 browser</code>.</p>
+    <p>If this API was started directly, start the UI from <code>crates/qsf_browser_server/ui</code> with an available Vite port.</p>
     <p>API health is available at <a href="/api/health"><code>/api/health</code></a>.</p>
   </body>
 </html>"#,

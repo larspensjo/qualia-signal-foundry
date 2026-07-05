@@ -106,6 +106,22 @@ Describe "qsf.ps1 realtime launcher" {
         $target.Dir | Should -Be (Join-Path $projectRoot "crates/qsf_browser_server/ui")
     }
 
+    It "defaults the memory browser to realtime continuity state" {
+        $Store | Should -Be "state/realtime/continuity/default/memory-store.json"
+        $defaultStore | Should -Be "state/realtime/continuity/default/memory-store.json"
+        Get-BrowserStoreArgument | Should -Be "state/realtime/continuity/default/memory-store.json"
+    }
+
+    It "prefers port 5173 for the memory browser UI" {
+        $browserUiPort | Should -Be 5173
+    }
+
+    It "probes wildcard-bound API servers through loopback" {
+        Get-LocalProbeHost -HostName "0.0.0.0" | Should -Be "127.0.0.1"
+        Get-LocalProbeHost -HostName "::" | Should -Be "127.0.0.1"
+        Get-LocalProbeHost -HostName "127.0.0.1" | Should -Be "127.0.0.1"
+    }
+
     It "resolves the realtime UI target" {
         $target = Get-UiTarget -Target "realtime"
 

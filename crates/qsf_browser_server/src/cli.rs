@@ -5,7 +5,7 @@ use clap::Parser;
 
 /// Defaults are chosen so the workbench launches with no arguments against
 /// the runtime's standard memory store location.
-pub const DEFAULT_STORE_PATH: &str = "state/text-loop/memory-store.json";
+pub const DEFAULT_STORE_PATH: &str = "state/realtime/continuity/default/memory-store.json";
 pub const DEFAULT_HOST: IpAddr = IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1));
 pub const DEFAULT_PORT: u16 = 3939;
 

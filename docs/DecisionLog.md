@@ -1747,3 +1747,19 @@ Consequences: Any new reader or writer of continuity state resolves paths throug
 shared helpers rather than re-deriving them. Sleep understands both the nested realtime
 layout and the flat text-loop layout; an ambiguous multi-session root is an explicit
 error rather than a silent wrong guess.
+
+## 2026-07-05 - Memory browser launcher opens the Vite UI on a free port
+Decision: `qsf.ps1 browser` and `qsf.ps1 workbench` now start both the memory
+browser API and the Vite UI, choose the first free UI port at or above 5173, and
+open the Vite page automatically. The Rust API root remains an informational
+health page rather than the primary operator surface.
+
+Context: The browser API root linked to `http://localhost:5173/`, but that port
+can already belong to another local application. Operators had to discover and
+start the Vite UI separately even though the useful memory browser experience is
+the UI, not the API landing page.
+
+Consequences: The launcher owns the workbench lifecycle and avoids hardcoded UI
+port collisions. Raw API launches remain possible through `cargo run`; raw UI
+launches can still be run from `crates/qsf_browser_server/ui` with an explicit
+Vite port.

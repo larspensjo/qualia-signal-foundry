@@ -29,6 +29,6 @@ async fn root_points_to_vite_ui_and_health_endpoint() {
 
     let body = response.into_body().collect().await.unwrap().to_bytes();
     let html = std::str::from_utf8(&body).unwrap();
-    assert!(html.contains("http://localhost:5173/"));
+    assert!(html.contains(r#".\scripts\qsf.ps1 browser"#));
     assert!(html.contains("/api/health"));
 }
