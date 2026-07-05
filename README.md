@@ -280,6 +280,25 @@ Vite dev proxy is pinned to the server, so `realtime` does not take `-Port`/`-Bi
 By default it uses the stable `default` QSF session id (reusing local memory and
 continuity); pass `-RandomSessionId` to allocate a fresh session id per run.
 
+After a realtime session ends, run a first-class sleep/consolidation update over
+the realtime state:
+
+```powershell
+.\scripts\qsf.ps1 sleep
+.\scripts\qsf.ps1 sleep -Provider mock
+.\scripts\qsf.ps1 sleep -StateDir state/realtime -Provider openai
+```
+
+`sleep` defaults to `state/realtime` and the `openai` provider, matching the
+normal realtime workflow. It verifies `OPENAI_API_KEY` for OpenAI-backed runs,
+then calls `qsf_app sleep` to produce reviewable sleep artifacts, update the
+consolidated brief and memory store, and mark the consumed session in the
+continuity manifest. The direct Cargo form is:
+
+```powershell
+cargo run -p qsf_app -- sleep --state-dir state/realtime --provider openai
+```
+
 #### Launcher troubleshooting
 
 - **Blocked port:** `doctor` reports whether `127.0.0.1:3939` and `127.0.0.1:3940`
@@ -288,7 +307,8 @@ continuity); pass `-RandomSessionId` to allocate a fresh session id per run.
   server's port is fixed at `3940`; free it before running `realtime`.
 - **Missing API key:** OpenAI-backed profiles and the `realtime` command require
   `OPENAI_API_KEY` in the current shell before launch. The launcher checks presence
-  but never prints the value.
+  but never prints the value. The default `sleep` command is also OpenAI-backed;
+  use `.\scripts\qsf.ps1 sleep -Provider mock` for a deterministic local smoke run.
 - **Missing UI dependencies:** If `ui` or `workbench` reports missing dependencies,
   run `cd crates/qsf_browser_server/ui; npm install`. For `realtime` (or `ui
   realtime`), run `cd crates/qsf_realtime_server/ui; npm install`.

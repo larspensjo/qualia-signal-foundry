@@ -17,6 +17,9 @@ param(
     [string]$SessionMemoryFile = "",
     [switch]$DemoMemory,
     [string]$Store = "state/text-loop/memory-store.json",
+    [string]$StateDir = "state/realtime",
+    [ValidateSet("openai", "mock")]
+    [string]$Provider = "openai",
     [string]$BindHost = "127.0.0.1",
     [int]$Port = 3939,
     [switch]$Workbench,
@@ -376,6 +379,22 @@ function Get-RealtimeEnvironmentDelta {
     }
 }
 
+function Get-SleepEnvironmentDelta {
+    $envSets = [ordered]@{
+        "QSF_MODEL_PROVIDER" = $Provider
+    }
+    $clearEnv = @(
+        Get-ManagedQsfEnvironmentVariableNames |
+        Where-Object { -not $envSets.Contains($_) } |
+        Sort-Object -Unique
+    )
+
+    return [pscustomobject]@{
+        Sets   = $envSets
+        Clears = $clearEnv
+    }
+}
+
 function Show-EnvironmentDelta {
     param(
         [Parameter(Mandatory = $true)]
@@ -497,6 +516,7 @@ Usage:
   .\scripts\qsf.ps1 ui [browser|realtime]
   .\scripts\qsf.ps1 workbench [<store>] [-Store <path>] [-BindHost <ip>] [-Port <port>]
   .\scripts\qsf.ps1 realtime [-RandomSessionId]
+  .\scripts\qsf.ps1 sleep [-StateDir <path>] [-Provider <openai|mock>]
   .\scripts\qsf.ps1 doctor [-LaunchProfile <name>] [-Workbench]
   .\scripts\qsf.ps1 list experiments
   .\scripts\qsf.ps1 list profiles
@@ -513,6 +533,7 @@ Defaults:
   Realtime server: 127.0.0.1:$realtimeServerPort (state/realtime); requires OPENAI_API_KEY
     Realtime environment: sets QSF_MODEL_PROVIDER=openai and clears other non-secret QSF_* values
   Realtime UI:     crates/qsf_realtime_server/ui (Vite on $realtimeUiUrl)
+  Sleep update:    state/realtime through the $Provider provider; openai requires OPENAI_API_KEY
 
 Examples:
   .\scripts\qsf.ps1 app -Experiment multi-turn-text-loop
@@ -526,6 +547,8 @@ Examples:
   .\scripts\qsf.ps1 ui realtime
   .\scripts\qsf.ps1 realtime
   .\scripts\qsf.ps1 realtime -RandomSessionId
+  .\scripts\qsf.ps1 sleep
+  .\scripts\qsf.ps1 sleep -Provider mock
   .\scripts\qsf.ps1 workbench $sampleStore
   .\scripts\qsf.ps1 doctor -Workbench
   .\scripts\qsf.ps1 list experiments
@@ -1102,6 +1125,34 @@ function Invoke-Realtime {
     }
 }
 
+function Invoke-Sleep {
+    if ($Provider -eq "openai") {
+        Test-RequiredSecret -Name "OPENAI_API_KEY"
+    }
+
+    Write-Host "Sleep state directory: $StateDir"
+    Write-Host "Sleep provider: $Provider"
+    if ($Provider -eq "openai") {
+        Write-Host "OPENAI_API_KEY: present in environment; value not shown"
+    }
+
+    Invoke-WithEnvironmentDelta -Delta (Get-SleepEnvironmentDelta) -ScriptBlock {
+        Invoke-LoggedCommand -Executable "cargo" -Arguments @(
+            "run",
+            "-p",
+            "qsf_app",
+            "--",
+            "sleep",
+            "--state-dir",
+            $StateDir,
+            "--provider",
+            $Provider,
+            "--workspace-root",
+            $projectRoot
+        )
+    }
+}
+
 function Test-QsfAutoRunEnabled {
     $skipAutoRun = Get-Variable -Name "QsfSkipAutoRun" -Scope Script -ValueOnly -ErrorAction SilentlyContinue
     return -not ($skipAutoRun -is [bool] -and $skipAutoRun)
@@ -1126,6 +1177,9 @@ if (Test-QsfAutoRunEnabled) {
         }
         "realtime" {
             Invoke-Realtime
+        }
+        "sleep" {
+            Invoke-Sleep
         }
         "doctor" {
             Invoke-Doctor

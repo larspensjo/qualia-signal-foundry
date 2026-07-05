@@ -29,6 +29,21 @@ enum Command {
         workspace_root: Option<PathBuf>,
     },
 
+    /// Run a first-class sleep/consolidation update over persisted realtime state.
+    Sleep {
+        /// State directory to sleep; defaults to the realtime continuity state.
+        #[arg(long, default_value = "state/realtime", value_name = "PATH")]
+        state_dir: PathBuf,
+
+        /// Model provider to use for summarization and sleep maintenance.
+        #[arg(long, value_name = "PROVIDER")]
+        provider: Option<String>,
+
+        /// Repository/workspace root used by sleep maintenance that needs repo-relative resources.
+        #[arg(long, value_name = "PATH")]
+        workspace_root: Option<PathBuf>,
+    },
+
     /// List experiments available in this build.
     ListExperiments,
 }
@@ -46,6 +61,25 @@ pub fn run() -> anyhow::Result<()> {
             println!(
                 "Experiment `{}` completed. Run artifacts: {}",
                 summary.experiment_id,
+                summary.run_dir.display()
+            );
+            Ok(())
+        }
+        Some(Command::Sleep {
+            state_dir,
+            provider,
+            workspace_root,
+        }) => {
+            let requested_provider =
+                provider.unwrap_or_else(|| qsf_models::requested_provider_from_env().to_string());
+            let summary = crate::sleep::run_sleep_update(crate::sleep::SleepUpdateOptions {
+                state_dir,
+                requested_provider,
+                workspace_root,
+            })?;
+            println!(
+                "Sleep update completed. State: {}. Run artifacts: {}",
+                summary.state_dir.display(),
                 summary.run_dir.display()
             );
             Ok(())
@@ -83,5 +117,15 @@ mod tests {
 
         assert!(before.no_color);
         assert!(after.no_color);
+    }
+
+    #[test]
+    fn sleep_command_defaults_to_realtime_state() {
+        let cli = Cli::try_parse_from(["qsf_app", "sleep"]).unwrap();
+
+        let Some(super::Command::Sleep { state_dir, .. }) = cli.command else {
+            panic!("expected sleep command");
+        };
+        assert_eq!(state_dir, std::path::PathBuf::from("state/realtime"));
     }
 }

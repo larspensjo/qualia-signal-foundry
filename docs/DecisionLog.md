@@ -1675,3 +1675,21 @@ below-qualification-threshold suppression with no initiative, and injection late
 Consequences: The threshold stays fixture data and can be retuned per persona without code
 changes if later evidence warrants; no per-tier thresholds are introduced. The value is
 validated for these two fixtures, not proven optimal across all personas.
+
+## 2026-07-05 - Realtime sleep consolidation is a first-class command
+Decision: Sleep/consolidation after a realtime session is exposed as `qsf.ps1 sleep`
+and `qsf_app sleep`, not only as an experiment. The launcher defaults to
+`state/realtime` and the OpenAI provider so the command processes the same continuity
+state produced by `qsf.ps1 realtime`; `-Provider mock` remains available for local
+smoke runs. The command writes the same inspectable sleep artifacts and manifest-last
+state commit as the existing sleep flow.
+
+Context: Realtime voice is now a normal operating mode, and its follow-up
+consolidation is routine workflow rather than a mechanism experiment. Running a real
+session and then having to invoke `sleep-phase-session-summary` through the experiment
+launcher made the operational boundary unclear.
+
+Consequences: The experiment harness can still validate the sleep machinery, but the
+supported user workflow is realtime session first, first-class sleep update second,
+then resume from the consolidated brief. Sleep remains explicit and inspectable; this
+does not introduce background or periodic sleep.

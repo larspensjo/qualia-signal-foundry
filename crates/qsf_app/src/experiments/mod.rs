@@ -34,3 +34,9 @@ pub use registry::{
     Experiment, ExperimentInfo, ExperimentName, ExperimentOutcome, ExperimentRunSummary,
     available_experiments, run_experiment, run_experiment_in, run_experiment_with_workspace_root,
 };
+
+pub(crate) use volition_continuity::{
+    consolidate_session_volition,
+    render_markdown_report as render_volition_continuity_markdown_report,
+    run_sleep_volition_goal_maintenance,
+};

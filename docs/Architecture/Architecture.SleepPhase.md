@@ -6,12 +6,13 @@ Candidate
 
 ## Implementation Status
 
-A session-end sleep flow exists: a sleep pass produces a structured report, consumes
-the persisted shared-session `SessionState` when available, promotes routine memory
-candidates into the cross-session store, writes a consolidated brief, updates the
-continuity manifest through a manifest-last commit protocol, and now reads a
-normalized shared view of both text turns and voice exchanges for consolidation.
-Manual review remains the boundary for decision-kind candidates.
+A session-end sleep flow exists: a first-class `qsf_app sleep` / `qsf.ps1 sleep`
+command produces a structured report, consumes the persisted shared-session
+`SessionState` when available, promotes routine memory candidates into the
+cross-session store, writes a consolidated brief, updates the continuity manifest
+through a manifest-last commit protocol, and reads a normalized shared view of both
+text turns and voice exchanges for consolidation. Manual review remains the
+boundary for decision-kind candidates.
 
 **Implemented today:**
 
@@ -20,6 +21,13 @@ Manual review remains the boundary for decision-kind candidates.
   ([experiments/sleep_phase_session_summary.rs](../../crates/qsf_app/src/experiments/sleep_phase_session_summary.rs),
   [sleep/sleep_report.rs](../../crates/qsf_app/src/sleep/sleep_report.rs),
   [sleep/session_summary.rs](../../crates/qsf_app/src/sleep/session_summary.rs))
+- First-class sleep update command for operational realtime consolidation:
+  `qsf.ps1 sleep` defaults to `state/realtime` and `openai`, while
+  `cargo run -p qsf_app -- sleep --state-dir state/realtime --provider openai`
+  exposes the same path without the launcher
+  ([sleep/update.rs](../../crates/qsf_app/src/sleep/update.rs),
+  [cli.rs](../../crates/qsf_app/src/cli.rs),
+  [qsf.ps1](../../scripts/qsf.ps1))
 - `reviewed_memory_draft` experiment that converts a sleep report into a memory
   draft file
   ([experiments/reviewed_memory_draft.rs](../../crates/qsf_app/src/experiments/reviewed_memory_draft.rs))
@@ -80,7 +88,7 @@ Manual review remains the boundary for decision-kind candidates.
 - Semantic deduplication or contradiction handling during promotion
 - Replay UI or report view for deterministic sleep comparison
 
-Last reviewed: 2026-06-06 against the shared sleep-view implementation.
+Last reviewed: 2026-07-05 against the first-class sleep update command.
 
 ## Summary
 
@@ -189,6 +197,13 @@ Useful for:
 - controlled experiments
 - debugging
 - comparing different consolidation strategies
+
+The operational manual trigger is:
+
+```powershell
+.\scripts\qsf.ps1 sleep
+cargo run -p qsf_app -- sleep --state-dir state/realtime --provider openai
+```
 
 ### Checkpoint Sleep
 

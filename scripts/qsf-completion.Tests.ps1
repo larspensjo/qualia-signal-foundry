@@ -27,6 +27,7 @@ Describe "qsf.ps1 argument completion" {
         $completions | Should -Contain "ui"
         $completions | Should -Contain "workbench"
         $completions | Should -Contain "realtime"
+        $completions | Should -Contain "sleep"
         $completions | Should -Contain "doctor"
         $completions | Should -Contain "list"
         $completions | Should -Contain "help"
@@ -112,5 +113,19 @@ Describe "qsf.ps1 argument completion" {
         $completions = Complete-QsfInput -InputText ".\scripts\qsf.ps1 app -Experiment multi-turn-text-loop -SessionMemoryFile "
 
         $completions | Should -Contain "docs/Experiments/Fixtures/session-memory.empty.json"
+    }
+
+    It "completes sleep providers" {
+        $completions = Complete-QsfInput -InputText ".\scripts\qsf.ps1 sleep -Provider "
+
+        $completions | Should -Contain "openai"
+        $completions | Should -Contain "mock"
+    }
+
+    It "completes sleep state directories" {
+        $completions = Complete-QsfInput -InputText ".\scripts\qsf.ps1 sleep -StateDir "
+
+        $completions | Should -Contain "state/realtime"
+        $completions | Should -Contain "state/session"
     }
 }

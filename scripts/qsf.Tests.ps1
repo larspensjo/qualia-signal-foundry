@@ -7,6 +7,7 @@ BeforeAll {
         "QSF_ACCEPT_MEMORY_DRAFT",
         "QSF_CUSTOM_API_KEY",
         "QSF_MODEL_PROVIDER",
+        "QSF_STATE_DIR",
         "QSF_SESSION_MAX_TURNS",
         "QSF_SESSION_MEMORY_SOURCE"
     )
@@ -168,5 +169,44 @@ Describe "qsf.ps1 realtime launcher" {
         finally {
             $listener.Stop()
         }
+    }
+}
+
+Describe "qsf.ps1 sleep launcher" {
+    BeforeAll {
+        $script:QsfSkipAutoRun = $true
+        . $script:LauncherScript -Command "help"
+    }
+
+    BeforeEach {
+        [System.Environment]::SetEnvironmentVariable("OPENAI_API_KEY", $null, "Process")
+    }
+
+    It "defaults to openai over realtime state" {
+        $Provider | Should -Be "openai"
+        $StateDir | Should -Be "state/realtime"
+    }
+
+    It "pins the selected model provider for sleep" {
+        $delta = Get-SleepEnvironmentDelta
+
+        $delta.Sets["QSF_MODEL_PROVIDER"] | Should -Be "openai"
+        $delta.Clears | Should -Not -Contain "QSF_MODEL_PROVIDER"
+    }
+
+    It "clears ambient non-secret QSF variables for sleep" {
+        [System.Environment]::SetEnvironmentVariable("QSF_STATE_DIR", "ambient-state", "Process")
+        try {
+            $delta = Get-SleepEnvironmentDelta
+
+            $delta.Clears | Should -Contain "QSF_STATE_DIR"
+        }
+        finally {
+            [System.Environment]::SetEnvironmentVariable("QSF_STATE_DIR", $null, "Process")
+        }
+    }
+
+    It "requires OPENAI_API_KEY for the default provider" {
+        { Invoke-Sleep } | Should -Throw "*OPENAI_API_KEY is not set*"
     }
 }

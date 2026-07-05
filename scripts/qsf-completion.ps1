@@ -13,6 +13,7 @@ $script:QsfCompletionCommands = @(
     "ui",
     "workbench",
     "realtime",
+    "sleep",
     "doctor",
     "list",
     "help"
@@ -33,6 +34,11 @@ $script:QsfCompletionSessionMemorySources = @(
     "empty",
     "file",
     "fixture"
+)
+
+$script:QsfCompletionProviders = @(
+    "openai",
+    "mock"
 )
 
 $script:QsfCompletionExperiments = @(
@@ -140,6 +146,23 @@ function Get-QsfCompletionStorePaths {
     return $script:QsfCompletionStorePathCache
 }
 
+function Get-QsfCompletionStateDirs {
+    $paths = [System.Collections.Generic.List[string]]::new()
+    $paths.Add("state/realtime")
+    $paths.Add("state/session")
+
+    $stateRoot = Join-Path $script:QsfCompletionProjectRoot "state"
+    if (Test-Path -LiteralPath $stateRoot -PathType Container) {
+        Get-ChildItem -LiteralPath $stateRoot -Directory -ErrorAction SilentlyContinue |
+            ForEach-Object {
+                $relativePath = [System.IO.Path]::GetRelativePath($script:QsfCompletionProjectRoot, $_.FullName)
+                $paths.Add(($relativePath -replace '\\', '/'))
+            }
+    }
+
+    return @($paths | Sort-Object -Unique)
+}
+
 function Get-QsfCompletionNativeContext {
     param(
         [Parameter(Mandatory = $true)]
@@ -216,6 +239,14 @@ $qsfCompleter = {
             }
             "-SessionMemoryFile" {
                 Select-QsfCompletionMatches -Values (Get-QsfCompletionStorePaths) -WordToComplete $wordToComplete
+                return
+            }
+            "-Provider" {
+                Select-QsfCompletionMatches -Values $script:QsfCompletionProviders -WordToComplete $wordToComplete
+                return
+            }
+            "-StateDir" {
+                Select-QsfCompletionMatches -Values (Get-QsfCompletionStateDirs) -WordToComplete $wordToComplete
                 return
             }
         }
