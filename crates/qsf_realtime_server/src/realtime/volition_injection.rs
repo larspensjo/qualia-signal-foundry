@@ -1228,4 +1228,88 @@ mod tests {
                 .any(|layer| layer.name == "coherence")
         );
     }
+
+    #[test]
+    fn packet_text_starts_with_ui_locator_prefix() {
+        // The realtime browser UI locates the injected volition item by this exact prefix — see
+        // `VOLITION_INJECTED_TEXT_PREFIX` and `selectInjectedVolitionText` in
+        // crates/qsf_realtime_server/ui/src/realtime.ts. If you reword the rendered packet, update
+        // that constant and its tests too; this assertion exists so the reword fails CI here first.
+        const UI_LOCATOR_PREFIX: &str = "Simulated volition context for this turn";
+        let (fixture, state) = fixture_state();
+        let snapshot = VolitionStateSnapshot {
+            state: state.clone(),
+            fixture: fixture.clone(),
+        };
+
+        // Qualified-winner path.
+        let ranked = select_goals_ranked("how can you help me", &state, &fixture);
+        let outcome = arbitrate_with_mode(ranked.selected.clone(), &fixture, Mode::Neutral);
+        let packet = build_volition_turn_context_packet(
+            &snapshot,
+            &ranked,
+            outcome,
+            &[],
+            ShapingIntensity::Low,
+            "stable-baseline-hash".to_string(),
+            None,
+            &[],
+        )
+        .expect("qualified winner emits a packet");
+        assert!(
+            packet.text.starts_with(UI_LOCATOR_PREFIX),
+            "qualified-path packet prefix drifted from the UI locator: {}",
+            packet.text
+        );
+
+        // No-qualifier path (goals activate but none clear the bar).
+        let ranked = select_goals_ranked("for what it's worth, thanks", &state, &fixture);
+        let outcome = arbitrate_with_mode(ranked.selected.clone(), &fixture, Mode::Neutral);
+        let packet = build_volition_turn_context_packet(
+            &snapshot,
+            &ranked,
+            outcome,
+            &[],
+            ShapingIntensity::None,
+            "stable-baseline-hash".to_string(),
+            None,
+            &[],
+        )
+        .expect("no-qualifier turn emits a packet");
+        assert!(
+            packet.text.starts_with(UI_LOCATOR_PREFIX),
+            "no-qualifier-path packet prefix drifted from the UI locator: {}",
+            packet.text
+        );
+
+        // Coherence-only path (no ranked selection or arbitration winner; declined candidates only).
+        let ranked = select_goals_ranked("xyzzy frobnicator quux", &state, &fixture);
+        let opportunities =
+            detect_opportunities(&grounded_terms_from_text("xyzzy"), &state, &fixture);
+        let declined = vec![DeclinedCandidate {
+            candidate_id: "candidate-3".to_string(),
+            title: "pursue an unrelated tangent".to_string(),
+            conflict: DeclineReason::ConflictingGoal {
+                goal_id: "keep-theses-distinct-from-fact".to_string(),
+            },
+            rationale: "would derail the current task".to_string(),
+            tick: 5,
+        }];
+        let packet = build_volition_turn_context_packet(
+            &snapshot,
+            &ranked,
+            None,
+            &opportunities,
+            ShapingIntensity::None,
+            "stable-baseline-hash".to_string(),
+            None,
+            &declined,
+        )
+        .expect("coherence-only turn emits a packet");
+        assert!(
+            packet.text.starts_with(UI_LOCATOR_PREFIX),
+            "coherence-only-path packet prefix drifted from the UI locator: {}",
+            packet.text
+        );
+    }
 }
