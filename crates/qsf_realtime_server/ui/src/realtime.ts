@@ -923,6 +923,30 @@ export function selectMuteButton(state: ConversationState): MuteButtonModel {
   };
 }
 
+export interface TextTurnSubmitInput {
+  hasText: boolean;
+  pending: boolean;
+}
+
+export function selectCanSubmitTextTurn(
+  state: ConversationState,
+  input: TextTurnSubmitInput,
+): boolean {
+  if (input.pending || !input.hasText) {
+    return false;
+  }
+  switch (state.connection) {
+    case "idle":
+    case "ready":
+      return true;
+    case "requesting_session":
+    case "connecting_media":
+    case "stopping":
+    case "error":
+      return false;
+  }
+}
+
 export function mapProviderMessageToRelayEnvelope(
   qsfSessionId: string,
   message: ProviderDataChannelMessage,

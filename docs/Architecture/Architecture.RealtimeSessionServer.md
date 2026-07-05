@@ -52,10 +52,11 @@ mode, not a one-off experiment server.
   diagnostics only, and persists diagnostic-only exchanges with explicit
   trust/source markers.
 - `POST /api/realtime/text` accepts typed user turns for noisy environments once
-  the sideband is attached. The browser may start a receive-only WebRTC session
-  without microphone capture, then submit text; the sideband records the typed
-  turn as trusted input, adds a user conversation item, injects memory, and owns
-  `response.create` as in the voice path.
+  the sideband is attached. The browser can submit text during an existing live
+  session, or start a receive-only WebRTC session without microphone capture and
+  then submit text; the sideband records the typed turn as trusted input, adds a
+  user conversation item, injects memory, and owns `response.create` as in the
+  voice path.
 - `POST /api/realtime/stop` invalidates the binding and finalizes any open
   diagnostic exchange.
 - `crates/qsf_realtime_server/ui/` is a dedicated Vite + TypeScript + Biome +

@@ -14,6 +14,7 @@ import {
   reduceConversationState,
   type SdpExchangeResponse,
   type SessionAllocationResponse,
+  selectCanSubmitTextTurn,
   selectMuteButton,
   selectVolitionPanelModel,
 } from "./realtime";
@@ -513,21 +514,10 @@ function scrollTranscriptToLatest() {
 }
 
 function canSubmitTextTurn(): boolean {
-  if (textTurnPending) {
-    return false;
-  }
-  if (!refs.textInput.value.trim()) {
-    return false;
-  }
-  if (
-    state.connection === "requesting_session" ||
-    state.connection === "connecting_media" ||
-    state.connection === "stopping" ||
-    state.connection === "error"
-  ) {
-    return false;
-  }
-  return state.connection === "idle" || (state.connection === "ready" && state.phase === "idle");
+  return selectCanSubmitTextTurn(state, {
+    hasText: Boolean(refs.textInput.value.trim()),
+    pending: textTurnPending,
+  });
 }
 
 async function connectRelaySocket(sessionId: string): Promise<WebSocket> {

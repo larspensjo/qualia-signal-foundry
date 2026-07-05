@@ -11,6 +11,7 @@ import {
   parseVolitionStateMessage,
   providerTypeToRelayKind,
   reduceConversationState,
+  selectCanSubmitTextTurn,
   selectMuteButton,
   selectVolitionPanelModel,
 } from "./realtime";
@@ -419,6 +420,70 @@ describe("microphone mute", () => {
 
     const muted = reduceConversationState(INITIAL_STATE, { type: "mute_toggled" });
     expect(selectMuteButton(muted)).toEqual({ label: "Unmute", pressed: true });
+  });
+});
+
+describe("text turn availability", () => {
+  const readyState = reduceConversationState(
+    reduceConversationState(INITIAL_STATE, {
+      type: "session_allocated",
+      sessionId: "session_1",
+    }),
+    { type: "connection_ready" },
+  );
+
+  it("allows text during an idle page and throughout a ready live session", () => {
+    const listening = reduceConversationState(readyState, {
+      type: "provider_envelope",
+      envelope: {
+        qsf_session_id: "session_1",
+        event_id: "evt_listening",
+        kind: "user_turn_started",
+      },
+    });
+    const thinking = reduceConversationState(readyState, {
+      type: "provider_envelope",
+      envelope: {
+        qsf_session_id: "session_1",
+        event_id: "evt_final",
+        kind: "final_transcript",
+        transcript: "hello",
+      },
+    });
+    const speaking = reduceConversationState(readyState, {
+      type: "provider_envelope",
+      envelope: {
+        qsf_session_id: "session_1",
+        event_id: "evt_done",
+        kind: "response_completed",
+        status: "completed",
+        text: "hi",
+      },
+    });
+
+    for (const state of [INITIAL_STATE, readyState, listening, thinking, speaking]) {
+      expect(selectCanSubmitTextTurn(state, { hasText: true, pending: false })).toBe(true);
+    }
+  });
+
+  it("blocks empty, pending, transitional, and error states", () => {
+    expect(selectCanSubmitTextTurn(readyState, { hasText: false, pending: false })).toBe(false);
+    expect(selectCanSubmitTextTurn(readyState, { hasText: true, pending: true })).toBe(false);
+
+    const requesting = reduceConversationState(INITIAL_STATE, { type: "session_requested" });
+    const connecting = reduceConversationState(requesting, {
+      type: "session_allocated",
+      sessionId: "session_1",
+    });
+    const stopping = reduceConversationState(readyState, { type: "stop_requested" });
+    const error = reduceConversationState(readyState, {
+      type: "connection_error",
+      message: "failed",
+    });
+
+    for (const state of [requesting, connecting, stopping, error]) {
+      expect(selectCanSubmitTextTurn(state, { hasText: true, pending: false })).toBe(false);
+    }
   });
 });
 
