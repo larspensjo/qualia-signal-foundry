@@ -12,6 +12,7 @@ import {
   providerTypeToRelayKind,
   reduceConversationState,
   selectCanSubmitTextTurn,
+  selectInjectedVolitionText,
   selectMuteButton,
   selectVolitionPanelModel,
   selectVolitionVerdict,
@@ -1234,5 +1235,121 @@ describe("volition verdict selector", () => {
     const verdict = selectVolitionVerdict(state, { status: "none_injected" });
     expect(verdict.kind).toBe("no_decision");
     expect(verdict.line).toContain("no per-turn decision");
+  });
+});
+
+describe("injected volition text locator", () => {
+  const volitionMessage = {
+    type: "conversation.item.create",
+    item: {
+      type: "message",
+      role: "system",
+      content: [
+        {
+          type: "input_text",
+          text: "Simulated volition context for this turn (internal state only; not a claim of real desire or consciousness).\nActive goal: Serve the present person (serve-the-present-person) — be useful now.",
+        },
+      ],
+    },
+  };
+  const memoryMessage = {
+    type: "conversation.item.create",
+    item: {
+      type: "message",
+      role: "system",
+      content: [{ type: "input_text", text: "Relevant memories: none." }],
+    },
+  };
+  const captureAtExchange = (exchangeIndex: number) => ({
+    qsfSessionId: "session_1",
+    exchangeIndex,
+    capturedAt: "2026-06-30T12:00:00Z",
+    responseCreateEventRef: "hash-abc",
+    inspection: {
+      mode: "neutral",
+      tick: 12,
+      activeGoals: [],
+      acceptedGoals: [],
+      blockedGoals: [],
+      cooldownGoals: [],
+      retiredGoals: [],
+      pendingCandidateCount: 0,
+      acceptedCandidateCount: 0,
+      lastInitiativeSummaries: [],
+    },
+    decision: null,
+  });
+  const turnContextAtExchange = (exchangeIndex: number, messages: unknown[]) => ({
+    qsfSessionId: "session_1",
+    exchangeIndex,
+    capturedAt: "2026-06-30T12:00:00Z",
+    requestHash: "hash-abc",
+    messages,
+  });
+
+  const expectFound = (result: ReturnType<typeof selectInjectedVolitionText>): string => {
+    if (result.status !== "found") {
+      throw new Error(`expected found, got ${result.status}`);
+    }
+    return result.text;
+  };
+
+  it("returns the verbatim volition item text when both captures describe the same turn", () => {
+    const state = {
+      ...INITIAL_STATE,
+      sessionId: "session_1",
+      latestVolitionState: captureAtExchange(4),
+      latestTurnContext: turnContextAtExchange(4, [memoryMessage, volitionMessage]),
+    };
+    const text = expectFound(selectInjectedVolitionText(state));
+    expect(text).toContain("Active goal: Serve the present person");
+    expect(text).toMatch(/^Simulated volition context for this turn/);
+  });
+
+  it("reports unavailable when the two captures describe different turns", () => {
+    const state = {
+      ...INITIAL_STATE,
+      sessionId: "session_1",
+      latestVolitionState: captureAtExchange(5),
+      latestTurnContext: turnContextAtExchange(4, [volitionMessage]),
+    };
+    expect(selectInjectedVolitionText(state).status).toBe("unavailable");
+  });
+
+  it("reports none injected when the matched turn context has no volition item", () => {
+    const state = {
+      ...INITIAL_STATE,
+      sessionId: "session_1",
+      latestVolitionState: captureAtExchange(4),
+      latestTurnContext: turnContextAtExchange(4, [memoryMessage]),
+    };
+    expect(selectInjectedVolitionText(state).status).toBe("none_injected");
+  });
+
+  it("reports unavailable when either capture is missing", () => {
+    expect(selectInjectedVolitionText(INITIAL_STATE).status).toBe("unavailable");
+    expect(
+      selectInjectedVolitionText({
+        ...INITIAL_STATE,
+        sessionId: "session_1",
+        latestVolitionState: captureAtExchange(4),
+      }).status,
+    ).toBe("unavailable");
+  });
+
+  it("tolerates malformed messages without throwing", () => {
+    const state = {
+      ...INITIAL_STATE,
+      sessionId: "session_1",
+      latestVolitionState: captureAtExchange(4),
+      latestTurnContext: turnContextAtExchange(4, [
+        null,
+        "a string",
+        { type: "conversation.item.create" },
+        { type: "conversation.item.create", item: { content: [] } },
+        volitionMessage,
+      ]),
+    };
+    expect(expectFound(selectInjectedVolitionText(state))).toContain("Active goal:");
   });
 });

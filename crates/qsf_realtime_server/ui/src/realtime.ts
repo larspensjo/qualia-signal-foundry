@@ -1402,3 +1402,52 @@ function describeShapingIntensity(intensity: string): string {
       return formatLabelValue(intensity);
   }
 }
+
+/// Locate the verbatim volition turn packet the model saw this turn. The text is not carried on the
+/// volition capture (kept out by a deliberate privacy guardrail); it rides inside the turn-context
+/// messages as a `conversation.item.create` item whose text begins with
+/// `VOLITION_INJECTED_TEXT_PREFIX`. Returns a status model rather than `string | null` so consumers
+/// can tell "the matched turn context carried no packet" (`none_injected`) apart from "the matching
+/// capture has not arrived or describes another turn" (`unavailable`). Total: never throws.
+export function selectInjectedVolitionText(state: ConversationState): InjectedVolitionText {
+  const capture = state.latestVolitionState;
+  const context = state.latestTurnContext;
+  if (capture === null || context === null) {
+    return { status: "unavailable" };
+  }
+  // Only correlate when both captures describe the same turn. They are published by two
+  // non-atomic watch-channel writes, so for a brief window the browser can hold a verdict for turn
+  // N and a context for turn N-1; matching exchangeIndex rejects that mismatch instead of showing
+  // last turn's injected text next to this turn's verdict.
+  if (capture.exchangeIndex !== context.exchangeIndex) {
+    return { status: "unavailable" };
+  }
+  for (const message of context.messages) {
+    const text = volitionItemText(message);
+    if (text?.startsWith(VOLITION_INJECTED_TEXT_PREFIX)) {
+      return { status: "found", text };
+    }
+  }
+  return { status: "none_injected" };
+}
+
+/// Extract the first content text from a `conversation.item.create` message, or null if the value
+/// is not that shape. Defensive at every hop so a malformed capture can never throw.
+function volitionItemText(message: unknown): string | null {
+  if (!isRecord(message) || message.type !== "conversation.item.create") {
+    return null;
+  }
+  const item = message.item;
+  if (!isRecord(item)) {
+    return null;
+  }
+  const content = item.content;
+  if (!Array.isArray(content)) {
+    return null;
+  }
+  const first = content[0];
+  if (!isRecord(first) || typeof first.text !== "string") {
+    return null;
+  }
+  return first.text;
+}
