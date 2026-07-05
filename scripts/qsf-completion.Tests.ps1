@@ -128,4 +128,45 @@ Describe "qsf.ps1 argument completion" {
         $completions | Should -Contain "state/realtime"
         $completions | Should -Contain "state/session"
     }
+
+    It "completes the restore command" {
+        $completions = Complete-QsfInput -InputText ".\scripts\qsf.ps1 re"
+
+        $completions | Should -Contain "restore"
+        $completions | Should -Contain "realtime"
+    }
+
+    It "completes latest for restore even without backups" {
+        $completions = Complete-QsfInput -InputText ".\scripts\qsf.ps1 restore "
+
+        $completions | Should -Contain "latest"
+    }
+
+    Context "with a hermetic project root that has backups" {
+        BeforeEach {
+            $script:OriginalCompletionRoot = $script:QsfCompletionProjectRoot
+            $script:QsfCompletionProjectRoot = "$TestDrive"
+            New-Item -ItemType Directory -Force (Join-Path $TestDrive "state/realtime") | Out-Null
+            New-Item -ItemType Directory -Force (Join-Path $TestDrive "state/backups/realtime-20260705-120000") | Out-Null
+        }
+
+        AfterEach {
+            $script:QsfCompletionProjectRoot = $script:OriginalCompletionRoot
+            Remove-Item -LiteralPath (Join-Path $TestDrive "state") -Recurse -Force -ErrorAction SilentlyContinue
+        }
+
+        It "completes real backup names for restore" {
+            $completions = Complete-QsfInput -InputText ".\scripts\qsf.ps1 restore "
+
+            $completions | Should -Contain "latest"
+            $completions | Should -Contain "realtime-20260705-120000"
+        }
+
+        It "does not offer the backups root as a sleep state dir when it exists" {
+            $completions = Complete-QsfInput -InputText ".\scripts\qsf.ps1 sleep -StateDir "
+
+            $completions | Should -Contain "state/realtime"
+            $completions | Should -Not -Contain "state/backups"
+        }
+    }
 }

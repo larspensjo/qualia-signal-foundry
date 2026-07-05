@@ -14,6 +14,7 @@ $script:QsfCompletionCommands = @(
     "workbench",
     "realtime",
     "sleep",
+    "restore",
     "doctor",
     "list",
     "help"
@@ -160,7 +161,21 @@ function Get-QsfCompletionStateDirs {
             }
     }
 
-    return @($paths | Sort-Object -Unique)
+    return @($paths | Where-Object { $_ -ne "state/backups" } | Sort-Object -Unique)
+}
+
+function Get-QsfCompletionBackupNames {
+    $names = [System.Collections.Generic.List[string]]::new()
+    $names.Add("latest")
+
+    $backupRoot = Join-Path $script:QsfCompletionProjectRoot "state/backups"
+    if (Test-Path -LiteralPath $backupRoot -PathType Container) {
+        Get-ChildItem -LiteralPath $backupRoot -Directory -ErrorAction SilentlyContinue |
+            Sort-Object CreationTime, Name -Descending |
+            ForEach-Object { $names.Add($_.Name) }
+    }
+
+    return @($names)
 }
 
 function Get-QsfCompletionNativeContext {
@@ -268,6 +283,11 @@ $qsfCompleter = {
 
         if ($nativeContext.Arguments.Count -eq 1 -and $nativeContext.Arguments[0] -eq "ui") {
             Select-QsfCompletionMatches -Values $script:QsfCompletionUiTargets -WordToComplete $wordToComplete
+            return
+        }
+
+        if ($nativeContext.Arguments.Count -eq 1 -and $nativeContext.Arguments[0] -eq "restore") {
+            Select-QsfCompletionMatches -Values (Get-QsfCompletionBackupNames) -WordToComplete $wordToComplete
             return
         }
 
