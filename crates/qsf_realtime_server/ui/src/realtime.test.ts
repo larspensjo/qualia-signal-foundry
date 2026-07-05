@@ -17,6 +17,7 @@ import {
   type RelayEventKind,
   reduceConversationState,
   selectCanSubmitTextTurn,
+  selectEventTickerModel,
   selectInjectedVolitionText,
   selectMuteButton,
   selectVolitionPanelModel,
@@ -1538,5 +1539,52 @@ describe("diagnostics phase timeline", () => {
       sessionId: "session_2",
     });
     expect(allocated.phaseTimeline).toEqual([]);
+  });
+});
+
+describe("selectEventTickerModel", () => {
+  // Local-time constructor keeps the expected labels timezone-independent.
+  const at = (h: number, m: number, s: number, ms: number) =>
+    new Date(2026, 6, 5, h, m, s, ms).getTime();
+
+  it("formats rows with clock time, burst count, and inter-event gap", () => {
+    const state: ConversationState = {
+      ...INITIAL_STATE,
+      eventLog: [
+        {
+          kind: "final_transcript",
+          phase: "thinking",
+          firstAtMs: at(12, 0, 5, 200),
+          lastAtMs: at(12, 0, 5, 200),
+          count: 1,
+        },
+        {
+          kind: "partial_transcript",
+          phase: "listening",
+          firstAtMs: at(12, 0, 1, 100),
+          lastAtMs: at(12, 0, 3, 100),
+          count: 14,
+        },
+      ],
+    };
+    expect(selectEventTickerModel(state)).toEqual([
+      {
+        kind: "final_transcript",
+        countLabel: null,
+        timeLabel: "12:00:05.2",
+        // Gap measured against the previous row's *last* occurrence: 5.2 - 3.1 = 2.1 s.
+        deltaLabel: "+2.1s",
+      },
+      {
+        kind: "partial_transcript",
+        countLabel: "×14",
+        timeLabel: "12:00:01.1",
+        deltaLabel: null,
+      },
+    ]);
+  });
+
+  it("returns an empty list before any event", () => {
+    expect(selectEventTickerModel(INITIAL_STATE)).toEqual([]);
   });
 });

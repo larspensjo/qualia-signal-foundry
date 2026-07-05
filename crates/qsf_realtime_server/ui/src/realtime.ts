@@ -1026,6 +1026,36 @@ export function selectMuteButton(state: ConversationState): MuteButtonModel {
   };
 }
 
+export interface TickerRowModel {
+  kind: string;
+  /// "×N" for a collapsed burst, null for a single occurrence.
+  countLabel: string | null;
+  /// Local wall-clock "HH:MM:SS.d" of the row's first occurrence.
+  timeLabel: string;
+  /// "+X.Ys" gap since the previous (older) row's last occurrence; null on the oldest row.
+  deltaLabel: string | null;
+}
+
+export function selectEventTickerModel(state: ConversationState): TickerRowModel[] {
+  return state.eventLog.map((entry, index) => {
+    const older = state.eventLog[index + 1];
+    return {
+      kind: entry.kind,
+      countLabel: entry.count > 1 ? `×${entry.count}` : null,
+      timeLabel: formatClockTime(entry.firstAtMs),
+      deltaLabel:
+        older === undefined ? null : `+${((entry.firstAtMs - older.lastAtMs) / 1000).toFixed(1)}s`,
+    };
+  });
+}
+
+function formatClockTime(atMs: number): string {
+  const date = new Date(atMs);
+  const pad = (value: number) => String(value).padStart(2, "0");
+  const deciseconds = Math.floor(date.getMilliseconds() / 100);
+  return `${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}.${deciseconds}`;
+}
+
 export interface TextTurnSubmitInput {
   hasText: boolean;
   pending: boolean;
