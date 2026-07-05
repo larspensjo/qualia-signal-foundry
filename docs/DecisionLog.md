@@ -1709,3 +1709,25 @@ packet's prose prefix, pinned by a Rust guard test across every packet-emitting 
 follow-ups (revisit after using the prototype): binding each capture to the specific transcript
 answer that produced it, surfacing the standing persona/stable-baseline stance, and captioning
 interrupted/failed turns.
+
+## 2026-07-05 - Sleep launcher backs up state and reports an itemized change view
+
+Decision: `qsf.ps1 sleep` backs up the target state directory to
+`state/backups/<name>-<timestamp>/` (keeping the newest five) before invoking the
+sleep update, and `qsf.ps1 restore` rolls back from those backups, backing up the
+current state first so a restore is undoable. The sleep command reports an itemized
+change view (memories added, associations added/strengthened, goal changes, state
+files written) rendered from a structured `SleepChangeRecord` that is also written
+as a `sleep-changes.json` run artifact. Rollback safety was chosen over a `--dry-run`
+mode: sleep output depends on a live model call either way, and a backup keeps the
+real run as the single code path instead of maintaining a plan/apply split.
+
+Context: Sleep auto-applies memory promotion, association changes, and goal
+maintenance (2026-05-20, 2026-05-22, 2026-07-02), so an operator had no way to
+preview or undo a bad consolidation, and the command reported only artifact paths.
+
+Consequences: Operators can run sleep freely and roll back regretted consolidations.
+The change view and `sleep-changes.json` make each sleep run reviewable at a glance;
+backups live inside the git-ignored `state/` tree. The launcher remains the
+supported operator surface for backup/restore; raw `cargo run -p qsf_app -- sleep`
+does not create backups.
