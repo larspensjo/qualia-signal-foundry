@@ -504,6 +504,87 @@ button[aria-pressed="true"]:hover:not(:disabled) {
   overflow-wrap: anywhere;
 }
 
+.why-verdict {
+  padding: 0.8rem 0.9rem;
+  border-radius: 12px;
+  border: 1px solid rgba(125, 211, 252, 0.24);
+  background: rgba(125, 211, 252, 0.12);
+}
+
+.why-verdict-not_evaluated,
+.why-verdict-no_decision,
+.why-verdict-context_only,
+.why-verdict-quiet {
+  border-color: rgba(184, 191, 215, 0.18);
+  background: rgba(184, 191, 215, 0.08);
+}
+
+.why-verdict-line {
+  margin: 0;
+  color: var(--text);
+  font-size: 0.95rem;
+  line-height: 1.45;
+}
+
+.why-nudge {
+  display: inline-block;
+  margin-top: 0.5rem;
+  padding: 0.15rem 0.55rem;
+  border-radius: 999px;
+  background: rgba(245, 158, 11, 0.16);
+  border: 1px solid rgba(245, 158, 11, 0.3);
+  color: var(--text);
+  font-size: 0.72rem;
+  letter-spacing: 0.04em;
+}
+
+.why-verdict-caption {
+  margin: 0.5rem 0 0;
+  color: var(--muted);
+  font-size: 0.72rem;
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+}
+
+.why-injected h3 {
+  margin: 0 0 0.45rem;
+  color: var(--accent-2);
+  font-size: 0.76rem;
+  text-transform: uppercase;
+  letter-spacing: 0.16em;
+}
+
+.why-injected-empty {
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.88rem;
+  font-style: italic;
+}
+
+.why-injected-text {
+  margin: 0;
+  padding: 0.75rem;
+  border-radius: 10px;
+  background: rgba(0, 0, 0, 0.3);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  font-size: 0.82rem;
+  line-height: 1.5;
+  color: var(--text);
+  max-height: 320px;
+  overflow: auto;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.why-scoring summary {
+  cursor: pointer;
+  color: var(--muted);
+  font-size: 0.74rem;
+  text-transform: uppercase;
+  letter-spacing: 0.14em;
+  user-select: none;
+}
+
 @media (max-width: 900px) {
   body {
     overflow: auto;

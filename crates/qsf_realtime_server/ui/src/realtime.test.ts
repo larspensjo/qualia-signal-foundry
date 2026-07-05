@@ -12,8 +12,10 @@ import {
   providerTypeToRelayKind,
   reduceConversationState,
   selectCanSubmitTextTurn,
+  selectInjectedVolitionText,
   selectMuteButton,
   selectVolitionPanelModel,
+  selectVolitionVerdict,
 } from "./realtime";
 
 describe("provider relay mapping", () => {
@@ -1101,5 +1103,269 @@ describe("volition panel selector", () => {
     expect(model.headline).toBe("No volition state yet");
     expect(model.banner).toBe("Awaiting the first trusted turn.");
     expect(model.sections).toHaveLength(0);
+  });
+});
+
+describe("volition verdict selector", () => {
+  const unavailable = { status: "unavailable" } as const;
+  const spokeCapture = {
+    qsfSessionId: "session_1",
+    exchangeIndex: 4,
+    capturedAt: "2026-06-30T12:00:00Z",
+    responseCreateEventRef: "hash-abc",
+    inspection: {
+      mode: "neutral",
+      tick: 12,
+      activeGoals: [],
+      acceptedGoals: [],
+      blockedGoals: [],
+      cooldownGoals: [],
+      retiredGoals: [],
+      pendingCandidateCount: 0,
+      acceptedCandidateCount: 0,
+      lastInitiativeSummaries: [],
+    },
+    decision: {
+      winner: {
+        winnerGoalId: "serve-the-present-person",
+        winnerGoalTitle: "Serve the present person",
+        winnerEffectiveTier: 2,
+        winnerBiasedTier: 2,
+        protectedTierActive: true,
+      },
+      qualificationThreshold: 4,
+      belowThreshold: [],
+      modeBiasOutcomes: [],
+      selectedGoalIds: ["serve-the-present-person"],
+      omittedOrSuppressedGoalIds: [],
+      shapingIntensity: "low",
+      lastInitiativeOutputKind: "reflection_requested",
+      lastInitiativeSurfaced: true,
+      lastInitiativeSuppressionReason: null,
+      lastInitiativeRenderedLinePresent: true,
+    },
+  };
+
+  it("reports awaiting-first-turn when no capture has arrived", () => {
+    const verdict = selectVolitionVerdict(INITIAL_STATE, unavailable);
+    expect(verdict.kind).toBe("not_evaluated");
+    expect(verdict.line).toContain("No evaluated turn yet");
+    expect(verdict.caption).toBeNull();
+    expect(verdict.nudge).toBeNull();
+  });
+
+  it("reports a spoken verdict with the winning goal, intensity word, and added nudge", () => {
+    const state = { ...INITIAL_STATE, sessionId: "session_1", latestVolitionState: spokeCapture };
+    const verdict = selectVolitionVerdict(state, unavailable);
+    expect(verdict.kind).toBe("spoke");
+    expect(verdict.line).toContain("Serve the present person");
+    expect(verdict.line).toContain("gently");
+    expect(verdict.caption).toBe("Latest evaluated turn · exchange 4");
+    expect(verdict.nudge).toBe("nudge added");
+  });
+
+  it("reports a held-back nudge with the suppression reason when no line was rendered", () => {
+    const state = {
+      ...INITIAL_STATE,
+      sessionId: "session_1",
+      latestVolitionState: {
+        ...spokeCapture,
+        decision: {
+          ...spokeCapture.decision,
+          lastInitiativeSurfaced: false,
+          lastInitiativeSuppressionReason: "anti_nag_repeat" as const,
+          lastInitiativeRenderedLinePresent: false,
+        },
+      },
+    };
+    const verdict = selectVolitionVerdict(state, unavailable);
+    expect(verdict.kind).toBe("spoke");
+    expect(verdict.nudge).toBe("nudge held back (Anti Nag Repeat)");
+  });
+
+  it("reports a quiet verdict with the below-threshold count and bar", () => {
+    const state = {
+      ...INITIAL_STATE,
+      sessionId: "session_1",
+      latestVolitionState: {
+        ...spokeCapture,
+        decision: {
+          ...spokeCapture.decision,
+          winner: null,
+          belowThreshold: [
+            {
+              goalId: "learn-what-drives-this-person",
+              goalTitle: "Learn what drives this person",
+              matchedKeywords: [{ term: "me", weightClass: "weak" as const }],
+              matchStrength: 1,
+            },
+          ],
+          shapingIntensity: "none",
+        },
+      },
+    };
+    const verdict = selectVolitionVerdict(state, unavailable);
+    expect(verdict.kind).toBe("quiet");
+    expect(verdict.line).toContain("No goal qualified to lead this turn");
+    expect(verdict.line).toContain("1 goal(s) below the bar (threshold 4)");
+    expect(verdict.line).not.toContain("base-model");
+    expect(verdict.caption).toBe("Latest evaluated turn · exchange 4");
+  });
+
+  it("reports context-only when a no-decision capture pairs with an injected packet", () => {
+    const state = {
+      ...INITIAL_STATE,
+      sessionId: "session_1",
+      latestVolitionState: { ...spokeCapture, decision: null },
+    };
+    const verdict = selectVolitionVerdict(state, {
+      status: "found",
+      text: "Simulated volition context for this turn (internal state only; not a claim of real desire or consciousness).\nDeclined goal candidates (coherence): pursue an unrelated tangent — would derail the current task.",
+    });
+    expect(verdict.kind).toBe("context_only");
+    expect(verdict.line).toContain("still injected context");
+  });
+
+  it("reports a no-decision verdict when a capture has no decision and no packet was found", () => {
+    const state = {
+      ...INITIAL_STATE,
+      sessionId: "session_1",
+      latestVolitionState: { ...spokeCapture, decision: null },
+    };
+    const verdict = selectVolitionVerdict(state, { status: "none_injected" });
+    expect(verdict.kind).toBe("no_decision");
+    expect(verdict.line).toContain("no per-turn decision");
+  });
+});
+
+describe("injected volition text locator", () => {
+  const volitionMessage = {
+    type: "conversation.item.create",
+    item: {
+      type: "message",
+      role: "system",
+      content: [
+        {
+          type: "input_text",
+          text: "Simulated volition context for this turn (internal state only; not a claim of real desire or consciousness).\nActive goal: Serve the present person (serve-the-present-person) — be useful now.",
+        },
+      ],
+    },
+  };
+  const memoryMessage = {
+    type: "conversation.item.create",
+    item: {
+      type: "message",
+      role: "system",
+      content: [{ type: "input_text", text: "Relevant memories: none." }],
+    },
+  };
+  const captureAtExchange = (exchangeIndex: number, requestHash = "hash-abc") => ({
+    qsfSessionId: "session_1",
+    exchangeIndex,
+    capturedAt: "2026-06-30T12:00:00Z",
+    responseCreateEventRef: requestHash,
+    inspection: {
+      mode: "neutral",
+      tick: 12,
+      activeGoals: [],
+      acceptedGoals: [],
+      blockedGoals: [],
+      cooldownGoals: [],
+      retiredGoals: [],
+      pendingCandidateCount: 0,
+      acceptedCandidateCount: 0,
+      lastInitiativeSummaries: [],
+    },
+    decision: null,
+  });
+  const turnContextAtExchange = (
+    exchangeIndex: number,
+    messages: unknown[],
+    requestHash = "hash-abc",
+  ) => ({
+    qsfSessionId: "session_1",
+    exchangeIndex,
+    capturedAt: "2026-06-30T12:00:00Z",
+    requestHash,
+    messages,
+  });
+
+  const expectFound = (result: ReturnType<typeof selectInjectedVolitionText>): string => {
+    if (result.status !== "found") {
+      throw new Error(`expected found, got ${result.status}`);
+    }
+    return result.text;
+  };
+
+  it("returns the verbatim volition item text when both captures describe the same turn", () => {
+    const state = {
+      ...INITIAL_STATE,
+      sessionId: "session_1",
+      latestVolitionState: captureAtExchange(4),
+      latestTurnContext: turnContextAtExchange(4, [memoryMessage, volitionMessage]),
+    };
+    const text = expectFound(selectInjectedVolitionText(state));
+    expect(text).toContain("Active goal: Serve the present person");
+    expect(text).toMatch(/^Simulated volition context for this turn/);
+  });
+
+  it("reports unavailable when the two captures describe different turns", () => {
+    const state = {
+      ...INITIAL_STATE,
+      sessionId: "session_1",
+      latestVolitionState: captureAtExchange(5, "hash-turn-5"),
+      latestTurnContext: turnContextAtExchange(4, [volitionMessage], "hash-turn-4"),
+    };
+    expect(selectInjectedVolitionText(state).status).toBe("unavailable");
+  });
+
+  it("reports unavailable when captures share an exchange but are different attempts", () => {
+    // Two response.create attempts in one exchange keep the same exchangeIndex but get distinct
+    // request hashes, so correlating by request hash (not exchangeIndex) rejects the mismatch.
+    const state = {
+      ...INITIAL_STATE,
+      sessionId: "session_1",
+      latestVolitionState: captureAtExchange(4, "hash-attempt-b"),
+      latestTurnContext: turnContextAtExchange(4, [volitionMessage], "hash-attempt-a"),
+    };
+    expect(selectInjectedVolitionText(state).status).toBe("unavailable");
+  });
+
+  it("reports none injected when the matched turn context has no volition item", () => {
+    const state = {
+      ...INITIAL_STATE,
+      sessionId: "session_1",
+      latestVolitionState: captureAtExchange(4),
+      latestTurnContext: turnContextAtExchange(4, [memoryMessage]),
+    };
+    expect(selectInjectedVolitionText(state).status).toBe("none_injected");
+  });
+
+  it("reports unavailable when either capture is missing", () => {
+    expect(selectInjectedVolitionText(INITIAL_STATE).status).toBe("unavailable");
+    expect(
+      selectInjectedVolitionText({
+        ...INITIAL_STATE,
+        sessionId: "session_1",
+        latestVolitionState: captureAtExchange(4),
+      }).status,
+    ).toBe("unavailable");
+  });
+
+  it("tolerates malformed messages without throwing", () => {
+    const state = {
+      ...INITIAL_STATE,
+      sessionId: "session_1",
+      latestVolitionState: captureAtExchange(4),
+      latestTurnContext: turnContextAtExchange(4, [
+        null,
+        "a string",
+        { type: "conversation.item.create" },
+        { type: "conversation.item.create", item: { content: [] } },
+        volitionMessage,
+      ]),
+    };
+    expect(expectFound(selectInjectedVolitionText(state))).toContain("Active goal:");
   });
 });

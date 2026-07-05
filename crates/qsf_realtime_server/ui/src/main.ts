@@ -15,8 +15,10 @@ import {
   type SdpExchangeResponse,
   type SessionAllocationResponse,
   selectCanSubmitTextTurn,
+  selectInjectedVolitionText,
   selectMuteButton,
   selectVolitionPanelModel,
+  selectVolitionVerdict,
 } from "./realtime";
 
 interface UiRefs {
@@ -128,13 +130,13 @@ root.innerHTML = `
           </div>
         </dl>
         <audio data-role="remote-audio" autoplay playsinline></audio>
+        <details class="turn-context-details" open>
+          <summary>What volition did this turn</summary>
+          <div data-role="volition-state-body" class="volition-state-body"></div>
+        </details>
         <details class="turn-context-details">
           <summary>Last turn context</summary>
           <div data-role="turn-context-body" class="turn-context-body"></div>
-        </details>
-        <details class="turn-context-details">
-          <summary>Volition state</summary>
-          <div data-role="volition-state-body" class="volition-state-body"></div>
         </details>
       </aside>
     </section>
@@ -504,7 +506,13 @@ function render() {
     refs.turnContextBody.replaceChildren(meta, pre);
   }
 
-  renderVolitionStatePanel(refs.volitionStateBody, selectVolitionPanelModel(state));
+  const injectedVolition = selectInjectedVolitionText(state);
+  renderWhyThisAnswerPanel(
+    refs.volitionStateBody,
+    selectVolitionVerdict(state, injectedVolition),
+    injectedVolition,
+    selectVolitionPanelModel(state),
+  );
 }
 
 function scrollTranscriptToLatest() {
@@ -616,6 +624,72 @@ function collectRefs(container: HTMLElement): UiRefs {
     turnContextBody: query<HTMLElement>('[data-role="turn-context-body"]'),
     volitionStateBody: query<HTMLElement>('[data-role="volition-state-body"]'),
   };
+}
+
+function renderWhyThisAnswerPanel(
+  container: HTMLElement,
+  verdict: ReturnType<typeof selectVolitionVerdict>,
+  injected: ReturnType<typeof selectInjectedVolitionText>,
+  model: ReturnType<typeof selectVolitionPanelModel>,
+) {
+  container.replaceChildren();
+
+  // Tier 1 — verdict.
+  const verdictBlock = document.createElement("div");
+  verdictBlock.className = `why-verdict why-verdict-${verdict.kind}`;
+  const line = document.createElement("p");
+  line.className = "why-verdict-line";
+  line.textContent = verdict.line;
+  verdictBlock.appendChild(line);
+  if (verdict.nudge !== null) {
+    const nudge = document.createElement("span");
+    nudge.className = "why-nudge";
+    nudge.textContent = verdict.nudge;
+    verdictBlock.appendChild(nudge);
+  }
+  if (verdict.caption !== null) {
+    const caption = document.createElement("p");
+    caption.className = "why-verdict-caption";
+    caption.textContent = verdict.caption;
+    verdictBlock.appendChild(caption);
+  }
+  container.appendChild(verdictBlock);
+
+  // Tier 2 — what volition told the model. "Nothing was injected" is only claimed when the
+  // exchange-matched turn context was actually inspected; a missing/mismatched capture (the
+  // non-atomic watch-channel window) gets a neutral "not captured" line instead.
+  const injectedSection = document.createElement("section");
+  injectedSection.className = "why-injected";
+  const injectedHeading = document.createElement("h3");
+  injectedHeading.textContent = "What volition told the model";
+  injectedSection.appendChild(injectedHeading);
+  if (injected.status === "found") {
+    const pre = document.createElement("pre");
+    pre.className = "why-injected-text";
+    pre.textContent = injected.text;
+    injectedSection.appendChild(pre);
+  } else {
+    const placeholder = document.createElement("p");
+    placeholder.className = "why-injected-empty";
+    placeholder.textContent =
+      injected.status === "none_injected"
+        ? "Nothing was injected this turn."
+        : "No matching injected packet captured for this evaluated turn.";
+    injectedSection.appendChild(placeholder);
+  }
+  container.appendChild(injectedSection);
+
+  // Tier 3 — scoring detail, collapsed. Reuses the existing panel renderer verbatim.
+  const scoring = document.createElement("details");
+  scoring.className = "why-scoring";
+  const scoringSummary = document.createElement("summary");
+  scoringSummary.textContent = "Scoring detail";
+  scoring.appendChild(scoringSummary);
+  const scoringBody = document.createElement("div");
+  scoringBody.className = "volition-state-body";
+  renderVolitionStatePanel(scoringBody, model);
+  scoring.appendChild(scoringBody);
+  container.appendChild(scoring);
 }
 
 function renderVolitionStatePanel(

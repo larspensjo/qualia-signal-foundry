@@ -3,7 +3,7 @@
 ## Workflow
 - Build with `cargo build`.
 - When a task is complete, run `cargo clippy --all-targets -- -D warnings` and then `cargo fmt`.
-- For changes under `crates/qsf_browser_server/ui/`, run `npm run check` and then `npm run fmt` from that directory. `npm run check` covers both `tsc --noEmit` and Biome lint.
+- For changes under a crate's `ui/` directory, run `npm run check` and then `npm run fmt` from that directory. `npm run check` covers both `tsc --noEmit` and Biome lint.
 - When launching npm through `Start-Process`, use `npm.cmd` explicitly instead of bare `npm`; PowerShell may resolve bare `npm` to `npm.ps1`, which can open in Notepad depending on file association.
 - When implementing changes, update the relevant project documents when the change affects current behavior, workflow, architecture, experiments, or durable decisions.
 - When creating complex plans, they should be divided into incremental phases that can be tested.
