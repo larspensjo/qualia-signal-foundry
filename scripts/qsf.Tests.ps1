@@ -207,17 +207,27 @@ Describe "qsf.ps1 sleep launcher" {
     }
 
     It "requires OPENAI_API_KEY for the default provider and creates no backup" {
-        $originalRoot = $projectRoot
         try {
-            $script:projectRoot = "$TestDrive"
             New-Item -ItemType Directory -Force (Join-Path $TestDrive "state/realtime") | Out-Null
+
+            # Re-source the launcher into this test's scope so Invoke-Sleep closes
+            # over the default openai provider (which triggers the OPENAI_API_KEY
+            # check) and the TestDrive project root. Pester promotes the outer
+            # BeforeAll's dot-sourced variables, so $script: assignments here do
+            # not reach the launcher's own $Provider/$projectRoot/$StateDir.
+            . $script:LauncherScript -Command "help" -Provider "openai" -StateDir "state/realtime"
+            $projectRoot = "$TestDrive"
+
+            [System.Environment]::SetEnvironmentVariable("OPENAI_API_KEY", $null, "Process")
 
             { Invoke-Sleep } | Should -Throw "*OPENAI_API_KEY is not set*"
 
+            # No backup must exist at the location Invoke-Sleep would actually
+            # write to under the TestDrive project root: the secret check must
+            # throw before any backup is created.
             Test-Path -LiteralPath (Join-Path $TestDrive "state/backups") | Should -BeFalse
         }
         finally {
-            $script:projectRoot = $originalRoot
             Remove-Item -LiteralPath (Join-Path $TestDrive "state") -Recurse -Force -ErrorAction SilentlyContinue
         }
     }
