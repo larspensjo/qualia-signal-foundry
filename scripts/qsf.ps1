@@ -33,6 +33,8 @@ $projectRoot = Split-Path -Parent $PSScriptRoot
 $defaultStore = "state/text-loop/memory-store.json"
 $sampleStore = "crates/qsf_browser_server/tests/fixtures/small-store.json"
 $emptySessionMemoryFile = "docs/Experiments/Fixtures/session-memory.empty.json"
+$backupRootRelative = "state/backups"
+$sleepBackupKeepCount = 5
 $uiDir = Join-Path $projectRoot "crates/qsf_browser_server/ui"
 $realtimeUiDir = Join-Path $projectRoot "crates/qsf_realtime_server/ui"
 # The realtime server port must match qsf_realtime_server's cli.rs DEFAULT_PORT and the
@@ -534,6 +536,7 @@ Defaults:
     Realtime environment: sets QSF_MODEL_PROVIDER=openai and clears other non-secret QSF_* values
   Realtime UI:     crates/qsf_realtime_server/ui (Vite on $realtimeUiUrl)
   Sleep update:    state/realtime through the $Provider provider; openai requires OPENAI_API_KEY
+                   backs up the state dir to state/backups/<name>-<timestamp> first (keeps last 5)
 
 Examples:
   .\scripts\qsf.ps1 app -Experiment multi-turn-text-loop
@@ -1125,6 +1128,59 @@ function Invoke-Realtime {
     }
 }
 
+function New-QsfStateBackup {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$StateDirPath,
+
+        [Parameter(Mandatory = $true)]
+        [string]$BackupRootPath,
+
+        [int]$KeepCount = 0
+    )
+
+    if (-not (Test-Path -LiteralPath $StateDirPath -PathType Container)) {
+        return $null
+    }
+
+    # Reject a backup root that is the state dir itself or nested inside it: a
+    # recursive copy would otherwise try to copy the backup into itself and can
+    # fail partway through. This is exposed by the documented `-StateDir state`.
+    $resolvedStateDir = (Resolve-Path -LiteralPath $StateDirPath).Path
+    $stateDirWithSep = $resolvedStateDir.TrimEnd('\', '/') + [System.IO.Path]::DirectorySeparatorChar
+    $normalizedBackupRoot = [System.IO.Path]::GetFullPath($BackupRootPath)
+    if ($normalizedBackupRoot -eq $resolvedStateDir -or
+        $normalizedBackupRoot.StartsWith($stateDirWithSep, [System.StringComparison]::OrdinalIgnoreCase)) {
+        throw "Backup root '$BackupRootPath' must not be inside the state directory '$StateDirPath'."
+    }
+
+    $leaf = Split-Path -Leaf $StateDirPath
+    $timestamp = Get-Date -Format "yyyyMMdd-HHmmss"
+    New-Item -ItemType Directory -Force $BackupRootPath | Out-Null
+
+    $backupPath = Join-Path $BackupRootPath "$leaf-$timestamp"
+    $suffix = 2
+    while (Test-Path -LiteralPath $backupPath) {
+        $backupPath = Join-Path $BackupRootPath "$leaf-$timestamp-$suffix"
+        $suffix++
+    }
+    Copy-Item -LiteralPath $StateDirPath -Destination $backupPath -Recurse
+
+    if ($KeepCount -gt 0) {
+        $existing = @(
+            Get-ChildItem -LiteralPath $BackupRootPath -Directory -Filter "$leaf-*" |
+            Sort-Object CreationTime, Name -Descending
+        )
+        if ($existing.Count -gt $KeepCount) {
+            foreach ($stale in $existing[$KeepCount..($existing.Count - 1)]) {
+                Remove-Item -LiteralPath $stale.FullName -Recurse -Force
+            }
+        }
+    }
+
+    return $backupPath
+}
+
 function Invoke-Sleep {
     if ($Provider -eq "openai") {
         Test-RequiredSecret -Name "OPENAI_API_KEY"
@@ -1134,6 +1190,18 @@ function Invoke-Sleep {
     Write-Host "Sleep provider: $Provider"
     if ($Provider -eq "openai") {
         Write-Host "OPENAI_API_KEY: present in environment; value not shown"
+    }
+
+    $backupPath = New-QsfStateBackup `
+        -StateDirPath (Join-Path $projectRoot $StateDir) `
+        -BackupRootPath (Join-Path $projectRoot $backupRootRelative) `
+        -KeepCount $sleepBackupKeepCount
+    if ($null -ne $backupPath) {
+        $relativeBackup = [System.IO.Path]::GetRelativePath($projectRoot, $backupPath) -replace '\\', '/'
+        Write-Host "State backup: $relativeBackup (keeping last $sleepBackupKeepCount)"
+    }
+    else {
+        Write-Host "State backup: skipped ($StateDir does not exist yet)"
     }
 
     Invoke-WithEnvironmentDelta -Delta (Get-SleepEnvironmentDelta) -ScriptBlock {
