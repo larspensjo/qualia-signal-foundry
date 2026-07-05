@@ -20,6 +20,7 @@ import {
   selectEventTickerModel,
   selectInjectedVolitionText,
   selectMuteButton,
+  selectPhaseLaneModel,
   selectVolitionPanelModel,
   selectVolitionVerdict,
 } from "./realtime";
@@ -1586,5 +1587,79 @@ describe("selectEventTickerModel", () => {
 
   it("returns an empty list before any event", () => {
     expect(selectEventTickerModel(INITIAL_STATE)).toEqual([]);
+  });
+});
+
+describe("selectPhaseLaneModel", () => {
+  const NOW = 100_000; // window start = 40_000 with the 60 s window
+
+  it("maps segments to window fractions and fills the leading gap with idle", () => {
+    const state: ConversationState = {
+      ...INITIAL_STATE,
+      phaseTimeline: [
+        { phase: "listening", startedAtMs: 70_000 },
+        { phase: "thinking", startedAtMs: 85_000 },
+      ],
+    };
+    expect(selectPhaseLaneModel(state, NOW).segments).toEqual([
+      { phase: "idle", startFraction: 0, endFraction: 0.5 },
+      { phase: "listening", startFraction: 0.5, endFraction: 0.75 },
+      { phase: "thinking", startFraction: 0.75, endFraction: 1 },
+    ]);
+  });
+
+  it("renders a fully idle lane when the timeline is empty", () => {
+    expect(selectPhaseLaneModel(INITIAL_STATE, NOW).segments).toEqual([
+      { phase: "idle", startFraction: 0, endFraction: 1 },
+    ]);
+  });
+
+  it("clamps a segment that started before the window", () => {
+    const state: ConversationState = {
+      ...INITIAL_STATE,
+      phaseTimeline: [{ phase: "speaking", startedAtMs: 10_000 }],
+    };
+    expect(selectPhaseLaneModel(state, NOW).segments).toEqual([
+      { phase: "speaking", startFraction: 0, endFraction: 1 },
+    ]);
+  });
+
+  it("emits ticks inside the window carrying the reducer-derived phase; a burst row becomes a start/end pair", () => {
+    const state: ConversationState = {
+      ...INITIAL_STATE,
+      eventLog: [
+        {
+          kind: "final_transcript",
+          phase: "thinking",
+          firstAtMs: 85_000,
+          lastAtMs: 85_000,
+          count: 1,
+        },
+        {
+          kind: "partial_transcript",
+          phase: "listening",
+          firstAtMs: 70_000,
+          lastAtMs: 76_000,
+          count: 9,
+        },
+        { kind: "stopped", phase: "idle", firstAtMs: 10_000, lastAtMs: 10_000, count: 1 }, // outside window
+      ],
+    };
+    const ticks = selectPhaseLaneModel(state, NOW).ticks;
+    expect(ticks.map((tick) => [tick.kind, tick.phase, tick.fraction])).toEqual([
+      ["partial_transcript", "listening", 0.5],
+      ["partial_transcript", "listening", 0.6],
+      ["final_transcript", "thinking", 0.75],
+    ]);
+  });
+
+  it("labels gridlines every 15 s back from now", () => {
+    expect(selectPhaseLaneModel(INITIAL_STATE, NOW).gridlines).toEqual([
+      { fraction: 1, label: "now" },
+      { fraction: 0.75, label: "-15s" },
+      { fraction: 0.5, label: "-30s" },
+      { fraction: 0.25, label: "-45s" },
+      { fraction: 0, label: "-60s" },
+    ]);
   });
 });

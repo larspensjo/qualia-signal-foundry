@@ -1049,6 +1049,92 @@ export function selectEventTickerModel(state: ConversationState): TickerRowModel
   });
 }
 
+export interface PhaseLaneSegmentModel {
+  phase: RuntimePhase;
+  startFraction: number;
+  endFraction: number;
+}
+
+export interface PhaseLaneTickModel {
+  fraction: number;
+  kind: string;
+  /// Reducer-derived phase after the event (copied from EventLogEntry.phase);
+  /// the canvas colors the tick with this and needs no event-kind knowledge.
+  phase: RuntimePhase;
+  timeLabel: string;
+}
+
+export interface PhaseLaneGridlineModel {
+  fraction: number;
+  label: string;
+}
+
+export interface PhaseLaneModel {
+  segments: PhaseLaneSegmentModel[];
+  ticks: PhaseLaneTickModel[];
+  gridlines: PhaseLaneGridlineModel[];
+}
+
+export const PHASE_LANE_GRIDLINE_STEP_MS = 15_000;
+
+/// Geometry for the phase swimlane, all x-positions as fractions of the lane
+/// width in [0, 1] with `now` at 1. The canvas renderer multiplies by pixel
+/// width and picks colors; it makes no layout decisions of its own.
+export function selectPhaseLaneModel(state: ConversationState, nowMs: number): PhaseLaneModel {
+  const windowStartMs = nowMs - PHASE_LANE_WINDOW_MS;
+  const fractionOf = (atMs: number) => (atMs - windowStartMs) / PHASE_LANE_WINDOW_MS;
+  const clamp01 = (value: number) => Math.min(1, Math.max(0, value));
+
+  const timeline = state.phaseTimeline;
+  const segments: PhaseLaneSegmentModel[] = [];
+  // Before the first recorded segment the runtime phase was idle (INITIAL_STATE.phase).
+  const firstStartMs = timeline.length > 0 ? timeline[0].startedAtMs : nowMs;
+  if (firstStartMs > windowStartMs) {
+    segments.push({
+      phase: "idle",
+      startFraction: 0,
+      endFraction: clamp01(fractionOf(firstStartMs)),
+    });
+  }
+  for (let i = 0; i < timeline.length; i++) {
+    const endMs = i + 1 < timeline.length ? timeline[i + 1].startedAtMs : nowMs;
+    if (endMs <= windowStartMs) {
+      continue;
+    }
+    segments.push({
+      phase: timeline[i].phase,
+      startFraction: clamp01(fractionOf(timeline[i].startedAtMs)),
+      endFraction: clamp01(fractionOf(endMs)),
+    });
+  }
+
+  const ticks: PhaseLaneTickModel[] = [];
+  for (const entry of state.eventLog) {
+    const atMss = entry.count > 1 ? [entry.firstAtMs, entry.lastAtMs] : [entry.firstAtMs];
+    for (const atMs of atMss) {
+      if (atMs >= windowStartMs && atMs <= nowMs) {
+        ticks.push({
+          fraction: fractionOf(atMs),
+          kind: entry.kind,
+          phase: entry.phase,
+          timeLabel: formatClockTime(atMs),
+        });
+      }
+    }
+  }
+  ticks.sort((a, b) => a.fraction - b.fraction);
+
+  const gridlines: PhaseLaneGridlineModel[] = [];
+  for (let backMs = 0; backMs <= PHASE_LANE_WINDOW_MS; backMs += PHASE_LANE_GRIDLINE_STEP_MS) {
+    gridlines.push({
+      fraction: fractionOf(nowMs - backMs),
+      label: backMs === 0 ? "now" : `-${backMs / 1000}s`,
+    });
+  }
+
+  return { segments, ticks, gridlines };
+}
+
 function formatClockTime(atMs: number): string {
   const date = new Date(atMs);
   const pad = (value: number) => String(value).padStart(2, "0");
