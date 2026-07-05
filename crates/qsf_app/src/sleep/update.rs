@@ -560,20 +560,6 @@ pub(crate) fn commit_cross_session_sleep(
         outcome
             .extra_artifacts
             .push("reviewed-memory-draft.md".to_string());
-        state_files_written.push(
-            context
-                .run_dir()
-                .join("reviewed-memory-draft.json")
-                .display()
-                .to_string(),
-        );
-        state_files_written.push(
-            context
-                .run_dir()
-                .join("reviewed-memory-draft.md")
-                .display()
-                .to_string(),
-        );
     }
 
     let change_record = SleepChangeRecord {
@@ -907,7 +893,10 @@ fn push_markdown_list(markdown: &mut String, items: &[String]) {
 
 #[cfg(test)]
 mod tests {
-    use std::fs;
+    use std::{
+        fs,
+        path::{Path, PathBuf},
+    };
 
     use crate::runtime::run_context::RunContext;
     use crate::session::manifest::{ContinuityManifest, ResumeMode};
@@ -917,6 +906,24 @@ mod tests {
     use crate::sleep::{SleepMemoryCandidate, SleepReport};
 
     use super::{SleepUpdateOptions, build_sleep_input, run_sleep_update};
+
+    struct CurrentDirGuard {
+        original: PathBuf,
+    }
+
+    impl CurrentDirGuard {
+        fn enter(path: &Path) -> Self {
+            let original = std::env::current_dir().unwrap();
+            std::env::set_current_dir(path).unwrap();
+            Self { original }
+        }
+    }
+
+    impl Drop for CurrentDirGuard {
+        fn drop(&mut self) {
+            std::env::set_current_dir(&self.original).unwrap();
+        }
+    }
 
     fn config() -> SessionConfig {
         SessionConfig {
@@ -985,8 +992,7 @@ mod tests {
                 .unwrap();
         }
 
-        let cwd = std::env::current_dir().unwrap();
-        std::env::set_current_dir(&base_dir).unwrap();
+        let cwd_guard = CurrentDirGuard::enter(&base_dir);
         let summary = run_sleep_update(SleepUpdateOptions {
             state_dir: std::path::PathBuf::from("state/realtime"),
             requested_provider: "mock".to_string(),
@@ -1067,9 +1073,7 @@ mod tests {
         );
         assert!(second.change_record.state_files_written.is_empty());
 
-        // Restore the captured original cwd before cleanup — never leave the test
-        // process in `base_dir` or the system temp dir.
-        std::env::set_current_dir(&cwd).unwrap();
+        drop(cwd_guard);
 
         fs::remove_dir_all(base_dir).unwrap();
     }
@@ -1122,7 +1126,7 @@ mod tests {
                 }],
                 association_candidates: vec![],
                 open_questions: vec![],
-                decision_candidates: vec![],
+                decision_candidates: vec!["Keep this draft provisional.".to_string()],
                 future_context_hints: vec![],
                 review_notes: vec![],
             },
@@ -1147,6 +1151,26 @@ mod tests {
         assert_eq!(change_record.new_memories[0].title, "Candidate memory.");
         assert!((change_record.new_memories[0].importance - 0.8).abs() < 1e-9);
         assert_eq!(change_record.open_question_count, 0);
+        assert!(
+            outcome
+                .extra_artifacts
+                .iter()
+                .any(|artifact| artifact == "reviewed-memory-draft.json")
+        );
+        assert!(
+            context
+                .run_dir()
+                .join("reviewed-memory-draft.json")
+                .exists()
+        );
+        assert!(
+            !change_record
+                .state_files_written
+                .iter()
+                .any(|file| file.contains("reviewed-memory-draft")),
+            "run artifacts must not be listed as state files: {:?}",
+            change_record.state_files_written
+        );
         assert!(
             change_record
                 .state_files_written

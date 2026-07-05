@@ -538,6 +538,7 @@ Defaults:
   Realtime UI:     crates/qsf_realtime_server/ui (Vite on $realtimeUiUrl)
   Sleep update:    state/realtime through the $Provider provider; openai requires OPENAI_API_KEY
                    backs up the state dir to state/backups/<name>-<timestamp> first (keeps last 5)
+  Restore:         creates undo backups as state/backups/<name>-restore-<timestamp>; latest ignores those undo backups
 
 Examples:
   .\scripts\qsf.ps1 app -Experiment multi-turn-text-loop
@@ -1139,6 +1140,9 @@ function New-QsfStateBackup {
         [Parameter(Mandatory = $true)]
         [string]$BackupRootPath,
 
+        [ValidateSet("sleep", "restore")]
+        [string]$BackupKind = "sleep",
+
         [int]$KeepCount = 0
     )
 
@@ -1161,10 +1165,11 @@ function New-QsfStateBackup {
     $timestamp = Get-Date -Format "yyyyMMdd-HHmmss"
     New-Item -ItemType Directory -Force $BackupRootPath | Out-Null
 
-    $backupPath = Join-Path $BackupRootPath "$leaf-$timestamp"
+    $backupPrefix = if ($BackupKind -eq "restore") { "$leaf-restore" } else { $leaf }
+    $backupPath = Join-Path $BackupRootPath "$backupPrefix-$timestamp"
     $suffix = 2
     while (Test-Path -LiteralPath $backupPath) {
-        $backupPath = Join-Path $BackupRootPath "$leaf-$timestamp-$suffix"
+        $backupPath = Join-Path $BackupRootPath "$backupPrefix-$timestamp-$suffix"
         $suffix++
     }
     Copy-Item -LiteralPath $StateDirPath -Destination $backupPath -Recurse
@@ -1172,6 +1177,7 @@ function New-QsfStateBackup {
     if ($KeepCount -gt 0) {
         $existing = @(
             Get-ChildItem -LiteralPath $BackupRootPath -Directory -Filter "$leaf-*" |
+            Where-Object { Test-QsfSleepBackupName -Name $_.Name -Leaf $leaf } |
             Sort-Object CreationTime, Name -Descending
         )
         if ($existing.Count -gt $KeepCount) {
@@ -1182,6 +1188,19 @@ function New-QsfStateBackup {
     }
 
     return $backupPath
+}
+
+function Test-QsfSleepBackupName {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$Name,
+
+        [Parameter(Mandatory = $true)]
+        [string]$Leaf
+    )
+
+    $escapedLeaf = [System.Text.RegularExpressions.Regex]::Escape($Leaf)
+    return $Name -match "^$escapedLeaf-\d{8}-\d{6}(-\d+)?$"
 }
 
 function Restore-QsfStateBackup {
@@ -1200,6 +1219,7 @@ function Restore-QsfStateBackup {
     if ($BackupName -eq "latest") {
         $newest = @(
             Get-ChildItem -LiteralPath $BackupRootPath -Directory -Filter "$leaf-*" -ErrorAction SilentlyContinue |
+            Where-Object { Test-QsfSleepBackupName -Name $_.Name -Leaf $leaf } |
             Sort-Object CreationTime, Name -Descending
         ) | Select-Object -First 1
         if ($null -eq $newest) {
@@ -1221,17 +1241,16 @@ function Restore-QsfStateBackup {
     }
 
     # Self-backup without pruning: pruning here could delete the very backup being restored.
-    $selfBackup = New-QsfStateBackup -StateDirPath $StateDirPath -BackupRootPath $BackupRootPath
+    $selfBackup = New-QsfStateBackup -StateDirPath $StateDirPath -BackupRootPath $BackupRootPath -BackupKind "restore"
     if ($null -ne $selfBackup) {
         Write-Host "Current state backed up to: $selfBackup"
     }
 
-    # Stage the restore into a temporary sibling first, then swap. A failed copy
-    # (locked file, disk error, partial backup) must never leave the operator
-    # without a live state directory, so we only remove the live dir once the
-    # staged copy is validated.
+    # Stage the restore into a temporary sibling first, then swap. Copy or swap
+    # failures must not leave the operator without the original live state dir.
     $parent = Split-Path -Parent $StateDirPath
     $staging = Join-Path $parent "$leaf.restore-staging-$(Get-Date -Format 'yyyyMMddHHmmssfff')"
+    $oldLive = Join-Path $parent "$leaf.restore-old-live-$(Get-Date -Format 'yyyyMMddHHmmssfff')"
     try {
         Copy-Item -LiteralPath $sourcePath -Destination $staging -Recurse
         if (-not (Test-Path -LiteralPath $staging -PathType Container)) {
@@ -1243,10 +1262,30 @@ function Restore-QsfStateBackup {
         throw
     }
 
-    if (Test-Path -LiteralPath $StateDirPath) {
-        Remove-Item -LiteralPath $StateDirPath -Recurse -Force
+    $renamedLive = $false
+    try {
+        if (Test-Path -LiteralPath $StateDirPath) {
+            Move-Item -LiteralPath $StateDirPath -Destination $oldLive
+            $renamedLive = $true
+        }
+        Move-Item -LiteralPath $staging -Destination $StateDirPath
     }
-    Move-Item -LiteralPath $staging -Destination $StateDirPath
+    catch {
+        if ($renamedLive -and -not (Test-Path -LiteralPath $StateDirPath) -and (Test-Path -LiteralPath $oldLive)) {
+            Move-Item -LiteralPath $oldLive -Destination $StateDirPath
+        }
+        Remove-Item -LiteralPath $staging -Recurse -Force -ErrorAction SilentlyContinue
+        throw
+    }
+
+    if ($renamedLive -and (Test-Path -LiteralPath $oldLive)) {
+        try {
+            Remove-Item -LiteralPath $oldLive -Recurse -Force
+        }
+        catch {
+            Write-Warning "Restored state, but could not remove old live state at $oldLive. Remove it manually after closing any process that still holds it."
+        }
+    }
     Write-Host "Restored $StateDirPath from $(Split-Path -Leaf $sourcePath)"
 
     return $sourcePath

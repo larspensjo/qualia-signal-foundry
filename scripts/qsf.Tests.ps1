@@ -312,16 +312,21 @@ Describe "qsf.ps1 state backups" {
 
     It "prunes to the keep count, newest kept, and only for the same leaf" {
         New-Item -ItemType Directory -Force (Join-Path $script:TestBackupRoot "other-20260101-000000") | Out-Null
+        New-Item -ItemType Directory -Force (Join-Path $script:TestBackupRoot "realtime-restore-20260101-000000") | Out-Null
         $paths = @()
         foreach ($i in 1..4) {
             $paths += New-QsfStateBackup -StateDirPath $script:TestStateDir -BackupRootPath $script:TestBackupRoot -KeepCount 3
         }
 
-        $remaining = @(Get-ChildItem -LiteralPath $script:TestBackupRoot -Directory -Filter "realtime-*")
+        $remaining = @(
+            Get-ChildItem -LiteralPath $script:TestBackupRoot -Directory -Filter "realtime-*" |
+                Where-Object { Test-QsfSleepBackupName -Name $_.Name -Leaf "realtime" }
+        )
         $remaining.Count | Should -Be 3
         Test-Path -LiteralPath $paths[0] | Should -BeFalse
         Test-Path -LiteralPath $paths[3] | Should -BeTrue
         Test-Path -LiteralPath (Join-Path $script:TestBackupRoot "other-20260101-000000") | Should -BeTrue
+        Test-Path -LiteralPath (Join-Path $script:TestBackupRoot "realtime-restore-20260101-000000") | Should -BeTrue
     }
 
     It "rejects a backup root nested inside the state dir" {
@@ -342,9 +347,11 @@ Describe "qsf.ps1 state backups" {
 
     It "restores the newest backup for 'latest'" {
         Set-Content -LiteralPath (Join-Path $script:TestStateDir "memory-store.json") -Value '{"version":"old"}'
-        New-QsfStateBackup -StateDirPath $script:TestStateDir -BackupRootPath $script:TestBackupRoot | Out-Null
+        $oldBackup = New-QsfStateBackup -StateDirPath $script:TestStateDir -BackupRootPath $script:TestBackupRoot
         Set-Content -LiteralPath (Join-Path $script:TestStateDir "memory-store.json") -Value '{"version":"new"}'
-        New-QsfStateBackup -StateDirPath $script:TestStateDir -BackupRootPath $script:TestBackupRoot | Out-Null
+        $newBackup = New-QsfStateBackup -StateDirPath $script:TestStateDir -BackupRootPath $script:TestBackupRoot
+        (Get-Item -LiteralPath $oldBackup).CreationTime = [datetime]"2026-07-05T12:00:00"
+        (Get-Item -LiteralPath $newBackup).CreationTime = [datetime]"2026-07-05T12:01:00"
         Set-Content -LiteralPath (Join-Path $script:TestStateDir "memory-store.json") -Value '{"version":"live"}'
 
         Restore-QsfStateBackup -BackupName "latest" -StateDirPath $script:TestStateDir -BackupRootPath $script:TestBackupRoot | Out-Null
@@ -353,14 +360,32 @@ Describe "qsf.ps1 state backups" {
             Should -Match '"version":"new"'
     }
 
+    It "keeps restore latest idempotent by ignoring restore undo backups" {
+        Set-Content -LiteralPath (Join-Path $script:TestStateDir "memory-store.json") -Value '{"version":"old"}'
+        $oldBackup = New-QsfStateBackup -StateDirPath $script:TestStateDir -BackupRootPath $script:TestBackupRoot
+        Set-Content -LiteralPath (Join-Path $script:TestStateDir "memory-store.json") -Value '{"version":"new"}'
+        $newBackup = New-QsfStateBackup -StateDirPath $script:TestStateDir -BackupRootPath $script:TestBackupRoot
+        (Get-Item -LiteralPath $oldBackup).CreationTime = [datetime]"2026-07-05T12:00:00"
+        (Get-Item -LiteralPath $newBackup).CreationTime = [datetime]"2026-07-05T12:01:00"
+        Set-Content -LiteralPath (Join-Path $script:TestStateDir "memory-store.json") -Value '{"version":"live-before-restore"}'
+
+        Restore-QsfStateBackup -BackupName "latest" -StateDirPath $script:TestStateDir -BackupRootPath $script:TestBackupRoot | Out-Null
+        Restore-QsfStateBackup -BackupName "latest" -StateDirPath $script:TestStateDir -BackupRootPath $script:TestBackupRoot | Out-Null
+
+        Get-Content -LiteralPath (Join-Path $script:TestStateDir "memory-store.json") -Raw |
+            Should -Match '"version":"new"'
+        @(Get-ChildItem -LiteralPath $script:TestBackupRoot -Directory -Filter "realtime-restore-*").Count |
+            Should -Be 2
+    }
+
     It "backs up the current state before restoring so a restore is undoable" {
         $backupPath = New-QsfStateBackup -StateDirPath $script:TestStateDir -BackupRootPath $script:TestBackupRoot
         Set-Content -LiteralPath (Join-Path $script:TestStateDir "memory-store.json") -Value '{"records":["live-only"]}'
-        $countBefore = @(Get-ChildItem -LiteralPath $script:TestBackupRoot -Directory -Filter "realtime-*").Count
+        $countBefore = @(Get-ChildItem -LiteralPath $script:TestBackupRoot -Directory -Filter "realtime-restore-*").Count
 
         Restore-QsfStateBackup -BackupName (Split-Path -Leaf $backupPath) -StateDirPath $script:TestStateDir -BackupRootPath $script:TestBackupRoot | Out-Null
 
-        $backups = @(Get-ChildItem -LiteralPath $script:TestBackupRoot -Directory -Filter "realtime-*")
+        $backups = @(Get-ChildItem -LiteralPath $script:TestBackupRoot -Directory -Filter "realtime-restore-*")
         $backups.Count | Should -Be ($countBefore + 1)
         $newest = $backups | Sort-Object CreationTime, Name -Descending | Select-Object -First 1
         Get-Content -LiteralPath (Join-Path $newest.FullName "memory-store.json") -Raw |
@@ -401,6 +426,19 @@ Describe "qsf.ps1 state backups" {
 
         { Restore-QsfStateBackup -BackupName (Split-Path -Leaf $backupPath) -StateDirPath $script:TestStateDir -BackupRootPath $script:TestBackupRoot } |
             Should -Throw "*simulated copy failure*"
+
+        (Join-Path $script:TestStateDir "memory-store.json") | Should -Exist
+        Get-Content -LiteralPath (Join-Path $script:TestStateDir "memory-store.json") -Raw |
+            Should -Match 'live-only'
+    }
+
+    It "rolls the live state dir back when the staged restore install fails" {
+        $backupPath = New-QsfStateBackup -StateDirPath $script:TestStateDir -BackupRootPath $script:TestBackupRoot
+        Set-Content -LiteralPath (Join-Path $script:TestStateDir "memory-store.json") -Value '{"records":["live-only"]}'
+        Mock -CommandName Move-Item -ParameterFilter { "$LiteralPath" -like "*restore-staging*" } -MockWith { throw "simulated install failure" }
+
+        { Restore-QsfStateBackup -BackupName (Split-Path -Leaf $backupPath) -StateDirPath $script:TestStateDir -BackupRootPath $script:TestBackupRoot } |
+            Should -Throw "*simulated install failure*"
 
         (Join-Path $script:TestStateDir "memory-store.json") | Should -Exist
         Get-Content -LiteralPath (Join-Path $script:TestStateDir "memory-store.json") -Raw |

@@ -1715,10 +1715,12 @@ interrupted/failed turns.
 Decision: `qsf.ps1 sleep` backs up the target state directory to
 `state/backups/<name>-<timestamp>/` (keeping the newest five) before invoking the
 sleep update, and `qsf.ps1 restore` rolls back from those backups, backing up the
-current state first so a restore is undoable. The sleep command reports an itemized
-change view (memories added, associations added/strengthened, goal changes, state
-files written) rendered from a structured `SleepChangeRecord` that is also written
-as a `sleep-changes.json` run artifact. Rollback safety was chosen over a `--dry-run`
+current state first to `state/backups/<name>-restore-<timestamp>/` so a restore is
+undoable. Restore undo snapshots are excluded from `restore latest` and
+sleep-backup pruning. The sleep command reports an itemized change view (memories
+added, associations added/strengthened, goal changes, state files written)
+rendered from a structured `SleepChangeRecord` that is also written as a
+`sleep-changes.json` run artifact. Rollback safety was chosen over a `--dry-run`
 mode: sleep output depends on a live model call either way, and a backup keeps the
 real run as the single code path instead of maintaining a plan/apply split.
 

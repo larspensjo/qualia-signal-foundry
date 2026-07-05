@@ -207,11 +207,13 @@ cargo run -p qsf_app -- sleep --state-dir state/realtime --provider openai
 
 Before the launcher-driven run, `qsf.ps1 sleep` copies the state directory to
 `state/backups/<name>-<timestamp>/` (keeping the newest five), and
-`.\scripts\qsf.ps1 restore [<backup>|latest]` rolls the state directory back;
-a restore backs up the current state first, so it is itself undoable. After the
-run, the command prints an itemized change view (memories added, associations
-added/strengthened, goal changes, files written) and writes the same data as a
-`sleep-changes.json` run artifact.
+`.\scripts\qsf.ps1 restore [<backup>|latest]` rolls the state directory back.
+Restore-created undo snapshots use `state/backups/<name>-restore-<timestamp>/`
+and are ignored by `restore latest` and sleep-backup pruning, so repeating
+`restore latest` targets the same newest sleep backup rather than undoing the
+previous restore. After the run, the command prints an itemized change view
+(memories added, associations added/strengthened, goal changes, state files
+written) and writes the same data as a `sleep-changes.json` run artifact.
 
 ### Checkpoint Sleep
 
