@@ -9,9 +9,8 @@ use crate::runtime::run_context::RunContext;
 use qsf_models::ModelResponse;
 
 use super::memory_source::VoiceMemorySourceSnapshot;
-use super::{
-    VOICE_CONTEXT_ASSEMBLY_LATENCY_MS, VOICE_MEMORY_RETRIEVAL_STRATEGY, voice_loop_total_latency_ms,
-};
+use super::trace_recording::voice_loop_total_latency_ms;
+use super::{VOICE_CONTEXT_ASSEMBLY_LATENCY_MS, VOICE_MEMORY_RETRIEVAL_STRATEGY};
 
 pub(crate) struct VoiceLoopReport<'a> {
     pub(crate) transcript_session: &'a TranscriptProviderSession,
