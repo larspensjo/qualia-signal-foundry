@@ -62,9 +62,17 @@ pub struct SleepUpdateRunSummary {
 }
 
 pub fn run_sleep_update(options: SleepUpdateOptions) -> anyhow::Result<SleepUpdateRunSummary> {
+    // The realtime server nests continuity state under `<state_dir>/continuity/<session_id>/`,
+    // so the raw `--state-dir` (e.g. `state/realtime`) is a root, not the session directory.
+    // Resolve it to the concrete session dir; a flat layout resolves to itself, and an absent
+    // session falls back to the raw dir so the smoke path still reports `NoPersistedSession`.
+    let session_state_dir = qsf_session::resolve_continuity_session_dir(&options.state_dir)?
+        .session_dir()
+        .map(std::path::Path::to_path_buf)
+        .unwrap_or_else(|| options.state_dir.clone());
     let state_resolution = StateDirectoryResolution {
-        resume_state_dir: options.state_dir.clone(),
-        persist_state_dir: options.state_dir.clone(),
+        resume_state_dir: session_state_dir.clone(),
+        persist_state_dir: session_state_dir,
         legacy_fallback_used: false,
     };
     let mut context = RunContext::create_in_with_workspace_root(
@@ -907,15 +915,27 @@ mod tests {
 
     use super::{SleepUpdateOptions, build_sleep_input, run_sleep_update};
 
+    // The current directory is process-global, so every cwd-mutating test must serialize
+    // through this lock; otherwise concurrent tests swap cwd out from under each other and
+    // sleep artifacts land in the wrong tree.
+    static CWD_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
     struct CurrentDirGuard {
         original: PathBuf,
+        _lock: std::sync::MutexGuard<'static, ()>,
     }
 
     impl CurrentDirGuard {
         fn enter(path: &Path) -> Self {
+            let lock = CWD_LOCK
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
             let original = std::env::current_dir().unwrap();
             std::env::set_current_dir(path).unwrap();
-            Self { original }
+            Self {
+                original,
+                _lock: lock,
+            }
         }
     }
 
@@ -1074,6 +1094,66 @@ mod tests {
         assert!(second.change_record.state_files_written.is_empty());
 
         drop(cwd_guard);
+
+        fs::remove_dir_all(base_dir).unwrap();
+    }
+
+    // Regression: the realtime server nests continuity state under
+    // `state/realtime/continuity/<session_id>/`, but sleep used to read the manifest directly
+    // from `state/realtime`, so `qsf sleep` reported `NoPersistedSession` against a real
+    // session. Sleeping the root must now resolve and consume the nested `default` session.
+    #[test]
+    fn sleep_update_command_consumes_a_nested_realtime_session() {
+        use crate::sleep::change_view::SleepStateOutcome;
+
+        let base_dir =
+            std::env::temp_dir().join(format!("qsf-sleep-nested-{}", uuid::Uuid::new_v4()));
+        let session_dir = base_dir
+            .join("state")
+            .join("realtime")
+            .join("continuity")
+            .join("default");
+        fs::create_dir_all(&session_dir).unwrap();
+
+        let mut previous = SessionState::new_with_id("default".to_string(), config());
+        previous.turns.push(crate::session::tests::fake_turn(0));
+        crate::session::persistence::persist_session_state(&previous, &session_dir).unwrap();
+        ContinuityManifest {
+            current_session_id: Some(previous.session_id.clone()),
+            current_session_state_path: Some("session-state.json".into()),
+            sleep_pending: true,
+            resume_mode: ResumeMode::AwakeContinuation,
+            ..ContinuityManifest::default()
+        }
+        .persist(session_dir.join("continuity-manifest.json"))
+        .unwrap();
+
+        let cwd_guard = CurrentDirGuard::enter(&base_dir);
+        // Sleep the *root*, exactly as `qsf.ps1 sleep` does with its default `state/realtime`.
+        let summary = run_sleep_update(SleepUpdateOptions {
+            state_dir: std::path::PathBuf::from("state/realtime"),
+            requested_provider: "mock".to_string(),
+            workspace_root: None,
+        })
+        .unwrap();
+        drop(cwd_guard);
+
+        assert_eq!(summary.status, "completed");
+        assert_eq!(
+            summary.change_record.state_outcome,
+            SleepStateOutcome::ConsumedSession
+        );
+        assert_eq!(summary.change_record.session_id.as_deref(), Some("default"));
+
+        let manifest =
+            ContinuityManifest::load_or_default(session_dir.join("continuity-manifest.json"))
+                .unwrap();
+        assert!(!manifest.sleep_pending);
+        assert_eq!(
+            manifest.last_sleep_consumed_session_id.as_deref(),
+            Some("default")
+        );
+        assert!(session_dir.join("consolidated-brief.json").exists());
 
         fs::remove_dir_all(base_dir).unwrap();
     }

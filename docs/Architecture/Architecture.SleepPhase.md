@@ -28,6 +28,17 @@ boundary for decision-kind candidates.
   ([sleep/update.rs](../../crates/qsf_app/src/sleep/update.rs),
   [cli.rs](../../crates/qsf_app/src/cli.rs),
   [qsf.ps1](../../scripts/qsf.ps1))
+- Continuity-directory resolution shared by the realtime writer and the sleep
+  reader, so `--state-dir state/realtime` resolves to the session the realtime
+  server actually wrote. The realtime server nests continuity state under
+  `<state_dir>/continuity/<session_id>/`; sleep understands both that nested
+  layout (selecting the stable `default` session, the sole session, or erroring
+  on an ambiguous set) and the flat layout used by the text-loop experiments. A
+  single source of truth prevents the writer and reader from disagreeing on the
+  manifest path (the drift that previously made sleep report
+  `no_persisted_session` against a real session)
+  ([continuity.rs](../../crates/qsf_session/src/continuity.rs),
+  [sleep/update.rs](../../crates/qsf_app/src/sleep/update.rs))
 - `reviewed_memory_draft` experiment that converts a sleep report into a memory
   draft file
   ([experiments/reviewed_memory_draft.rs](../../crates/qsf_app/src/experiments/reviewed_memory_draft.rs))

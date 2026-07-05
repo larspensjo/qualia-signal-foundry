@@ -1,5 +1,6 @@
 pub mod context;
 pub mod continuation;
+pub mod continuity;
 pub mod conversation;
 pub mod exchange;
 pub mod live_state;
@@ -14,6 +15,10 @@ pub mod tools;
 pub use context::{
     ContextAssembly, ContextBudget, ContextFragment, ContextOmission, ContextSelection,
     ContextSourceKind,
+};
+pub use continuity::{
+    ContinuitySessionResolution, DEFAULT_SESSION_ID, continuity_root_dir, continuity_session_dir,
+    resolve_continuity_session_dir,
 };
 pub use conversation::ContentHash;
 pub use exchange::{

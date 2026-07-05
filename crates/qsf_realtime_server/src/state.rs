@@ -19,7 +19,9 @@ use crate::realtime::turn_context::TurnContextCapture;
 use crate::realtime::volition_injection::build_stable_baseline_instructions;
 use crate::realtime::volition_inspection_capture::VolitionInspectionCapture;
 
-pub const DEFAULT_QSF_SESSION_ID: &str = "default";
+/// The stable session id for non-random mode. Sourced from `qsf_session` so the realtime
+/// writer and the sleep reader agree on the same value (see [`qsf_session::continuity`]).
+pub const DEFAULT_QSF_SESSION_ID: &str = qsf_session::DEFAULT_SESSION_ID;
 const DEFAULT_OPENAI_BASE_URL: &str = "https://api.openai.com";
 const DEFAULT_INSTRUCTIONS: &str = "\
 Speak briefly. Keep the browser UI informed, keep secrets server-side, and preserve the QSF trust boundary. \
@@ -96,7 +98,7 @@ impl AppState {
         let state_dir = state_dir.into();
         std::fs::create_dir_all(&state_dir)
             .with_context(|| format!("failed to create state dir `{}`", state_dir.display()))?;
-        let continuity_root = state_dir.join("continuity");
+        let continuity_root = qsf_session::continuity_root_dir(&state_dir);
         std::fs::create_dir_all(&continuity_root).with_context(|| {
             format!(
                 "failed to create continuity root `{}`",

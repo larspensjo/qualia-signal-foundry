@@ -1733,3 +1733,17 @@ The change view and `sleep-changes.json` make each sleep run reviewable at a gla
 backups live inside the git-ignored `state/` tree. The launcher remains the
 supported operator surface for backup/restore; raw `cargo run -p qsf_app -- sleep`
 does not create backups.
+
+## 2026-07-05 - Continuity directory layout is one source of truth in qsf_session
+Decision: The on-disk continuity layout (the `continuity/<session_id>/` nesting, the
+stable `default` session id, and the resolver that maps a state-directory root to a
+concrete session directory) is defined once in the shared session crate and used by both
+the realtime writer and the sleep reader.
+Context: The realtime server nested continuity state under the state directory while the
+sleep command read the manifest directly from the root, so the two disagreed on the
+manifest path and sleep silently fell back to a smoke-test transcript against a real
+persisted session. Duplicated layout knowledge is what let them drift.
+Consequences: Any new reader or writer of continuity state resolves paths through the
+shared helpers rather than re-deriving them. Sleep understands both the nested realtime
+layout and the flat text-loop layout; an ambiguous multi-session root is an explicit
+error rather than a silent wrong guess.
