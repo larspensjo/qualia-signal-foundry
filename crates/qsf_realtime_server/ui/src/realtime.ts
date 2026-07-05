@@ -1281,3 +1281,124 @@ function formatLabelValue(value: string): string {
     .map((part) => part[0].toUpperCase() + part.slice(1))
     .join(" ");
 }
+
+/// The exact prefix every volition turn-context packet's rendered text begins with — on the
+/// qualified-winner, no-qualifier, and coherence-only paths alike. The realtime server renders it
+/// in `crates/qsf_realtime_server/src/realtime/volition_injection.rs`; a Rust guard test
+/// (`packet_text_starts_with_ui_locator_prefix`) pins it so a reword there fails CI before this
+/// locator silently stops matching.
+export const VOLITION_INJECTED_TEXT_PREFIX = "Simulated volition context for this turn";
+
+/// Result of the injected-packet lookup (`selectInjectedVolitionText`, Task 2). Three states so no
+/// consumer can claim nothing was injected when the text is merely unavailable: `found` carries the
+/// verbatim packet text; `none_injected` means the exchange-matched turn context was inspected and
+/// carried no volition packet; `unavailable` means either capture is missing or the two captures
+/// describe different turns (the expected non-atomic watch-channel window).
+export type InjectedVolitionText =
+  | { status: "found"; text: string }
+  | { status: "none_injected" }
+  | { status: "unavailable" };
+
+export type VolitionVerdictKind =
+  | "not_evaluated"
+  | "no_decision"
+  | "context_only"
+  | "quiet"
+  | "spoke";
+
+export interface VolitionVerdict {
+  /// Machine-readable state, used only to pick a style class in the renderer.
+  kind: VolitionVerdictKind;
+  /// One plain-English sentence describing volition's role in the latest reply.
+  line: string;
+  /// Which turn this verdict describes, e.g. "Latest evaluated turn · exchange 4". Null before any
+  /// capture arrives. Surfaced so drift between the panel and the visible answer stays honest.
+  caption: string | null;
+  /// For a spoken turn: whether an extra initiative line was actually injected ("nudge added") or
+  /// held back with a reason ("nudge held back (Anti Nag Repeat)"). Null otherwise. A goal can win
+  /// and shape framing while its initiative line is suppressed, so this is reported separately.
+  nudge: string | null;
+}
+
+/// Derive the plain-English verdict for the latest evaluated turn. Takes the exchange-matched
+/// injected-packet lookup as an explicit input: the server can inject a coherence-only packet
+/// (declined candidates, no arbitration winner) on a turn whose capture has `decision: null`, so
+/// the no-decision wording is only safe when no matching packet was found. Total: returns a
+/// defined verdict for every input, including before any capture arrives.
+export function selectVolitionVerdict(
+  state: ConversationState,
+  injected: InjectedVolitionText,
+): VolitionVerdict {
+  const capture = state.latestVolitionState;
+  if (capture === null) {
+    return {
+      kind: "not_evaluated",
+      line: "No evaluated turn yet — awaiting the first volition-evaluated turn.",
+      caption: null,
+      nudge: null,
+    };
+  }
+
+  const caption = `Latest evaluated turn · exchange ${capture.exchangeIndex}`;
+  const decision = capture.decision;
+  if (decision === null) {
+    if (injected.status === "found") {
+      return {
+        kind: "context_only",
+        line: "No goal led this turn, but volition still injected context (declined-goal coherence packet).",
+        caption,
+        nudge: null,
+      };
+    }
+    // Deliberately does not claim "nothing was injected": `injected` may be merely unavailable
+    // during the non-atomic watch-channel window.
+    return {
+      kind: "no_decision",
+      line: "Volition was watching but recorded no per-turn decision.",
+      caption,
+      nudge: null,
+    };
+  }
+
+  if (decision.winner === null) {
+    // A no-qualifier turn still injects a packet telling the model volition stays quiet, so this
+    // must not read as "base-model reply".
+    const count = decision.belowThreshold.length;
+    return {
+      kind: "quiet",
+      line: `No goal qualified to lead this turn — ${count} goal(s) below the bar (threshold ${decision.qualificationThreshold}). No winning goal shaped this reply.`,
+      caption,
+      nudge: null,
+    };
+  }
+
+  const nudge = decision.lastInitiativeRenderedLinePresent
+    ? "nudge added"
+    : decision.lastInitiativeSuppressionReason !== null
+      ? `nudge held back (${formatLabelValue(decision.lastInitiativeSuppressionReason)})`
+      : null;
+  return {
+    kind: "spoke",
+    line: `Volition spoke: ${decision.winner.winnerGoalTitle} tilted this reply — ${describeShapingIntensity(decision.shapingIntensity)}.`,
+    caption,
+    nudge,
+  };
+}
+
+/// Map the wire shaping-intensity string to a plain adverb. `none` still reads as "lightly" (not
+/// "not at all") because a winning goal always injects a framing packet — the intensity governs how
+/// hard, not whether. Unknown values fall back to a title-cased label rather than throwing.
+function describeShapingIntensity(intensity: string): string {
+  switch (intensity.toLowerCase()) {
+    case "none":
+      return "lightly";
+    case "low":
+      return "gently";
+    case "medium":
+      return "moderately";
+    case "high":
+      return "strongly";
+    default:
+      return formatLabelValue(intensity);
+  }
+}
