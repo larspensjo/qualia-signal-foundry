@@ -53,7 +53,7 @@ pub fn render_change_view(record: &SleepChangeRecord) -> String {
 
     match record.state_outcome {
         SleepStateOutcome::NoPersistedSession => {
-            view.push_str("Sleep update - No persisted session to consume; ran the smoke-test summarization only. state unchanged.\n");
+            view.push_str("Sleep update - No persisted session to consume; ran the smoke-test summarization only; state unchanged.\n");
             return view;
         }
         SleepStateOutcome::AlreadyConsumed => {
