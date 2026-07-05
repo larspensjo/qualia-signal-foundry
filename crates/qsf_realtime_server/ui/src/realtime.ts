@@ -227,7 +227,6 @@ export interface ConversationState {
   transcript: TranscriptEntry[];
   liveTranscript: string;
   responseDraft: string;
-  lastEvent: string | null;
   /// Newest-first collapsed history of relay/lifecycle events (see EventLogEntry).
   /// Kept after stop for post-hoc review; cleared when a new session is allocated.
   eventLog: EventLogEntry[];
@@ -311,7 +310,6 @@ export const INITIAL_STATE: ConversationState = {
   transcript: [],
   liveTranscript: "",
   responseDraft: "",
-  lastEvent: null,
   eventLog: [],
   phaseTimeline: [],
   error: null,
@@ -361,7 +359,6 @@ export function reduceConversationState(
         ...state,
         connection: "error",
         error: action.message,
-        lastEvent: action.message,
         eventLog: appendEventLog(state.eventLog, "connection_error", action.atMs, state.phase),
       };
     case "server_status":
@@ -379,7 +376,6 @@ export function reduceConversationState(
       return {
         ...state,
         connection: "stopping",
-        lastEvent: "stopping",
         eventLog: appendEventLog(state.eventLog, "stopping", action.atMs, state.phase),
       };
     case "stopped":
@@ -390,7 +386,6 @@ export function reduceConversationState(
         sessionId: null,
         liveTranscript: "",
         responseDraft: "",
-        lastEvent: "stopped",
         eventLog: appendEventLog(state.eventLog, "stopped", action.atMs, "idle"),
         phaseTimeline: appendPhaseTimeline(state.phaseTimeline, "idle", action.atMs),
         warning: null,
@@ -846,10 +841,7 @@ function applyRelayEnvelope(
   envelope: RelayEnvelope,
   atMs: number,
 ): ConversationState {
-  const base = {
-    ...state,
-    lastEvent: envelope.kind,
-  };
+  const base = { ...state };
   const next = applyRelayEnvelopeKind(base, envelope);
   return {
     ...next,
@@ -859,8 +851,8 @@ function applyRelayEnvelope(
 }
 
 /// The per-kind switch that maps a relay envelope to the next runtime state. The
-/// wrapper `applyRelayEnvelope` stamps `lastEvent` and the event log around it, so
-/// this returns `{ ...base, ... }` for each kind without touching history.
+/// wrapper `applyRelayEnvelope` stamps the event log and phase timeline around it,
+/// so this returns `{ ...base, ... }` for each kind without touching history.
 function applyRelayEnvelopeKind(
   base: ConversationState,
   envelope: RelayEnvelope,

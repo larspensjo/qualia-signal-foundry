@@ -389,6 +389,49 @@ button[aria-pressed="true"]:hover:not(:disabled) {
   line-height: 1.5;
 }
 
+.event-ticker {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: grid;
+  gap: 0.1rem;
+  font-family: Consolas, "Cascadia Mono", ui-monospace, monospace;
+  font-size: 0.78rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.event-ticker li {
+  display: grid;
+  grid-template-columns: 11ch minmax(0, 1fr) auto;
+  gap: 0.6rem;
+  align-items: baseline;
+}
+
+.event-ticker-time,
+.event-ticker-delta {
+  color: var(--muted);
+}
+
+.event-ticker-kind {
+  color: var(--accent-2);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.event-ticker li:first-child .event-ticker-kind {
+  color: var(--text);
+}
+
+.event-ticker li:nth-child(n + 9) {
+  opacity: 0.55;
+}
+
+.event-ticker-empty {
+  color: var(--muted);
+  font-style: italic;
+}
+
 .details-panel audio {
   display: block;
   width: calc(100% - 2.4rem);

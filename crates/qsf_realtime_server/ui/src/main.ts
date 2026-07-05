@@ -15,6 +15,7 @@ import {
   type SdpExchangeResponse,
   type SessionAllocationResponse,
   selectCanSubmitTextTurn,
+  selectEventTickerModel,
   selectInjectedVolitionText,
   selectMuteButton,
   selectVolitionPanelModel,
@@ -32,7 +33,7 @@ interface UiRefs {
   connectionStatus: HTMLElement;
   runtimePhase: HTMLElement;
   liveTranscript: HTMLElement;
-  lastEvent: HTMLElement;
+  eventTicker: HTMLOListElement;
   transcriptList: HTMLOListElement;
   errorBanner: HTMLElement;
   warningBanner: HTMLElement;
@@ -117,8 +118,10 @@ root.innerHTML = `
         </div>
         <dl class="details">
           <div>
-            <dt>Last event</dt>
-            <dd data-role="last-event">None yet</dd>
+            <dt>Recent events</dt>
+            <dd>
+              <ol data-role="event-ticker" class="event-ticker" aria-label="Recent relay events"></ol>
+            </dd>
           </div>
           <div>
             <dt>Media</dt>
@@ -460,7 +463,31 @@ function render() {
   refs.runtimePhase.textContent = describeRuntimePhase(state.phase);
   refs.sessionId.textContent = state.sessionId ?? "—";
   refs.liveTranscript.textContent = state.liveTranscript || "Waiting for the next turn.";
-  refs.lastEvent.textContent = state.lastEvent ?? "None yet";
+
+  const tickerRows = selectEventTickerModel(state);
+  if (tickerRows.length === 0) {
+    const empty = document.createElement("li");
+    empty.className = "event-ticker-empty";
+    empty.textContent = "None yet";
+    refs.eventTicker.replaceChildren(empty);
+  } else {
+    refs.eventTicker.replaceChildren(
+      ...tickerRows.map((row) => {
+        const item = document.createElement("li");
+        const time = document.createElement("span");
+        time.className = "event-ticker-time";
+        time.textContent = row.timeLabel;
+        const kind = document.createElement("span");
+        kind.className = "event-ticker-kind";
+        kind.textContent = row.countLabel === null ? row.kind : `${row.kind} ${row.countLabel}`;
+        const delta = document.createElement("span");
+        delta.className = "event-ticker-delta";
+        delta.textContent = row.deltaLabel ?? "";
+        item.append(time, kind, delta);
+        return item;
+      }),
+    );
+  }
 
   refs.errorBanner.hidden = state.error === null;
   refs.errorBanner.textContent = state.error ?? "";
@@ -622,7 +649,7 @@ function collectRefs(container: HTMLElement): UiRefs {
     connectionStatus: query<HTMLElement>('[data-role="connection"]'),
     runtimePhase: query<HTMLElement>('[data-role="phase"]'),
     liveTranscript: query<HTMLElement>('[data-role="live-transcript"]'),
-    lastEvent: query<HTMLElement>('[data-role="last-event"]'),
+    eventTicker: query<HTMLOListElement>('[data-role="event-ticker"]'),
     transcriptList: query<HTMLOListElement>('[data-role="transcript"]'),
     errorBanner: query<HTMLElement>('[data-role="error"]'),
     warningBanner: query<HTMLElement>('[data-role="warning"]'),
