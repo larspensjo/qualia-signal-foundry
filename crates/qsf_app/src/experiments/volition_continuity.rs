@@ -190,17 +190,58 @@ fn snapshot_path_from_manifest(
     })
 }
 
-/// Read the realtime continuity artifacts for `session_id` from `state_root` and run pure
-/// consolidation. Returns `None` when no continuity snapshot exists for that session (i.e. no
-/// realtime volition continuity has been persisted yet).
+struct RealtimeContinuityPaths {
+    continuity_dir: PathBuf,
+    diagnostics_path: PathBuf,
+}
+
+fn realtime_continuity_paths(
+    state_root_or_continuity_dir: &Path,
+    session_id: &str,
+) -> RealtimeContinuityPaths {
+    if state_root_or_continuity_dir
+        .join("continuity-manifest.json")
+        .exists()
+    {
+        let state_root = state_root_or_continuity_dir
+            .parent()
+            .and_then(|continuity_root| {
+                (continuity_root.file_name().and_then(|name| name.to_str()) == Some("continuity"))
+                    .then(|| continuity_root.parent())
+                    .flatten()
+            })
+            .unwrap_or(state_root_or_continuity_dir);
+        return RealtimeContinuityPaths {
+            continuity_dir: state_root_or_continuity_dir.to_path_buf(),
+            diagnostics_path: state_root
+                .join("diagnostics")
+                .join(format!("{session_id}.jsonl")),
+        };
+    }
+
+    RealtimeContinuityPaths {
+        continuity_dir: state_root_or_continuity_dir
+            .join("continuity")
+            .join(session_id),
+        diagnostics_path: state_root_or_continuity_dir
+            .join("diagnostics")
+            .join(format!("{session_id}.jsonl")),
+    }
+}
+
+/// Read the realtime continuity artifacts for `session_id` from either the realtime state root or
+/// the already-resolved per-session continuity directory and run pure consolidation. Returns
+/// `None` when no continuity snapshot exists for that session (i.e. no realtime volition
+/// continuity has been persisted yet).
 ///
 /// Called both from `VolitionContinuityExperiment` and from the sleep-pass
 /// `commit_cross_session_sleep` flow so consolidation runs through the standard sleep path.
 pub(crate) fn consolidate_session_volition(
-    state_root: &Path,
+    state_root_or_continuity_dir: &Path,
     session_id: &str,
 ) -> anyhow::Result<Option<VolitionConsolidationReport>> {
-    let continuity_dir = state_root.join("continuity").join(session_id);
+    let paths = realtime_continuity_paths(state_root_or_continuity_dir, session_id);
+    let continuity_dir = paths.continuity_dir;
     let manifest_path = continuity_dir.join("continuity-manifest.json");
     if !manifest_path.exists() {
         return Ok(None);
@@ -223,10 +264,7 @@ pub(crate) fn consolidate_session_volition(
         snapshot,
     };
 
-    let diagnostics_path = state_root
-        .join("diagnostics")
-        .join(format!("{session_id}.jsonl"));
-    let initiative_outcomes = load_initiative_outcomes(&diagnostics_path)?;
+    let initiative_outcomes = load_initiative_outcomes(&paths.diagnostics_path)?;
 
     let reviewed_seed_path = continuity_dir.join("volition-seed.reviewed.json");
     let reviewed_seed = if reviewed_seed_path.exists() {
@@ -273,11 +311,12 @@ fn fixture_for_seed_id(seed_fixture_id: &str) -> Option<VolitionFixture> {
 pub(crate) fn run_sleep_volition_goal_maintenance(
     context: &mut RunContext,
     client: &dyn ModelClient,
-    state_root: &Path,
+    state_root_or_continuity_dir: &Path,
     session_id: &str,
     whole_history_input: &str,
 ) -> anyhow::Result<Option<SleepVolitionMaintenanceSummary>> {
-    let continuity_dir = state_root.join("continuity").join(session_id);
+    let paths = realtime_continuity_paths(state_root_or_continuity_dir, session_id);
+    let continuity_dir = paths.continuity_dir;
     let manifest_path = continuity_dir.join("continuity-manifest.json");
     if !manifest_path.exists() {
         return Ok(None);

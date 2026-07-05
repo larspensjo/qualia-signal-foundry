@@ -471,7 +471,7 @@ mod tests {
     use uuid::Uuid;
 
     use std::fs;
-    use std::path::PathBuf;
+    use std::path::{Path, PathBuf};
 
     use super::{LiveMemoryExtractionExperiment, build_live_memory_extraction_input};
     use crate::context::{ContextAssembly, ContextBudget, ContextFragment, ContextSelection};
@@ -486,6 +486,10 @@ mod tests {
     };
     use qsf_models::MockModelClient;
     use qsf_session::{ToolExecutionRecord, ToolExecutionStatus, ToolPermissionDecision};
+    use qsf_volition::{
+        REALTIME_SEED_FIXTURE_ID, VolitionContinuitySnapshot, VolitionState,
+        build_state_inspection, persist_volition_continuity_snapshot, realtime_seed_fixture,
+    };
 
     #[test]
     fn live_memory_input_uses_turns_as_canonical_source_without_duplicating_exchange_text() {
@@ -732,6 +736,55 @@ mod tests {
     }
 
     #[test]
+    fn live_memory_sleep_runs_volition_maintenance_from_resolved_continuity_root() {
+        let base_dir =
+            std::env::temp_dir().join(format!("qsf-live-memory-volition-run-{}", Uuid::new_v4()));
+        let continuity_root = base_dir.join("state/realtime/continuity/default");
+        let mut previous =
+            SessionState::new_with_id("continuity-session".to_string(), config_with_warm(0));
+        previous.turns.push(turn_with_memory(
+            0,
+            "Remember to preserve sleep volition continuity.",
+            "The sleep pass should see the realtime volition snapshot.",
+        ));
+        persist_session_state(&previous, &continuity_root).unwrap();
+        write_volition_snapshot_fixture(&continuity_root, &previous.session_id).unwrap();
+        ContinuityManifest {
+            current_session_id: Some(previous.session_id.clone()),
+            current_session_state_path: Some(PathBuf::from("session-state.json")),
+            current_volition_snapshot_path: Some(PathBuf::from("volition-state.json")),
+            sleep_pending: true,
+            resume_mode: ResumeMode::AwakeContinuation,
+            ..ContinuityManifest::default()
+        }
+        .persist(continuity_root.join("continuity-manifest.json"))
+        .unwrap();
+
+        let mut context = RunContext::create_in(&base_dir, "live-memory-volition-run").unwrap();
+        let experiment = LiveMemoryExtractionExperiment;
+        let outcome = experiment
+            .run_with_provider_at_state_dir(&mut context, "mock", &continuity_root)
+            .unwrap();
+
+        let traces = fs::read_to_string(context.run_dir().join("traces.jsonl")).unwrap();
+        assert!(traces.contains(r#""operation":"live-goal-formation""#));
+        assert!(traces.contains(r#""operation":"goal-coherence-check""#));
+        assert!(
+            continuity_root
+                .join("volition-continuity-report.json")
+                .exists()
+        );
+        assert!(
+            outcome
+                .observations
+                .iter()
+                .any(|observation| observation.contains("Volition consolidation"))
+        );
+
+        fs::remove_dir_all(base_dir).unwrap();
+    }
+
+    #[test]
     fn live_memory_experiment_skips_commit_when_root_is_absent() {
         let base_dir =
             std::env::temp_dir().join(format!("qsf-live-memory-empty-{}", Uuid::new_v4()));
@@ -788,6 +841,28 @@ mod tests {
 
     fn config() -> SessionConfig {
         config_with_warm(2)
+    }
+
+    fn write_volition_snapshot_fixture(
+        continuity_dir: &Path,
+        session_id: &str,
+    ) -> anyhow::Result<()> {
+        fs::create_dir_all(continuity_dir)?;
+        let fixture = realtime_seed_fixture();
+        let state = VolitionState::from_fixture(&fixture);
+        let inspection = build_state_inspection(&state, &fixture);
+        let snapshot = VolitionContinuitySnapshot::new(
+            session_id,
+            "2026-07-02T00:00:00Z",
+            REALTIME_SEED_FIXTURE_ID,
+            state,
+            inspection,
+        );
+        persist_volition_continuity_snapshot(
+            &snapshot,
+            continuity_dir.join("volition-state.json"),
+        )?;
+        Ok(())
     }
 
     fn config_with_warm(warm_threshold: usize) -> SessionConfig {
