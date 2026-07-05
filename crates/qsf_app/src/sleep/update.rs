@@ -10,6 +10,10 @@ use crate::observability::trace::{TraceRecord, elapsed_ns};
 use crate::runtime::run_context::RunContext;
 use crate::session::resume::ResumeInputs;
 use crate::session::{SessionState, SleepRecord, StateDirectoryResolution};
+use crate::sleep::change_view::{
+    NewAssociationChange, NewMemoryChange, SleepChangeRecord, SleepStateOutcome,
+    StrengthenedAssociationChange,
+};
 use crate::sleep::{SleepInputBundle, SleepReport, summarize_session};
 
 const SESSION_TEXT: &str = "Session transcript:\n- We introduced typed model roles and a deterministic mock model.\n- The runtime still routes observable behavior through explicit events and traces.\n- Sleep phase should summarize the session, extract candidate memories, surface open questions, and keep decision candidates provisional.\n- Nothing in the sleep phase should silently become an accepted decision.";
@@ -45,7 +49,7 @@ pub struct SleepUpdateOutcome {
     pub extra_artifacts: Vec<String>,
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct SleepUpdateRunSummary {
     pub run_id: String,
     pub run_dir: PathBuf,
@@ -54,6 +58,7 @@ pub struct SleepUpdateRunSummary {
     pub event_count: usize,
     pub trace_count: usize,
     pub outcome: SleepUpdateOutcome,
+    pub change_record: SleepChangeRecord,
 }
 
 pub fn run_sleep_update(options: SleepUpdateOptions) -> anyhow::Result<SleepUpdateRunSummary> {
@@ -88,12 +93,12 @@ pub fn run_sleep_update(options: SleepUpdateOptions) -> anyhow::Result<SleepUpda
         None,
     )?;
 
-    let outcome = match run_sleep_update_with_context(
+    let (outcome, change_record) = match run_sleep_update_with_context(
         &mut context,
         &options.requested_provider,
         &state_resolution,
     ) {
-        Ok(outcome) => outcome,
+        Ok((outcome, change_record)) => (outcome, change_record),
         Err(error) => {
             let error_message = error.to_string();
             engine_logging::engine_error!(
@@ -141,6 +146,14 @@ pub fn run_sleep_update(options: SleepUpdateOptions) -> anyhow::Result<SleepUpda
         state_resolution.persist_state_dir.display()
     );
 
+    let changes_path = context.run_dir().join("sleep-changes.json");
+    fs::write(&changes_path, serde_json::to_string_pretty(&change_record)?).with_context(|| {
+        format!(
+            "failed to write sleep changes JSON for run {}",
+            context.run_id()
+        )
+    })?;
+
     Ok(SleepUpdateRunSummary {
         run_id: context.run_id().to_string(),
         run_dir: context.run_dir().to_path_buf(),
@@ -149,6 +162,7 @@ pub fn run_sleep_update(options: SleepUpdateOptions) -> anyhow::Result<SleepUpda
         event_count: context.event_count(),
         trace_count: context.trace_count(),
         outcome,
+        change_record,
     })
 }
 
@@ -156,7 +170,7 @@ pub(crate) fn run_sleep_update_with_context(
     context: &mut RunContext,
     requested_provider: &str,
     state_resolution: &StateDirectoryResolution,
-) -> anyhow::Result<SleepUpdateOutcome> {
+) -> anyhow::Result<(SleepUpdateOutcome, SleepChangeRecord)> {
     let resume_inputs =
         crate::session::resume::load_resume_inputs(&state_resolution.resume_state_dir)?;
     let input = build_sleep_input(&resume_inputs);
@@ -281,11 +295,28 @@ pub(crate) fn commit_cross_session_sleep(
     report: &SleepReport,
     mut outcome: SleepUpdateOutcome,
     state_resolution: &StateDirectoryResolution,
-) -> anyhow::Result<SleepUpdateOutcome> {
+) -> anyhow::Result<(SleepUpdateOutcome, SleepChangeRecord)> {
     let resume_inputs =
         crate::session::resume::load_resume_inputs(&state_resolution.resume_state_dir)?;
     let Some(session) = resume_inputs.previous_session.clone() else {
-        return Ok(outcome);
+        return Ok((
+            outcome,
+            SleepChangeRecord {
+                state_outcome: SleepStateOutcome::NoPersistedSession,
+                session_id: None,
+                state_dir: state_resolution.persist_state_dir.display().to_string(),
+                new_memories: vec![],
+                skipped_duplicates: vec![],
+                new_associations: vec![],
+                strengthened_associations: vec![],
+                admitted_goal_id: None,
+                declined_goal_candidate_id: None,
+                swept_goal_ids: vec![],
+                open_question_count: report.open_questions.len(),
+                decision_candidate_count: report.decision_candidates.len(),
+                state_files_written: vec![],
+            },
+        ));
     };
 
     if resume_inputs
@@ -299,7 +330,24 @@ pub(crate) fn commit_cross_session_sleep(
             "Session `{}` was already consumed by sleep; state was left unchanged.",
             session.session_id
         ));
-        return Ok(outcome);
+        return Ok((
+            outcome,
+            SleepChangeRecord {
+                state_outcome: SleepStateOutcome::AlreadyConsumed,
+                session_id: Some(session.session_id.clone()),
+                state_dir: state_resolution.persist_state_dir.display().to_string(),
+                new_memories: vec![],
+                skipped_duplicates: vec![],
+                new_associations: vec![],
+                strengthened_associations: vec![],
+                admitted_goal_id: None,
+                declined_goal_candidate_id: None,
+                swept_goal_ids: vec![],
+                open_question_count: report.open_questions.len(),
+                decision_candidate_count: report.decision_candidates.len(),
+                state_files_written: vec![],
+            },
+        ));
     }
 
     let as_of = latest_sleep_record_completion(&session)
@@ -326,12 +374,34 @@ pub(crate) fn commit_cross_session_sleep(
         &sleep_run_id,
     );
 
+    let new_memories = plan
+        .new_records
+        .iter()
+        .map(|record| NewMemoryChange {
+            id: record.id.clone(),
+            title: record.title.clone(),
+            importance: record.importance,
+        })
+        .collect::<Vec<_>>();
+    let new_association_changes = plan
+        .new_associations
+        .iter()
+        .map(|association| NewAssociationChange {
+            from_id: association.from_memory_id.clone(),
+            to_id: association.to_memory_id.clone(),
+            weight: association.weight,
+            reason: association.reason.clone(),
+        })
+        .collect::<Vec<_>>();
+    let skipped_duplicates = plan.skipped_duplicates.clone();
+
     store.append_records(plan.new_records.clone());
     store.append_associations(plan.new_associations.clone());
     store
         .contents_mut()
         .processed_ranges
         .extend(plan.processed_ranges.clone());
+    let mut strengthened_changes = Vec::new();
     for (from_id, to_id, new_weight) in &plan.strengthened_associations {
         if let Some(existing) = store
             .contents_mut()
@@ -341,6 +411,12 @@ pub(crate) fn commit_cross_session_sleep(
                 association.from_memory_id == *from_id && association.to_memory_id == *to_id
             })
         {
+            strengthened_changes.push(StrengthenedAssociationChange {
+                from_id: from_id.clone(),
+                to_id: to_id.clone(),
+                old_weight: existing.weight,
+                new_weight: *new_weight,
+            });
             existing.weight = *new_weight;
             existing.last_reinforced_at = as_of;
         }
@@ -365,6 +441,9 @@ pub(crate) fn commit_cross_session_sleep(
 
     let whole_history_input = session_sleep_input(&session).session_text;
     let maintenance_client = qsf_models::build_client(requested_provider)?;
+    let mut admitted_goal_id = None;
+    let mut declined_goal_candidate_id = None;
+    let mut swept_goal_ids = Vec::new();
     if let Some(maintenance) = crate::experiments::run_sleep_volition_goal_maintenance(
         context,
         maintenance_client.as_ref(),
@@ -372,12 +451,18 @@ pub(crate) fn commit_cross_session_sleep(
         &session.session_id,
         &whole_history_input,
     )? {
-        if let Some(admitted) = maintenance.admitted_goal_id {
+        admitted_goal_id = maintenance.admitted_goal_id.clone();
+        declined_goal_candidate_id = maintenance
+            .declined_candidate
+            .as_ref()
+            .map(|candidate| candidate.candidate_id.clone());
+        swept_goal_ids = maintenance.swept_goal_ids.clone();
+        if let Some(admitted) = &maintenance.admitted_goal_id {
             outcome.observations.push(format!(
                 "Sleep whole-history formation admitted durable goal `{admitted}`."
             ));
         }
-        if let Some(declined) = maintenance.declined_candidate {
+        if let Some(declined) = &maintenance.declined_candidate {
             outcome.observations.push(format!(
                 "Sleep whole-history formation declined candidate `{}`.",
                 declined.candidate_id
@@ -400,6 +485,23 @@ pub(crate) fn commit_cross_session_sleep(
         brief_archive_name: format!("sleep-{sleep_run_id}.json"),
     }
     .write()?;
+
+    let mut state_files_written = vec![
+        state_dir.join("memory-store.json").display().to_string(),
+        state_dir
+            .join("consolidated-brief.json")
+            .display()
+            .to_string(),
+        state_dir
+            .join("archive")
+            .join(format!("sleep-{sleep_run_id}.json"))
+            .display()
+            .to_string(),
+        state_dir
+            .join("continuity-manifest.json")
+            .display()
+            .to_string(),
+    ];
 
     if let Some(report) =
         crate::experiments::consolidate_session_volition(state_dir, &session.session_id)?
@@ -426,6 +528,8 @@ pub(crate) fn commit_cross_session_sleep(
         outcome
             .extra_artifacts
             .push(report_md_path.display().to_string());
+        state_files_written.push(report_json_path.display().to_string());
+        state_files_written.push(report_md_path.display().to_string());
     }
 
     outcome.observations.push(format!(
@@ -448,9 +552,39 @@ pub(crate) fn commit_cross_session_sleep(
         outcome
             .extra_artifacts
             .push("reviewed-memory-draft.md".to_string());
+        state_files_written.push(
+            context
+                .run_dir()
+                .join("reviewed-memory-draft.json")
+                .display()
+                .to_string(),
+        );
+        state_files_written.push(
+            context
+                .run_dir()
+                .join("reviewed-memory-draft.md")
+                .display()
+                .to_string(),
+        );
     }
 
-    Ok(outcome)
+    let change_record = SleepChangeRecord {
+        state_outcome: SleepStateOutcome::ConsumedSession,
+        session_id: Some(session.session_id.clone()),
+        state_dir: state_resolution.persist_state_dir.display().to_string(),
+        new_memories,
+        skipped_duplicates,
+        new_associations: new_association_changes,
+        strengthened_associations: strengthened_changes,
+        admitted_goal_id,
+        declined_goal_candidate_id,
+        swept_goal_ids,
+        open_question_count: report.open_questions.len(),
+        decision_candidate_count: report.decision_candidates.len(),
+        state_files_written,
+    };
+
+    Ok((outcome, change_record))
 }
 
 pub(crate) fn build_sleep_input(resume_inputs: &ResumeInputs) -> SleepInputBundle {
@@ -829,7 +963,6 @@ mod tests {
             workspace_root: None,
         })
         .unwrap();
-        std::env::set_current_dir(cwd).unwrap();
 
         let manifest =
             ContinuityManifest::load_or_default(state_dir.join("continuity-manifest.json"))
@@ -842,6 +975,53 @@ mod tests {
         );
         assert!(state_dir.join("consolidated-brief.json").exists());
         assert!(state_dir.join("memory-store.json").exists());
+
+        use crate::sleep::change_view::SleepStateOutcome;
+
+        assert_eq!(
+            summary.change_record.state_outcome,
+            SleepStateOutcome::ConsumedSession
+        );
+        assert_eq!(
+            summary.change_record.session_id.as_deref(),
+            Some("realtime-session-to-sleep")
+        );
+        use crate::sleep::change_view::SleepChangeRecord;
+
+        let changes_path = summary.run_dir.join("sleep-changes.json");
+        assert!(changes_path.exists());
+        // Parse as the structured record (not untyped Value) so the durable
+        // artifact cannot drift from `SleepChangeRecord`'s shape. Also assert the
+        // written file round-trips back to the in-memory record.
+        let parsed: SleepChangeRecord =
+            serde_json::from_str(&fs::read_to_string(&changes_path).unwrap()).unwrap();
+        assert_eq!(parsed.state_outcome, SleepStateOutcome::ConsumedSession);
+        assert_eq!(
+            parsed.session_id.as_deref(),
+            Some("realtime-session-to-sleep")
+        );
+        // At least one nested vector field must survive the round-trip.
+        assert_eq!(parsed.new_memories, summary.change_record.new_memories);
+        assert_eq!(parsed, summary.change_record);
+
+        // A second run over the same state must report AlreadyConsumed and write
+        // nothing. The process is still in `base_dir` from the first run, so the
+        // relative `state/realtime` resolves correctly; do not restore cwd yet.
+        let second = run_sleep_update(SleepUpdateOptions {
+            state_dir: std::path::PathBuf::from("state/realtime"),
+            requested_provider: "mock".to_string(),
+            workspace_root: None,
+        })
+        .unwrap();
+        assert_eq!(
+            second.change_record.state_outcome,
+            SleepStateOutcome::AlreadyConsumed
+        );
+        assert!(second.change_record.state_files_written.is_empty());
+
+        // Restore the captured original cwd before cleanup — never leave the test
+        // process in `base_dir` or the system temp dir.
+        std::env::set_current_dir(&cwd).unwrap();
 
         fs::remove_dir_all(base_dir).unwrap();
     }
@@ -882,7 +1062,7 @@ mod tests {
 
         let mut context =
             RunContext::create_in(base_dir.join("runs"), "sleep-update-test").unwrap();
-        let outcome = super::commit_cross_session_sleep(
+        let (outcome, change_record) = super::commit_cross_session_sleep(
             &mut context,
             "mock",
             &SleepReport {
@@ -915,11 +1095,103 @@ mod tests {
         .unwrap();
 
         assert!(outcome.summary.contains("ok"));
+        assert_eq!(change_record.new_memories.len(), 1);
+        assert_eq!(change_record.new_memories[0].title, "Candidate memory.");
+        assert!((change_record.new_memories[0].importance - 0.8).abs() < 1e-9);
+        assert_eq!(change_record.open_question_count, 0);
+        assert!(
+            change_record
+                .state_files_written
+                .iter()
+                .any(|file| file.ends_with("memory-store.json"))
+        );
         let manifest =
             ContinuityManifest::load_or_default(state_dir.join("continuity-manifest.json"))
                 .unwrap();
         assert!(!manifest.sleep_pending);
         assert!(state_dir.join("memory-store.json").exists());
+
+        fs::remove_dir_all(base_dir).unwrap();
+    }
+
+    #[test]
+    fn commit_cross_session_sleep_records_skipped_duplicates() {
+        let base_dir = std::env::temp_dir().join(format!("qsf-sleep-dup-{}", uuid::Uuid::new_v4()));
+        let state_dir = base_dir.join("state");
+        fs::create_dir_all(&state_dir).unwrap();
+
+        let mut previous = SessionState::new_with_id("session-to-sleep".to_string(), config());
+        previous.turns.push(crate::session::tests::fake_turn(0));
+        crate::session::persistence::persist_session_state(&previous, &state_dir).unwrap();
+        ContinuityManifest {
+            current_session_id: Some(previous.session_id.clone()),
+            current_session_state_path: Some("session-state.json".into()),
+            sleep_pending: true,
+            resume_mode: ResumeMode::AwakeContinuation,
+            ..ContinuityManifest::default()
+        }
+        .persist(state_dir.join("continuity-manifest.json"))
+        .unwrap();
+
+        // Seed an existing memory whose title matches the report candidate so
+        // auto-promotion skips it as a duplicate.
+        let store_path = state_dir.join("memory-store.json");
+        let mut store = crate::memory::MemoryStore::load_or_empty(&store_path).unwrap();
+        store.append_records([crate::memory::MemoryRecord::new(
+            "memory.existing",
+            crate::memory::MemoryRecordKind::Observation,
+            "Candidate memory.",
+            "Candidate memory.",
+            vec![],
+            time::OffsetDateTime::now_utc(),
+            0.5,
+            0,
+            "tests",
+            10,
+        )]);
+        store.persist().unwrap();
+
+        let mut context =
+            RunContext::create_in(base_dir.join("runs"), "sleep-update-test").unwrap();
+        let (_outcome, change_record) = super::commit_cross_session_sleep(
+            &mut context,
+            "mock",
+            &SleepReport {
+                session_summary: "Summary.".to_string(),
+                memory_candidates: vec![SleepMemoryCandidate {
+                    summary: "Candidate memory.".to_string(),
+                    importance: Some(0.8),
+                    source_reference: Some("turn:0".to_string()),
+                }],
+                association_candidates: vec![],
+                open_questions: vec![],
+                decision_candidates: vec![],
+                future_context_hints: vec![],
+                review_notes: vec![],
+            },
+            super::SleepUpdateOutcome {
+                summary: "ok".to_string(),
+                observations: vec![],
+                failure_modes: vec![],
+                follow_up_questions: vec![],
+                decision_candidates: vec![],
+                extra_artifacts: vec![],
+            },
+            &StateDirectoryResolution {
+                resume_state_dir: state_dir.clone(),
+                persist_state_dir: state_dir.clone(),
+                legacy_fallback_used: false,
+            },
+        )
+        .unwrap();
+
+        assert!(change_record.new_memories.is_empty());
+        assert!(
+            change_record
+                .skipped_duplicates
+                .iter()
+                .any(|title| title == "Candidate memory.")
+        );
 
         fs::remove_dir_all(base_dir).unwrap();
     }

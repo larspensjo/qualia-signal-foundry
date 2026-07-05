@@ -78,6 +78,10 @@ pub fn run() -> anyhow::Result<()> {
                 workspace_root,
             })?;
             println!(
+                "{}",
+                crate::sleep::render_change_view(&summary.change_record)
+            );
+            println!(
                 "Sleep update completed. State: {}. Run artifacts: {}",
                 summary.state_dir.display(),
                 summary.run_dir.display()
