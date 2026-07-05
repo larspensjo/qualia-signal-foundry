@@ -84,7 +84,7 @@ mode, not a one-off experiment server.
   and `volition_inspection_sender()`.
 - The browser UI renders a per-turn "What volition did this turn" panel derived
   entirely in the view-model layer from the `turn_context` and `volition_state`
-  captures correlated by `exchange_index`: a plain-English verdict, the verbatim
+  captures correlated by their shared per-attempt request hash: a plain-English verdict, the verbatim
   injected volition packet located by its prose prefix, and the previous detailed
   rows collapsed into a "Scoring detail" section.
 
@@ -384,7 +384,9 @@ The realtime browser UI derives a per-turn explanation of the latest reply purel
 in the TypeScript view-model layer, from two server-pushed captures it already
 receives: the `volition_state` inspection capture (mode, tick, decision, scoring)
 and the `turn_context` capture (the verbatim messages sent to the provider). The
-panel correlates them by matching `exchange_index`, renders a plain-English
+panel correlates them by matching their shared request hash (unique per
+`response.create` attempt, so a retry within one exchange cannot cross-match),
+renders a plain-English
 verdict plus the injected volition packet located from the turn-context messages,
 and demotes the detailed scoring rows into a collapsed section. The volition
 capture deliberately excludes the injected instruction text (privacy guardrail);

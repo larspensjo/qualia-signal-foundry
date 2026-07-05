@@ -1415,11 +1415,15 @@ export function selectInjectedVolitionText(state: ConversationState): InjectedVo
   if (capture === null || context === null) {
     return { status: "unavailable" };
   }
-  // Only correlate when both captures describe the same turn. They are published by two
-  // non-atomic watch-channel writes, so for a brief window the browser can hold a verdict for turn
-  // N and a context for turn N-1; matching exchangeIndex rejects that mismatch instead of showing
-  // last turn's injected text next to this turn's verdict.
-  if (capture.exchangeIndex !== context.exchangeIndex) {
+  // Only correlate when both captures describe the same response.create attempt. They are published
+  // by two non-atomic watch-channel writes, so for a brief window the browser can hold a verdict for
+  // one attempt and a context for another; matching the shared request hash rejects that mismatch
+  // instead of showing another turn's injected text next to this verdict. The request hash is the
+  // key rather than exchangeIndex because it is unique per response.create attempt — exchangeIndex
+  // is constant across retries within one exchange, so it cannot distinguish an earlier attempt's
+  // turn-context from a later attempt's volition capture. Both fields are the server's
+  // `request_hash.to_string()`, stamped on the two captures back-to-back in the same send.
+  if (capture.responseCreateEventRef !== context.requestHash) {
     return { status: "unavailable" };
   }
   for (const message of context.messages) {

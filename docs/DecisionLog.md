@@ -1697,8 +1697,8 @@ does not introduce background or periodic sleep.
 ## 2026-07-05 - Realtime browser explains volition's per-turn effect via presentation-only selectors
 Decision: The realtime browser explains volition's effect on the latest reply purely in the
 TypeScript view-model layer, from the existing `volition_state` and `turn_context` captures
-correlated by `exchange_index` — no new wire fields, no reducer changes, no server-behavior
-changes.
+correlated by their shared per-attempt request hash — no new wire fields, no reducer changes, no
+server-behavior changes.
 Context: The right-hand panel was a flat dump of volition-domain fields (tick, tiers, salience,
 thresholds) that assumed familiarity with the volition model and never connected a decision to
 the answer it shaped.

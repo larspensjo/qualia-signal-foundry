@@ -1260,11 +1260,11 @@ describe("injected volition text locator", () => {
       content: [{ type: "input_text", text: "Relevant memories: none." }],
     },
   };
-  const captureAtExchange = (exchangeIndex: number) => ({
+  const captureAtExchange = (exchangeIndex: number, requestHash = "hash-abc") => ({
     qsfSessionId: "session_1",
     exchangeIndex,
     capturedAt: "2026-06-30T12:00:00Z",
-    responseCreateEventRef: "hash-abc",
+    responseCreateEventRef: requestHash,
     inspection: {
       mode: "neutral",
       tick: 12,
@@ -1279,11 +1279,15 @@ describe("injected volition text locator", () => {
     },
     decision: null,
   });
-  const turnContextAtExchange = (exchangeIndex: number, messages: unknown[]) => ({
+  const turnContextAtExchange = (
+    exchangeIndex: number,
+    messages: unknown[],
+    requestHash = "hash-abc",
+  ) => ({
     qsfSessionId: "session_1",
     exchangeIndex,
     capturedAt: "2026-06-30T12:00:00Z",
-    requestHash: "hash-abc",
+    requestHash,
     messages,
   });
 
@@ -1310,8 +1314,20 @@ describe("injected volition text locator", () => {
     const state = {
       ...INITIAL_STATE,
       sessionId: "session_1",
-      latestVolitionState: captureAtExchange(5),
-      latestTurnContext: turnContextAtExchange(4, [volitionMessage]),
+      latestVolitionState: captureAtExchange(5, "hash-turn-5"),
+      latestTurnContext: turnContextAtExchange(4, [volitionMessage], "hash-turn-4"),
+    };
+    expect(selectInjectedVolitionText(state).status).toBe("unavailable");
+  });
+
+  it("reports unavailable when captures share an exchange but are different attempts", () => {
+    // Two response.create attempts in one exchange keep the same exchangeIndex but get distinct
+    // request hashes, so correlating by request hash (not exchangeIndex) rejects the mismatch.
+    const state = {
+      ...INITIAL_STATE,
+      sessionId: "session_1",
+      latestVolitionState: captureAtExchange(4, "hash-attempt-b"),
+      latestTurnContext: turnContextAtExchange(4, [volitionMessage], "hash-attempt-a"),
     };
     expect(selectInjectedVolitionText(state).status).toBe("unavailable");
   });
