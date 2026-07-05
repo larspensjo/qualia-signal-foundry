@@ -289,6 +289,10 @@ pub(crate) struct SleepVolitionMaintenanceSummary {
     pub admitted_goal_id: Option<String>,
     pub declined_candidate: Option<DeclinedCandidate>,
     pub swept_goal_ids: Vec<String>,
+    /// Path of the volition continuity snapshot re-persisted by this maintenance pass, so the
+    /// sleep change view can list it among the state files written. `Some` on every path that
+    /// reaches the snapshot re-persist below; the early `None` returns never build a summary.
+    pub persisted_snapshot_path: Option<PathBuf>,
 }
 
 /// Rebuilds the seed fixture named by a snapshot's `seed_fixture_id`. Only the realtime seed
@@ -493,6 +497,7 @@ pub(crate) fn run_sleep_volition_goal_maintenance(
         admitted_goal_id,
         declined_candidate,
         swept_goal_ids,
+        persisted_snapshot_path: Some(snapshot_path),
     }))
 }
 

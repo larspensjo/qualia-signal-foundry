@@ -444,6 +444,7 @@ pub(crate) fn commit_cross_session_sleep(
     let mut admitted_goal_id = None;
     let mut declined_goal_candidate_id = None;
     let mut swept_goal_ids = Vec::new();
+    let mut volition_snapshot_path = None;
     if let Some(maintenance) = crate::experiments::run_sleep_volition_goal_maintenance(
         context,
         maintenance_client.as_ref(),
@@ -452,6 +453,7 @@ pub(crate) fn commit_cross_session_sleep(
         &whole_history_input,
     )? {
         admitted_goal_id = maintenance.admitted_goal_id.clone();
+        volition_snapshot_path = maintenance.persisted_snapshot_path.clone();
         declined_goal_candidate_id = maintenance
             .declined_candidate
             .as_ref()
@@ -502,6 +504,12 @@ pub(crate) fn commit_cross_session_sleep(
             .display()
             .to_string(),
     ];
+
+    // On a consumed realtime session with volition continuity, the maintenance pass re-persists
+    // the continuity snapshot inside the state dir; list it so the change view is complete.
+    if let Some(snapshot_path) = volition_snapshot_path {
+        state_files_written.push(snapshot_path.display().to_string());
+    }
 
     if let Some(report) =
         crate::experiments::consolidate_session_volition(state_dir, &session.session_id)?
@@ -955,6 +963,28 @@ mod tests {
         .persist(state_dir.join("continuity-manifest.json"))
         .unwrap();
 
+        // Seed a volition continuity snapshot so the sleep maintenance pass re-persists it.
+        // The change view must then list that snapshot path among `state_files_written`.
+        {
+            use qsf_volition::{
+                REALTIME_SEED_FIXTURE_ID, VolitionContinuitySnapshot, VolitionState,
+                build_state_inspection, persist_volition_continuity_snapshot,
+                realtime_seed_fixture,
+            };
+            let fixture = realtime_seed_fixture();
+            let vol_state = VolitionState::from_fixture(&fixture);
+            let inspection = build_state_inspection(&vol_state, &fixture);
+            let snapshot = VolitionContinuitySnapshot::new(
+                previous.session_id.clone(),
+                "2026-07-02T00:00:00Z",
+                REALTIME_SEED_FIXTURE_ID,
+                vol_state,
+                inspection,
+            );
+            persist_volition_continuity_snapshot(&snapshot, state_dir.join("volition-state.json"))
+                .unwrap();
+        }
+
         let cwd = std::env::current_dir().unwrap();
         std::env::set_current_dir(&base_dir).unwrap();
         let summary = run_sleep_update(SleepUpdateOptions {
@@ -1003,6 +1033,24 @@ mod tests {
         // At least one nested vector field must survive the round-trip.
         assert_eq!(parsed.new_memories, summary.change_record.new_memories);
         assert_eq!(parsed, summary.change_record);
+
+        // The maintenance pass re-persisted the volition continuity snapshot inside the state
+        // dir, so the change view must list it (both in memory and in the written artifact).
+        assert!(
+            summary
+                .change_record
+                .state_files_written
+                .iter()
+                .any(|file| file.ends_with("volition-state.json")),
+            "state_files_written should include the volition continuity snapshot path, got {:?}",
+            summary.change_record.state_files_written
+        );
+        assert!(
+            parsed
+                .state_files_written
+                .iter()
+                .any(|file| file.ends_with("volition-state.json"))
+        );
 
         // A second run over the same state must report AlreadyConsumed and write
         // nothing. The process is still in `base_dir` from the first run, so the
