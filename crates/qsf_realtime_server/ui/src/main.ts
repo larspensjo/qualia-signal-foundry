@@ -217,6 +217,7 @@ async function startConversation(options: ConversationStartOptions): Promise<boo
         dispatch({
           type: "connection_error",
           message: "relay socket closed",
+          atMs: Date.now(),
         });
       }
     });
@@ -258,11 +259,12 @@ async function startConversation(options: ConversationStartOptions): Promise<boo
         } else {
           relayBuffer.push(serialized);
         }
-        dispatch({ type: "provider_envelope", envelope });
+        dispatch({ type: "provider_envelope", envelope, atMs: Date.now() });
       } catch (error) {
         dispatch({
           type: "connection_error",
           message: messageFromError(error),
+          atMs: Date.now(),
         });
       }
     });
@@ -324,6 +326,7 @@ async function startConversation(options: ConversationStartOptions): Promise<boo
     dispatch({
       type: "connection_error",
       message: messageFromError(error),
+      atMs: Date.now(),
     });
     return false;
   }
@@ -361,12 +364,14 @@ async function submitTextTurn() {
         kind: "final_transcript",
         transcript: text,
       },
+      atMs: Date.now(),
     });
     refs.textInput.value = "";
   } catch (error) {
     dispatch({
       type: "connection_error",
       message: messageFromError(error),
+      atMs: Date.now(),
     });
   } finally {
     textTurnPending = false;
@@ -375,7 +380,7 @@ async function submitTextTurn() {
 }
 
 async function stopConversation() {
-  dispatch({ type: "stop_requested" });
+  dispatch({ type: "stop_requested", atMs: Date.now() });
 
   if (activeConversation) {
     try {
@@ -392,12 +397,13 @@ async function stopConversation() {
       dispatch({
         type: "connection_error",
         message: messageFromError(error),
+        atMs: Date.now(),
       });
     }
   }
 
   await stopActiveConversation(true);
-  dispatch({ type: "stopped" });
+  dispatch({ type: "stopped", atMs: Date.now() });
 }
 
 /// Gate the live microphone track(s) to match the `muted` state. Isolated side

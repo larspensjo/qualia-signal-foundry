@@ -87,6 +87,25 @@ export interface TranscriptEntry {
   text: string;
 }
 
+/// One collapsed row of the diagnostics event ticker. Consecutive events of the
+/// same kind merge into a single row so a partial_transcript burst stays readable.
+export interface EventLogEntry {
+  /// Relay event kind, or a lifecycle marker: "stopping", "stopped", "connection_error".
+  kind: string;
+  /// Runtime phase after the reducer applied this event — the transition the
+  /// reducer actually made, not a kind lookup (response_completed lands in
+  /// speaking or idle depending on status). For a collapsed burst this is the
+  /// phase after the most recent occurrence.
+  phase: RuntimePhase;
+  /// Wall-clock ms of the first occurrence in this collapsed run.
+  firstAtMs: number;
+  /// Wall-clock ms of the most recent occurrence in this collapsed run.
+  lastAtMs: number;
+  count: number;
+}
+
+export const EVENT_LOG_LIMIT = 14;
+
 export type VolitionSuppressionReason =
   | "intensity"
   | "protected_no_opportunity"
@@ -199,6 +218,9 @@ export interface ConversationState {
   liveTranscript: string;
   responseDraft: string;
   lastEvent: string | null;
+  /// Newest-first collapsed history of relay/lifecycle events (see EventLogEntry).
+  /// Kept after stop for post-hoc review; cleared when a new session is allocated.
+  eventLog: EventLogEntry[];
   error: string | null;
   warning: string | null;
   latestTurnContext: TurnContextCapture | null;
@@ -210,11 +232,11 @@ export type ConversationAction =
   | { type: "mute_toggled" }
   | { type: "session_allocated"; sessionId: string }
   | { type: "connection_ready" }
-  | { type: "provider_envelope"; envelope: RelayEnvelope }
-  | { type: "connection_error"; message: string }
+  | { type: "provider_envelope"; envelope: RelayEnvelope; atMs: number }
+  | { type: "connection_error"; message: string; atMs: number }
   | { type: "server_status"; sessionId: string; degraded: boolean; detail: string | null }
-  | { type: "stop_requested" }
-  | { type: "stopped" }
+  | { type: "stop_requested"; atMs: number }
+  | { type: "stopped"; atMs: number }
   | { type: "turn_context_captured"; capture: TurnContextCapture }
   | { type: "volition_state_captured"; capture: VolitionInspectionCapture };
 
@@ -277,6 +299,7 @@ export const INITIAL_STATE: ConversationState = {
   liveTranscript: "",
   responseDraft: "",
   lastEvent: null,
+  eventLog: [],
   error: null,
   warning: null,
   latestTurnContext: null,
@@ -306,6 +329,7 @@ export function reduceConversationState(
         connection: "connecting_media",
         sessionId: action.sessionId,
         error: null,
+        eventLog: [],
         latestTurnContext: null,
         latestVolitionState: null,
       };
@@ -316,13 +340,14 @@ export function reduceConversationState(
         error: null,
       };
     case "provider_envelope":
-      return applyRelayEnvelope(state, action.envelope);
+      return applyRelayEnvelope(state, action.envelope, action.atMs);
     case "connection_error":
       return {
         ...state,
         connection: "error",
         error: action.message,
         lastEvent: action.message,
+        eventLog: appendEventLog(state.eventLog, "connection_error", action.atMs, state.phase),
       };
     case "server_status":
       // Ignore status for a session other than the active one: a queued message
@@ -340,6 +365,7 @@ export function reduceConversationState(
         ...state,
         connection: "stopping",
         lastEvent: "stopping",
+        eventLog: appendEventLog(state.eventLog, "stopping", action.atMs, state.phase),
       };
     case "stopped":
       return {
@@ -350,6 +376,7 @@ export function reduceConversationState(
         liveTranscript: "",
         responseDraft: "",
         lastEvent: "stopped",
+        eventLog: appendEventLog(state.eventLog, "stopped", action.atMs, "idle"),
         warning: null,
       };
     case "turn_context_captured":
@@ -798,12 +825,29 @@ function isVolitionSuppressionReason(value: unknown): value is VolitionSuppressi
   );
 }
 
-function applyRelayEnvelope(state: ConversationState, envelope: RelayEnvelope): ConversationState {
+function applyRelayEnvelope(
+  state: ConversationState,
+  envelope: RelayEnvelope,
+  atMs: number,
+): ConversationState {
   const base = {
     ...state,
     lastEvent: envelope.kind,
   };
+  const next = applyRelayEnvelopeKind(base, envelope);
+  return {
+    ...next,
+    eventLog: appendEventLog(state.eventLog, envelope.kind, atMs, next.phase),
+  };
+}
 
+/// The per-kind switch that maps a relay envelope to the next runtime state. The
+/// wrapper `applyRelayEnvelope` stamps `lastEvent` and the event log around it, so
+/// this returns `{ ...base, ... }` for each kind without touching history.
+function applyRelayEnvelopeKind(
+  base: ConversationState,
+  envelope: RelayEnvelope,
+): ConversationState {
   switch (envelope.kind) {
     case "user_turn_started":
       return {
@@ -816,7 +860,7 @@ function applyRelayEnvelope(state: ConversationState, envelope: RelayEnvelope): 
       return {
         ...base,
         phase: "listening",
-        liveTranscript: envelope.transcript ?? state.liveTranscript,
+        liveTranscript: envelope.transcript ?? base.liveTranscript,
       };
     case "final_transcript": {
       const text = envelope.transcript?.trim();
@@ -825,8 +869,8 @@ function applyRelayEnvelope(state: ConversationState, envelope: RelayEnvelope): 
         phase: "thinking",
         liveTranscript: "",
         transcript: text
-          ? appendTranscript(state.transcript, { role: "user", text })
-          : state.transcript,
+          ? appendTranscript(base.transcript, { role: "user", text })
+          : base.transcript,
       };
     }
     case "response_started":
@@ -837,22 +881,22 @@ function applyRelayEnvelope(state: ConversationState, envelope: RelayEnvelope): 
       };
     case "response_completed": {
       const completed = !envelope.status || envelope.status === "completed";
-      const text = (envelope.text ?? (completed ? state.responseDraft : "")).trim();
+      const text = (envelope.text ?? (completed ? base.responseDraft : "")).trim();
       const phase = completed ? "speaking" : "idle";
       return {
         ...base,
         phase,
         responseDraft: "",
         transcript: text
-          ? appendTranscript(state.transcript, { role: "assistant", text })
-          : state.transcript,
+          ? appendTranscript(base.transcript, { role: "assistant", text })
+          : base.transcript,
       };
     }
     case "speech_playback_started":
       return {
         ...base,
         phase: "speaking",
-        responseDraft: state.responseDraft + (envelope.text ?? ""),
+        responseDraft: base.responseDraft + (envelope.text ?? ""),
       };
     case "speech_playback_completed":
       return {
@@ -869,6 +913,22 @@ function applyRelayEnvelope(state: ConversationState, envelope: RelayEnvelope): 
         responseDraft: "",
       };
   }
+}
+
+function appendEventLog(
+  log: EventLogEntry[],
+  kind: string,
+  atMs: number,
+  phase: RuntimePhase,
+): EventLogEntry[] {
+  const head = log[0];
+  if (head !== undefined && head.kind === kind) {
+    return [{ ...head, lastAtMs: atMs, count: head.count + 1, phase }, ...log.slice(1)];
+  }
+  return [{ kind, phase, firstAtMs: atMs, lastAtMs: atMs, count: 1 }, ...log].slice(
+    0,
+    EVENT_LOG_LIMIT,
+  );
 }
 
 function appendTranscript(entries: TranscriptEntry[], entry: TranscriptEntry): TranscriptEntry[] {
