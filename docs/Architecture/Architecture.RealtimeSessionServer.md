@@ -82,6 +82,11 @@ mode, not a one-off experiment server.
   volition snapshot plus an optional decision summary, and late-joining sockets
   receive the stored latest value immediately via `subscribe_volition_inspection()`
   and `volition_inspection_sender()`.
+- The browser UI renders a per-turn "What volition did this turn" panel derived
+  entirely in the view-model layer from the `turn_context` and `volition_state`
+  captures correlated by `exchange_index`: a plain-English verdict, the verbatim
+  injected volition packet located by its prose prefix, and the previous detailed
+  rows collapsed into a "Scoring detail" section.
 
 **Partial:**
 
@@ -94,9 +99,10 @@ mode, not a one-off experiment server.
 
 - Full `qsf_app` tool exposure to the live realtime model.
 
-Last reviewed: 2026-07-03 against the curiosity-observer seed fixture, the
-compatible-snapshot restore / incompatible-snapshot discard resume path, and the
-live volition inspection capture surface.
+Last reviewed: 2026-07-05 against the curiosity-observer seed fixture, the
+compatible-snapshot restore / incompatible-snapshot discard resume path, the
+live volition inspection capture surface, and the browser "What volition did
+this turn" panel reframe.
 
 ## Purpose
 
@@ -371,3 +377,17 @@ Neither output ever contains `OPENAI_API_KEY` or raw fixture dumps. See
 - `docs/Architecture/Architecture.ToolSystem.md`
 - `docs/Architecture/Architecture.MemorySystem.md`
 - `docs/Research/ResearchQuestions.Audio.md`
+
+## Browser "What volition did this turn" panel
+
+The realtime browser UI derives a per-turn explanation of the latest reply purely
+in the TypeScript view-model layer, from two server-pushed captures it already
+receives: the `volition_state` inspection capture (mode, tick, decision, scoring)
+and the `turn_context` capture (the verbatim messages sent to the provider). The
+panel correlates them by matching `exchange_index`, renders a plain-English
+verdict plus the injected volition packet located from the turn-context messages,
+and demotes the detailed scoring rows into a collapsed section. The volition
+capture deliberately excludes the injected instruction text (privacy guardrail);
+the panel reads that text from the turn-context capture instead. This keeps the
+observation plane read-only and non-blocking: the selectors are total and a
+malformed capture cannot break the transcript render.

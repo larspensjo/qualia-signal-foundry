@@ -1693,3 +1693,19 @@ Consequences: The experiment harness can still validate the sleep machinery, but
 supported user workflow is realtime session first, first-class sleep update second,
 then resume from the consolidated brief. Sleep remains explicit and inspectable; this
 does not introduce background or periodic sleep.
+
+## 2026-07-05 - Realtime browser explains volition's per-turn effect via presentation-only selectors
+Decision: The realtime browser explains volition's effect on the latest reply purely in the
+TypeScript view-model layer, from the existing `volition_state` and `turn_context` captures
+correlated by `exchange_index` — no new wire fields, no reducer changes, no server-behavior
+changes.
+Context: The right-hand panel was a flat dump of volition-domain fields (tick, tiers, salience,
+thresholds) that assumed familiarity with the volition model and never connected a decision to
+the answer it shaped.
+Consequences: Per-turn explanation stays on the read-only, non-blocking observation plane;
+richer explanations must come from correlating existing captures (or extending a capture), not
+from coupling the UI to server internals. The injected text is located client-side by the
+packet's prose prefix, pinned by a Rust guard test across every packet-emitting path. Deferred
+follow-ups (revisit after using the prototype): binding each capture to the specific transcript
+answer that produced it, surfacing the standing persona/stable-baseline stance, and captioning
+interrupted/failed turns.
