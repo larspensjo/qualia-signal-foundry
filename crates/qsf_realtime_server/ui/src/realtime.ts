@@ -106,6 +106,16 @@ export interface EventLogEntry {
 
 export const EVENT_LOG_LIMIT = 14;
 
+/// One segment of the runtime-phase swimlane: `phase` holds from `startedAtMs`
+/// until the next segment starts (or now, for the last segment).
+export interface PhaseSegment {
+  phase: RuntimePhase;
+  startedAtMs: number;
+}
+
+/// Width of the phase-lane display window; also the reducer's pruning horizon.
+export const PHASE_LANE_WINDOW_MS = 60_000;
+
 export type VolitionSuppressionReason =
   | "intensity"
   | "protected_no_opportunity"
@@ -221,6 +231,9 @@ export interface ConversationState {
   /// Newest-first collapsed history of relay/lifecycle events (see EventLogEntry).
   /// Kept after stop for post-hoc review; cleared when a new session is allocated.
   eventLog: EventLogEntry[];
+  /// Oldest-first runtime-phase history, pruned to the lane window. Empty means
+  /// "idle so far". Kept after stop; cleared when a new session is allocated.
+  phaseTimeline: PhaseSegment[];
   error: string | null;
   warning: string | null;
   latestTurnContext: TurnContextCapture | null;
@@ -300,6 +313,7 @@ export const INITIAL_STATE: ConversationState = {
   responseDraft: "",
   lastEvent: null,
   eventLog: [],
+  phaseTimeline: [],
   error: null,
   warning: null,
   latestTurnContext: null,
@@ -330,6 +344,7 @@ export function reduceConversationState(
         sessionId: action.sessionId,
         error: null,
         eventLog: [],
+        phaseTimeline: [],
         latestTurnContext: null,
         latestVolitionState: null,
       };
@@ -377,6 +392,7 @@ export function reduceConversationState(
         responseDraft: "",
         lastEvent: "stopped",
         eventLog: appendEventLog(state.eventLog, "stopped", action.atMs, "idle"),
+        phaseTimeline: appendPhaseTimeline(state.phaseTimeline, "idle", action.atMs),
         warning: null,
       };
     case "turn_context_captured":
@@ -838,6 +854,7 @@ function applyRelayEnvelope(
   return {
     ...next,
     eventLog: appendEventLog(state.eventLog, envelope.kind, atMs, next.phase),
+    phaseTimeline: appendPhaseTimeline(state.phaseTimeline, next.phase, atMs),
   };
 }
 
@@ -929,6 +946,32 @@ function appendEventLog(
     0,
     EVENT_LOG_LIMIT,
   );
+}
+
+function appendPhaseTimeline(
+  timeline: PhaseSegment[],
+  phase: RuntimePhase,
+  atMs: number,
+): PhaseSegment[] {
+  const last = timeline.at(-1);
+  const appended =
+    last !== undefined && last.phase === phase
+      ? timeline
+      : [...timeline, { phase, startedAtMs: atMs }];
+  return prunePhaseTimeline(appended, atMs);
+}
+
+/// Drop segments that ended before the window start, but keep the segment that
+/// spans the cutoff so the lane's left edge is still painted.
+function prunePhaseTimeline(timeline: PhaseSegment[], nowMs: number): PhaseSegment[] {
+  const cutoff = nowMs - PHASE_LANE_WINDOW_MS;
+  let firstVisible = 0;
+  for (let i = 0; i + 1 < timeline.length; i++) {
+    if (timeline[i + 1].startedAtMs <= cutoff) {
+      firstVisible = i + 1;
+    }
+  }
+  return firstVisible === 0 ? timeline : timeline.slice(firstVisible);
 }
 
 function appendTranscript(entries: TranscriptEntry[], entry: TranscriptEntry): TranscriptEntry[] {

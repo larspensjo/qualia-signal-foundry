@@ -7,6 +7,7 @@ import {
   INITIAL_STATE,
   MICROPHONE_AUDIO_CONSTRAINTS,
   mapProviderMessageToRelayEnvelope,
+  PHASE_LANE_WINDOW_MS,
   parseProviderDataChannelMessage,
   parseSidebandStatusMessage,
   parseTurnContextMessage,
@@ -21,6 +22,21 @@ import {
   selectVolitionPanelModel,
   selectVolitionVerdict,
 } from "./realtime";
+
+function envelopeOfKind(kind: RelayEventKind): RelayEnvelope {
+  return { qsf_session_id: "session_1", event_id: `evt_${kind}`, kind };
+}
+function withEnvelope(
+  state: ConversationState,
+  kind: RelayEventKind,
+  atMs: number,
+): ConversationState {
+  return reduceConversationState(state, {
+    type: "provider_envelope",
+    envelope: envelopeOfKind(kind),
+    atMs,
+  });
+}
 
 describe("provider relay mapping", () => {
   it("maps provider messages to typed relay envelopes", () => {
@@ -1393,21 +1409,6 @@ describe("injected volition text locator", () => {
 });
 
 describe("diagnostics event log", () => {
-  function envelopeOfKind(kind: RelayEventKind): RelayEnvelope {
-    return { qsf_session_id: "session_1", event_id: `evt_${kind}`, kind };
-  }
-  function withEnvelope(
-    state: ConversationState,
-    kind: RelayEventKind,
-    atMs: number,
-  ): ConversationState {
-    return reduceConversationState(state, {
-      type: "provider_envelope",
-      envelope: envelopeOfKind(kind),
-      atMs,
-    });
-  }
-
   it("appends distinct events newest-first with timestamps", () => {
     const first = withEnvelope(INITIAL_STATE, "user_turn_started", 1_000);
     const second = withEnvelope(first, "final_transcript", 3_500);
@@ -1497,5 +1498,45 @@ describe("diagnostics event log", () => {
       sessionId: "session_2",
     });
     expect(allocated.eventLog).toEqual([]);
+  });
+});
+
+describe("diagnostics phase timeline", () => {
+  it("appends a segment only when the runtime phase changes", () => {
+    let state = withEnvelope(INITIAL_STATE, "user_turn_started", 1_000); // -> listening
+    state = withEnvelope(state, "partial_transcript", 1_200); // still listening
+    state = withEnvelope(state, "final_transcript", 2_000); // -> thinking
+    expect(state.phaseTimeline).toEqual([
+      { phase: "listening", startedAtMs: 1_000 },
+      { phase: "thinking", startedAtMs: 2_000 },
+    ]);
+  });
+
+  it("returns to idle when the session stops", () => {
+    let state = withEnvelope(INITIAL_STATE, "user_turn_started", 1_000);
+    state = reduceConversationState(state, { type: "stopped", atMs: 4_000 });
+    expect(state.phaseTimeline.at(-1)).toEqual({ phase: "idle", startedAtMs: 4_000 });
+  });
+
+  it("prunes segments that ended before the lane window, keeping the spanning one", () => {
+    let state = withEnvelope(INITIAL_STATE, "user_turn_started", 0); // listening @ 0
+    state = withEnvelope(state, "final_transcript", 1_000); // thinking @ 1000
+    state = withEnvelope(state, "speech_playback_started", 2_000); // speaking @ 2000
+    // Same phase much later: no new segment, but pruning runs at atMs.
+    state = withEnvelope(state, "speech_playback_started", PHASE_LANE_WINDOW_MS + 1_500);
+    // cutoff = 1_500: listening ended at 1_000 (dropped); thinking ended at 2_000 (spans, kept).
+    expect(state.phaseTimeline).toEqual([
+      { phase: "thinking", startedAtMs: 1_000 },
+      { phase: "speaking", startedAtMs: 2_000 },
+    ]);
+  });
+
+  it("clears the timeline when a new session is allocated", () => {
+    const seeded = withEnvelope(INITIAL_STATE, "user_turn_started", 1_000);
+    const allocated = reduceConversationState(seeded, {
+      type: "session_allocated",
+      sessionId: "session_2",
+    });
+    expect(allocated.phaseTimeline).toEqual([]);
   });
 });
