@@ -1208,6 +1208,12 @@ function Restore-QsfStateBackup {
         $sourcePath = $newest.FullName
     }
     else {
+        # Reject a backup whose name is not for this state dir's leaf BEFORE any
+        # mutation (self-backup, staging), so a tab-completed cross-leaf name cannot
+        # silently overwrite live data with the wrong state dir's contents.
+        if ($BackupName -notlike "$leaf-*") {
+            Write-Error "Backup '$BackupName' is for a different state dir (expected leaf '$leaf-...'). Pass -StateDir for the matching state dir, or use: .\scripts\qsf.ps1 restore latest"
+        }
         $sourcePath = Join-Path $BackupRootPath $BackupName
         if (-not (Test-Path -LiteralPath $sourcePath -PathType Container)) {
             Write-Error "No backup named '$BackupName' under $BackupRootPath. Run: .\scripts\qsf.ps1 restore"

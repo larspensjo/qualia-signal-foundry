@@ -165,17 +165,62 @@ function Get-QsfCompletionStateDirs {
 }
 
 function Get-QsfCompletionBackupNames {
+    param(
+        # Only offer backups for the effective restore target's leaf, matching the
+        # launcher's own leaf guard, so a cross-leaf name is never tab-completed into
+        # a restore that would overwrite the wrong state dir. Defaults to the launcher's
+        # default -StateDir state/realtime leaf.
+        [string]$Leaf = "realtime"
+    )
+
     $names = [System.Collections.Generic.List[string]]::new()
     $names.Add("latest")
 
     $backupRoot = Join-Path $script:QsfCompletionProjectRoot "state/backups"
     if (Test-Path -LiteralPath $backupRoot -PathType Container) {
         Get-ChildItem -LiteralPath $backupRoot -Directory -ErrorAction SilentlyContinue |
+            Where-Object { $_.Name -like "$Leaf-*" } |
             Sort-Object CreationTime, Name -Descending |
             ForEach-Object { $names.Add($_.Name) }
     }
 
     return @($names)
+}
+
+function Get-QsfCompletionRestoreContext {
+    param(
+        [Parameter(Mandatory = $true)]
+        [AllowEmptyCollection()]
+        [string[]]$Arguments
+    )
+
+    # $Arguments[0] is "restore". Classify the remaining tokens so completion only
+    # fires at the backup-name position (no positional name supplied yet) and derives
+    # the target leaf from an explicit -StateDir, mirroring the launcher's default.
+    $leaf = "realtime"
+    $positionalCount = 0
+    $index = 1
+    while ($index -lt $Arguments.Count) {
+        $token = $Arguments[$index]
+        if ($token -like "-*") {
+            if ($token -eq "-StateDir" -and ($index + 1) -lt $Arguments.Count) {
+                $value = $Arguments[$index + 1]
+                if (-not [string]::IsNullOrWhiteSpace($value)) {
+                    $leaf = Split-Path -Leaf $value
+                }
+            }
+            $index += 2
+        }
+        else {
+            $positionalCount++
+            $index++
+        }
+    }
+
+    [pscustomobject]@{
+        Leaf            = $leaf
+        PositionalCount = $positionalCount
+    }
 }
 
 function Get-QsfCompletionNativeContext {
@@ -286,8 +331,11 @@ $qsfCompleter = {
             return
         }
 
-        if ($nativeContext.Arguments.Count -eq 1 -and $nativeContext.Arguments[0] -eq "restore") {
-            Select-QsfCompletionMatches -Values (Get-QsfCompletionBackupNames) -WordToComplete $wordToComplete
+        if ($nativeContext.Arguments.Count -ge 1 -and $nativeContext.Arguments[0] -eq "restore") {
+            $restoreContext = Get-QsfCompletionRestoreContext -Arguments $nativeContext.Arguments
+            if ($restoreContext.PositionalCount -eq 0) {
+                Select-QsfCompletionMatches -Values (Get-QsfCompletionBackupNames -Leaf $restoreContext.Leaf) -WordToComplete $wordToComplete
+            }
             return
         }
 

@@ -148,6 +148,7 @@ Describe "qsf.ps1 argument completion" {
             $script:QsfCompletionProjectRoot = "$TestDrive"
             New-Item -ItemType Directory -Force (Join-Path $TestDrive "state/realtime") | Out-Null
             New-Item -ItemType Directory -Force (Join-Path $TestDrive "state/backups/realtime-20260705-120000") | Out-Null
+            New-Item -ItemType Directory -Force (Join-Path $TestDrive "state/backups/session-20260705-120000") | Out-Null
         }
 
         AfterEach {
@@ -160,6 +161,23 @@ Describe "qsf.ps1 argument completion" {
 
             $completions | Should -Contain "latest"
             $completions | Should -Contain "realtime-20260705-120000"
+        }
+
+        It "offers only the default realtime leaf's backups for restore" {
+            # A session-leaf backup must never be tab-completed into the default
+            # realtime restore; the launcher's leaf guard would reject it anyway.
+            $completions = Complete-QsfInput -InputText ".\scripts\qsf.ps1 restore "
+
+            $completions | Should -Contain "realtime-20260705-120000"
+            $completions | Should -Not -Contain "session-20260705-120000"
+        }
+
+        It "offers the matching leaf's backups when -StateDir targets another state dir" {
+            $completions = Complete-QsfInput -InputText ".\scripts\qsf.ps1 restore -StateDir state/session "
+
+            $completions | Should -Contain "latest"
+            $completions | Should -Contain "session-20260705-120000"
+            $completions | Should -Not -Contain "realtime-20260705-120000"
         }
 
         It "does not offer the backups root as a sleep state dir when it exists" {

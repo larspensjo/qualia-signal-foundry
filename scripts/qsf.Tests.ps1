@@ -373,6 +373,26 @@ Describe "qsf.ps1 state backups" {
         (Join-Path $script:TestStateDir "memory-store.json") | Should -Exist
     }
 
+    It "rejects a cross-leaf named restore without touching the target state dir" {
+        # Build a session-leaf backup alongside the live realtime state dir. Its name
+        # ('session-...') does not match the realtime target's leaf, so restoring it
+        # into state/realtime would silently overwrite live data with the wrong leaf.
+        $sessionStateDir = Join-Path $TestDrive "state/session"
+        New-Item -ItemType Directory -Force $sessionStateDir | Out-Null
+        Set-Content -LiteralPath (Join-Path $sessionStateDir "memory-store.json") -Value '{"leaf":"session"}'
+        $sessionBackup = New-QsfStateBackup -StateDirPath $sessionStateDir -BackupRootPath $script:TestBackupRoot
+        $realtimeBackupsBefore = @(Get-ChildItem -LiteralPath $script:TestBackupRoot -Directory -Filter "realtime-*").Count
+
+        { Restore-QsfStateBackup -BackupName (Split-Path -Leaf $sessionBackup) -StateDirPath $script:TestStateDir -BackupRootPath $script:TestBackupRoot } |
+            Should -Throw "*is for a different state dir*"
+
+        # The leaf guard must run before the self-backup, so a rejected name mutates nothing:
+        # no realtime-* self-backup was created and the live realtime content is intact.
+        @(Get-ChildItem -LiteralPath $script:TestBackupRoot -Directory -Filter "realtime-*").Count | Should -Be $realtimeBackupsBefore
+        Get-Content -LiteralPath (Join-Path $script:TestStateDir "memory-store.json") -Raw |
+            Should -Match '"records":\[\]'
+    }
+
     It "leaves the live state dir intact when the staged restore copy fails" {
         $backupPath = New-QsfStateBackup -StateDirPath $script:TestStateDir -BackupRootPath $script:TestBackupRoot
         Set-Content -LiteralPath (Join-Path $script:TestStateDir "memory-store.json") -Value '{"records":["live-only"]}'
