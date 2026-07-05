@@ -1,4 +1,5 @@
 import "./styles.css";
+import { attachPhaseLane } from "./phase-lane";
 import {
   type ConversationAction,
   type ConversationState,
@@ -40,6 +41,8 @@ interface UiRefs {
   remoteAudio: HTMLAudioElement;
   turnContextBody: HTMLElement;
   volitionStateBody: HTMLElement;
+  phaseLaneCanvas: HTMLCanvasElement;
+  phaseLaneTip: HTMLElement;
 }
 
 interface ActiveConversation {
@@ -132,6 +135,18 @@ root.innerHTML = `
             <dd>Typed browser-to-server envelopes</dd>
           </div>
         </dl>
+        <div class="phase-lane">
+          <ul class="phase-lane-legend" aria-hidden="true">
+            <li><i style="background: var(--phase-idle)"></i>idle</li>
+            <li><i style="background: var(--phase-listening)"></i>listening</li>
+            <li><i style="background: var(--phase-thinking)"></i>thinking</li>
+            <li><i style="background: var(--phase-speaking)"></i>speaking</li>
+          </ul>
+          <div class="phase-lane-wrap">
+            <canvas data-role="phase-lane" aria-label="Runtime phase timeline, last 60 seconds"></canvas>
+            <div data-role="phase-lane-tip" class="phase-lane-tip" hidden></div>
+          </div>
+        </div>
         <audio data-role="remote-audio" autoplay playsinline></audio>
         <details class="turn-context-details" open>
           <summary>What volition did this turn</summary>
@@ -170,6 +185,7 @@ refs.textInput.addEventListener("input", () => {
 });
 
 render();
+attachPhaseLane(refs.phaseLaneCanvas, refs.phaseLaneTip, () => state);
 
 async function startConversation(options: ConversationStartOptions): Promise<boolean> {
   if (activeConversation) {
@@ -656,6 +672,8 @@ function collectRefs(container: HTMLElement): UiRefs {
     remoteAudio: query<HTMLAudioElement>('[data-role="remote-audio"]'),
     turnContextBody: query<HTMLElement>('[data-role="turn-context-body"]'),
     volitionStateBody: query<HTMLElement>('[data-role="volition-state-body"]'),
+    phaseLaneCanvas: query<HTMLCanvasElement>('[data-role="phase-lane"]'),
+    phaseLaneTip: query<HTMLElement>('[data-role="phase-lane-tip"]'),
   };
 }
 
