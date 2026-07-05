@@ -1624,6 +1624,20 @@ describe("selectPhaseLaneModel", () => {
     ]);
   });
 
+  it("skips a segment that ended before the window and emits no leading idle prefix", () => {
+    const state: ConversationState = {
+      ...INITIAL_STATE,
+      phaseTimeline: [
+        { phase: "listening", startedAtMs: 5_000 }, // ends at 30_000 <= 40_000 window start → skipped
+        { phase: "thinking", startedAtMs: 30_000 },
+      ],
+    };
+    // First segment starts at 5_000 <= 40_000, so no leading idle prefix is emitted either.
+    expect(selectPhaseLaneModel(state, NOW).segments).toEqual([
+      { phase: "thinking", startFraction: 0, endFraction: 1 },
+    ]);
+  });
+
   it("emits ticks inside the window carrying the reducer-derived phase; a burst row becomes a start/end pair", () => {
     const state: ConversationState = {
       ...INITIAL_STATE,
