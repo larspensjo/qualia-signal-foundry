@@ -81,6 +81,32 @@ export function attachPhaseLane(
       context.globalAlpha = 1;
     }
 
+    for (const gapBreak of model.breaks) {
+      const x1 = gapBreak.startFraction * width;
+      const x2 = gapBreak.endFraction * width;
+      const bandWidth = Math.max(2, x2 - x1);
+      context.fillStyle = "rgba(184, 191, 215, 0.1)";
+      context.fillRect(x1, BAND_TOP, bandWidth, BAND_HEIGHT);
+      // Diagonal hatching marks the band as compressed time.
+      context.save();
+      context.beginPath();
+      context.rect(x1, BAND_TOP, bandWidth, BAND_HEIGHT);
+      context.clip();
+      context.strokeStyle = "rgba(184, 191, 215, 0.32)";
+      for (let x = x1 - BAND_HEIGHT; x < x2; x += 7) {
+        context.beginPath();
+        context.moveTo(x, BAND_TOP + BAND_HEIGHT);
+        context.lineTo(x + BAND_HEIGHT, BAND_TOP);
+        context.stroke();
+      }
+      context.restore();
+      // Pixel-space legibility only: skip the label when the band cannot fit it.
+      if (bandWidth > 44) {
+        context.fillStyle = "rgba(244, 241, 234, 0.9)";
+        context.fillText(gapBreak.label, x1 + bandWidth / 2, BAND_TOP + BAND_HEIGHT / 2 + 3);
+      }
+    }
+
     for (const tick of model.ticks) {
       const x = tick.fraction * width;
       context.strokeStyle = colors[tick.phase];

@@ -150,6 +150,7 @@ root.innerHTML = `
           <li><i style="background: var(--phase-listening)"></i>listening</li>
           <li><i style="background: var(--phase-thinking)"></i>thinking</li>
           <li><i style="background: var(--phase-speaking)"></i>speaking</li>
+          <li><i class="legend-gap"></i>skipped idle</li>
         </ul>
       </div>
       <div class="phase-lane-wrap">
