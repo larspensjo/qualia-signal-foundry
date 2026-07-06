@@ -632,6 +632,122 @@ button[aria-pressed="true"]:hover:not(:disabled) {
   user-select: none;
 }
 
+.scoring-compact-body {
+  display: grid;
+  gap: 0.6rem;
+  margin-top: 0.6rem;
+}
+
+.scoring-summary-strip,
+.scoring-flag-strip {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.45rem;
+}
+
+.scoring-chip,
+.scoring-flag {
+  display: inline-flex;
+  align-items: center;
+  min-height: 2rem;
+  gap: 0.45rem;
+  padding: 0.35rem 0.6rem;
+  border-radius: 8px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: rgba(255, 255, 255, 0.04);
+}
+
+.scoring-chip {
+  max-width: 100%;
+}
+
+.scoring-chip-label {
+  color: var(--muted);
+  font-size: 0.68rem;
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+  white-space: nowrap;
+}
+
+.scoring-chip strong {
+  color: var(--text);
+  font-size: 0.82rem;
+  font-weight: 600;
+  line-height: 1.25;
+  overflow-wrap: anywhere;
+}
+
+.scoring-counter-strip .scoring-chip strong {
+  font-size: 0.95rem;
+}
+
+.scoring-compact-section h3 {
+  margin: 0 0 0.35rem;
+  color: var(--accent-2);
+  font-size: 0.72rem;
+  text-transform: uppercase;
+  letter-spacing: 0.14em;
+}
+
+.scoring-grid-list {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+  gap: 0.45rem;
+  margin: 0;
+}
+
+.scoring-grid-row {
+  display: grid;
+  grid-template-columns: minmax(8.5rem, 0.34fr) minmax(0, 1fr);
+  align-items: start;
+  gap: 0.65rem;
+  padding: 0.5rem 0.65rem;
+  border-radius: 8px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: rgba(255, 255, 255, 0.035);
+}
+
+.scoring-grid-row dt {
+  color: var(--muted);
+  font-size: 0.68rem;
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+}
+
+.scoring-grid-row dd {
+  margin: 0;
+  color: var(--text);
+  font-size: 0.82rem;
+  line-height: 1.4;
+  overflow-wrap: anywhere;
+}
+
+.scoring-grid-row dd.scoring-muted-value {
+  color: var(--muted);
+}
+
+.scoring-flag {
+  color: var(--text);
+  font-size: 0.82rem;
+  line-height: 1.2;
+}
+
+.scoring-flag input {
+  width: 0.95rem;
+  height: 0.95rem;
+  accent-color: var(--accent);
+}
+
+.scoring-signals-section .scoring-grid-list {
+  grid-template-columns: 1fr;
+}
+
+.scoring-signals-section .scoring-grid-row {
+  grid-template-columns: minmax(8.5rem, 0.18fr) minmax(0, 1fr);
+  border-color: rgba(125, 211, 252, 0.18);
+  background: rgba(125, 211, 252, 0.06);
+}
+
 @media (max-width: 900px) {
   body {
     overflow: auto;

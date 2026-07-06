@@ -21,6 +21,9 @@ import {
   selectMuteButton,
   selectVolitionPanelModel,
   selectVolitionVerdict,
+  type VolitionPanelModel,
+  type VolitionPanelRow,
+  type VolitionPanelSection,
 } from "./realtime";
 
 interface UiRefs {
@@ -718,16 +721,13 @@ function renderWhyThisAnswerPanel(
   scoringSummary.textContent = "Scoring detail";
   scoring.appendChild(scoringSummary);
   const scoringBody = document.createElement("div");
-  scoringBody.className = "volition-state-body";
-  renderVolitionStatePanel(scoringBody, model);
+  scoringBody.className = "scoring-compact-body";
+  renderCompactScoringPanel(scoringBody, model);
   scoring.appendChild(scoringBody);
   container.appendChild(scoring);
 }
 
-function renderVolitionStatePanel(
-  container: HTMLElement,
-  model: ReturnType<typeof selectVolitionPanelModel>,
-) {
+function renderCompactScoringPanel(container: HTMLElement, model: VolitionPanelModel) {
   container.replaceChildren();
 
   const banner = document.createElement("p");
@@ -735,34 +735,187 @@ function renderVolitionStatePanel(
   banner.textContent = model.banner;
   container.appendChild(banner);
 
-  for (const section of model.sections) {
-    const sectionElement = document.createElement("section");
-    sectionElement.className = "volition-state-section";
+  const stateSection = findVolitionSection(model, "State snapshot");
+  const decisionSection = findVolitionSection(model, "Decision detail");
+  const signalsSection = findVolitionSection(model, "Functional signals");
+  const stateRows = rowsByLabel(stateSection);
+  const decisionRows = rowsByLabel(decisionSection);
 
-    const heading = document.createElement("h3");
-    heading.textContent = section.title;
-    sectionElement.appendChild(heading);
+  renderScoringSummary(container, stateRows, decisionRows);
+  renderScoringCounters(container, stateRows);
+  renderScoringGridSection(container, "Goal sets", [
+    rowFromMap(stateRows, "Active goals"),
+    rowFromMap(stateRows, "Accepted goals"),
+    rowFromMap(decisionRows, "Selected goals"),
+    rowFromMap(decisionRows, "Omitted/suppressed goals"),
+    rowFromMap(stateRows, "Last initiative summaries"),
+  ]);
+  renderScoringGridSection(container, "Decision detail", [
+    rowFromMap(decisionRows, "Winner"),
+    rowFromMap(decisionRows, "Winner tiers"),
+    rowFromMap(decisionRows, "Below threshold"),
+    rowFromMap(decisionRows, "Mode bias outcomes"),
+    rowFromMap(decisionRows, "Last initiative output"),
+    rowFromMap(decisionRows, "Suppression reason"),
+    rowFromMap(decisionRows, "Trace ref"),
+  ]);
+  renderBooleanStrip(container, decisionRows);
+  if (signalsSection) {
+    renderScoringGridSection(container, signalsSection.title, signalsSection.rows, true);
+  }
+}
 
-    const list = document.createElement("dl");
-    list.className = "volition-state-list";
+function findVolitionSection(
+  model: VolitionPanelModel,
+  title: string,
+): VolitionPanelSection | undefined {
+  return model.sections.find((section) => section.title === title);
+}
 
-    for (const row of section.rows) {
-      const rowElement = document.createElement("div");
-      rowElement.className = "volition-state-row";
+function rowsByLabel(section: VolitionPanelSection | undefined): Map<string, VolitionPanelRow> {
+  return new Map((section?.rows ?? []).map((row) => [row.label, row]));
+}
 
-      const label = document.createElement("dt");
-      label.textContent = row.label;
+function rowFromMap(
+  rows: Map<string, VolitionPanelRow>,
+  label: string,
+): VolitionPanelRow | undefined {
+  return rows.get(label);
+}
 
-      const value = document.createElement("dd");
-      value.textContent = row.value;
+function renderScoringSummary(
+  container: HTMLElement,
+  stateRows: Map<string, VolitionPanelRow>,
+  decisionRows: Map<string, VolitionPanelRow>,
+) {
+  const summary = document.createElement("div");
+  summary.className = "scoring-summary-strip";
+  for (const row of [
+    rowFromMap(stateRows, "Mode"),
+    rowFromMap(stateRows, "Tick"),
+    rowFromMap(decisionRows, "Winner"),
+    rowFromMap(decisionRows, "Shaping intensity"),
+  ]) {
+    if (row) {
+      summary.appendChild(scoringChip(row.label, row.value));
+    }
+  }
+  if (summary.childElementCount > 0) {
+    container.appendChild(summary);
+  }
+}
 
-      rowElement.append(label, value);
-      list.appendChild(rowElement);
+function renderScoringCounters(container: HTMLElement, stateRows: Map<string, VolitionPanelRow>) {
+  const counters = [
+    rowFromMap(stateRows, "Pending candidates"),
+    rowFromMap(stateRows, "Accepted candidates"),
+    rowFromMap(stateRows, "Blocked goals"),
+    rowFromMap(stateRows, "Cooldown goals"),
+    rowFromMap(stateRows, "Retired goals"),
+  ].filter((row): row is VolitionPanelRow => row !== undefined);
+  if (counters.length === 0) {
+    return;
+  }
+
+  const section = document.createElement("section");
+  section.className = "scoring-compact-section";
+  const heading = document.createElement("h3");
+  heading.textContent = "Counters";
+  section.appendChild(heading);
+
+  const strip = document.createElement("div");
+  strip.className = "scoring-summary-strip scoring-counter-strip";
+  for (const row of counters) {
+    strip.appendChild(scoringChip(row.label, row.value === "none" ? "0" : row.value));
+  }
+  section.appendChild(strip);
+  container.appendChild(section);
+}
+
+function renderScoringGridSection(
+  container: HTMLElement,
+  title: string,
+  rows: Array<VolitionPanelRow | undefined>,
+  emphasize = false,
+) {
+  const presentRows = rows.filter((row): row is VolitionPanelRow => row !== undefined);
+  if (presentRows.length === 0) {
+    return;
+  }
+
+  const section = document.createElement("section");
+  section.className = emphasize
+    ? "scoring-compact-section scoring-signals-section"
+    : "scoring-compact-section";
+  const heading = document.createElement("h3");
+  heading.textContent = title;
+  section.appendChild(heading);
+
+  const list = document.createElement("dl");
+  list.className = "scoring-grid-list";
+  for (const row of presentRows) {
+    const rowElement = document.createElement("div");
+    rowElement.className = "scoring-grid-row";
+
+    const label = document.createElement("dt");
+    label.textContent = row.label;
+
+    const value = document.createElement("dd");
+    value.textContent = row.value;
+    if (row.value === "none") {
+      value.className = "scoring-muted-value";
     }
 
-    sectionElement.appendChild(list);
-    container.appendChild(sectionElement);
+    rowElement.append(label, value);
+    list.appendChild(rowElement);
   }
+  section.appendChild(list);
+  container.appendChild(section);
+}
+
+function renderBooleanStrip(container: HTMLElement, decisionRows: Map<string, VolitionPanelRow>) {
+  const flags = [
+    rowFromMap(decisionRows, "Last initiative surfaced"),
+    rowFromMap(decisionRows, "Rendered line"),
+  ].filter((row): row is VolitionPanelRow => row !== undefined);
+  if (flags.length === 0) {
+    return;
+  }
+
+  const section = document.createElement("section");
+  section.className = "scoring-compact-section";
+  const heading = document.createElement("h3");
+  heading.textContent = "Flags";
+  section.appendChild(heading);
+
+  const strip = document.createElement("div");
+  strip.className = "scoring-flag-strip";
+  for (const row of flags) {
+    const flag = document.createElement("label");
+    flag.className = "scoring-flag";
+    const checkbox = document.createElement("input");
+    checkbox.type = "checkbox";
+    checkbox.disabled = true;
+    checkbox.checked = row.value === "yes";
+    const text = document.createElement("span");
+    text.textContent = row.label;
+    flag.append(checkbox, text);
+    strip.appendChild(flag);
+  }
+  section.appendChild(strip);
+  container.appendChild(section);
+}
+
+function scoringChip(label: string, value: string): HTMLElement {
+  const chip = document.createElement("div");
+  chip.className = "scoring-chip";
+  const labelElement = document.createElement("span");
+  labelElement.className = "scoring-chip-label";
+  labelElement.textContent = label;
+  const valueElement = document.createElement("strong");
+  valueElement.textContent = value;
+  chip.append(labelElement, valueElement);
+  return chip;
 }
 
 function messageFromError(error: unknown): string {
