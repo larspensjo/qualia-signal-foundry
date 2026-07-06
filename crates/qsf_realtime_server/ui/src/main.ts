@@ -107,18 +107,13 @@ root.innerHTML = `
         <ol data-role="transcript" class="transcript" aria-label="Conversation transcript"></ol>
       </article>
 
-      <aside class="panel details-panel">
+      <article class="panel events-panel">
         <div class="panel-header">
-          <h2>Diagnostics</h2>
+          <h2>Events</h2>
           <span class="status-pill muted">Browser view</span>
         </div>
-        <dl class="details">
-          <div>
-            <dt>Recent events</dt>
-            <dd>
-              <ol data-role="event-ticker" class="event-ticker" aria-label="Recent relay events"></ol>
-            </dd>
-          </div>
+        <ol data-role="event-ticker" class="event-ticker" aria-label="Recent relay events"></ol>
+        <dl class="details channel-facts">
           <div>
             <dt>Media</dt>
             <dd>Direct browser to OpenAI</dd>
@@ -128,29 +123,42 @@ root.innerHTML = `
             <dd>Typed browser-to-server envelopes</dd>
           </div>
         </dl>
-        <div class="phase-lane">
-          <ul class="phase-lane-legend" aria-hidden="true">
-            <li><i style="background: var(--phase-idle)"></i>idle</li>
-            <li><i style="background: var(--phase-listening)"></i>listening</li>
-            <li><i style="background: var(--phase-thinking)"></i>thinking</li>
-            <li><i style="background: var(--phase-speaking)"></i>speaking</li>
-          </ul>
-          <div class="phase-lane-wrap">
-            <canvas data-role="phase-lane" aria-label="Runtime phase timeline, last 60 seconds"></canvas>
-            <div data-role="phase-lane-tip" class="phase-lane-tip" hidden></div>
-          </div>
+      </article>
+
+      <aside class="panel volition-panel">
+        <div class="panel-header">
+          <h2>Volition</h2>
         </div>
-        <audio data-role="remote-audio" autoplay playsinline></audio>
-        <details class="turn-context-details" open>
-          <summary>What volition did this turn</summary>
-          <div data-role="volition-state-body" class="volition-state-body"></div>
-        </details>
-        <details class="turn-context-details">
-          <summary>Last turn context</summary>
-          <div data-role="turn-context-body" class="turn-context-body"></div>
-        </details>
+        <div class="volition-scroll">
+          <details class="turn-context-details" open>
+            <summary>What volition did this turn</summary>
+            <div data-role="volition-state-body" class="volition-state-body"></div>
+          </details>
+          <details class="turn-context-details">
+            <summary>Last turn context</summary>
+            <div data-role="turn-context-body" class="turn-context-body"></div>
+          </details>
+        </div>
       </aside>
     </section>
+
+    <section class="panel phase-strip">
+      <div class="phase-strip-header">
+        <h2>Phase timeline</h2>
+        <ul class="phase-lane-legend" aria-hidden="true">
+          <li><i style="background: var(--phase-idle)"></i>idle</li>
+          <li><i style="background: var(--phase-listening)"></i>listening</li>
+          <li><i style="background: var(--phase-thinking)"></i>thinking</li>
+          <li><i style="background: var(--phase-speaking)"></i>speaking</li>
+        </ul>
+      </div>
+      <div class="phase-lane-wrap">
+        <canvas data-role="phase-lane" aria-label="Runtime phase timeline, last 60 seconds of activity"></canvas>
+        <div data-role="phase-lane-tip" class="phase-lane-tip" hidden></div>
+      </div>
+    </section>
+
+    <audio data-role="remote-audio" autoplay playsinline></audio>
   </main>
 `;
 
