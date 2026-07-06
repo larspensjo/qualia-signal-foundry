@@ -1764,6 +1764,21 @@ port collisions. Raw API launches remain possible through `cargo run`; raw UI
 launches can still be run from `crates/qsf_browser_server/ui` with an explicit
 Vite port.
 
+## 2026-07-05 - Diagnostics card shows reducer-owned transition history
+Decision: The realtime browser Diagnostics card shows transition history — a
+collapsed recent-event ticker and a 60 s runtime-phase swimlane — instead of a
+single overwritten last-event field. History lives in reducer state (an event log
+and a phase timeline) with wall-clock timestamps carried on actions so reducers
+stay pure; all geometry and formatting derive from pure selectors, and the canvas
+strip is a dumb consumer redrawn on a clock interval.
+Context: Relay events — especially partial_transcript bursts — overwrote the single
+last-event field faster than a human could read, so transitions were invisible.
+Reducers may not read a clock, so timestamps are stamped at each action's dispatch
+site and threaded through as data.
+Consequences: Diagnostics history survives Stop for post-hoc review and clears when
+a new session is allocated. Any future action that should appear in the ticker must
+carry a wall-clock timestamp stamped at its dispatch site.
+
 ## 2026-07-06 - Volition functional signals are visualization-first and operator-panel only
 Decision: The first volition functional-signal set is
 `coherence_decline`, `frustration`, `satisfaction`, and `boredom`. Signals are pure,
