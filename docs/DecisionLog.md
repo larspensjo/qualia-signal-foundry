@@ -1836,3 +1836,28 @@ opens that boundary. Future true tension, sustained boredom, curiosity, attachme
 model-visible signals require separate substrate and review.
 Refs: docs/Plans/Plan.VolitionMotivationalTexture.md,
 docs/Experiments/Experiment.VolitionEmotionLikeSignals.md
+
+## 2026-07-06 - Subconscious volition goals use reduced ambient exposure
+Decision: Goal visibility is a presentation and surfacing filter, not a separate runtime path.
+`Subconscious` goals participate in salience, selection, arbitration, coherence, and surfacing
+gate decisions exactly like conscious goals. In ordinary model-visible ambient turn context,
+however, a subconscious arbitration winner is reduced rather than rendered as the normal full
+`Active goal: {title} — {summary}` line. Full subconscious detail remains available to operator
+panel views, traces, explicit `inspect_volition_state` / `select_volition_goals` tool calls when
+sectioned and labeled, and forced-surfacing cases backed by evidence such as a rendered
+initiative line or coherence conflict.
+
+Context: The conscious/subconscious visibility slice needed to decide whether a subconscious
+winner should be hidden, reduced, or rendered in full to the response model. Rendering it in full
+would make "subconscious" mostly a UI/introspection label; hiding it entirely would weaken the
+model's ability to follow the selected shaping contract. Reduced ambient exposure preserves
+enough guidance for coherent behavior while making ordinary subconscious context less freely
+narratable.
+
+Consequences: Selection and arbitration tests must stay identical across visibility mixes.
+Ambient injection traces must record the winner visibility and exposure treatment, with full
+winner identity preserved trace-side even when rendered text is reduced. Tool outputs that expose
+subconscious goals must section and label them instead of silently merging them into ordinary
+goal lists. Suppressed internal initiatives do not count as forced surfacing; only rendered
+initiative lines or other evidence-backed forcing conditions may justify full surfaced detail.
+Refs: docs/Plans/Plan.VolitionMotivationalTexture.md
