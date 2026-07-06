@@ -1763,3 +1763,26 @@ Consequences: The launcher owns the workbench lifecycle and avoids hardcoded UI
 port collisions. Raw API launches remain possible through `cargo run`; raw UI
 launches can still be run from `crates/qsf_browser_server/ui` with an explicit
 Vite port.
+
+## 2026-07-06 - Volition functional signals are visualization-first and operator-panel only
+Decision: The first volition functional-signal set is
+`coherence_decline`, `frustration`, `satisfaction`, and `boredom`. Signals are pure,
+evidence-derived values recomputed from recorded volition lifecycle state and fixture data.
+They are exposed only through offline experiment traces and the realtime operator-panel
+capture (`VolitionInspectionCapture`), not through `VolitionStateInspection`,
+`inspect_volition_state`, arbitration, salience, selection, initiative, or context injection.
+True D4 `tension` is reserved for a future unresolved current-conflict substrate, not derived
+from historical declined candidates. Boredom is current-tick low salience with a prior-activity
+guard, not a sustained N-tick window.
+
+Context: Review of the Volition Motivational Texture signal slice found that historical
+coherence declines were being mislabeled as tension, model-visible inspection would move the
+feature from visualization into self-narration input, and sustained boredom could not be proven
+from the current `VolitionState` shape. The slice needs inspectable motivational texture
+without weakening the evidence-based, anti-anthropomorphic stance.
+
+Consequences: Reducer additions for this slice are lifecycle facts only, such as exact
+satisfaction evidence and block repetition counters. The browser may render evidence-backed
+signal rows, but models do not see or narrate them unless a later decision deliberately opens
+that boundary. Future true tension, sustained boredom, curiosity, attachment, or model-visible
+signals require separate substrate and review.
