@@ -29,7 +29,7 @@ export function attachPhaseLane(
   }
   const colors = readPhaseColors(canvas);
   let pointerX: number | null = null;
-  let model: PhaseLaneModel = { segments: [], ticks: [], gridlines: [] };
+  let model: PhaseLaneModel = { segments: [], ticks: [], gridlines: [], breaks: [] };
 
   canvas.addEventListener("mousemove", (event) => {
     pointerX = event.offsetX;

@@ -116,6 +116,13 @@ export interface PhaseSegment {
 /// Width of the phase-lane display window; also the reducer's pruning horizon.
 export const PHASE_LANE_WINDOW_MS = 60_000;
 
+/// Idle time shown at true scale before a gap is compressed; also how long the
+/// live trailing idle runs before the lane pauses.
+export const PHASE_LANE_IDLE_CAP_MS = 2_000;
+
+/// Fixed lane-time width of a compressed gap's break band.
+export const PHASE_LANE_BREAK_LANE_MS = 1_500;
+
 export type VolitionSuppressionReason =
   | "intensity"
   | "protected_no_opportunity"
@@ -953,17 +960,21 @@ function appendPhaseTimeline(
   return prunePhaseTimeline(appended, atMs);
 }
 
-/// Drop segments that ended before the window start, but keep the segment that
-/// spans the cutoff so the lane's left edge is still painted.
+/// Drop segments that ended a full lane window of *activity time* ago, keeping
+/// the segment that spans the cutoff so the lane's left edge is still painted.
+/// Compressed idle gaps cost almost no lane time, so wall-clock-old history
+/// survives a long wait — that is the point of the lane pause.
 function prunePhaseTimeline(timeline: PhaseSegment[], nowMs: number): PhaseSegment[] {
-  const cutoff = nowMs - PHASE_LANE_WINDOW_MS;
-  let firstVisible = 0;
-  for (let i = 0; i + 1 < timeline.length; i++) {
-    if (timeline[i + 1].startedAtMs <= cutoff) {
-      firstVisible = i + 1;
+  let laneFromNow = 0;
+  for (let i = timeline.length - 1; i > 0; i--) {
+    // After adding segment i, laneFromNow is the lane distance from now back to
+    // segment i's start — which is where segment i-1 ends.
+    laneFromNow += laneDurationOf(timeline, i, nowMs);
+    if (laneFromNow >= PHASE_LANE_WINDOW_MS) {
+      return timeline.slice(i);
     }
   }
-  return firstVisible === 0 ? timeline : timeline.slice(firstVisible);
+  return timeline;
 }
 
 function appendTranscript(entries: TranscriptEntry[], entry: TranscriptEntry): TranscriptEntry[] {
@@ -1061,52 +1072,177 @@ export interface PhaseLaneGridlineModel {
   label: string;
 }
 
+export interface PhaseLaneBreakModel {
+  startFraction: number;
+  endFraction: number;
+  /// Wall-clock duration of the whole compressed idle gap, e.g. "⫽ 41s".
+  label: string;
+}
+
 export interface PhaseLaneModel {
   segments: PhaseLaneSegmentModel[];
   ticks: PhaseLaneTickModel[];
   gridlines: PhaseLaneGridlineModel[];
+  breaks: PhaseLaneBreakModel[];
 }
 
 export const PHASE_LANE_GRIDLINE_STEP_MS = 15_000;
 
-/// Geometry for the phase swimlane, all x-positions as fractions of the lane
-/// width in [0, 1] with `now` at 1. The canvas renderer multiplies by pixel
-/// width and picks colors; it makes no layout decisions of its own.
-export function selectPhaseLaneModel(state: ConversationState, nowMs: number): PhaseLaneModel {
-  const windowStartMs = nowMs - PHASE_LANE_WINDOW_MS;
-  const fractionOf = (atMs: number) => (atMs - windowStartMs) / PHASE_LANE_WINDOW_MS;
-  const clamp01 = (value: number) => Math.min(1, Math.max(0, value));
+/// One wall-time interval annotated with the lane-time width it occupies.
+interface LaneSpan {
+  phase: RuntimePhase;
+  wallStartMs: number;
+  wallEndMs: number;
+  laneMs: number;
+  /// Non-null when this span is a compressed idle gap's break band.
+  breakLabel: string | null;
+}
 
-  const timeline = state.phaseTimeline;
-  const segments: PhaseLaneSegmentModel[] = [];
-  // Before the first recorded segment the runtime phase was idle (INITIAL_STATE.phase).
-  const firstStartMs = timeline.length > 0 ? timeline[0].startedAtMs : nowMs;
-  if (firstStartMs > windowStartMs) {
-    segments.push({
-      phase: "idle",
-      startFraction: 0,
-      endFraction: clamp01(fractionOf(firstStartMs)),
-    });
+/// Lane-time width of timeline segment `index`: non-idle and short-idle segments
+/// map 1:1; a closed long idle gap costs cap + break band; the live trailing
+/// idle freezes at the cap (the pause). Shared by the selector and pruning so
+/// state retention matches what the lane can show.
+function laneDurationOf(timeline: PhaseSegment[], index: number, nowMs: number): number {
+  const { phase, startedAtMs } = timeline[index];
+  const isTrailing = index + 1 === timeline.length;
+  const endMs = isTrailing ? nowMs : timeline[index + 1].startedAtMs;
+  const durationMs = endMs - startedAtMs;
+  if (phase !== "idle" || durationMs <= PHASE_LANE_IDLE_CAP_MS) {
+    return durationMs;
   }
+  return isTrailing ? PHASE_LANE_IDLE_CAP_MS : PHASE_LANE_IDLE_CAP_MS + PHASE_LANE_BREAK_LANE_MS;
+}
+
+/// Expand the phase timeline into lane spans. A closed idle gap longer than the
+/// cap splits into a true-scale head plus a break band; the live trailing idle
+/// keeps a single capped span and gains its band only once the gap closes.
+function laneSpansOf(timeline: PhaseSegment[], nowMs: number): LaneSpan[] {
+  const spans: LaneSpan[] = [];
   for (let i = 0; i < timeline.length; i++) {
-    const endMs = i + 1 < timeline.length ? timeline[i + 1].startedAtMs : nowMs;
-    if (endMs <= windowStartMs) {
+    const { phase, startedAtMs } = timeline[i];
+    const isTrailing = i + 1 === timeline.length;
+    const endMs = isTrailing ? nowMs : timeline[i + 1].startedAtMs;
+    const durationMs = endMs - startedAtMs;
+    const isCompressed = phase === "idle" && durationMs > PHASE_LANE_IDLE_CAP_MS;
+    if (!isCompressed || isTrailing) {
+      spans.push({
+        phase,
+        wallStartMs: startedAtMs,
+        wallEndMs: endMs,
+        laneMs: laneDurationOf(timeline, i, nowMs),
+        breakLabel: null,
+      });
       continue;
     }
-    segments.push({
-      phase: timeline[i].phase,
-      startFraction: clamp01(fractionOf(timeline[i].startedAtMs)),
-      endFraction: clamp01(fractionOf(endMs)),
+    spans.push({
+      phase,
+      wallStartMs: startedAtMs,
+      wallEndMs: startedAtMs + PHASE_LANE_IDLE_CAP_MS,
+      laneMs: PHASE_LANE_IDLE_CAP_MS,
+      breakLabel: null,
     });
+    spans.push({
+      phase,
+      wallStartMs: startedAtMs + PHASE_LANE_IDLE_CAP_MS,
+      wallEndMs: endMs,
+      laneMs: PHASE_LANE_BREAK_LANE_MS,
+      breakLabel: `⫽ ${formatGapDuration(durationMs)}`,
+    });
+  }
+  return spans;
+}
+
+function formatGapDuration(ms: number): string {
+  const totalSeconds = Math.round(ms / 1000);
+  if (totalSeconds < 60) {
+    return `${totalSeconds}s`;
+  }
+  return `${Math.floor(totalSeconds / 60)}m ${totalSeconds % 60}s`;
+}
+
+/// Geometry for the phase swimlane, all x-positions as fractions of the lane
+/// width in [0, 1] with `now` at 1. The x-axis is *activity time*: idle gaps
+/// longer than PHASE_LANE_IDLE_CAP_MS are compressed into break bands, and the
+/// live trailing idle freezes the lane (gridline "now" reads "paused"). The
+/// canvas renderer multiplies by pixel width and picks colors; it makes no
+/// layout decisions of its own.
+export function selectPhaseLaneModel(state: ConversationState, nowMs: number): PhaseLaneModel {
+  const clamp01 = (value: number) => Math.min(1, Math.max(0, value));
+  const spans = laneSpansOf(state.phaseTimeline, nowMs);
+
+  // Lane-time distance from now back to each span's start.
+  const laneStartFromNow: number[] = new Array(spans.length);
+  let cumulative = 0;
+  for (let i = spans.length - 1; i >= 0; i--) {
+    cumulative += spans[i].laneMs;
+    laneStartFromNow[i] = cumulative;
+  }
+
+  const fractionWithin = (span: LaneSpan, laneStart: number, atMs: number): number => {
+    const wallSpanMs = span.wallEndMs - span.wallStartMs;
+    // Break bands squash their wall interval linearly; other spans map 1:1 with
+    // the offset clamped to laneMs (the frozen tail of a live idle span).
+    const offset =
+      span.breakLabel !== null && wallSpanMs > 0
+        ? (span.laneMs * (atMs - span.wallStartMs)) / wallSpanMs
+        : Math.min(atMs - span.wallStartMs, span.laneMs);
+    return 1 - (laneStart - offset) / PHASE_LANE_WINDOW_MS;
+  };
+
+  /// Lane fraction of an arbitrary wall time. Times before the first span map
+  /// 1:1 through the leading implicit idle; with no spans at all the axis is
+  /// plain wall clock.
+  const fractionOf = (atMs: number): number => {
+    if (spans.length === 0) {
+      return 1 - (nowMs - atMs) / PHASE_LANE_WINDOW_MS;
+    }
+    if (atMs < spans[0].wallStartMs) {
+      const firstStartFraction = 1 - laneStartFromNow[0] / PHASE_LANE_WINDOW_MS;
+      return firstStartFraction - (spans[0].wallStartMs - atMs) / PHASE_LANE_WINDOW_MS;
+    }
+    let index = spans.length - 1;
+    for (let i = 0; i + 1 < spans.length; i++) {
+      if (atMs < spans[i + 1].wallStartMs) {
+        index = i;
+        break;
+      }
+    }
+    return fractionWithin(spans[index], laneStartFromNow[index], atMs);
+  };
+
+  const segments: PhaseLaneSegmentModel[] = [];
+  const breaks: PhaseLaneBreakModel[] = [];
+  // Before the first recorded segment the runtime phase was idle (INITIAL_STATE.phase).
+  const firstStartFraction =
+    spans.length === 0 ? 1 : clamp01(1 - laneStartFromNow[0] / PHASE_LANE_WINDOW_MS);
+  if (firstStartFraction > 0) {
+    segments.push({ phase: "idle", startFraction: 0, endFraction: firstStartFraction });
+  }
+  for (let i = 0; i < spans.length; i++) {
+    // Hoisting the element is load-bearing: TypeScript only narrows
+    // span.breakLabel to string on a const reference, not on spans[i] with a
+    // mutable index.
+    const span = spans[i];
+    const startFraction = clamp01(1 - laneStartFromNow[i] / PHASE_LANE_WINDOW_MS);
+    const endFraction = clamp01(1 - (laneStartFromNow[i] - span.laneMs) / PHASE_LANE_WINDOW_MS);
+    if (endFraction <= 0) {
+      continue;
+    }
+    if (span.breakLabel !== null) {
+      breaks.push({ startFraction, endFraction, label: span.breakLabel });
+    } else {
+      segments.push({ phase: span.phase, startFraction, endFraction });
+    }
   }
 
   const ticks: PhaseLaneTickModel[] = [];
   for (const entry of state.eventLog) {
     const atMss = entry.count > 1 ? [entry.firstAtMs, entry.lastAtMs] : [entry.firstAtMs];
     for (const atMs of atMss) {
-      if (atMs >= windowStartMs && atMs <= nowMs) {
+      const fraction = fractionOf(Math.min(atMs, nowMs));
+      if (fraction >= 0 && fraction <= 1) {
         ticks.push({
-          fraction: fractionOf(atMs),
+          fraction,
           kind: entry.kind,
           phase: entry.phase,
           timeLabel: formatClockTime(atMs),
@@ -1116,15 +1252,21 @@ export function selectPhaseLaneModel(state: ConversationState, nowMs: number): P
   }
   ticks.sort((a, b) => a.fraction - b.fraction);
 
+  const lastSegment = state.phaseTimeline.at(-1);
+  const paused =
+    lastSegment !== undefined &&
+    lastSegment.phase === "idle" &&
+    nowMs - lastSegment.startedAtMs > PHASE_LANE_IDLE_CAP_MS;
+
   const gridlines: PhaseLaneGridlineModel[] = [];
   for (let backMs = 0; backMs <= PHASE_LANE_WINDOW_MS; backMs += PHASE_LANE_GRIDLINE_STEP_MS) {
     gridlines.push({
-      fraction: fractionOf(nowMs - backMs),
-      label: backMs === 0 ? "now" : `-${backMs / 1000}s`,
+      fraction: 1 - backMs / PHASE_LANE_WINDOW_MS,
+      label: backMs === 0 ? (paused ? "paused" : "now") : `-${backMs / 1000}s`,
     });
   }
 
-  return { segments, ticks, gridlines };
+  return { segments, ticks, gridlines, breaks };
 }
 
 function formatClockTime(atMs: number): string {

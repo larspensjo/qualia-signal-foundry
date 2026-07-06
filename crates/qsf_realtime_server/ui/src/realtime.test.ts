@@ -1541,6 +1541,33 @@ describe("diagnostics phase timeline", () => {
     });
     expect(allocated.phaseTimeline).toEqual([]);
   });
+
+  it("keeps wall-clock-old history across a compressed idle gap", () => {
+    let state = withEnvelope(INITIAL_STATE, "speech_playback_started", 0); // -> speaking
+    state = withEnvelope(state, "speech_playback_completed", 10_000); // -> idle
+    // Five minutes of silence, then the user speaks. The gap costs only
+    // cap + break lane-ms, so the speaking segment must survive.
+    state = withEnvelope(state, "user_turn_started", 310_000); // -> listening
+    expect(state.phaseTimeline).toEqual([
+      { phase: "speaking", startedAtMs: 0 },
+      { phase: "idle", startedAtMs: 10_000 },
+      { phase: "listening", startedAtMs: 310_000 },
+    ]);
+  });
+
+  it("drops pre-gap history once post-gap activity exceeds the lane window", () => {
+    // Regression guard: compressed gaps must not make retention unbounded.
+    // After the gap, listening runs a full lane window (60_000 ms), so the
+    // pre-gap speaking and idle segments fall off the lane-time cutoff.
+    let state = withEnvelope(INITIAL_STATE, "speech_playback_started", 0); // -> speaking
+    state = withEnvelope(state, "speech_playback_completed", 10_000); // -> idle
+    state = withEnvelope(state, "user_turn_started", 310_000); // -> listening
+    state = withEnvelope(state, "final_transcript", 370_000); // -> thinking
+    expect(state.phaseTimeline).toEqual([
+      { phase: "listening", startedAtMs: 310_000 },
+      { phase: "thinking", startedAtMs: 370_000 },
+    ]);
+  });
 });
 
 describe("selectEventTickerModel", () => {
@@ -1674,6 +1701,175 @@ describe("selectPhaseLaneModel", () => {
       { fraction: 0.5, label: "-30s" },
       { fraction: 0.25, label: "-45s" },
       { fraction: 0, label: "-60s" },
+    ]);
+  });
+});
+
+describe("selectPhaseLaneModel idle-gap compression", () => {
+  // Lane distances are written as explicit arithmetic mirroring the selector's
+  // formula (1 - laneMsFromNow / PHASE_LANE_WINDOW_MS) so toEqual stays bit-exact.
+
+  it("keeps an idle gap at or under the cap at true scale with no break", () => {
+    const state: ConversationState = {
+      ...INITIAL_STATE,
+      phaseTimeline: [
+        { phase: "speaking", startedAtMs: 0 },
+        { phase: "idle", startedAtMs: 10_000 },
+        { phase: "listening", startedAtMs: 11_500 },
+      ],
+    };
+    const model = selectPhaseLaneModel(state, 20_000);
+    expect(model.breaks).toEqual([]);
+    expect(model.segments).toEqual([
+      { phase: "idle", startFraction: 0, endFraction: 1 - 20_000 / 60_000 },
+      { phase: "speaking", startFraction: 1 - 20_000 / 60_000, endFraction: 1 - 10_000 / 60_000 },
+      { phase: "idle", startFraction: 1 - 10_000 / 60_000, endFraction: 1 - 8_500 / 60_000 },
+      { phase: "listening", startFraction: 1 - 8_500 / 60_000, endFraction: 1 },
+    ]);
+  });
+
+  it("compresses a closed idle gap into a 2s head plus a labeled break band", () => {
+    // Gap: idle 12_000..53_000 (41 s). Head 12_000..14_000 (2_000 lane-ms);
+    // break band 14_000..53_000 squashed to 1_500 lane-ms.
+    // Lane distances from now=60_000: listening 7_000; break 8_500; head 10_500;
+    // speaking 22_500.
+    const state: ConversationState = {
+      ...INITIAL_STATE,
+      phaseTimeline: [
+        { phase: "speaking", startedAtMs: 0 },
+        { phase: "idle", startedAtMs: 12_000 },
+        { phase: "listening", startedAtMs: 53_000 },
+      ],
+    };
+    const model = selectPhaseLaneModel(state, 60_000);
+    expect(model.segments).toEqual([
+      { phase: "idle", startFraction: 0, endFraction: 1 - 22_500 / 60_000 },
+      { phase: "speaking", startFraction: 1 - 22_500 / 60_000, endFraction: 1 - 10_500 / 60_000 },
+      { phase: "idle", startFraction: 1 - 10_500 / 60_000, endFraction: 1 - 8_500 / 60_000 },
+      { phase: "listening", startFraction: 1 - 7_000 / 60_000, endFraction: 1 },
+    ]);
+    expect(model.breaks).toEqual([
+      {
+        startFraction: 1 - 8_500 / 60_000,
+        endFraction: 1 - 7_000 / 60_000,
+        label: "⫽ 41s",
+      },
+    ]);
+  });
+
+  it("labels a multi-minute gap in minutes and seconds", () => {
+    const state: ConversationState = {
+      ...INITIAL_STATE,
+      phaseTimeline: [
+        { phase: "listening", startedAtMs: 0 },
+        { phase: "idle", startedAtMs: 5_000 },
+        { phase: "listening", startedAtMs: 166_000 },
+      ],
+    };
+    const model = selectPhaseLaneModel(state, 170_000);
+    expect(model.breaks).toHaveLength(1);
+    expect(model.breaks[0].label).toBe("⫽ 2m 41s");
+  });
+
+  it("positions a tick inside a compressed gap proportionally within its break band", () => {
+    // Same geometry as the compression test. Tick at 33_500 = halfway through the
+    // squashed 39_000 ms excess -> lane offset 750 into the 1_500 lane-ms band ->
+    // lane distance from now = 8_500 - 750 = 7_750.
+    const state: ConversationState = {
+      ...INITIAL_STATE,
+      phaseTimeline: [
+        { phase: "speaking", startedAtMs: 0 },
+        { phase: "idle", startedAtMs: 12_000 },
+        { phase: "listening", startedAtMs: 53_000 },
+      ],
+      eventLog: [
+        { kind: "connection_error", phase: "idle", firstAtMs: 33_500, lastAtMs: 33_500, count: 1 },
+      ],
+    };
+    const ticks = selectPhaseLaneModel(state, 60_000).ticks;
+    expect(ticks.map((tick) => [tick.kind, tick.fraction])).toEqual([
+      ["connection_error", 1 - 7_750 / 60_000],
+    ]);
+  });
+
+  it("freezes the lane while the live trailing idle exceeds the cap", () => {
+    const state: ConversationState = {
+      ...INITIAL_STATE,
+      phaseTimeline: [
+        { phase: "speaking", startedAtMs: 0 },
+        { phase: "idle", startedAtMs: 10_000 },
+      ],
+    };
+    const at30 = selectPhaseLaneModel(state, 30_000);
+    // Trailing idle contributes only the cap: speaking spans lane 12_000..2_000
+    // from now, trailing idle the last 2_000, and no break band while live.
+    expect(at30.segments).toEqual([
+      { phase: "idle", startFraction: 0, endFraction: 1 - 12_000 / 60_000 },
+      { phase: "speaking", startFraction: 1 - 12_000 / 60_000, endFraction: 1 - 2_000 / 60_000 },
+      { phase: "idle", startFraction: 1 - 2_000 / 60_000, endFraction: 1 },
+    ]);
+    expect(at30.breaks).toEqual([]);
+    expect(at30.gridlines[0]).toEqual({ fraction: 1, label: "paused" });
+    // A minute later, still waiting: identical geometry — the lane is paused.
+    const at90 = selectPhaseLaneModel(state, 90_000);
+    expect(at90.segments).toEqual(at30.segments);
+    expect(at90.gridlines).toEqual(at30.gridlines);
+  });
+
+  it("ticks at the lane's right edge for events during a frozen trailing idle", () => {
+    // Pause reflects *phase* inactivity: an event inside the frozen tail does
+    // not unpause; its wall time clamps to the capped span, so it lands at 1.
+    const state: ConversationState = {
+      ...INITIAL_STATE,
+      phaseTimeline: [
+        { phase: "speaking", startedAtMs: 0 },
+        { phase: "idle", startedAtMs: 10_000 },
+      ],
+      eventLog: [
+        { kind: "connection_error", phase: "idle", firstAtMs: 25_000, lastAtMs: 25_000, count: 1 },
+      ],
+    };
+    const model = selectPhaseLaneModel(state, 30_000);
+    expect(model.gridlines[0].label).toBe("paused");
+    expect(model.ticks.map((tick) => [tick.kind, tick.fraction])).toEqual([
+      ["connection_error", 1],
+    ]);
+  });
+
+  it("does not pause during short waits, active phases, or before any session", () => {
+    const shortWait: ConversationState = {
+      ...INITIAL_STATE,
+      phaseTimeline: [{ phase: "idle", startedAtMs: 10_000 }],
+    };
+    expect(selectPhaseLaneModel(shortWait, 11_500).gridlines[0].label).toBe("now");
+    const active: ConversationState = {
+      ...INITIAL_STATE,
+      phaseTimeline: [{ phase: "listening", startedAtMs: 0 }],
+    };
+    expect(selectPhaseLaneModel(active, 90_000).gridlines[0].label).toBe("now");
+    expect(selectPhaseLaneModel(INITIAL_STATE, 90_000).gridlines[0].label).toBe("now");
+  });
+
+  it("resumes without flushing history when activity closes a long gap", () => {
+    // After a 80_000 ms wait, listening resumes at 90_000. The gap closes into
+    // head + break (3_500 lane-ms) and speaking remains well inside the window.
+    const state: ConversationState = {
+      ...INITIAL_STATE,
+      phaseTimeline: [
+        { phase: "speaking", startedAtMs: 0 },
+        { phase: "idle", startedAtMs: 10_000 },
+        { phase: "listening", startedAtMs: 90_000 },
+      ],
+    };
+    const model = selectPhaseLaneModel(state, 95_000);
+    // Lane distances from now: listening 5_000; break 6_500; head 8_500; speaking 18_500.
+    expect(model.segments).toContainEqual({
+      phase: "speaking",
+      startFraction: 1 - 18_500 / 60_000,
+      endFraction: 1 - 8_500 / 60_000,
+    });
+    expect(model.breaks).toEqual([
+      { startFraction: 1 - 6_500 / 60_000, endFraction: 1 - 5_000 / 60_000, label: "⫽ 1m 20s" },
     ]);
   });
 });
