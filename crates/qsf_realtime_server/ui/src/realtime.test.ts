@@ -240,6 +240,42 @@ describe("conversation reducer", () => {
     expect(afterPlayback.phase).toBe("idle");
   });
 
+  it("keeps the phase idle when response completion arrives after playback completion", () => {
+    let state = reduceConversationState(INITIAL_STATE, {
+      type: "provider_envelope",
+      envelope: {
+        qsf_session_id: "session_1",
+        event_id: "evt_answer_delta",
+        kind: "speech_playback_started",
+        text: "late",
+      },
+      atMs: 1_000,
+    });
+    state = reduceConversationState(state, {
+      type: "provider_envelope",
+      envelope: {
+        qsf_session_id: "session_1",
+        event_id: "evt_audio_done",
+        kind: "speech_playback_completed",
+      },
+      atMs: 2_000,
+    });
+    state = reduceConversationState(state, {
+      type: "provider_envelope",
+      envelope: {
+        qsf_session_id: "session_1",
+        event_id: "evt_response_done",
+        kind: "response_completed",
+        status: "completed",
+      },
+      atMs: 2_100,
+    });
+
+    expect(state.phase).toBe("idle");
+    expect(state.phaseTimeline.at(-1)).toEqual({ phase: "idle", startedAtMs: 2_000 });
+    expect(state.transcript).toEqual([{ role: "assistant", text: "late" }]);
+  });
+
   it("accumulates assistant transcript deltas until response completion", () => {
     const started = reduceConversationState(INITIAL_STATE, {
       type: "provider_envelope",
@@ -1728,11 +1764,11 @@ describe("selectPhaseLaneModel idle-gap compression", () => {
     ]);
   });
 
-  it("compresses a closed idle gap into a 2s head plus a labeled break band", () => {
-    // Gap: idle 12_000..53_000 (41 s). Head 12_000..14_000 (2_000 lane-ms);
-    // break band 14_000..53_000 squashed to 1_500 lane-ms.
-    // Lane distances from now=60_000: listening 7_000; break 8_500; head 10_500;
-    // speaking 22_500.
+  it("compresses a closed idle gap into a 3s head plus a labeled break band", () => {
+    // Gap: idle 12_000..53_000 (41 s). Head 12_000..15_000 (3_000 lane-ms);
+    // break band 15_000..53_000 squashed to 1_500 lane-ms.
+    // Lane distances from now=60_000: listening 7_000; break 8_500; head 11_500;
+    // speaking 23_500.
     const state: ConversationState = {
       ...INITIAL_STATE,
       phaseTimeline: [
@@ -1743,9 +1779,9 @@ describe("selectPhaseLaneModel idle-gap compression", () => {
     };
     const model = selectPhaseLaneModel(state, 60_000);
     expect(model.segments).toEqual([
-      { phase: "idle", startFraction: 0, endFraction: 1 - 22_500 / 60_000 },
-      { phase: "speaking", startFraction: 1 - 22_500 / 60_000, endFraction: 1 - 10_500 / 60_000 },
-      { phase: "idle", startFraction: 1 - 10_500 / 60_000, endFraction: 1 - 8_500 / 60_000 },
+      { phase: "idle", startFraction: 0, endFraction: 1 - 23_500 / 60_000 },
+      { phase: "speaking", startFraction: 1 - 23_500 / 60_000, endFraction: 1 - 11_500 / 60_000 },
+      { phase: "idle", startFraction: 1 - 11_500 / 60_000, endFraction: 1 - 8_500 / 60_000 },
       { phase: "listening", startFraction: 1 - 7_000 / 60_000, endFraction: 1 },
     ]);
     expect(model.breaks).toEqual([
@@ -1773,8 +1809,8 @@ describe("selectPhaseLaneModel idle-gap compression", () => {
 
   it("positions a tick inside a compressed gap proportionally within its break band", () => {
     // Same geometry as the compression test. Tick at 33_500 = halfway through the
-    // squashed 39_000 ms excess -> lane offset 750 into the 1_500 lane-ms band ->
-    // lane distance from now = 8_500 - 750 = 7_750.
+    // squashed 38_000 ms excess -> lane offset proportional into the 1_500 lane-ms
+    // band.
     const state: ConversationState = {
       ...INITIAL_STATE,
       phaseTimeline: [
@@ -1787,8 +1823,9 @@ describe("selectPhaseLaneModel idle-gap compression", () => {
       ],
     };
     const ticks = selectPhaseLaneModel(state, 60_000).ticks;
+    const expectedFraction = 1 - (8_500 - (1_500 * (33_500 - 15_000)) / 38_000) / 60_000;
     expect(ticks.map((tick) => [tick.kind, tick.fraction])).toEqual([
-      ["connection_error", 1 - 7_750 / 60_000],
+      ["connection_error", expectedFraction],
     ]);
   });
 
@@ -1801,12 +1838,12 @@ describe("selectPhaseLaneModel idle-gap compression", () => {
       ],
     };
     const at30 = selectPhaseLaneModel(state, 30_000);
-    // Trailing idle contributes only the cap: speaking spans lane 12_000..2_000
-    // from now, trailing idle the last 2_000, and no break band while live.
+    // Trailing idle contributes only the cap: speaking spans lane 13_000..3_000
+    // from now, trailing idle the last 3_000, and no break band while live.
     expect(at30.segments).toEqual([
-      { phase: "idle", startFraction: 0, endFraction: 1 - 12_000 / 60_000 },
-      { phase: "speaking", startFraction: 1 - 12_000 / 60_000, endFraction: 1 - 2_000 / 60_000 },
-      { phase: "idle", startFraction: 1 - 2_000 / 60_000, endFraction: 1 },
+      { phase: "idle", startFraction: 0, endFraction: 1 - 13_000 / 60_000 },
+      { phase: "speaking", startFraction: 1 - 13_000 / 60_000, endFraction: 1 - 3_000 / 60_000 },
+      { phase: "idle", startFraction: 1 - 3_000 / 60_000, endFraction: 1 },
     ]);
     expect(at30.breaks).toEqual([]);
     expect(at30.gridlines[0]).toEqual({ fraction: 1, label: "paused" });
@@ -1852,7 +1889,7 @@ describe("selectPhaseLaneModel idle-gap compression", () => {
 
   it("resumes without flushing history when activity closes a long gap", () => {
     // After a 80_000 ms wait, listening resumes at 90_000. The gap closes into
-    // head + break (3_500 lane-ms) and speaking remains well inside the window.
+    // head + break (4_500 lane-ms) and speaking remains well inside the window.
     const state: ConversationState = {
       ...INITIAL_STATE,
       phaseTimeline: [
@@ -1862,11 +1899,11 @@ describe("selectPhaseLaneModel idle-gap compression", () => {
       ],
     };
     const model = selectPhaseLaneModel(state, 95_000);
-    // Lane distances from now: listening 5_000; break 6_500; head 8_500; speaking 18_500.
+    // Lane distances from now: listening 5_000; break 6_500; head 9_500; speaking 19_500.
     expect(model.segments).toContainEqual({
       phase: "speaking",
-      startFraction: 1 - 18_500 / 60_000,
-      endFraction: 1 - 8_500 / 60_000,
+      startFraction: 1 - 19_500 / 60_000,
+      endFraction: 1 - 9_500 / 60_000,
     });
     expect(model.breaks).toEqual([
       { startFraction: 1 - 6_500 / 60_000, endFraction: 1 - 5_000 / 60_000, label: "⫽ 1m 20s" },

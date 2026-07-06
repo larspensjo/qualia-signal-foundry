@@ -118,7 +118,7 @@ export const PHASE_LANE_WINDOW_MS = 60_000;
 
 /// Idle time shown at true scale before a gap is compressed; also how long the
 /// live trailing idle runs before the lane pauses.
-export const PHASE_LANE_IDLE_CAP_MS = 2_000;
+export const PHASE_LANE_IDLE_CAP_MS = 3_000;
 
 /// Fixed lane-time width of a compressed gap's break band.
 export const PHASE_LANE_BREAK_LANE_MS = 1_500;
@@ -898,7 +898,7 @@ function applyRelayEnvelopeKind(
     case "response_completed": {
       const completed = !envelope.status || envelope.status === "completed";
       const text = (envelope.text ?? (completed ? base.responseDraft : "")).trim();
-      const phase = completed ? "speaking" : "idle";
+      const phase = completed && base.phase !== "idle" ? "speaking" : "idle";
       return {
         ...base,
         phase,

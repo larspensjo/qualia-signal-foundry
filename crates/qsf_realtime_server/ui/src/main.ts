@@ -39,7 +39,6 @@ interface UiRefs {
   errorBanner: HTMLElement;
   warningBanner: HTMLElement;
   remoteAudio: HTMLAudioElement;
-  turnContextBody: HTMLElement;
   volitionStateBody: HTMLElement;
   phaseLaneCanvas: HTMLCanvasElement;
   phaseLaneTip: HTMLElement;
@@ -133,10 +132,6 @@ root.innerHTML = `
           <details class="turn-context-details" open>
             <summary>What volition did this turn</summary>
             <div data-role="volition-state-body" class="volition-state-body"></div>
-          </details>
-          <details class="turn-context-details">
-            <summary>Last turn context</summary>
-            <div data-role="turn-context-body" class="turn-context-body"></div>
           </details>
         </div>
       </aside>
@@ -541,22 +536,6 @@ function render() {
   );
   scrollTranscriptToLatest();
 
-  const ctx = state.latestTurnContext;
-  if (ctx === null) {
-    const p = document.createElement("p");
-    p.className = "turn-context-placeholder";
-    p.textContent = "No context captured yet";
-    refs.turnContextBody.replaceChildren(p);
-  } else {
-    const meta = document.createElement("p");
-    meta.className = "turn-context-meta";
-    meta.textContent = `Exchange: ${ctx.exchangeIndex}  Hash: ${ctx.requestHash}`;
-    const pre = document.createElement("pre");
-    pre.className = "turn-context-pre";
-    pre.textContent = JSON.stringify(ctx.messages, null, 2);
-    refs.turnContextBody.replaceChildren(meta, pre);
-  }
-
   const injectedVolition = selectInjectedVolitionText(state);
   renderWhyThisAnswerPanel(
     refs.volitionStateBody,
@@ -672,7 +651,6 @@ function collectRefs(container: HTMLElement): UiRefs {
     errorBanner: query<HTMLElement>('[data-role="error"]'),
     warningBanner: query<HTMLElement>('[data-role="warning"]'),
     remoteAudio: query<HTMLAudioElement>('[data-role="remote-audio"]'),
-    turnContextBody: query<HTMLElement>('[data-role="turn-context-body"]'),
     volitionStateBody: query<HTMLElement>('[data-role="volition-state-body"]'),
     phaseLaneCanvas: query<HTMLCanvasElement>('[data-role="phase-lane"]'),
     phaseLaneTip: query<HTMLElement>('[data-role="phase-lane-tip"]'),

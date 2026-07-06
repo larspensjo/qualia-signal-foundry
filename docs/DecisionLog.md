@@ -1781,7 +1781,7 @@ carry a wall-clock timestamp stamped at its dispatch site.
 
 ## 2026-07-06 - Phase lane shows activity time with compressed idle gaps
 Decision: The realtime diagnostics phase lane's x-axis is activity time, not wall-clock
-time. An idle stretch longer than a short cap (2 s) renders as its first 2 s at true
+time. An idle stretch longer than a short cap (3 s) renders as its first 3 s at true
 scale plus a fixed-width hatched break band labeled with the real gap duration; while
 the live trailing idle exceeds the cap the lane freezes and reads "paused" until the
 next activity. History pruning uses the same activity-time window.
