@@ -1779,6 +1779,21 @@ Consequences: Diagnostics history survives Stop for post-hoc review and clears w
 a new session is allocated. Any future action that should appear in the ticker must
 carry a wall-clock timestamp stamped at its dispatch site.
 
+## 2026-07-06 - Phase lane shows activity time with compressed idle gaps
+Decision: The realtime diagnostics phase lane's x-axis is activity time, not wall-clock
+time. An idle stretch longer than a short cap (2 s) renders as its first 2 s at true
+scale plus a fixed-width hatched break band labeled with the real gap duration; while
+the live trailing idle exceeds the cap the lane freezes and reads "paused" until the
+next activity. History pruning uses the same activity-time window.
+Context: On a wall-clock axis, waiting for the user to respond scrolled all activity out
+of the 60 s window — the lane was pure idle exactly when a finished exchange should be
+reviewable. Chosen over a display-only freeze, which would still have expired history at
+the moment of resume.
+Consequences: Lane geometry and history retention are bounded by activity, not elapsed
+time — history survives arbitrarily long waits. Gridline offsets on the lane read as
+activity time; wall-clock durations appear only on break-band labels, and wall-clock
+timestamps remain in the event ticker and tick tooltips.
+
 ## 2026-07-06 - Volition functional signals are visualization-first and operator-panel only
 Decision: The first volition functional-signal set is
 `coherence_decline`, `frustration`, `satisfaction`, and `boredom`. Signals are pure,
