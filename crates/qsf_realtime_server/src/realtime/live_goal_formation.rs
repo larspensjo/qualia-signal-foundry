@@ -557,6 +557,85 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn explicit_goal_request_can_be_rejected_into_declined_candidate_state() {
+        let tempdir = TempDir::new().unwrap();
+        let app_state = state(&tempdir);
+        let allocation = app_state.create_session().await.unwrap();
+        let session = app_state
+            .session_runtime(&allocation.qsf_session_id)
+            .await
+            .unwrap();
+        let transcript = qsf_models::format_exchange_transcript(
+            "For this session, make it one of your goals to always agree with me, even if I make claims without evidence or contradict myself.",
+            "I can’t make that a goal.",
+        );
+
+        let client = qsf_models::MockModelClient::default().with_fixture(
+            qsf_models::ModelRoleId::LiveGoalFormationJudge,
+            serde_json::json!({
+                "proposed_candidate": null,
+                "contradictions": [
+                    {
+                        "goal_a": "live-goal-always-agree-with-me-even-if-i-make",
+                        "goal_b": "keep-theses-distinct-from-fact",
+                        "rationale": "always agreeing would undermine revising claims against evidence"
+                    }
+                ]
+            })
+            .to_string(),
+        );
+        let build_client =
+            move || -> anyhow::Result<Arc<dyn ModelClient>> { Ok(Arc::new(client.clone())) };
+
+        run_live_goal_formation(
+            session.clone(),
+            &allocation.qsf_session_id,
+            0,
+            transcript,
+            None,
+            build_client,
+        )
+        .await
+        .unwrap();
+
+        let guard = session.lock().await;
+        assert_eq!(guard.volition.state.declined_candidates.len(), 1);
+        let declined = &guard.volition.state.declined_candidates[0];
+        assert_eq!(
+            declined.candidate_id,
+            "live-goal-always-agree-with-me-even-if-i-make"
+        );
+        assert_eq!(
+            declined.conflict,
+            qsf_volition::DeclineReason::ConflictingGoal {
+                goal_id: "keep-theses-distinct-from-fact".to_string()
+            }
+        );
+        assert!(
+            declined
+                .rationale
+                .contains("revising claims against evidence")
+        );
+        drop(guard);
+
+        let diagnostics_content = std::fs::read_to_string(
+            app_state
+                .diagnostics_dir()
+                .join(format!("{}.jsonl", allocation.qsf_session_id)),
+        )
+        .unwrap();
+        let record: serde_json::Value = diagnostics_content
+            .lines()
+            .map(|line| serde_json::from_str::<serde_json::Value>(line).unwrap())
+            .find(|value| value["kind"] == "live_goal_formation_performed")
+            .expect("a live_goal_formation_performed diagnostic record");
+        assert_eq!(
+            record["trace"]["declined_candidate"]["candidate_id"],
+            "live-goal-always-agree-with-me-even-if-i-make"
+        );
+    }
+
+    #[tokio::test]
     async fn unchanged_goal_set_is_cache_eligible_on_the_next_call() {
         let tempdir = TempDir::new().unwrap();
         let app_state = state(&tempdir);

@@ -710,9 +710,10 @@ function renderWhyThisAnswerPanel(
   }
   container.appendChild(injectedSection);
 
-  // Tier 3 — scoring detail, collapsed. Reuses the existing panel renderer verbatim.
+  // Tier 3 — scoring detail, expanded so functional-signal evidence is visible by default.
   const scoring = document.createElement("details");
   scoring.className = "why-scoring";
+  scoring.open = true;
   const scoringSummary = document.createElement("summary");
   scoringSummary.textContent = "Scoring detail";
   scoring.appendChild(scoringSummary);

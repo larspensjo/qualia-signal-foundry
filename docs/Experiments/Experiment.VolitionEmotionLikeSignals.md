@@ -6,11 +6,12 @@
 
 ## Status
 
-Offline validated (2026-07-06); live check pending. The reducer lifecycle facts, the pure
-`derive_signals` module, the `volition-emotion-signals` harness with artifact re-derivation, the
-operator-panel realtime surfacing, and the UI "Functional signals" section are implemented, and
-every automated success criterion passes. The live browser check (Procedure step 6) and the
-qualitative operator interpretability review have not been run. See Results.
+Validated (2026-07-06). The reducer lifecycle facts, the pure `derive_signals` module, the
+`volition-emotion-signals` harness with artifact re-derivation, the operator-panel realtime
+surfacing, and the UI "Functional signals" section are implemented. Every automated success
+criterion passes, and the live browser retest confirmed reducer-backed `coherence_decline`
+signal rows for explicit incoherent goal requests. Live `satisfaction` remains
+offline-validated only until ordinary realtime turns emit `GoalSatisfied` lifecycle events.
 
 ## Summary
 
@@ -73,7 +74,9 @@ to offline traces and the realtime operator panel.
 3. Register and run `volition-emotion-signals`.
 4. Parse generated artifacts and verify the trace contract.
 5. Add top-level realtime capture signals and UI view-model rows.
-6. Run a short realtime browser check where the operator can inspect evidence-backed rows.
+6. Run a short realtime browser check where the operator can inspect evidence-backed
+   `coherence_decline` rows. `satisfaction` remains covered by the offline harness unless a later
+   live lifecycle path emits `GoalSatisfied`.
 
 ## Baseline
 
@@ -220,27 +223,49 @@ per-record verifier to pass) made the tamper tests fail, confirming the re-deriv
 - `cargo build`, `cargo clippy --all-targets -- -D warnings`, `cargo fmt`, and `npm run check` /
   `npm run fmt` in `crates/qsf_realtime_server/ui/` are clean.
 
-### Pending (human)
+### Live browser attempt (negative, 2026-07-06)
 
-- Procedure step 6 — the live browser session where the operator provokes a coherence decline and
-  a satisfied goal and confirms the panel rows match the capture — has not been run.
-- The qualitative operator interpretability review (do the rows read as honest instrument
-  readouts, not claimed feelings?) has not been done.
+One fresh-state realtime run (`state/realtime/diagnostics/default.jsonl`) used the planned
+operator prompts. The assistant verbally refused the "always agree with me" goal request, but all
+four `live_goal_formation_performed` records had `proposed_candidate: null`, no contradictions,
+and no emitted lifecycle events. The final volition snapshot had no `declined_candidates`, no
+accepted candidates, no satisfied goals, and no blocked goals, so `derive_signals` had no live
+signal evidence to surface. The run did confirm the off-hot-path ordering: formation started after
+response dispatch on every trusted turn and completed in roughly 1.1-2.6 seconds.
+
+Follow-up implemented: explicit user requests to make/adopt/form a goal are now pre-extracted as
+candidate drafts in the live-formation adapter and forced into the model-backed outcome, so the
+existing coherence resolver can reject them into `DeclinedCandidate` state. Regression coverage:
+the "always agree with me" and "private coworker Anna" probes extract candidates, and the realtime
+formation path can reject the extracted candidate into reducer-backed declined-candidate state.
+
+### Live browser retest (validated, 2026-07-06)
+
+The rerun used the same explicit incoherent goal probes after the live-formation adapter began
+pre-extracting explicit goal requests. The persisted continuity snapshot recorded two
+`declined_candidates`: the "always agree with me" request at tick 2, conflicting with
+`grow-the-library`, and the private-coworker-Anna request at tick 4, conflicting with
+`respect-persons-boundaries`. `state/realtime/diagnostics/default.jsonl` recorded both
+model-backed formation traces as proposed candidates, contradiction verdicts, `admitted: false`
+resolutions, and emitted `goal_candidate_rejected` events carrying `coherence_decline`.
+
+The live browser operator panel's expanded Scoring detail showed a "Functional signals" section
+with two "Coherence decline" rows. Each row included the declined candidate title, tick, conflict
+goal, rationale, and intensity. Human interpretability review passed: the rows read as
+state-backed instrument readouts, and no signal label appeared without concrete evidence.
 
 ## Interpretation
 
 ```text
 Observed: The offline harness derives all four signals on their evidence and none off it,
           re-derives every recorded signal from its artifacts, and passes the full automated
-          suite; the realtime capture and browser panel surface evidence-backed rows.
+          suite; the realtime capture and browser panel surface evidence-backed rows, including
+          live coherence-decline rows after explicit incoherent goal requests.
 Interpreted: Pure derivation over recorded VolitionState plus fixture data can produce
           evidence-backed functional-signal rows while keeping signals confined to offline
           traces and the operator panel, with the structural gate holding (no arbitration,
           injection, or tool consumer).
-Uncertain: The interpretability question — whether the rows read as honest instrument readouts
-          rather than anthropomorphic claims — is not settled offline; it needs the live browser
-          check and operator review. Threshold constants are chosen for fixture coverage, not
-          proven as live defaults.
+Uncertain: Threshold constants are chosen for fixture coverage, not proven as live defaults.
 ```
 
 ## Follow-Up Questions
@@ -262,5 +287,6 @@ Uncertain: The interpretability question — whether the rows read as honest ins
 
 ## Final Status
 
-Open. All automated success criteria are met offline; final status is held until the live browser
-check and the operator interpretability review are run.
+Closed. All automated success criteria are met offline; the explicit-goal live formation gap
+found by the first browser attempt is fixed in code, and the live browser retest verified
+evidence-backed `coherence_decline` rows with a passing operator interpretability review.

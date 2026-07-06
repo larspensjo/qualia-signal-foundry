@@ -4,9 +4,9 @@
 
 Candidate. Phases 1–3 are implemented and compacted to summaries below — Phase 1 (goal
 coherence under a protected floor), Phase 2 (live goal formation and off-hot-path coherence),
-and Phase 3 (emotion-like signals, visualization-first), which is offline-validated with the
-live browser verification and the interpretability review still pending. Phases 4–5 remain
-sequenced but not yet specified.
+and Phase 3 (emotion-like signals, visualization-first), which is offline-validated and
+live-browser verified for coherence-decline signal rows. Phases 4–5 remain sequenced but not yet
+specified.
 
 ## Purpose
 
@@ -143,11 +143,13 @@ offline validation and the trace contract in
   (needs cross-session reinforcement semantics), sustained N-tick boredom (needs salience
   history), and any model-visible signal exposure (would edge toward narration input; its own D4
   review). Feeding any signal into arbitration stays out of scope (see Parked questions).
-- **Open item (human):** the live browser check — a realtime session provoking a coherence
-  decline and a satisfied goal, confirming the panel rows match the capture — and the recommended
-  interpretability review (do the rows read as honest instrument readouts, not claimed feelings?
-  Same lens as [Design.LiveActivationDashboard.md](Design.LiveActivationDashboard.md)) are not
-  yet run. The slice is uncommitted, pending that review.
+- **Human review closed:** after the 2026-07-06 negative attempt, the live-formation adapter
+  pre-extracts explicit goal requests so the existing coherence resolver can reject incoherent
+  requests into declined-candidate state. The browser retest showed two `coherence_decline`
+  functional-signal rows in Scoring detail, each carrying candidate title, tick, conflicting goal,
+  rationale, and intensity. The operator interpretability review passed: the rows read as honest
+  instrument readouts, not claimed feelings. Live `satisfaction` remains offline-harness-only
+  until ordinary realtime turns emit `GoalSatisfied` lifecycle events.
 
 ### Phase 4 — Conscious / subconscious visibility (brief §6)
 
@@ -195,7 +197,8 @@ suspend / resume / abandon. The current system is single-turn initiative.
   [Architecture.VolitionSystem.md](../Architecture/Architecture.VolitionSystem.md) now carries
   both the signals slice and Phase 2's additions (shared model crate, live formation +
   off-hot-path admission, declined-candidate injection layer, sleep formation + sweep); the
-  experiment Results record the offline validation with the live browser check pending.
+  experiment Results record the offline validation and completed live browser coherence-decline
+  review.
 - When a later phase is detailed: write its `Experiment.*.md` scaffold and trace contract.
 - **Done as brief concepts landed:** the brief's §12 is annotated **not-adopted** (ownership
   declined), §11 **delivered** through coherence, and §8 **delivered (translated)** now that the

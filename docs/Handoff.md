@@ -1,7 +1,7 @@
 # Handoff — Resume Here
 
-**Updated:** 2026-07-06 — emotion-like functional signals implemented and offline-validated
-(visualization-first, operator-panel only); live browser check and interpretability review pending.
+**Updated:** 2026-07-06 — emotion-like functional signals validated; next work is Phase 4
+conscious/subconscious visibility in the volition motivational texture plan.
 
 <!--
 Rules (see ProjectWorkflow.md, "Handoff Discipline"):
@@ -15,35 +15,34 @@ Rules (see ProjectWorkflow.md, "Handoff Discipline"):
 
 ## Now — immediate action
 
-**Verify the functional-signals slice in a live browser session** — the implementation is
-offline-validated but its operator-panel readouts have not been seen live, and the work is
-uncommitted pending that review.
-Why: a short realtime session that provokes a coherence decline and a satisfied goal should confirm
-the "Functional signals" panel rows match the capture, read through the interpretability lens
-(honest instrument readouts, not claimed feelings) — the pending gate in
-[Experiment.VolitionEmotionLikeSignals.md](Experiments/Experiment.VolitionEmotionLikeSignals.md)
-(Procedure step 6 / Results).
-Alternate: run the formation voice test
-([Experiment.LiveGoalFormationAndCoherence.md](Experiments/Experiment.LiveGoalFormationAndCoherence.md)
-Human Test Steps), the other open live check.
+**Detail Phase 4 into an experiment scaffold** — turn the conscious/subconscious visibility slice
+in [Plan.VolitionMotivationalTexture.md](Plans/Plan.VolitionMotivationalTexture.md) into a
+self-contained `Experiment.*.md` before implementation.
+Why: Phase 4 is still only sequenced at plan level; ProjectWorkflow requires a testable
+experiment scaffold with verification steps and a trace contract before building behavior.
+Alternate: run the remaining Phase 2 formation voice test in
+[Experiment.LiveGoalFormationAndCoherence.md](Experiments/Experiment.LiveGoalFormationAndCoherence.md)
+if live conversational feel needs checking before Phase 4.
 
 ## Next — active plan
 
-**Elaborate a persona experiment** (e.g. `Experiment.PersonaTensionVariations` in
-[Experiment.Backlog.md](Experiments/Experiment.Backlog.md)) that exercises the now-validated
-weighted activation — new tensions/keyword-weight mixes and their felt behavior.
-Why: with qualification gating in place, fixture-data changes are the cheapest lever on persona
-behavior and no longer masked by stopword wins.
-Alternate: [Plan.RealtimeVoiceConversation.md](Plans/Plan.RealtimeVoiceConversation.md) Phase 5
-(live memory extraction), independent of the volition work.
+**Implement Phase 4 conscious/subconscious visibility** — after the experiment scaffold is written,
+build it as an introspection-surfacing filter over goal selection/inspection rather than a separate
+runtime path.
+Why: [Plan.VolitionMotivationalTexture.md](Plans/Plan.VolitionMotivationalTexture.md) identifies
+Phase 4 as the next sequenced volition texture step after the now-closed functional-signals slice.
+Alternate: elaborate a persona experiment from
+[Experiment.Backlog.md](Experiments/Experiment.Backlog.md) if fixture-level personality tuning
+becomes more urgent than Phase 4.
 
 ## Horizon — direction
 
-**Personality/goal experimentation** on the live volition system — new tensions, modes, and felt
-behavior changes.
-Why: the volition build is complete; the value now is in what the fixture can express.
+**Persona and longer-horizon volition structure** — after Phase 4, choose between fixture-level
+personality experiments and Phase 5 multi-turn plans.
+Why: Phase 4 completes the remaining visibility layer; the next uncertainty is whether more value
+comes from persona tuning or from adding explicit multi-turn plan state.
 Candidates: `Experiment.PersonaTensionVariations` in
-[Experiment.Backlog.md](Experiments/Experiment.Backlog.md); guidance in
+[Experiment.Backlog.md](Experiments/Experiment.Backlog.md), Phase 5 in
+[Plan.VolitionMotivationalTexture.md](Plans/Plan.VolitionMotivationalTexture.md), and
 [Architecture.VolitionSystem.md](Architecture/Architecture.VolitionSystem.md) (Persona And Fixture
 Experimentation).
-Alternate: elaborate another `docs/Plans/Idea.*.md` into a plan.
