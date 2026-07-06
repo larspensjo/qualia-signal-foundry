@@ -1,22 +1,44 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  type ConversationState,
   DEFAULT_SESSION_CONFIG,
+  EVENT_LOG_LIMIT,
   INITIAL_STATE,
   MICROPHONE_AUDIO_CONSTRAINTS,
   mapProviderMessageToRelayEnvelope,
+  PHASE_LANE_WINDOW_MS,
   parseProviderDataChannelMessage,
   parseSidebandStatusMessage,
   parseTurnContextMessage,
   parseVolitionStateMessage,
   providerTypeToRelayKind,
+  type RelayEnvelope,
+  type RelayEventKind,
   reduceConversationState,
   selectCanSubmitTextTurn,
+  selectEventTickerModel,
   selectInjectedVolitionText,
   selectMuteButton,
+  selectPhaseLaneModel,
   selectVolitionPanelModel,
   selectVolitionVerdict,
 } from "./realtime";
+
+function envelopeOfKind(kind: RelayEventKind): RelayEnvelope {
+  return { qsf_session_id: "session_1", event_id: `evt_${kind}`, kind };
+}
+function withEnvelope(
+  state: ConversationState,
+  kind: RelayEventKind,
+  atMs: number,
+): ConversationState {
+  return reduceConversationState(state, {
+    type: "provider_envelope",
+    envelope: envelopeOfKind(kind),
+    atMs,
+  });
+}
 
 describe("provider relay mapping", () => {
   it("maps provider messages to typed relay envelopes", () => {
@@ -167,6 +189,7 @@ describe("conversation reducer", () => {
         kind: "partial_transcript",
         transcript: "hel",
       },
+      atMs: 0,
     });
 
     expect(afterPartial.phase).toBe("listening");
@@ -180,6 +203,7 @@ describe("conversation reducer", () => {
         kind: "final_transcript",
         transcript: "hello",
       },
+      atMs: 0,
     });
 
     expect(afterFinal.phase).toBe("thinking");
@@ -194,6 +218,7 @@ describe("conversation reducer", () => {
         kind: "response_completed",
         text: "hi there",
       },
+      atMs: 0,
     });
 
     expect(afterResponse.phase).toBe("speaking");
@@ -209,9 +234,46 @@ describe("conversation reducer", () => {
         event_id: "evt_5",
         kind: "speech_playback_completed",
       },
+      atMs: 0,
     });
 
     expect(afterPlayback.phase).toBe("idle");
+  });
+
+  it("keeps the phase idle when response completion arrives after playback completion", () => {
+    let state = reduceConversationState(INITIAL_STATE, {
+      type: "provider_envelope",
+      envelope: {
+        qsf_session_id: "session_1",
+        event_id: "evt_answer_delta",
+        kind: "speech_playback_started",
+        text: "late",
+      },
+      atMs: 1_000,
+    });
+    state = reduceConversationState(state, {
+      type: "provider_envelope",
+      envelope: {
+        qsf_session_id: "session_1",
+        event_id: "evt_audio_done",
+        kind: "speech_playback_completed",
+      },
+      atMs: 2_000,
+    });
+    state = reduceConversationState(state, {
+      type: "provider_envelope",
+      envelope: {
+        qsf_session_id: "session_1",
+        event_id: "evt_response_done",
+        kind: "response_completed",
+        status: "completed",
+      },
+      atMs: 2_100,
+    });
+
+    expect(state.phase).toBe("idle");
+    expect(state.phaseTimeline.at(-1)).toEqual({ phase: "idle", startedAtMs: 2_000 });
+    expect(state.transcript).toEqual([{ role: "assistant", text: "late" }]);
   });
 
   it("accumulates assistant transcript deltas until response completion", () => {
@@ -222,6 +284,7 @@ describe("conversation reducer", () => {
         event_id: "evt_response_started",
         kind: "response_started",
       },
+      atMs: 0,
     });
     const firstDelta = reduceConversationState(started, {
       type: "provider_envelope",
@@ -231,6 +294,7 @@ describe("conversation reducer", () => {
         kind: "speech_playback_started",
         text: "hi",
       },
+      atMs: 0,
     });
     const secondDelta = reduceConversationState(firstDelta, {
       type: "provider_envelope",
@@ -240,6 +304,7 @@ describe("conversation reducer", () => {
         kind: "speech_playback_started",
         text: " there",
       },
+      atMs: 0,
     });
     const completed = reduceConversationState(secondDelta, {
       type: "provider_envelope",
@@ -249,6 +314,7 @@ describe("conversation reducer", () => {
         kind: "response_completed",
         status: "completed",
       },
+      atMs: 0,
     });
 
     expect(completed.transcript).toEqual([{ role: "assistant", text: "hi there" }]);
@@ -263,6 +329,7 @@ describe("conversation reducer", () => {
         kind: "response_completed",
         text: "same answer",
       },
+      atMs: 0,
     });
     const duplicateCompletion = reduceConversationState(firstCompletion, {
       type: "provider_envelope",
@@ -272,6 +339,7 @@ describe("conversation reducer", () => {
         kind: "response_completed",
         text: "same answer",
       },
+      atMs: 0,
     });
 
     expect(duplicateCompletion.transcript).toEqual([{ role: "assistant", text: "same answer" }]);
@@ -291,6 +359,7 @@ describe("conversation reducer", () => {
         kind: "response_completed",
         status: "cancelled",
       },
+      atMs: 0,
     });
 
     expect(cancelled.phase).toBe("idle");
@@ -306,6 +375,7 @@ describe("conversation reducer", () => {
         kind: "speech_playback_started",
         text: "partial answer",
       },
+      atMs: 0,
     });
     const cancelled = reduceConversationState(withDraft, {
       type: "provider_envelope",
@@ -315,6 +385,7 @@ describe("conversation reducer", () => {
         kind: "response_completed",
         status: "cancelled",
       },
+      atMs: 0,
     });
 
     expect(cancelled.phase).toBe("idle");
@@ -376,7 +447,7 @@ describe("conversation reducer", () => {
     expect(ignored).toBe(active);
 
     // After stop, sessionId is null, so a late message is still ignored.
-    const stopped = reduceConversationState(active, { type: "stopped" });
+    const stopped = reduceConversationState(active, { type: "stopped", atMs: 0 });
     const afterStop = reduceConversationState(stopped, {
       type: "server_status",
       sessionId: "session_2",
@@ -398,7 +469,7 @@ describe("microphone mute", () => {
 
   it("preserves a pre-armed mute across a stop", () => {
     const muted = reduceConversationState(INITIAL_STATE, { type: "mute_toggled" });
-    const stopped = reduceConversationState(muted, { type: "stopped" });
+    const stopped = reduceConversationState(muted, { type: "stopped", atMs: 0 });
     expect(stopped.muted).toBe(true);
 
     // A provider-driven session close must also leave the gate armed.
@@ -413,6 +484,7 @@ describe("microphone mute", () => {
         event_id: "evt_close",
         kind: "session_stopped",
       },
+      atMs: 0,
     });
     expect(closed.muted).toBe(true);
   });
@@ -442,6 +514,7 @@ describe("text turn availability", () => {
         event_id: "evt_listening",
         kind: "user_turn_started",
       },
+      atMs: 0,
     });
     const thinking = reduceConversationState(readyState, {
       type: "provider_envelope",
@@ -451,6 +524,7 @@ describe("text turn availability", () => {
         kind: "final_transcript",
         transcript: "hello",
       },
+      atMs: 0,
     });
     const speaking = reduceConversationState(readyState, {
       type: "provider_envelope",
@@ -461,6 +535,7 @@ describe("text turn availability", () => {
         status: "completed",
         text: "hi",
       },
+      atMs: 0,
     });
 
     for (const state of [INITIAL_STATE, readyState, listening, thinking, speaking]) {
@@ -477,10 +552,11 @@ describe("text turn availability", () => {
       type: "session_allocated",
       sessionId: "session_1",
     });
-    const stopping = reduceConversationState(readyState, { type: "stop_requested" });
+    const stopping = reduceConversationState(readyState, { type: "stop_requested", atMs: 0 });
     const error = reduceConversationState(readyState, {
       type: "connection_error",
       message: "failed",
+      atMs: 0,
     });
 
     for (const state of [requesting, connecting, stopping, error]) {
@@ -528,7 +604,7 @@ describe("turn context reducer", () => {
     });
     expect(withCapture.latestTurnContext).not.toBeNull();
 
-    const stopped = reduceConversationState(withCapture, { type: "stopped" });
+    const stopped = reduceConversationState(withCapture, { type: "stopped", atMs: 0 });
     expect(stopped.latestTurnContext).toEqual(sampleCapture);
   });
 
@@ -639,7 +715,7 @@ describe("volition state reducer", () => {
     });
     expect(withCapture.latestVolitionState).not.toBeNull();
 
-    const stopped = reduceConversationState(withCapture, { type: "stopped" });
+    const stopped = reduceConversationState(withCapture, { type: "stopped", atMs: 0 });
     expect(stopped.latestVolitionState).toEqual(sampleCapture);
   });
 
@@ -1631,5 +1707,470 @@ describe("injected volition text locator", () => {
       ]),
     };
     expect(expectFound(selectInjectedVolitionText(state))).toContain("Active goal:");
+  });
+});
+
+describe("diagnostics event log", () => {
+  it("appends distinct events newest-first with timestamps", () => {
+    const first = withEnvelope(INITIAL_STATE, "user_turn_started", 1_000);
+    const second = withEnvelope(first, "final_transcript", 3_500);
+    expect(second.eventLog).toEqual([
+      { kind: "final_transcript", phase: "thinking", firstAtMs: 3_500, lastAtMs: 3_500, count: 1 },
+      {
+        kind: "user_turn_started",
+        phase: "listening",
+        firstAtMs: 1_000,
+        lastAtMs: 1_000,
+        count: 1,
+      },
+    ]);
+  });
+
+  it("collapses a burst of one kind into a single counted row", () => {
+    let state = withEnvelope(INITIAL_STATE, "user_turn_started", 1_000);
+    state = withEnvelope(state, "partial_transcript", 1_200);
+    state = withEnvelope(state, "partial_transcript", 1_450);
+    state = withEnvelope(state, "partial_transcript", 1_700);
+    expect(state.eventLog).toEqual([
+      {
+        kind: "partial_transcript",
+        phase: "listening",
+        firstAtMs: 1_200,
+        lastAtMs: 1_700,
+        count: 3,
+      },
+      {
+        kind: "user_turn_started",
+        phase: "listening",
+        firstAtMs: 1_000,
+        lastAtMs: 1_000,
+        count: 1,
+      },
+    ]);
+  });
+
+  it("records the reducer-derived phase, not a static kind lookup", () => {
+    // response_completed with a non-completed status transitions to idle, not
+    // speaking — the log entry must reflect the transition the reducer made.
+    const listening = withEnvelope(INITIAL_STATE, "user_turn_started", 1_000);
+    const cancelled = reduceConversationState(listening, {
+      type: "provider_envelope",
+      envelope: {
+        qsf_session_id: "session_1",
+        event_id: "evt_cancelled",
+        kind: "response_completed",
+        status: "cancelled",
+      },
+      atMs: 2_000,
+    });
+    expect(cancelled.eventLog[0]).toMatchObject({ kind: "response_completed", phase: "idle" });
+  });
+
+  it("caps the log at EVENT_LOG_LIMIT rows, dropping the oldest", () => {
+    let state = INITIAL_STATE;
+    // Alternate two kinds so no collapsing happens.
+    for (let i = 0; i < EVENT_LOG_LIMIT + 2; i++) {
+      const kind = i % 2 === 0 ? "user_turn_started" : "final_transcript";
+      state = withEnvelope(state, kind, 1_000 + i);
+    }
+    expect(state.eventLog).toHaveLength(EVENT_LOG_LIMIT);
+    expect(state.eventLog[0].lastAtMs).toBe(1_000 + EVENT_LOG_LIMIT + 1);
+    expect(state.eventLog.at(-1)?.lastAtMs).toBe(1_002);
+  });
+
+  it("logs lifecycle markers for stop, stopped, and errors", () => {
+    let state = reduceConversationState(INITIAL_STATE, { type: "stop_requested", atMs: 5_000 });
+    state = reduceConversationState(state, { type: "stopped", atMs: 6_000 });
+    state = reduceConversationState(state, {
+      type: "connection_error",
+      message: "relay socket closed",
+      atMs: 7_000,
+    });
+    expect(state.eventLog.map((entry) => entry.kind)).toEqual([
+      "connection_error",
+      "stopped",
+      "stopping",
+    ]);
+  });
+
+  it("clears the log when a new session is allocated", () => {
+    const seeded = withEnvelope(INITIAL_STATE, "user_turn_started", 1_000);
+    const allocated = reduceConversationState(seeded, {
+      type: "session_allocated",
+      sessionId: "session_2",
+    });
+    expect(allocated.eventLog).toEqual([]);
+  });
+});
+
+describe("diagnostics phase timeline", () => {
+  it("appends a segment only when the runtime phase changes", () => {
+    let state = withEnvelope(INITIAL_STATE, "user_turn_started", 1_000); // -> listening
+    state = withEnvelope(state, "partial_transcript", 1_200); // still listening
+    state = withEnvelope(state, "final_transcript", 2_000); // -> thinking
+    expect(state.phaseTimeline).toEqual([
+      { phase: "listening", startedAtMs: 1_000 },
+      { phase: "thinking", startedAtMs: 2_000 },
+    ]);
+  });
+
+  it("returns to idle when the session stops", () => {
+    let state = withEnvelope(INITIAL_STATE, "user_turn_started", 1_000);
+    state = reduceConversationState(state, { type: "stopped", atMs: 4_000 });
+    expect(state.phaseTimeline.at(-1)).toEqual({ phase: "idle", startedAtMs: 4_000 });
+  });
+
+  it("prunes segments that ended before the lane window, keeping the spanning one", () => {
+    let state = withEnvelope(INITIAL_STATE, "user_turn_started", 0); // listening @ 0
+    state = withEnvelope(state, "final_transcript", 1_000); // thinking @ 1000
+    state = withEnvelope(state, "speech_playback_started", 2_000); // speaking @ 2000
+    // Same phase much later: no new segment, but pruning runs at atMs.
+    state = withEnvelope(state, "speech_playback_started", PHASE_LANE_WINDOW_MS + 1_500);
+    // cutoff = 1_500: listening ended at 1_000 (dropped); thinking ended at 2_000 (spans, kept).
+    expect(state.phaseTimeline).toEqual([
+      { phase: "thinking", startedAtMs: 1_000 },
+      { phase: "speaking", startedAtMs: 2_000 },
+    ]);
+  });
+
+  it("clears the timeline when a new session is allocated", () => {
+    const seeded = withEnvelope(INITIAL_STATE, "user_turn_started", 1_000);
+    const allocated = reduceConversationState(seeded, {
+      type: "session_allocated",
+      sessionId: "session_2",
+    });
+    expect(allocated.phaseTimeline).toEqual([]);
+  });
+
+  it("keeps wall-clock-old history across a compressed idle gap", () => {
+    let state = withEnvelope(INITIAL_STATE, "speech_playback_started", 0); // -> speaking
+    state = withEnvelope(state, "speech_playback_completed", 10_000); // -> idle
+    // Five minutes of silence, then the user speaks. The gap costs only
+    // cap + break lane-ms, so the speaking segment must survive.
+    state = withEnvelope(state, "user_turn_started", 310_000); // -> listening
+    expect(state.phaseTimeline).toEqual([
+      { phase: "speaking", startedAtMs: 0 },
+      { phase: "idle", startedAtMs: 10_000 },
+      { phase: "listening", startedAtMs: 310_000 },
+    ]);
+  });
+
+  it("drops pre-gap history once post-gap activity exceeds the lane window", () => {
+    // Regression guard: compressed gaps must not make retention unbounded.
+    // After the gap, listening runs a full lane window (60_000 ms), so the
+    // pre-gap speaking and idle segments fall off the lane-time cutoff.
+    let state = withEnvelope(INITIAL_STATE, "speech_playback_started", 0); // -> speaking
+    state = withEnvelope(state, "speech_playback_completed", 10_000); // -> idle
+    state = withEnvelope(state, "user_turn_started", 310_000); // -> listening
+    state = withEnvelope(state, "final_transcript", 370_000); // -> thinking
+    expect(state.phaseTimeline).toEqual([
+      { phase: "listening", startedAtMs: 310_000 },
+      { phase: "thinking", startedAtMs: 370_000 },
+    ]);
+  });
+});
+
+describe("selectEventTickerModel", () => {
+  // Local-time constructor keeps the expected labels timezone-independent.
+  const at = (h: number, m: number, s: number, ms: number) =>
+    new Date(2026, 6, 5, h, m, s, ms).getTime();
+
+  it("formats rows with clock time, burst count, and inter-event gap", () => {
+    const state: ConversationState = {
+      ...INITIAL_STATE,
+      eventLog: [
+        {
+          kind: "final_transcript",
+          phase: "thinking",
+          firstAtMs: at(12, 0, 5, 200),
+          lastAtMs: at(12, 0, 5, 200),
+          count: 1,
+        },
+        {
+          kind: "partial_transcript",
+          phase: "listening",
+          firstAtMs: at(12, 0, 1, 100),
+          lastAtMs: at(12, 0, 3, 100),
+          count: 14,
+        },
+      ],
+    };
+    expect(selectEventTickerModel(state)).toEqual([
+      {
+        kind: "final_transcript",
+        countLabel: null,
+        timeLabel: "12:00:05.2",
+        // Gap measured against the previous row's *last* occurrence: 5.2 - 3.1 = 2.1 s.
+        deltaLabel: "+2.1s",
+      },
+      {
+        kind: "partial_transcript",
+        countLabel: "×14",
+        timeLabel: "12:00:01.1",
+        deltaLabel: null,
+      },
+    ]);
+  });
+
+  it("returns an empty list before any event", () => {
+    expect(selectEventTickerModel(INITIAL_STATE)).toEqual([]);
+  });
+});
+
+describe("selectPhaseLaneModel", () => {
+  const NOW = 100_000; // window start = 40_000 with the 60 s window
+
+  it("maps segments to window fractions and fills the leading gap with idle", () => {
+    const state: ConversationState = {
+      ...INITIAL_STATE,
+      phaseTimeline: [
+        { phase: "listening", startedAtMs: 70_000 },
+        { phase: "thinking", startedAtMs: 85_000 },
+      ],
+    };
+    expect(selectPhaseLaneModel(state, NOW).segments).toEqual([
+      { phase: "idle", startFraction: 0, endFraction: 0.5 },
+      { phase: "listening", startFraction: 0.5, endFraction: 0.75 },
+      { phase: "thinking", startFraction: 0.75, endFraction: 1 },
+    ]);
+  });
+
+  it("renders a fully idle lane when the timeline is empty", () => {
+    expect(selectPhaseLaneModel(INITIAL_STATE, NOW).segments).toEqual([
+      { phase: "idle", startFraction: 0, endFraction: 1 },
+    ]);
+  });
+
+  it("clamps a segment that started before the window", () => {
+    const state: ConversationState = {
+      ...INITIAL_STATE,
+      phaseTimeline: [{ phase: "speaking", startedAtMs: 10_000 }],
+    };
+    expect(selectPhaseLaneModel(state, NOW).segments).toEqual([
+      { phase: "speaking", startFraction: 0, endFraction: 1 },
+    ]);
+  });
+
+  it("skips a segment that ended before the window and emits no leading idle prefix", () => {
+    const state: ConversationState = {
+      ...INITIAL_STATE,
+      phaseTimeline: [
+        { phase: "listening", startedAtMs: 5_000 }, // ends at 30_000 <= 40_000 window start → skipped
+        { phase: "thinking", startedAtMs: 30_000 },
+      ],
+    };
+    // First segment starts at 5_000 <= 40_000, so no leading idle prefix is emitted either.
+    expect(selectPhaseLaneModel(state, NOW).segments).toEqual([
+      { phase: "thinking", startFraction: 0, endFraction: 1 },
+    ]);
+  });
+
+  it("emits ticks inside the window carrying the reducer-derived phase; a burst row becomes a start/end pair", () => {
+    const state: ConversationState = {
+      ...INITIAL_STATE,
+      eventLog: [
+        {
+          kind: "final_transcript",
+          phase: "thinking",
+          firstAtMs: 85_000,
+          lastAtMs: 85_000,
+          count: 1,
+        },
+        {
+          kind: "partial_transcript",
+          phase: "listening",
+          firstAtMs: 70_000,
+          lastAtMs: 76_000,
+          count: 9,
+        },
+        { kind: "stopped", phase: "idle", firstAtMs: 10_000, lastAtMs: 10_000, count: 1 }, // outside window
+      ],
+    };
+    const ticks = selectPhaseLaneModel(state, NOW).ticks;
+    expect(ticks.map((tick) => [tick.kind, tick.phase, tick.fraction])).toEqual([
+      ["partial_transcript", "listening", 0.5],
+      ["partial_transcript", "listening", 0.6],
+      ["final_transcript", "thinking", 0.75],
+    ]);
+  });
+
+  it("labels gridlines every 15 s back from now", () => {
+    expect(selectPhaseLaneModel(INITIAL_STATE, NOW).gridlines).toEqual([
+      { fraction: 1, label: "now" },
+      { fraction: 0.75, label: "-15s" },
+      { fraction: 0.5, label: "-30s" },
+      { fraction: 0.25, label: "-45s" },
+      { fraction: 0, label: "-60s" },
+    ]);
+  });
+});
+
+describe("selectPhaseLaneModel idle-gap compression", () => {
+  // Lane distances are written as explicit arithmetic mirroring the selector's
+  // formula (1 - laneMsFromNow / PHASE_LANE_WINDOW_MS) so toEqual stays bit-exact.
+
+  it("keeps an idle gap at or under the cap at true scale with no break", () => {
+    const state: ConversationState = {
+      ...INITIAL_STATE,
+      phaseTimeline: [
+        { phase: "speaking", startedAtMs: 0 },
+        { phase: "idle", startedAtMs: 10_000 },
+        { phase: "listening", startedAtMs: 11_500 },
+      ],
+    };
+    const model = selectPhaseLaneModel(state, 20_000);
+    expect(model.breaks).toEqual([]);
+    expect(model.segments).toEqual([
+      { phase: "idle", startFraction: 0, endFraction: 1 - 20_000 / 60_000 },
+      { phase: "speaking", startFraction: 1 - 20_000 / 60_000, endFraction: 1 - 10_000 / 60_000 },
+      { phase: "idle", startFraction: 1 - 10_000 / 60_000, endFraction: 1 - 8_500 / 60_000 },
+      { phase: "listening", startFraction: 1 - 8_500 / 60_000, endFraction: 1 },
+    ]);
+  });
+
+  it("compresses a closed idle gap into a 3s head plus a labeled break band", () => {
+    // Gap: idle 12_000..53_000 (41 s). Head 12_000..15_000 (3_000 lane-ms);
+    // break band 15_000..53_000 squashed to 1_500 lane-ms.
+    // Lane distances from now=60_000: listening 7_000; break 8_500; head 11_500;
+    // speaking 23_500.
+    const state: ConversationState = {
+      ...INITIAL_STATE,
+      phaseTimeline: [
+        { phase: "speaking", startedAtMs: 0 },
+        { phase: "idle", startedAtMs: 12_000 },
+        { phase: "listening", startedAtMs: 53_000 },
+      ],
+    };
+    const model = selectPhaseLaneModel(state, 60_000);
+    expect(model.segments).toEqual([
+      { phase: "idle", startFraction: 0, endFraction: 1 - 23_500 / 60_000 },
+      { phase: "speaking", startFraction: 1 - 23_500 / 60_000, endFraction: 1 - 11_500 / 60_000 },
+      { phase: "idle", startFraction: 1 - 11_500 / 60_000, endFraction: 1 - 8_500 / 60_000 },
+      { phase: "listening", startFraction: 1 - 7_000 / 60_000, endFraction: 1 },
+    ]);
+    expect(model.breaks).toEqual([
+      {
+        startFraction: 1 - 8_500 / 60_000,
+        endFraction: 1 - 7_000 / 60_000,
+        label: "⫽ 41s",
+      },
+    ]);
+  });
+
+  it("labels a multi-minute gap in minutes and seconds", () => {
+    const state: ConversationState = {
+      ...INITIAL_STATE,
+      phaseTimeline: [
+        { phase: "listening", startedAtMs: 0 },
+        { phase: "idle", startedAtMs: 5_000 },
+        { phase: "listening", startedAtMs: 166_000 },
+      ],
+    };
+    const model = selectPhaseLaneModel(state, 170_000);
+    expect(model.breaks).toHaveLength(1);
+    expect(model.breaks[0].label).toBe("⫽ 2m 41s");
+  });
+
+  it("positions a tick inside a compressed gap proportionally within its break band", () => {
+    // Same geometry as the compression test. Tick at 33_500 = halfway through the
+    // squashed 38_000 ms excess -> lane offset proportional into the 1_500 lane-ms
+    // band.
+    const state: ConversationState = {
+      ...INITIAL_STATE,
+      phaseTimeline: [
+        { phase: "speaking", startedAtMs: 0 },
+        { phase: "idle", startedAtMs: 12_000 },
+        { phase: "listening", startedAtMs: 53_000 },
+      ],
+      eventLog: [
+        { kind: "connection_error", phase: "idle", firstAtMs: 33_500, lastAtMs: 33_500, count: 1 },
+      ],
+    };
+    const ticks = selectPhaseLaneModel(state, 60_000).ticks;
+    const expectedFraction = 1 - (8_500 - (1_500 * (33_500 - 15_000)) / 38_000) / 60_000;
+    expect(ticks.map((tick) => [tick.kind, tick.fraction])).toEqual([
+      ["connection_error", expectedFraction],
+    ]);
+  });
+
+  it("freezes the lane while the live trailing idle exceeds the cap", () => {
+    const state: ConversationState = {
+      ...INITIAL_STATE,
+      phaseTimeline: [
+        { phase: "speaking", startedAtMs: 0 },
+        { phase: "idle", startedAtMs: 10_000 },
+      ],
+    };
+    const at30 = selectPhaseLaneModel(state, 30_000);
+    // Trailing idle contributes only the cap: speaking spans lane 13_000..3_000
+    // from now, trailing idle the last 3_000, and no break band while live.
+    expect(at30.segments).toEqual([
+      { phase: "idle", startFraction: 0, endFraction: 1 - 13_000 / 60_000 },
+      { phase: "speaking", startFraction: 1 - 13_000 / 60_000, endFraction: 1 - 3_000 / 60_000 },
+      { phase: "idle", startFraction: 1 - 3_000 / 60_000, endFraction: 1 },
+    ]);
+    expect(at30.breaks).toEqual([]);
+    expect(at30.gridlines[0]).toEqual({ fraction: 1, label: "paused" });
+    // A minute later, still waiting: identical geometry — the lane is paused.
+    const at90 = selectPhaseLaneModel(state, 90_000);
+    expect(at90.segments).toEqual(at30.segments);
+    expect(at90.gridlines).toEqual(at30.gridlines);
+  });
+
+  it("ticks at the lane's right edge for events during a frozen trailing idle", () => {
+    // Pause reflects *phase* inactivity: an event inside the frozen tail does
+    // not unpause; its wall time clamps to the capped span, so it lands at 1.
+    const state: ConversationState = {
+      ...INITIAL_STATE,
+      phaseTimeline: [
+        { phase: "speaking", startedAtMs: 0 },
+        { phase: "idle", startedAtMs: 10_000 },
+      ],
+      eventLog: [
+        { kind: "connection_error", phase: "idle", firstAtMs: 25_000, lastAtMs: 25_000, count: 1 },
+      ],
+    };
+    const model = selectPhaseLaneModel(state, 30_000);
+    expect(model.gridlines[0].label).toBe("paused");
+    expect(model.ticks.map((tick) => [tick.kind, tick.fraction])).toEqual([
+      ["connection_error", 1],
+    ]);
+  });
+
+  it("does not pause during short waits, active phases, or before any session", () => {
+    const shortWait: ConversationState = {
+      ...INITIAL_STATE,
+      phaseTimeline: [{ phase: "idle", startedAtMs: 10_000 }],
+    };
+    expect(selectPhaseLaneModel(shortWait, 11_500).gridlines[0].label).toBe("now");
+    const active: ConversationState = {
+      ...INITIAL_STATE,
+      phaseTimeline: [{ phase: "listening", startedAtMs: 0 }],
+    };
+    expect(selectPhaseLaneModel(active, 90_000).gridlines[0].label).toBe("now");
+    expect(selectPhaseLaneModel(INITIAL_STATE, 90_000).gridlines[0].label).toBe("now");
+  });
+
+  it("resumes without flushing history when activity closes a long gap", () => {
+    // After a 80_000 ms wait, listening resumes at 90_000. The gap closes into
+    // head + break (4_500 lane-ms) and speaking remains well inside the window.
+    const state: ConversationState = {
+      ...INITIAL_STATE,
+      phaseTimeline: [
+        { phase: "speaking", startedAtMs: 0 },
+        { phase: "idle", startedAtMs: 10_000 },
+        { phase: "listening", startedAtMs: 90_000 },
+      ],
+    };
+    const model = selectPhaseLaneModel(state, 95_000);
+    // Lane distances from now: listening 5_000; break 6_500; head 9_500; speaking 19_500.
+    expect(model.segments).toContainEqual({
+      phase: "speaking",
+      startFraction: 1 - 19_500 / 60_000,
+      endFraction: 1 - 9_500 / 60_000,
+    });
+    expect(model.breaks).toEqual([
+      { startFraction: 1 - 6_500 / 60_000, endFraction: 1 - 5_000 / 60_000, label: "⫽ 1m 20s" },
+    ]);
   });
 });

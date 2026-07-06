@@ -96,8 +96,9 @@ candidate categories listed below still have no shared module.
   Each completed trusted turn publishes a `TurnContextCapture` (verbatim
   `turn_request_values` in send order + `request_hash`) to the browser via the
   per-session events socket (`kind: "turn_context"` message). The realtime page
-  shows a "Last turn context" collapsible panel rendering the raw per-turn
-  provider payload. The `request_hash` field matches the existing
+  consumes the capture to correlate the volition explanation with the exact
+  provider packet, but no longer renders the raw payload as its own panel. The
+  `request_hash` field matches the existing
   `VolitionContextInjected.response_create_event_ref` for the same turn, providing
   a durable fidelity cross-check anchor. The capture is live-only and not persisted
   to the diagnostics JSONL.

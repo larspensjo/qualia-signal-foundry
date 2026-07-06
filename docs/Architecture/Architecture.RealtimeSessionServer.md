@@ -390,6 +390,7 @@ renders a plain-English
 verdict plus the injected volition packet located from the turn-context messages,
 and demotes the detailed scoring rows into a collapsed section. The volition
 capture deliberately excludes the injected instruction text (privacy guardrail);
-the panel reads that text from the turn-context capture instead. This keeps the
-observation plane read-only and non-blocking: the selectors are total and a
-malformed capture cannot break the transcript render.
+the panel reads that text from the turn-context capture instead, without exposing
+the raw turn-context payload as its own browser panel. This keeps the observation
+plane read-only and non-blocking: the selectors are total and a malformed capture
+cannot break the transcript render.

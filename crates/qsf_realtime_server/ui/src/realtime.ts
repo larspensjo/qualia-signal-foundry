@@ -87,6 +87,42 @@ export interface TranscriptEntry {
   text: string;
 }
 
+/// One collapsed row of the diagnostics event ticker. Consecutive events of the
+/// same kind merge into a single row so a partial_transcript burst stays readable.
+export interface EventLogEntry {
+  /// Relay event kind, or a lifecycle marker: "stopping", "stopped", "connection_error".
+  kind: string;
+  /// Runtime phase after the reducer applied this event — the transition the
+  /// reducer actually made, not a kind lookup (response_completed lands in
+  /// speaking or idle depending on status). For a collapsed burst this is the
+  /// phase after the most recent occurrence.
+  phase: RuntimePhase;
+  /// Wall-clock ms of the first occurrence in this collapsed run.
+  firstAtMs: number;
+  /// Wall-clock ms of the most recent occurrence in this collapsed run.
+  lastAtMs: number;
+  count: number;
+}
+
+export const EVENT_LOG_LIMIT = 14;
+
+/// One segment of the runtime-phase swimlane: `phase` holds from `startedAtMs`
+/// until the next segment starts (or now, for the last segment).
+export interface PhaseSegment {
+  phase: RuntimePhase;
+  startedAtMs: number;
+}
+
+/// Width of the phase-lane display window; also the reducer's pruning horizon.
+export const PHASE_LANE_WINDOW_MS = 60_000;
+
+/// Idle time shown at true scale before a gap is compressed; also how long the
+/// live trailing idle runs before the lane pauses.
+export const PHASE_LANE_IDLE_CAP_MS = 3_000;
+
+/// Fixed lane-time width of a compressed gap's break band.
+export const PHASE_LANE_BREAK_LANE_MS = 1_500;
+
 export type VolitionSuppressionReason =
   | "intensity"
   | "protected_no_opportunity"
@@ -260,7 +296,12 @@ export interface ConversationState {
   transcript: TranscriptEntry[];
   liveTranscript: string;
   responseDraft: string;
-  lastEvent: string | null;
+  /// Newest-first collapsed history of relay/lifecycle events (see EventLogEntry).
+  /// Kept after stop for post-hoc review; cleared when a new session is allocated.
+  eventLog: EventLogEntry[];
+  /// Oldest-first runtime-phase history, pruned to the lane window. Empty means
+  /// "idle so far". Kept after stop; cleared when a new session is allocated.
+  phaseTimeline: PhaseSegment[];
   error: string | null;
   warning: string | null;
   latestTurnContext: TurnContextCapture | null;
@@ -272,11 +313,11 @@ export type ConversationAction =
   | { type: "mute_toggled" }
   | { type: "session_allocated"; sessionId: string }
   | { type: "connection_ready" }
-  | { type: "provider_envelope"; envelope: RelayEnvelope }
-  | { type: "connection_error"; message: string }
+  | { type: "provider_envelope"; envelope: RelayEnvelope; atMs: number }
+  | { type: "connection_error"; message: string; atMs: number }
   | { type: "server_status"; sessionId: string; degraded: boolean; detail: string | null }
-  | { type: "stop_requested" }
-  | { type: "stopped" }
+  | { type: "stop_requested"; atMs: number }
+  | { type: "stopped"; atMs: number }
   | { type: "turn_context_captured"; capture: TurnContextCapture }
   | { type: "volition_state_captured"; capture: VolitionInspectionCapture };
 
@@ -338,7 +379,8 @@ export const INITIAL_STATE: ConversationState = {
   transcript: [],
   liveTranscript: "",
   responseDraft: "",
-  lastEvent: null,
+  eventLog: [],
+  phaseTimeline: [],
   error: null,
   warning: null,
   latestTurnContext: null,
@@ -368,6 +410,8 @@ export function reduceConversationState(
         connection: "connecting_media",
         sessionId: action.sessionId,
         error: null,
+        eventLog: [],
+        phaseTimeline: [],
         latestTurnContext: null,
         latestVolitionState: null,
       };
@@ -378,13 +422,13 @@ export function reduceConversationState(
         error: null,
       };
     case "provider_envelope":
-      return applyRelayEnvelope(state, action.envelope);
+      return applyRelayEnvelope(state, action.envelope, action.atMs);
     case "connection_error":
       return {
         ...state,
         connection: "error",
         error: action.message,
-        lastEvent: action.message,
+        eventLog: appendEventLog(state.eventLog, "connection_error", action.atMs, state.phase),
       };
     case "server_status":
       // Ignore status for a session other than the active one: a queued message
@@ -401,7 +445,7 @@ export function reduceConversationState(
       return {
         ...state,
         connection: "stopping",
-        lastEvent: "stopping",
+        eventLog: appendEventLog(state.eventLog, "stopping", action.atMs, state.phase),
       };
     case "stopped":
       return {
@@ -411,7 +455,8 @@ export function reduceConversationState(
         sessionId: null,
         liveTranscript: "",
         responseDraft: "",
-        lastEvent: "stopped",
+        eventLog: appendEventLog(state.eventLog, "stopped", action.atMs, "idle"),
+        phaseTimeline: appendPhaseTimeline(state.phaseTimeline, "idle", action.atMs),
         warning: null,
       };
     case "turn_context_captured":
@@ -1004,12 +1049,27 @@ function isVolitionSuppressionReason(value: unknown): value is VolitionSuppressi
   );
 }
 
-function applyRelayEnvelope(state: ConversationState, envelope: RelayEnvelope): ConversationState {
-  const base = {
-    ...state,
-    lastEvent: envelope.kind,
+function applyRelayEnvelope(
+  state: ConversationState,
+  envelope: RelayEnvelope,
+  atMs: number,
+): ConversationState {
+  const base = { ...state };
+  const next = applyRelayEnvelopeKind(base, envelope);
+  return {
+    ...next,
+    eventLog: appendEventLog(state.eventLog, envelope.kind, atMs, next.phase),
+    phaseTimeline: appendPhaseTimeline(state.phaseTimeline, next.phase, atMs),
   };
+}
 
+/// The per-kind switch that maps a relay envelope to the next runtime state. The
+/// wrapper `applyRelayEnvelope` stamps the event log and phase timeline around it,
+/// so this returns `{ ...base, ... }` for each kind without touching history.
+function applyRelayEnvelopeKind(
+  base: ConversationState,
+  envelope: RelayEnvelope,
+): ConversationState {
   switch (envelope.kind) {
     case "user_turn_started":
       return {
@@ -1022,7 +1082,7 @@ function applyRelayEnvelope(state: ConversationState, envelope: RelayEnvelope): 
       return {
         ...base,
         phase: "listening",
-        liveTranscript: envelope.transcript ?? state.liveTranscript,
+        liveTranscript: envelope.transcript ?? base.liveTranscript,
       };
     case "final_transcript": {
       const text = envelope.transcript?.trim();
@@ -1031,8 +1091,8 @@ function applyRelayEnvelope(state: ConversationState, envelope: RelayEnvelope): 
         phase: "thinking",
         liveTranscript: "",
         transcript: text
-          ? appendTranscript(state.transcript, { role: "user", text })
-          : state.transcript,
+          ? appendTranscript(base.transcript, { role: "user", text })
+          : base.transcript,
       };
     }
     case "response_started":
@@ -1043,22 +1103,22 @@ function applyRelayEnvelope(state: ConversationState, envelope: RelayEnvelope): 
       };
     case "response_completed": {
       const completed = !envelope.status || envelope.status === "completed";
-      const text = (envelope.text ?? (completed ? state.responseDraft : "")).trim();
-      const phase = completed ? "speaking" : "idle";
+      const text = (envelope.text ?? (completed ? base.responseDraft : "")).trim();
+      const phase = completed && base.phase !== "idle" ? "speaking" : "idle";
       return {
         ...base,
         phase,
         responseDraft: "",
         transcript: text
-          ? appendTranscript(state.transcript, { role: "assistant", text })
-          : state.transcript,
+          ? appendTranscript(base.transcript, { role: "assistant", text })
+          : base.transcript,
       };
     }
     case "speech_playback_started":
       return {
         ...base,
         phase: "speaking",
-        responseDraft: state.responseDraft + (envelope.text ?? ""),
+        responseDraft: base.responseDraft + (envelope.text ?? ""),
       };
     case "speech_playback_completed":
       return {
@@ -1075,6 +1135,52 @@ function applyRelayEnvelope(state: ConversationState, envelope: RelayEnvelope): 
         responseDraft: "",
       };
   }
+}
+
+function appendEventLog(
+  log: EventLogEntry[],
+  kind: string,
+  atMs: number,
+  phase: RuntimePhase,
+): EventLogEntry[] {
+  const head = log[0];
+  if (head !== undefined && head.kind === kind) {
+    return [{ ...head, lastAtMs: atMs, count: head.count + 1, phase }, ...log.slice(1)];
+  }
+  return [{ kind, phase, firstAtMs: atMs, lastAtMs: atMs, count: 1 }, ...log].slice(
+    0,
+    EVENT_LOG_LIMIT,
+  );
+}
+
+function appendPhaseTimeline(
+  timeline: PhaseSegment[],
+  phase: RuntimePhase,
+  atMs: number,
+): PhaseSegment[] {
+  const last = timeline.at(-1);
+  const appended =
+    last !== undefined && last.phase === phase
+      ? timeline
+      : [...timeline, { phase, startedAtMs: atMs }];
+  return prunePhaseTimeline(appended, atMs);
+}
+
+/// Drop segments that ended a full lane window of *activity time* ago, keeping
+/// the segment that spans the cutoff so the lane's left edge is still painted.
+/// Compressed idle gaps cost almost no lane time, so wall-clock-old history
+/// survives a long wait — that is the point of the lane pause.
+function prunePhaseTimeline(timeline: PhaseSegment[], nowMs: number): PhaseSegment[] {
+  let laneFromNow = 0;
+  for (let i = timeline.length - 1; i > 0; i--) {
+    // After adding segment i, laneFromNow is the lane distance from now back to
+    // segment i's start — which is where segment i-1 ends.
+    laneFromNow += laneDurationOf(timeline, i, nowMs);
+    if (laneFromNow >= PHASE_LANE_WINDOW_MS) {
+      return timeline.slice(i);
+    }
+  }
+  return timeline;
 }
 
 function appendTranscript(entries: TranscriptEntry[], entry: TranscriptEntry): TranscriptEntry[] {
@@ -1127,6 +1233,253 @@ export function selectMuteButton(state: ConversationState): MuteButtonModel {
     label: state.muted ? "Unmute" : "Mute",
     pressed: state.muted,
   };
+}
+
+export interface TickerRowModel {
+  kind: string;
+  /// "×N" for a collapsed burst, null for a single occurrence.
+  countLabel: string | null;
+  /// Local wall-clock "HH:MM:SS.d" of the row's first occurrence.
+  timeLabel: string;
+  /// "+X.Ys" gap since the previous (older) row's last occurrence; null on the oldest row.
+  deltaLabel: string | null;
+}
+
+export function selectEventTickerModel(state: ConversationState): TickerRowModel[] {
+  return state.eventLog.map((entry, index) => {
+    const older = state.eventLog[index + 1];
+    return {
+      kind: entry.kind,
+      countLabel: entry.count > 1 ? `×${entry.count}` : null,
+      timeLabel: formatClockTime(entry.firstAtMs),
+      deltaLabel:
+        older === undefined ? null : `+${((entry.firstAtMs - older.lastAtMs) / 1000).toFixed(1)}s`,
+    };
+  });
+}
+
+export interface PhaseLaneSegmentModel {
+  phase: RuntimePhase;
+  startFraction: number;
+  endFraction: number;
+}
+
+export interface PhaseLaneTickModel {
+  fraction: number;
+  kind: string;
+  /// Reducer-derived phase after the event (copied from EventLogEntry.phase);
+  /// the canvas colors the tick with this and needs no event-kind knowledge.
+  phase: RuntimePhase;
+  timeLabel: string;
+}
+
+export interface PhaseLaneGridlineModel {
+  fraction: number;
+  label: string;
+}
+
+export interface PhaseLaneBreakModel {
+  startFraction: number;
+  endFraction: number;
+  /// Wall-clock duration of the whole compressed idle gap, e.g. "⫽ 41s".
+  label: string;
+}
+
+export interface PhaseLaneModel {
+  segments: PhaseLaneSegmentModel[];
+  ticks: PhaseLaneTickModel[];
+  gridlines: PhaseLaneGridlineModel[];
+  breaks: PhaseLaneBreakModel[];
+}
+
+export const PHASE_LANE_GRIDLINE_STEP_MS = 15_000;
+
+/// One wall-time interval annotated with the lane-time width it occupies.
+interface LaneSpan {
+  phase: RuntimePhase;
+  wallStartMs: number;
+  wallEndMs: number;
+  laneMs: number;
+  /// Non-null when this span is a compressed idle gap's break band.
+  breakLabel: string | null;
+}
+
+/// Lane-time width of timeline segment `index`: non-idle and short-idle segments
+/// map 1:1; a closed long idle gap costs cap + break band; the live trailing
+/// idle freezes at the cap (the pause). Shared by the selector and pruning so
+/// state retention matches what the lane can show.
+function laneDurationOf(timeline: PhaseSegment[], index: number, nowMs: number): number {
+  const { phase, startedAtMs } = timeline[index];
+  const isTrailing = index + 1 === timeline.length;
+  const endMs = isTrailing ? nowMs : timeline[index + 1].startedAtMs;
+  const durationMs = endMs - startedAtMs;
+  if (phase !== "idle" || durationMs <= PHASE_LANE_IDLE_CAP_MS) {
+    return durationMs;
+  }
+  return isTrailing ? PHASE_LANE_IDLE_CAP_MS : PHASE_LANE_IDLE_CAP_MS + PHASE_LANE_BREAK_LANE_MS;
+}
+
+/// Expand the phase timeline into lane spans. A closed idle gap longer than the
+/// cap splits into a true-scale head plus a break band; the live trailing idle
+/// keeps a single capped span and gains its band only once the gap closes.
+function laneSpansOf(timeline: PhaseSegment[], nowMs: number): LaneSpan[] {
+  const spans: LaneSpan[] = [];
+  for (let i = 0; i < timeline.length; i++) {
+    const { phase, startedAtMs } = timeline[i];
+    const isTrailing = i + 1 === timeline.length;
+    const endMs = isTrailing ? nowMs : timeline[i + 1].startedAtMs;
+    const durationMs = endMs - startedAtMs;
+    const isCompressed = phase === "idle" && durationMs > PHASE_LANE_IDLE_CAP_MS;
+    if (!isCompressed || isTrailing) {
+      spans.push({
+        phase,
+        wallStartMs: startedAtMs,
+        wallEndMs: endMs,
+        laneMs: laneDurationOf(timeline, i, nowMs),
+        breakLabel: null,
+      });
+      continue;
+    }
+    spans.push({
+      phase,
+      wallStartMs: startedAtMs,
+      wallEndMs: startedAtMs + PHASE_LANE_IDLE_CAP_MS,
+      laneMs: PHASE_LANE_IDLE_CAP_MS,
+      breakLabel: null,
+    });
+    spans.push({
+      phase,
+      wallStartMs: startedAtMs + PHASE_LANE_IDLE_CAP_MS,
+      wallEndMs: endMs,
+      laneMs: PHASE_LANE_BREAK_LANE_MS,
+      breakLabel: `⫽ ${formatGapDuration(durationMs)}`,
+    });
+  }
+  return spans;
+}
+
+function formatGapDuration(ms: number): string {
+  const totalSeconds = Math.round(ms / 1000);
+  if (totalSeconds < 60) {
+    return `${totalSeconds}s`;
+  }
+  return `${Math.floor(totalSeconds / 60)}m ${totalSeconds % 60}s`;
+}
+
+/// Geometry for the phase swimlane, all x-positions as fractions of the lane
+/// width in [0, 1] with `now` at 1. The x-axis is *activity time*: idle gaps
+/// longer than PHASE_LANE_IDLE_CAP_MS are compressed into break bands, and the
+/// live trailing idle freezes the lane (gridline "now" reads "paused"). The
+/// canvas renderer multiplies by pixel width and picks colors; it makes no
+/// layout decisions of its own.
+export function selectPhaseLaneModel(state: ConversationState, nowMs: number): PhaseLaneModel {
+  const clamp01 = (value: number) => Math.min(1, Math.max(0, value));
+  const spans = laneSpansOf(state.phaseTimeline, nowMs);
+
+  // Lane-time distance from now back to each span's start.
+  const laneStartFromNow: number[] = new Array(spans.length);
+  let cumulative = 0;
+  for (let i = spans.length - 1; i >= 0; i--) {
+    cumulative += spans[i].laneMs;
+    laneStartFromNow[i] = cumulative;
+  }
+
+  const fractionWithin = (span: LaneSpan, laneStart: number, atMs: number): number => {
+    const wallSpanMs = span.wallEndMs - span.wallStartMs;
+    // Break bands squash their wall interval linearly; other spans map 1:1 with
+    // the offset clamped to laneMs (the frozen tail of a live idle span).
+    const offset =
+      span.breakLabel !== null && wallSpanMs > 0
+        ? (span.laneMs * (atMs - span.wallStartMs)) / wallSpanMs
+        : Math.min(atMs - span.wallStartMs, span.laneMs);
+    return 1 - (laneStart - offset) / PHASE_LANE_WINDOW_MS;
+  };
+
+  /// Lane fraction of an arbitrary wall time. Times before the first span map
+  /// 1:1 through the leading implicit idle; with no spans at all the axis is
+  /// plain wall clock.
+  const fractionOf = (atMs: number): number => {
+    if (spans.length === 0) {
+      return 1 - (nowMs - atMs) / PHASE_LANE_WINDOW_MS;
+    }
+    if (atMs < spans[0].wallStartMs) {
+      const firstStartFraction = 1 - laneStartFromNow[0] / PHASE_LANE_WINDOW_MS;
+      return firstStartFraction - (spans[0].wallStartMs - atMs) / PHASE_LANE_WINDOW_MS;
+    }
+    let index = spans.length - 1;
+    for (let i = 0; i + 1 < spans.length; i++) {
+      if (atMs < spans[i + 1].wallStartMs) {
+        index = i;
+        break;
+      }
+    }
+    return fractionWithin(spans[index], laneStartFromNow[index], atMs);
+  };
+
+  const segments: PhaseLaneSegmentModel[] = [];
+  const breaks: PhaseLaneBreakModel[] = [];
+  // Before the first recorded segment the runtime phase was idle (INITIAL_STATE.phase).
+  const firstStartFraction =
+    spans.length === 0 ? 1 : clamp01(1 - laneStartFromNow[0] / PHASE_LANE_WINDOW_MS);
+  if (firstStartFraction > 0) {
+    segments.push({ phase: "idle", startFraction: 0, endFraction: firstStartFraction });
+  }
+  for (let i = 0; i < spans.length; i++) {
+    // Hoisting the element is load-bearing: TypeScript only narrows
+    // span.breakLabel to string on a const reference, not on spans[i] with a
+    // mutable index.
+    const span = spans[i];
+    const startFraction = clamp01(1 - laneStartFromNow[i] / PHASE_LANE_WINDOW_MS);
+    const endFraction = clamp01(1 - (laneStartFromNow[i] - span.laneMs) / PHASE_LANE_WINDOW_MS);
+    if (endFraction <= 0) {
+      continue;
+    }
+    if (span.breakLabel !== null) {
+      breaks.push({ startFraction, endFraction, label: span.breakLabel });
+    } else {
+      segments.push({ phase: span.phase, startFraction, endFraction });
+    }
+  }
+
+  const ticks: PhaseLaneTickModel[] = [];
+  for (const entry of state.eventLog) {
+    const atMss = entry.count > 1 ? [entry.firstAtMs, entry.lastAtMs] : [entry.firstAtMs];
+    for (const atMs of atMss) {
+      const fraction = fractionOf(Math.min(atMs, nowMs));
+      if (fraction >= 0 && fraction <= 1) {
+        ticks.push({
+          fraction,
+          kind: entry.kind,
+          phase: entry.phase,
+          timeLabel: formatClockTime(atMs),
+        });
+      }
+    }
+  }
+  ticks.sort((a, b) => a.fraction - b.fraction);
+
+  const lastSegment = state.phaseTimeline.at(-1);
+  const paused =
+    lastSegment !== undefined &&
+    lastSegment.phase === "idle" &&
+    nowMs - lastSegment.startedAtMs > PHASE_LANE_IDLE_CAP_MS;
+
+  const gridlines: PhaseLaneGridlineModel[] = [];
+  for (let backMs = 0; backMs <= PHASE_LANE_WINDOW_MS; backMs += PHASE_LANE_GRIDLINE_STEP_MS) {
+    gridlines.push({
+      fraction: 1 - backMs / PHASE_LANE_WINDOW_MS,
+      label: backMs === 0 ? (paused ? "paused" : "now") : `-${backMs / 1000}s`,
+    });
+  }
+
+  return { segments, ticks, gridlines, breaks };
+}
+
+function formatClockTime(atMs: number): string {
+  const date = new Date(atMs);
+  const pad = (value: number) => String(value).padStart(2, "0");
+  const deciseconds = Math.floor(date.getMilliseconds() / 100);
+  return `${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}.${deciseconds}`;
 }
 
 export interface TextTurnSubmitInput {

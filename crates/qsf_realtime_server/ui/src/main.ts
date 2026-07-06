@@ -1,4 +1,5 @@
 import "./styles.css";
+import { attachPhaseLane } from "./phase-lane";
 import {
   type ConversationAction,
   type ConversationState,
@@ -15,6 +16,7 @@ import {
   type SdpExchangeResponse,
   type SessionAllocationResponse,
   selectCanSubmitTextTurn,
+  selectEventTickerModel,
   selectInjectedVolitionText,
   selectMuteButton,
   selectVolitionPanelModel,
@@ -32,13 +34,14 @@ interface UiRefs {
   connectionStatus: HTMLElement;
   runtimePhase: HTMLElement;
   liveTranscript: HTMLElement;
-  lastEvent: HTMLElement;
+  eventTicker: HTMLOListElement;
   transcriptList: HTMLOListElement;
   errorBanner: HTMLElement;
   warningBanner: HTMLElement;
   remoteAudio: HTMLAudioElement;
-  turnContextBody: HTMLElement;
   volitionStateBody: HTMLElement;
+  phaseLaneCanvas: HTMLCanvasElement;
+  phaseLaneTip: HTMLElement;
 }
 
 interface ActiveConversation {
@@ -66,39 +69,32 @@ if (!root) {
 
 root.innerHTML = `
   <main class="shell">
-    <section class="hero">
-      <p class="eyebrow">QSF realtime voice</p>
-      <h1>Browser voice, server rendezvous.</h1>
-      <p class="lede">
-        The browser owns media, the server owns signaling and diagnostics, and the relay channel stays untrusted.
-      </p>
-      <div class="hero-metrics">
-        <div class="metric">
-          <span>Connection</span>
-          <strong data-role="connection">Idle</strong>
+    <header class="toolbar">
+      <p class="brand">QSF realtime voice</p>
+      <dl class="status-chips">
+        <div>
+          <dt>Connection</dt>
+          <dd data-role="connection">Idle</dd>
         </div>
-        <div class="metric">
-          <span>Runtime phase</span>
-          <strong data-role="phase">Idle</strong>
+        <div>
+          <dt>Phase</dt>
+          <dd data-role="phase">Idle</dd>
         </div>
-        <div class="metric">
-          <span>Session</span>
-          <strong data-role="session">—</strong>
+        <div>
+          <dt>Session</dt>
+          <dd data-role="session">—</dd>
         </div>
-      </div>
-    </section>
-
-    <section class="controls">
+      </dl>
       <button data-role="start" type="button">Start conversation</button>
       <button data-role="stop" type="button" disabled>Stop</button>
       <button data-role="mute" type="button" aria-pressed="false" title="Stop sending your microphone; the assistant stays live">Mute</button>
       <form data-role="text-form" class="text-turn-form">
-        <textarea data-role="text-input" rows="2" placeholder="Type a turn for noisy rooms"></textarea>
+        <textarea data-role="text-input" rows="1" placeholder="Type a turn for noisy rooms"></textarea>
         <button data-role="send-text" type="submit">Send text</button>
       </form>
       <p data-role="error" class="error" hidden></p>
       <p data-role="warning" class="warning" role="status" hidden></p>
-    </section>
+    </header>
 
     <section class="grid">
       <article class="panel transcript-panel">
@@ -110,16 +106,13 @@ root.innerHTML = `
         <ol data-role="transcript" class="transcript" aria-label="Conversation transcript"></ol>
       </article>
 
-      <aside class="panel details-panel">
+      <article class="panel events-panel">
         <div class="panel-header">
-          <h2>Diagnostics</h2>
+          <h2>Events</h2>
           <span class="status-pill muted">Browser view</span>
         </div>
-        <dl class="details">
-          <div>
-            <dt>Last event</dt>
-            <dd data-role="last-event">None yet</dd>
-          </div>
+        <ol data-role="event-ticker" class="event-ticker" aria-label="Recent relay events"></ol>
+        <dl class="details channel-facts">
           <div>
             <dt>Media</dt>
             <dd>Direct browser to OpenAI</dd>
@@ -129,17 +122,39 @@ root.innerHTML = `
             <dd>Typed browser-to-server envelopes</dd>
           </div>
         </dl>
-        <audio data-role="remote-audio" autoplay playsinline></audio>
-        <details class="turn-context-details" open>
-          <summary>What volition did this turn</summary>
-          <div data-role="volition-state-body" class="volition-state-body"></div>
-        </details>
-        <details class="turn-context-details">
-          <summary>Last turn context</summary>
-          <div data-role="turn-context-body" class="turn-context-body"></div>
-        </details>
+      </article>
+
+      <aside class="panel volition-panel">
+        <div class="panel-header">
+          <h2>Volition</h2>
+        </div>
+        <div class="volition-scroll">
+          <details class="turn-context-details" open>
+            <summary>What volition did this turn</summary>
+            <div data-role="volition-state-body" class="volition-state-body"></div>
+          </details>
+        </div>
       </aside>
     </section>
+
+    <section class="panel phase-strip">
+      <div class="phase-strip-header">
+        <h2>Phase timeline</h2>
+        <ul class="phase-lane-legend" aria-hidden="true">
+          <li><i style="background: var(--phase-idle)"></i>idle</li>
+          <li><i style="background: var(--phase-listening)"></i>listening</li>
+          <li><i style="background: var(--phase-thinking)"></i>thinking</li>
+          <li><i style="background: var(--phase-speaking)"></i>speaking</li>
+          <li><i class="legend-gap"></i>skipped idle</li>
+        </ul>
+      </div>
+      <div class="phase-lane-wrap">
+        <canvas data-role="phase-lane" aria-label="Runtime phase timeline, last 60 seconds of activity"></canvas>
+        <div data-role="phase-lane-tip" class="phase-lane-tip" hidden></div>
+      </div>
+    </section>
+
+    <audio data-role="remote-audio" autoplay playsinline></audio>
   </main>
 `;
 
@@ -167,6 +182,7 @@ refs.textInput.addEventListener("input", () => {
 });
 
 render();
+attachPhaseLane(refs.phaseLaneCanvas, refs.phaseLaneTip, () => state);
 
 async function startConversation(options: ConversationStartOptions): Promise<boolean> {
   if (activeConversation) {
@@ -217,6 +233,7 @@ async function startConversation(options: ConversationStartOptions): Promise<boo
         dispatch({
           type: "connection_error",
           message: "relay socket closed",
+          atMs: Date.now(),
         });
       }
     });
@@ -258,11 +275,12 @@ async function startConversation(options: ConversationStartOptions): Promise<boo
         } else {
           relayBuffer.push(serialized);
         }
-        dispatch({ type: "provider_envelope", envelope });
+        dispatch({ type: "provider_envelope", envelope, atMs: Date.now() });
       } catch (error) {
         dispatch({
           type: "connection_error",
           message: messageFromError(error),
+          atMs: Date.now(),
         });
       }
     });
@@ -324,6 +342,7 @@ async function startConversation(options: ConversationStartOptions): Promise<boo
     dispatch({
       type: "connection_error",
       message: messageFromError(error),
+      atMs: Date.now(),
     });
     return false;
   }
@@ -361,12 +380,14 @@ async function submitTextTurn() {
         kind: "final_transcript",
         transcript: text,
       },
+      atMs: Date.now(),
     });
     refs.textInput.value = "";
   } catch (error) {
     dispatch({
       type: "connection_error",
       message: messageFromError(error),
+      atMs: Date.now(),
     });
   } finally {
     textTurnPending = false;
@@ -375,7 +396,7 @@ async function submitTextTurn() {
 }
 
 async function stopConversation() {
-  dispatch({ type: "stop_requested" });
+  dispatch({ type: "stop_requested", atMs: Date.now() });
 
   if (activeConversation) {
     try {
@@ -392,12 +413,13 @@ async function stopConversation() {
       dispatch({
         type: "connection_error",
         message: messageFromError(error),
+        atMs: Date.now(),
       });
     }
   }
 
   await stopActiveConversation(true);
-  dispatch({ type: "stopped" });
+  dispatch({ type: "stopped", atMs: Date.now() });
 }
 
 /// Gate the live microphone track(s) to match the `muted` state. Isolated side
@@ -454,7 +476,31 @@ function render() {
   refs.runtimePhase.textContent = describeRuntimePhase(state.phase);
   refs.sessionId.textContent = state.sessionId ?? "—";
   refs.liveTranscript.textContent = state.liveTranscript || "Waiting for the next turn.";
-  refs.lastEvent.textContent = state.lastEvent ?? "None yet";
+
+  const tickerRows = selectEventTickerModel(state);
+  if (tickerRows.length === 0) {
+    const empty = document.createElement("li");
+    empty.className = "event-ticker-empty";
+    empty.textContent = "None yet";
+    refs.eventTicker.replaceChildren(empty);
+  } else {
+    refs.eventTicker.replaceChildren(
+      ...tickerRows.map((row) => {
+        const item = document.createElement("li");
+        const time = document.createElement("span");
+        time.className = "event-ticker-time";
+        time.textContent = row.timeLabel;
+        const kind = document.createElement("span");
+        kind.className = "event-ticker-kind";
+        kind.textContent = row.countLabel === null ? row.kind : `${row.kind} ${row.countLabel}`;
+        const delta = document.createElement("span");
+        delta.className = "event-ticker-delta";
+        delta.textContent = row.deltaLabel ?? "";
+        item.append(time, kind, delta);
+        return item;
+      }),
+    );
+  }
 
   refs.errorBanner.hidden = state.error === null;
   refs.errorBanner.textContent = state.error ?? "";
@@ -489,22 +535,6 @@ function render() {
     }),
   );
   scrollTranscriptToLatest();
-
-  const ctx = state.latestTurnContext;
-  if (ctx === null) {
-    const p = document.createElement("p");
-    p.className = "turn-context-placeholder";
-    p.textContent = "No context captured yet";
-    refs.turnContextBody.replaceChildren(p);
-  } else {
-    const meta = document.createElement("p");
-    meta.className = "turn-context-meta";
-    meta.textContent = `Exchange: ${ctx.exchangeIndex}  Hash: ${ctx.requestHash}`;
-    const pre = document.createElement("pre");
-    pre.className = "turn-context-pre";
-    pre.textContent = JSON.stringify(ctx.messages, null, 2);
-    refs.turnContextBody.replaceChildren(meta, pre);
-  }
 
   const injectedVolition = selectInjectedVolitionText(state);
   renderWhyThisAnswerPanel(
@@ -616,13 +646,14 @@ function collectRefs(container: HTMLElement): UiRefs {
     connectionStatus: query<HTMLElement>('[data-role="connection"]'),
     runtimePhase: query<HTMLElement>('[data-role="phase"]'),
     liveTranscript: query<HTMLElement>('[data-role="live-transcript"]'),
-    lastEvent: query<HTMLElement>('[data-role="last-event"]'),
+    eventTicker: query<HTMLOListElement>('[data-role="event-ticker"]'),
     transcriptList: query<HTMLOListElement>('[data-role="transcript"]'),
     errorBanner: query<HTMLElement>('[data-role="error"]'),
     warningBanner: query<HTMLElement>('[data-role="warning"]'),
     remoteAudio: query<HTMLAudioElement>('[data-role="remote-audio"]'),
-    turnContextBody: query<HTMLElement>('[data-role="turn-context-body"]'),
     volitionStateBody: query<HTMLElement>('[data-role="volition-state-body"]'),
+    phaseLaneCanvas: query<HTMLCanvasElement>('[data-role="phase-lane"]'),
+    phaseLaneTip: query<HTMLElement>('[data-role="phase-lane-tip"]'),
   };
 }
 
