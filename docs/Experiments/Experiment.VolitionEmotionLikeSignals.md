@@ -6,7 +6,11 @@
 
 ## Status
 
-Planned
+Offline validated (2026-07-06); live check pending. The reducer lifecycle facts, the pure
+`derive_signals` module, the `volition-emotion-signals` harness with artifact re-derivation, the
+operator-panel realtime surfacing, and the UI "Functional signals" section are implemented, and
+every automated success criterion passes. The live browser check (Procedure step 6) and the
+qualitative operator interpretability review have not been run. See Results.
 
 ## Summary
 
@@ -141,6 +145,11 @@ traces.jsonl:
   trace record carries the VolitionEvents needed to reconstruct the relevant state slice, the
   dynamic_state_snapshot, and the emitted signal evidence.
 
+  Scenario steps that assert a signal is absent are recorded as emotion-signal-absence-check
+  trace records, carrying the same events_applied, dynamic_state_snapshot, and
+  artifact_or_report_reference payload plus expected_absent_kinds and signals_present, so
+  absence claims are artifact-backed and re-derivable like presence claims.
+
 human-readable report:
   Summary and review checklist derived from trace records.
 ```
@@ -172,11 +181,67 @@ Automated verification:
 
 ## Results
 
-Not run yet.
+### Offline harness (validated)
+
+`cargo run -p qsf_app -- experiment volition-emotion-signals` completed end-to-end (also via
+`scripts/qsf.ps1 app -Experiment volition-emotion-signals`). Nine deterministic scenarios drive
+each signal on and off, giving every kind at least one presence and one absence case. Artifacts
+land under `runs/<timestamp>-volition-emotion-signals/`:
+
+- `traces.jsonl` — 6 `emotion-signal-derivation` records (one per emitted signal) carrying all
+  eight required fields, plus 9 `emotion-signal-absence-check` records (one per scenario) listing
+  the kinds asserted absent and the signals actually present.
+- `events.jsonl` — `TraceRecorded` entries linking to the derivation trace ids (the existing
+  experiment pattern, not a new lifecycle-event shape).
+- `emotion-signal-report.md` — per-signal presence/absence summary with a human checklist.
+
+The in-run verifier re-derives each signal genuinely rather than comparing a value to itself: it
+reconstructs `VolitionState` from the recorded `dynamic_state_snapshot`, independently replays the
+recorded `events_applied` from a fixture-seeded state and cross-checks the two reconstructions
+agree, then calls `derive_signals` fresh and asserts the re-derived kind, intensity, thresholds,
+and evidence match the trace record. Absence records re-derive from the snapshot and assert none
+of the expected-absent kinds appears. Any mismatch fails the run. A RED check (stubbing the
+per-record verifier to pass) made the tamper tests fail, confirming the re-derivation is real.
+
+### Automated tests (passing)
+
+- `qsf_volition::signals` unit tests: each signal appears exactly when its evidence exists and is
+  absent otherwise (below-threshold blocks, never-activated goals, progress-only evidence,
+  cold-start boredom), with every emitted signal's evidence resolving to present state; intensity
+  monotonicity, deterministic ordering, and serde round-trips covered.
+- Reducer unit tests for the new lifecycle fields, including re-blocking after satisfaction resets
+  the counters and back-compat deserialization of snapshots without the fields.
+- Realtime capture tests: the top-level `signals` array matches `derive_signals` for an active
+  state, is empty on cold start, serializes on the wire, and back-compat-deserializes when absent.
+- UI parser / view-model tests (vitest, 58/58): all four kinds parse into camelCased per-kind
+  evidence, a missing `signals` key defaults to an empty list, malformed entries are dropped
+  without discarding the message, and each kind renders one evidence-backed row (no bare emotion
+  word without its evidence).
+- `cargo build`, `cargo clippy --all-targets -- -D warnings`, `cargo fmt`, and `npm run check` /
+  `npm run fmt` in `crates/qsf_realtime_server/ui/` are clean.
+
+### Pending (human)
+
+- Procedure step 6 — the live browser session where the operator provokes a coherence decline and
+  a satisfied goal and confirms the panel rows match the capture — has not been run.
+- The qualitative operator interpretability review (do the rows read as honest instrument
+  readouts, not claimed feelings?) has not been done.
 
 ## Interpretation
 
-Not run yet.
+```text
+Observed: The offline harness derives all four signals on their evidence and none off it,
+          re-derives every recorded signal from its artifacts, and passes the full automated
+          suite; the realtime capture and browser panel surface evidence-backed rows.
+Interpreted: Pure derivation over recorded VolitionState plus fixture data can produce
+          evidence-backed functional-signal rows while keeping signals confined to offline
+          traces and the operator panel, with the structural gate holding (no arbitration,
+          injection, or tool consumer).
+Uncertain: The interpretability question — whether the rows read as honest instrument readouts
+          rather than anthropomorphic claims — is not settled offline; it needs the live browser
+          check and operator review. Threshold constants are chosen for fixture coverage, not
+          proven as live defaults.
+```
 
 ## Follow-Up Questions
 
@@ -197,4 +262,5 @@ Not run yet.
 
 ## Final Status
 
-Not run yet.
+Open. All automated success criteria are met offline; final status is held until the live browser
+check and the operator interpretability review are run.

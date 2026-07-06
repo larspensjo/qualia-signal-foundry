@@ -1,6 +1,7 @@
 use qsf_volition::{
-    ActivationKeyword, InitiativeOutput, ModeArbitrationOutcome, RankedSelectionResult,
-    ShapingIntensity, VolitionStateInspection, VolitionSuppressionReason,
+    ActivationKeyword, FunctionalSignal, InitiativeOutput, ModeArbitrationOutcome,
+    RankedSelectionResult, ShapingIntensity, VolitionFixture, VolitionState,
+    VolitionStateInspection, VolitionSuppressionReason, derive_signals,
 };
 use serde::{Deserialize, Serialize};
 use time::OffsetDateTime;
@@ -49,6 +50,12 @@ pub struct VolitionInspectionCapture {
     pub response_create_event_ref: String,
     pub inspection: VolitionStateInspection,
     pub decision: Option<VolitionTurnDecisionSummary>,
+    /// Display-only functional signals derived from the live volition state via
+    /// [`derive_signals`]. Operator-panel only: never model-visible (no context injection, no
+    /// tool output). `#[serde(default)]` keeps previously captured JSON (no `signals` key)
+    /// parseable.
+    #[serde(default)]
+    pub signals: Vec<FunctionalSignal>,
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -110,14 +117,20 @@ pub fn build_volition_turn_decision_summary(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 pub fn build_volition_inspection_capture(
     qsf_session_id: String,
     exchange_index: usize,
     captured_at: OffsetDateTime,
     response_create_event_ref: String,
+    state: &VolitionState,
+    fixture: &VolitionFixture,
     inspection: VolitionStateInspection,
     decision: Option<VolitionTurnDecisionSummary>,
 ) -> VolitionInspectionCapture {
+    // Signals are derived here, in the single capture-builder site, so the operator panel is the
+    // only surface that ever sees them. `derive_signals` reads the live session state/fixture.
+    let signals = derive_signals(state, fixture);
     VolitionInspectionCapture {
         qsf_session_id,
         exchange_index,
@@ -125,6 +138,7 @@ pub fn build_volition_inspection_capture(
         response_create_event_ref,
         inspection,
         decision,
+        signals,
     }
 }
 
@@ -194,6 +208,8 @@ mod tests {
             7,
             OffsetDateTime::from_unix_timestamp(1_700_000_000).expect("timestamp"),
             "request-ref".to_string(),
+            &state,
+            &fixture,
             inspection,
             None,
         );
@@ -222,6 +238,8 @@ mod tests {
             7,
             OffsetDateTime::from_unix_timestamp(1_700_000_000).expect("timestamp"),
             "request-ref".to_string(),
+            &state,
+            &fixture,
             inspection,
             Some(decision.clone()),
         );
@@ -269,6 +287,8 @@ mod tests {
             7,
             OffsetDateTime::from_unix_timestamp(1_700_000_000).expect("timestamp"),
             "request-ref".to_string(),
+            &state,
+            &fixture,
             inspection.clone(),
             None,
         );
@@ -297,6 +317,8 @@ mod tests {
             7,
             OffsetDateTime::from_unix_timestamp(1_700_000_000).expect("timestamp"),
             "request-ref".to_string(),
+            &state,
+            &fixture,
             inspection,
             Some(decision),
         );
@@ -325,6 +347,8 @@ mod tests {
             7,
             OffsetDateTime::from_unix_timestamp(1_700_000_000).expect("timestamp"),
             "request-ref".to_string(),
+            &state,
+            &fixture,
             build_state_inspection(&state, &fixture),
             Some(build_volition_turn_decision_summary(
                 &ranked,
@@ -392,5 +416,125 @@ mod tests {
         let json = serde_json::to_string(&VolitionSuppressionReason::BelowQualificationThreshold)
             .expect("json");
         assert_eq!(json, "\"below_qualification_threshold\"");
+    }
+
+    // ── functional signals surfaced on the capture ───────────────────────────
+
+    /// Advance the clock past the boredom elapsed-guard so a fresh seed state emits at least one
+    /// functional signal, without any live model call.
+    fn state_with_signals() -> (VolitionFixture, VolitionState) {
+        let fixture = realtime_seed_fixture();
+        let state = qsf_volition::apply(
+            VolitionState::from_fixture(&fixture),
+            qsf_volition::VolitionEvent::TickAdvanced {
+                tick: qsf_volition::BOREDOM_MIN_ELAPSED_TICKS,
+            },
+        );
+        (fixture, state)
+    }
+
+    #[test]
+    fn capture_signals_match_derive_signals_for_active_state() {
+        let (fixture, state) = state_with_signals();
+        let expected = derive_signals(&state, &fixture);
+        assert!(
+            !expected.is_empty(),
+            "test setup must produce at least one signal"
+        );
+
+        let capture = build_volition_inspection_capture(
+            "session-123".to_string(),
+            7,
+            OffsetDateTime::from_unix_timestamp(1_700_000_000).expect("timestamp"),
+            "request-ref".to_string(),
+            &state,
+            &fixture,
+            build_state_inspection(&state, &fixture),
+            None,
+        );
+
+        assert_eq!(capture.signals, expected);
+        assert!(
+            capture
+                .signals
+                .iter()
+                .any(|s| s.kind == qsf_volition::SignalKind::Boredom)
+        );
+    }
+
+    #[test]
+    fn capture_signals_empty_on_cold_start_state() {
+        let fixture = realtime_seed_fixture();
+        let state = VolitionState::from_fixture(&fixture);
+        let capture = build_volition_inspection_capture(
+            "session-123".to_string(),
+            7,
+            OffsetDateTime::from_unix_timestamp(1_700_000_000).expect("timestamp"),
+            "request-ref".to_string(),
+            &state,
+            &fixture,
+            build_state_inspection(&state, &fixture),
+            None,
+        );
+        assert!(
+            capture.signals.is_empty(),
+            "a cold-start state must surface no signals"
+        );
+    }
+
+    #[test]
+    fn serialized_capture_includes_top_level_signals_array() {
+        let (fixture, state) = state_with_signals();
+        let capture = build_volition_inspection_capture(
+            "session-123".to_string(),
+            7,
+            OffsetDateTime::from_unix_timestamp(1_700_000_000).expect("timestamp"),
+            "request-ref".to_string(),
+            &state,
+            &fixture,
+            build_state_inspection(&state, &fixture),
+            None,
+        );
+
+        // The capture is flattened into the `volition_state` websocket message, so its own
+        // serialization is what rides the wire under a top-level `signals` key.
+        let value = serde_json::to_value(&capture).expect("json");
+        assert!(
+            value.get("signals").is_some_and(|s| s.is_array()),
+            "capture must serialize a top-level `signals` array"
+        );
+        assert!(
+            !value["signals"].as_array().unwrap().is_empty(),
+            "signals array must carry the derived signals"
+        );
+    }
+
+    #[test]
+    fn capture_json_without_signals_still_deserializes() {
+        let fixture = realtime_seed_fixture();
+        let state = VolitionState::from_fixture(&fixture);
+        let capture = build_volition_inspection_capture(
+            "session-123".to_string(),
+            7,
+            OffsetDateTime::from_unix_timestamp(1_700_000_000).expect("timestamp"),
+            "request-ref".to_string(),
+            &state,
+            &fixture,
+            build_state_inspection(&state, &fixture),
+            None,
+        );
+
+        // Emulate a previously captured artifact that predates the `signals` field.
+        let mut value = serde_json::to_value(&capture).expect("json");
+        value
+            .as_object_mut()
+            .expect("object")
+            .remove("signals")
+            .expect("signals present before removal");
+        assert!(value.get("signals").is_none());
+
+        let restored: VolitionInspectionCapture =
+            serde_json::from_value(value).expect("back-compat deserialize without signals");
+        assert!(restored.signals.is_empty());
     }
 }

@@ -2,10 +2,11 @@
 
 ## Maturity
 
-Candidate. **Detail level: Phase 3 detailed** — Phase 1 (goal coherence under a protected
-floor) and Phase 2 (live goal formation and off-hot-path coherence) are implemented and
-compacted to summaries below. Phase 3 (emotion-like signals, visualization-first) is now
-expanded into implementation steps. Phases 4–5 remain sequenced but not yet specified.
+Candidate. Phases 1–3 are implemented and compacted to summaries below — Phase 1 (goal
+coherence under a protected floor), Phase 2 (live goal formation and off-hot-path coherence),
+and Phase 3 (emotion-like signals, visualization-first), which is offline-validated with the
+live browser verification and the interpretability review still pending. Phases 4–5 remain
+sequenced but not yet specified.
 
 ## Purpose
 
@@ -105,156 +106,48 @@ offline validation in
   has not yet been run. It does not block Phase 3's offline and panel work, but it should be
   run before any Phase 3 conclusions about how the texture *feels* in conversation.
 
-### Phase 3 — Emotion-like signals, visualization-first (brief §8)
+### Phase 3 — Emotion-like signals, visualization-first (brief §8) — implemented
 
-Derive named functional signals from existing goal/delta state per reconciliation D4
-([Design.VolitionBriefReconciliation.md](Design.VolitionBriefReconciliation.md)): frustration
-= repeatedly `Blocked` despite activation; satisfaction = `GoalSatisfied` + `EvidenceRef`;
-coherence decline = a coherence-engine rejection recorded in `declined_candidates`; boredom = low
-selected-goal salience across recent ticks. Pure derivations over recorded state — **no new mutable emotion object**:
-a signal is a value recomputed from `VolitionState` on demand, never stored, never an input to
-anything but display.
+The visualization-first functional-signal slice is built and offline-validated. Reducer
+lifecycle facts (`blocked_count`, `last_blocked_tick`, and `last_satisfied_evidence_ref`, all
+`#[serde(default)]` for snapshot back-compat) feed a pure derivation module
+[`qsf_volition::signals`](../../crates/qsf_volition/src/signals.rs) whose
+`derive_signals(state, fixture)` emits four named, evidence-derived signals —
+`coherence_decline` (from `declined_candidates`), `frustration` (a goal `Blocked` past
+`FRUSTRATION_BLOCKED_COUNT_THRESHOLD` despite activation), `satisfaction` (a recent
+`GoalSatisfied` with its `last_satisfied_evidence_ref`), and `boredom` (every non-retired goal
+below `BOREDOM_SALIENCE_THRESHOLD`, past a prior-activation / `BOREDOM_MIN_ELAPSED_TICKS`
+cold-start guard). Each signal carries structured evidence resolving to recorded state, is
+recomputed on demand, and is never stored — there is deliberately no `tension` kind. The offline
+`volition-emotion-signals` harness
+([volition_emotion_signals.rs](../../crates/qsf_app/src/experiments/volition_emotion_signals.rs))
+drives every signal on and off and re-derives each from its own artifacts (the trace contract).
+Signals are surfaced to the operator panel only: a top-level `signals` list on
+`VolitionInspectionCapture` populated by the capture builder and rendered as a browser
+"Functional signals" section ([realtime.ts](../../crates/qsf_realtime_server/ui/src/realtime.ts))
+that never shows a bare emotion word without its evidence; nested `VolitionStateInspection` and
+the `inspect_volition_state` tool are untouched. The gate is **structural** — the only consumers
+are the capture builder and the harness. Durable stance in
+[DecisionLog 2026-07-06](../DecisionLog.md#2026-07-06---volition-functional-signals-are-visualization-first-and-operator-panel-only);
+offline validation and the trace contract in
+[Experiment.VolitionEmotionLikeSignals.md](../Experiments/Experiment.VolitionEmotionLikeSignals.md).
 
-**Scope discipline (what "gated" means here):** visualization only. The gate is *structural*,
-not a runtime flag — signal derivation has no code path into arbitration, salience, selection,
-initiative, or context injection. There is nothing to toggle, so no config flag is needed and
-the default build exercises the new path (per Agents.md). Feeding any signal back into
-arbitration is a separate future decision (see Parked questions), out of scope.
-
-**First signal set** — the four whose evidence already exists or needs only a small
-reducer-derived counter: `coherence_decline`, `frustration`, `satisfaction`, `boredom`.
-Deferred: true `tension` (reserved for an unresolved current conflict among selected goals,
-per reconciliation D4), `curiosity` (needs an explicit open-delta representation the state does
-not yet carry), and `attachment` (needs settled cross-session reinforcement semantics on top of
-the continuity snapshot).
-
-**Steps (each independently implementable and reviewable):**
-
-1. **Detailing prerequisites (docs first).** Write
-   `docs/Experiments/Experiment.VolitionEmotionLikeSignals.md` from the template, including
-   the trace-completeness contract below, and add a DecisionLog entry recording the
-   visualization-first stance, the chosen signal set, and each signal's functional
-   definition. Resolve the open questions below with the reviewer before coding.
-
-2. **Signal substrate in the reducer (Rust, pure, smallest slice).** `frustration` needs
-   "repeatedly Blocked despite activation", but
-   [`GoalDynamicState`](../../crates/qsf_volition/src/reducer.rs) has no repetition record.
-   Add reducer-maintained bookkeeping — `blocked_count: u32` and
-   `last_blocked_tick: Option<u64>`, both `#[serde(default)]` so existing continuity
-   snapshots still deserialize — updated by the existing `GoalBlocked` arm of `apply`.
-   `satisfaction` needs exact event evidence, but `progress_evidence_refs` merges
-   `GoalProgressObserved` and `GoalSatisfied`; add
-   `last_satisfied_evidence_ref: Option<EvidenceRef>` with `#[serde(default)]`, set only by
-   `GoalSatisfied`, pairing with the existing `last_satisfied_tick`. `blocked_count` is
-   since-last-satisfaction lifecycle state: increment it on `GoalBlocked`, set
-   `last_blocked_tick` on `GoalBlocked`, and reset both `blocked_count` and `last_blocked_tick`
-   on `GoalSatisfied` so a later single block cannot re-trigger frustration from stale
-   history. These are lifecycle facts, not emotion state; the reducer stays pure. Unit tests
-   on the new fields, including re-blocking after satisfaction; no other behavior changes.
-
-3. **Pure derivation module** `crates/qsf_volition/src/signals.rs` (`lib.rs` stays a thin
-   re-export). A `FunctionalSignal { kind, intensity, evidence }` where `evidence` names the
-   recorded state justifying it (goal ids, ticks, `EvidenceRef`s, declined-candidate
-   conflict + rationale), and `derive_signals(state: &VolitionState, fixture: &VolitionFixture)
-   -> Vec<FunctionalSignal>`:
-   - `coherence_decline` — from `state.declined_candidates`: evidence is the rejected
-     candidate title, conflict (`DeclineReason`), rationale, and tick. Do not label this
-     `tension`; true tension remains reserved for an unresolved current conflict among selected
-     goals and needs a separate persisted substrate or replay input.
-   - `frustration` — goals with `status == Blocked`, `blocked_count` at or above a named
-     threshold constant, and `last_activated_tick` present ("despite activation");
-   - `satisfaction` — goals with a recent `last_satisfied_tick` and
-     `last_satisfied_evidence_ref`;
-   - `boredom` — every non-retired goal's salience below a named threshold for the current
-     tick, with a prior-activity guard so a fresh session whose salience values all start at
-     zero does not count. The guard can be satisfied by at least one prior goal activation or
-     by the state passing a named minimum elapsed-tick threshold.
-   Thresholds are named constants next to the existing salience constants, with defaults
-   chosen so scripted fixtures exercise every signal. Exhaustive unit tests: each signal
-   appears exactly when its evidence exists, and every emitted signal's evidence fields are
-   non-empty and resolve to state that is actually present.
-
-4. **Offline experiment harness** `volition-emotion-signals` in
-   `crates/qsf_app/src/experiments/` (pattern:
-   [live_goal_formation_and_coherence.rs](../../crates/qsf_app/src/experiments/live_goal_formation_and_coherence.rs)).
-   Wire it through the experiment registry (`ExperimentName` enum, experiment id/description
-   mapping, and `experiment_for` dispatch) so `scripts/qsf.ps1 app -Experiment
-   volition-emotion-signals` works, with a small availability/dispatch test.
-   Scripted event sequences drive each signal on and off (e.g. repeated `GoalBlocked` raises
-   frustration; `GoalSatisfied` with evidence produces satisfaction and clears frustration for
-   that goal; a coherence-engine rejection produces `coherence_decline`). Each derivation is recorded as an
-   `emotion-signal-derivation` trace record; the harness parses its own artifacts and asserts
-   the trace contract.
-
-5. **Realtime surfacing (Rust).** Extend
-   [`VolitionInspectionCapture`](../../crates/qsf_realtime_server/src/realtime/volition_inspection_capture.rs)
-   with a top-level `signals` list populated via `derive_signals` in
-   `build_volition_inspection_capture`, flowing through the existing `volition_state`
-   websocket message (`push_volition_inspection` in
-   [routes.rs](../../crates/qsf_realtime_server/src/realtime/routes.rs)) — no new transport.
-   Leave nested `VolitionStateInspection` and the `inspect_volition_state` tool unchanged:
-   signals are operator-panel only in this phase, not model-visible introspection input.
-
-6. **Volition panel section (TypeScript).** In `crates/qsf_realtime_server/ui/`: extend the
-   `volition_state` message parser and top-level `VolitionInspectionCapture` types, and add a
-   "Functional signals" section to the `VolitionPanelModel` view-model
-   ([realtime.ts](../../crates/qsf_realtime_server/ui/src/realtime.ts)) — one row per signal
-   with its evidence text (e.g. *coherence decline: declined "X", conflicts with goal Y —
-   rationale*), so the display never shows a bare emotion word without its evidence. Keep derivation of
-   rows in the pure view-model, components render only. Tests at the parser/reducer/view-model
-   level per project UI testing rules; `npm run check` + `npm run fmt` from the `ui/`
-   directory.
-
-**Trace-completeness contract** (finalized in the experiment spec at step 1):
-- required fields per `emotion-signal-derivation` record: `tick`, `signal_kind`,
-  `intensity`, `evidence` (goal ids / declined-candidate ids / evidence refs / threshold
-  values used), and a `dynamic_state_snapshot` reference sufficient to recompute the signal;
-- artifact boundary: `traces.jsonl` is the lifecycle-fact and derivation boundary for this
-  experiment. Each `emotion-signal-derivation` trace record includes the applied lifecycle
-  `VolitionEvent`s needed to reconstruct the relevant state slice, the
-  `dynamic_state_snapshot`, and the emitted signal evidence. `events.jsonl` keeps the existing
-  experiment pattern: generic `TraceRecorded` entries that link to trace ids, not a new
-  lifecycle-event log shape. The report summarizes per-signal outcomes from the trace records.
-- verification: the harness parses `traces.jsonl`, replays the included lifecycle
-  `VolitionEvent`s or checks the included dynamic snapshot as appropriate, re-derives each
-  signal, and asserts it matches the trace record — proving signals derive **only** from
-  recorded state.
-
-**Acceptance criteria:**
-- `derive_signals` is pure, deterministic, and covered by unit tests for presence *and*
-  absence of every signal in the first set.
-- Every emitted signal carries non-empty evidence resolving to recorded state; the harness
-  asserts this from parsed artifacts alone (trace contract satisfied).
-- No arbitration, selection, initiative, or context-injection code path reads signals
-  (reviewable by inspection: the only consumers are the capture builder and the harness).
-- Continuity snapshots from before the new `GoalDynamicState` fields still load.
-- The browser volition panel shows the signal section with evidence during a live session.
-- `cargo build`, `cargo clippy --all-targets -- -D warnings`, `cargo fmt` clean; `npm run
-  check` + `npm run fmt` clean in `crates/qsf_realtime_server/ui/`.
-
-**Verification guidance:** steps 2–4 are fully offline (unit tests + harness artifacts).
-Steps 5–6 need a running realtime server with the browser panel open — a short session where
-the operator provokes a coherence decline and a satisfied goal, then confirms the panel rows
-match the capture. **Human review is recommended** at the end, for interpretability rather
-than correctness: do the displayed signals read as honest instrument readouts, not as claimed
-feelings? (Same review lens as the activation dashboard,
-[Design.LiveActivationDashboard.md](Design.LiveActivationDashboard.md).)
-
-**Resolved Phase 3 decisions:**
-- **First set:** `{coherence_decline, frustration, satisfaction, boredom}`. True D4
-  `tension` needs unresolved current-conflict state this phase should not build; the other two
-  D4 signals also need substrate this phase should not build (curiosity: an explicit
-  open-delta record; attachment: cross-session reinforcement semantics).
-- **Should the model see its own signals?** Decision for this phase: no. Signals are attached
-  only to the top-level realtime `VolitionInspectionCapture` consumed by the operator panel.
-  Extending `VolitionStateInspection` would expose signals through the `inspect_volition_state`
-  tool, letting the model self-report them — which edges from visualization toward narration
-  input and deserves its own D4 review. Tool exposure is a separate later decision.
-- **Boredom window semantics:** Decision for this phase: current-tick low salience plus a
-  prior-activity guard. Sustained N-tick boredom is deferred until the reducer records salience
-  history or a replay-based derivation is deliberately introduced. The experiment spec should
-  name the salience threshold and the prior-activity guard constants, and include cold-start
-  absence coverage.
+**Lessons and what remains:**
+- Every automated criterion passes: unit tests for presence *and* absence of all four signals,
+  the reducer field tests (including re-blocking after satisfaction resets the counters), the
+  harness artifact re-derivation, and the UI parser/view-model tests; `cargo build` / `clippy` /
+  `fmt` and `npm run check` / `fmt` are clean.
+- Continuity snapshots predating the new `GoalDynamicState` fields still load (`#[serde(default)]`).
+- Deferred, unchanged from the resolved scope: true D4 `tension` (needs unresolved
+  current-conflict state), `curiosity` (needs an explicit open-delta record), `attachment`
+  (needs cross-session reinforcement semantics), sustained N-tick boredom (needs salience
+  history), and any model-visible signal exposure (would edge toward narration input; its own D4
+  review). Feeding any signal into arbitration stays out of scope (see Parked questions).
+- **Open item (human):** the live browser check — a realtime session provoking a coherence
+  decline and a satisfied goal, confirming the panel rows match the capture — and the recommended
+  interpretability review (do the rows read as honest instrument readouts, not claimed feelings?
+  Same lens as [Design.LiveActivationDashboard.md](Design.LiveActivationDashboard.md)) are not
+  yet run. The slice is uncommitted, pending that review.
 
 ### Phase 4 — Conscious / subconscious visibility (brief §6)
 
@@ -295,15 +188,15 @@ suspend / resume / abandon. The current system is single-turn initiative.
   and
   [Experiment.LiveGoalFormationAndCoherence.md](../Experiments/Experiment.LiveGoalFormationAndCoherence.md);
   the coherent-agent stance is in [ProjectVision.md](../ProjectFrame/ProjectVision.md).
-- **At Phase 3 detailing (step 1 of the phase):** write
-  `Experiment.VolitionEmotionLikeSignals.md` with its trace contract; add the DecisionLog
-  entry for the visualization-first signal set.
-- **On implementing Phase 3:** refresh the Implementation Status of
-  [Architecture.VolitionSystem.md](../Architecture/Architecture.VolitionSystem.md) — it should
-  also still gain Phase 2's additions (shared model crate, live formation + off-hot-path
-  admission, declined-candidate injection layer, sleep formation + sweep) if not yet folded in.
+- **Done at Phase 3 detailing:** `Experiment.VolitionEmotionLikeSignals.md` with its trace
+  contract is written; the DecisionLog entry for the visualization-first signal set is the
+  2026-07-06 entry.
+- **Done on implementing Phase 3:** the Implementation Status of
+  [Architecture.VolitionSystem.md](../Architecture/Architecture.VolitionSystem.md) now carries
+  both the signals slice and Phase 2's additions (shared model crate, live formation +
+  off-hot-path admission, declined-candidate injection layer, sleep formation + sweep); the
+  experiment Results record the offline validation with the live browser check pending.
 - When a later phase is detailed: write its `Experiment.*.md` scaffold and trace contract.
-- As brief concepts land in project docs, retire the corresponding brief sections: §12 is
-  retired as **not-adopted** (ownership declined); §11 is **delivered** through coherence; §8
-  is retired as **delivered (translated)** once the signal slice ships. Delete the brief once
-  nothing in it remains unmerged.
+- **Done as brief concepts landed:** the brief's §12 is annotated **not-adopted** (ownership
+  declined), §11 **delivered** through coherence, and §8 **delivered (translated)** now that the
+  signal slice ships. Delete the brief once nothing in it remains unmerged.

@@ -390,6 +390,8 @@ pub(crate) async fn inject_trusted_turn_context_and_response(
                 exchange_index,
                 OffsetDateTime::now_utc(),
                 request_hash.to_string(),
+                &guard.volition.state,
+                &guard.volition.fixture,
                 inspection,
                 decision,
             )
@@ -425,6 +427,8 @@ pub(crate) async fn inject_trusted_turn_context_and_response(
             exchange_index,
             OffsetDateTime::now_utc(),
             request_hash.to_string(),
+            &guard.volition.state,
+            &guard.volition.fixture,
             inspection,
             None,
         )
@@ -529,6 +533,8 @@ mod tests {
             0,
             OffsetDateTime::from_unix_timestamp(1_700_000_000).expect("timestamp"),
             "request-ref".to_string(),
+            &state,
+            &fixture,
             build_state_inspection(&state, &fixture),
             None,
         )

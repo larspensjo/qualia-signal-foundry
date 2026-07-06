@@ -1765,24 +1765,44 @@ launches can still be run from `crates/qsf_browser_server/ui` with an explicit
 Vite port.
 
 ## 2026-07-06 - Volition functional signals are visualization-first and operator-panel only
-Decision: The first volition functional-signal set is
-`coherence_decline`, `frustration`, `satisfaction`, and `boredom`. Signals are pure,
-evidence-derived values recomputed from recorded volition lifecycle state and fixture data.
-They are exposed only through offline experiment traces and the realtime operator-panel
-capture (`VolitionInspectionCapture`), not through `VolitionStateInspection`,
-`inspect_volition_state`, arbitration, salience, selection, initiative, or context injection.
-True D4 `tension` is reserved for a future unresolved current-conflict substrate, not derived
-from historical declined candidates. Boredom is current-tick low salience with a prior-activity
-guard, not a sustained N-tick window.
+Decision: Emotion-like functional signals derived from volition state are visualization-first.
+A signal is a pure, deterministic value recomputed on demand from recorded `VolitionState`
+plus fixture data — no new mutable emotion object, never stored, never an input to anything
+but display. The gate is structural, not a runtime flag: signal derivation has no code path
+into arbitration, salience, selection, initiative, or context injection, so there is nothing
+to toggle and no config flag is needed (the default build exercises the new path, per
+Agents.md). The first signal set, with each signal's functional definition:
+- `coherence_decline` — a coherence-engine rejection recorded in `declined_candidates`;
+  evidence is the rejected candidate title, conflict, rationale, and tick. Deliberately not
+  labeled `tension`: true tension stays reserved for an unresolved current conflict among
+  selected goals, which needs substrate this slice does not build.
+- `frustration` — a goal repeatedly `Blocked` despite activation: reducer-maintained
+  `blocked_count` at or above a named threshold, with `last_activated_tick` present.
+- `satisfaction` — a recent `GoalSatisfied` with exact event evidence:
+  `last_satisfied_tick` plus `last_satisfied_evidence_ref`.
+- `boredom` — every non-retired goal's salience below a named threshold at the current tick,
+  guarded by prior activity (at least one prior goal activation, or a named minimum
+  elapsed-tick threshold) so cold-start state never counts as bored.
+Deferred signals: true D4 `tension` (needs unresolved current-conflict state), `curiosity`
+(needs an explicit open-delta representation), and `attachment` (needs settled cross-session
+reinforcement semantics). Signals attach only to the top-level realtime
+`VolitionInspectionCapture` consumed by the operator panel; `VolitionStateInspection` and the
+`inspect_volition_state` tool are unchanged — exposing signals to the model would edge from
+visualization toward narration input and deserves its own D4 review later.
 
-Context: Review of the Volition Motivational Texture signal slice found that historical
+Context: Review of the volition motivational-texture signal slice found that historical
 coherence declines were being mislabeled as tension, model-visible inspection would move the
-feature from visualization into self-narration input, and sustained boredom could not be proven
-from the current `VolitionState` shape. The slice needs inspectable motivational texture
-without weakening the evidence-based, anti-anthropomorphic stance.
+feature from visualization into self-narration input, and sustained N-tick boredom could not
+be proven from the current `VolitionState` shape. The slice needs inspectable motivational
+texture consistent with the anti-anthropomorphic stance (D4 of
+`Design.VolitionBriefReconciliation.md`; DecisionLog 2026-05-15, 2026-06-27, 2026-06-30):
+"emotion" is only ever a named, evidence-derived functional signal, never a felt state.
 
 Consequences: Reducer additions for this slice are lifecycle facts only, such as exact
-satisfaction evidence and block repetition counters. The browser may render evidence-backed
-signal rows, but models do not see or narrate them unless a later decision deliberately opens
-that boundary. Future true tension, sustained boredom, curiosity, attachment, or model-visible
-signals require separate substrate and review.
+satisfaction evidence and block repetition counters — no stored emotion state. The browser
+may render evidence-backed signal rows, but the panel never shows a bare emotion word without
+its evidence, and models do not see or narrate signals unless a later decision deliberately
+opens that boundary. Future true tension, sustained boredom, curiosity, attachment, or
+model-visible signals require separate substrate and review.
+Refs: docs/Plans/Plan.VolitionMotivationalTexture.md,
+docs/Experiments/Experiment.VolitionEmotionLikeSignals.md

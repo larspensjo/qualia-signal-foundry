@@ -344,21 +344,38 @@ calculation.
 
 Activation sources:
 
+- volition functional signals from the realtime `VolitionInspectionCapture.signals`
+  field
+- `emotion-signal-derivation` traces from the `volition-emotion-signals` harness
+- declined candidate records, block repetition counters, satisfaction evidence, and
+  low-salience state used by Phase 3 signal derivation
 - future goal-system events
-- unresolved question or tension state
+- future unresolved question or true tension state
 - goal progress, blocking, satisfaction, or abandonment events
 - sleep or reflection outputs that affect active goals
 
 Possible visualization:
 
 - active goals appear as persistent low-frequency glows rather than short pulses
-- blocked goals create visible tension until resolved or abandoned
-- goal satisfaction creates a distinct completion pulse
+- `coherence_decline`, `frustration`, `satisfaction`, and `boredom` appear as
+  evidence-backed functional-signal activations
+- blocked goals can create a functional frustration signal after repeated blocking
+  with prior activation
+- goal satisfaction creates a distinct completion pulse linked to exact
+  satisfaction evidence
 - unresolved questions remain visible as weak background activity that can return to
   attention later
 
-This channel should wait until the volition idea has real runtime artifacts. It should
-not invent hidden goals merely for visualization.
+The first usable substrate for this channel is Phase 3 of
+`Plan.VolitionMotivationalTexture.md`: pure, deterministic functional signals derived from
+recorded `VolitionState` plus fixture data. The dashboard may visualize those signals, but
+it should preserve the same boundary as the operator panel: evidence-backed display only,
+no signal feedback into arbitration, salience, initiative, context injection, or
+model-visible self-narration.
+
+This channel should not invent hidden goals or infer emotion-like state from visual
+patterns. In particular, `coherence_decline` is not `tension`; true tension remains a future
+signal that needs an unresolved current-conflict substrate.
 
 ### Self-Reflection And Introspection
 

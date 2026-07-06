@@ -94,6 +94,16 @@ pub(crate) fn validate_contradictions_against_known_ids(
             "coherence judge returned a self-contradiction for goal `{}`",
             contradiction.goal_a
         );
+        // A blank rationale cannot ground a coherence decline: it would surface a bare
+        // `coherence_decline` signal with empty evidence, violating the contract that every
+        // signal points at reconstructable recorded facts. Reject it at the same boundary that
+        // rejects unknown and self-contradicting ids.
+        anyhow::ensure!(
+            !contradiction.rationale.trim().is_empty(),
+            "coherence judge returned a blank rationale for contradiction between `{}` and `{}`",
+            contradiction.goal_a,
+            contradiction.goal_b
+        );
         for id in [&contradiction.goal_a, &contradiction.goal_b] {
             anyhow::ensure!(
                 known_ids.contains(id.as_str()),
@@ -339,6 +349,41 @@ mod tests {
             .judge(&mut invoker, &[goal("goal-a"), goal("goal-b")])
             .unwrap_err();
         assert!(error.to_string().contains("self-contradiction"));
+    }
+
+    #[test]
+    fn model_backed_judge_rejects_blank_rationale() {
+        let client = MockModelClient::default().with_fixture(
+            ModelRoleId::CoherenceJudge,
+            json!({
+                "contradictions": [
+                    { "goal_a": "goal-a", "goal_b": "goal-b", "rationale": "   " }
+                ]
+            })
+            .to_string(),
+        );
+        let judge = ModelBackedCoherenceJudge::new(&client);
+        let mut invoker = DirectModelInvoker;
+
+        let error = judge
+            .judge(&mut invoker, &[goal("goal-a"), goal("goal-b")])
+            .unwrap_err();
+        assert!(error.to_string().contains("blank rationale"));
+    }
+
+    #[test]
+    fn scripted_judge_rejects_a_blank_rationale() {
+        let judge = ScriptedCoherenceJudge::new(vec![(
+            "goal-a".to_string(),
+            "goal-b".to_string(),
+            String::new(),
+        )]);
+        let mut invoker = DirectModelInvoker;
+
+        let error = judge
+            .judge(&mut invoker, &[goal("goal-a"), goal("goal-b")])
+            .unwrap_err();
+        assert!(error.to_string().contains("blank rationale"));
     }
 
     #[test]

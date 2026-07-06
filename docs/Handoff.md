@@ -1,7 +1,7 @@
 # Handoff — Resume Here
 
-**Updated:** 2026-07-04 — weighted goal activation implemented and voice-retested; the AI-transition
-probe wins on-topic, stopword turns stay quiet, threshold 4 confirmed. Gate passed.
+**Updated:** 2026-07-06 — emotion-like functional signals implemented and offline-validated
+(visualization-first, operator-panel only); live browser check and interpretability review pending.
 
 <!--
 Rules (see ProjectWorkflow.md, "Handoff Discipline"):
@@ -15,15 +15,17 @@ Rules (see ProjectWorkflow.md, "Handoff Discipline"):
 
 ## Now — immediate action
 
-**Resume persona/goal experimentation on the live volition system** — the weighted-activation
-gate is closed, so the fixture can now be tuned and felt-tested without stopwords hijacking the
-turn.
-Why: the deterministic activation layer is validated end-to-end
-([Experiment.WeightedGoalActivation.md](Experiments/Experiment.WeightedGoalActivation.md), Useful
-Result); the remaining value is in what the fixture expresses.
-Alternate: re-run the formation voice test
-([Experiment.LiveGoalFormationAndCoherence.md](Experiments/Experiment.LiveGoalFormationAndCoherence.md)),
-since selection mechanics changed under it.
+**Verify the functional-signals slice in a live browser session** — the implementation is
+offline-validated but its operator-panel readouts have not been seen live, and the work is
+uncommitted pending that review.
+Why: a short realtime session that provokes a coherence decline and a satisfied goal should confirm
+the "Functional signals" panel rows match the capture, read through the interpretability lens
+(honest instrument readouts, not claimed feelings) — the pending gate in
+[Experiment.VolitionEmotionLikeSignals.md](Experiments/Experiment.VolitionEmotionLikeSignals.md)
+(Procedure step 6 / Results).
+Alternate: run the formation voice test
+([Experiment.LiveGoalFormationAndCoherence.md](Experiments/Experiment.LiveGoalFormationAndCoherence.md)
+Human Test Steps), the other open live check.
 
 ## Next — active plan
 

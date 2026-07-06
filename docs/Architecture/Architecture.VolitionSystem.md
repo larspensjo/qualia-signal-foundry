@@ -6,7 +6,7 @@ Candidate
 
 ## Implementation Status
 
-Last reviewed: 2026-07-04
+Last reviewed: 2026-07-06
 
 The volition domain is extracted into a standalone `qsf_volition` crate
 ([crates/qsf_volition/src/lib.rs](../../crates/qsf_volition/src/lib.rs)). It holds
@@ -22,7 +22,12 @@ and—going forward—`qsf_realtime_server`), not in the crate.
 - Fixture domain: `Tension`, `Goal`, `VolitionFixture`, and `static_fixture()` with
   arbitration tiers and tension priority bias.
 - Durable-within-a-run state and a pure reducer: `VolitionState`, `GoalDynamicState`,
-  `VolitionEvent`, and `apply()` — the only place lifecycle status changes.
+  `VolitionEvent`, and `apply()` — the only place lifecycle status changes. Per-goal
+  bookkeeping includes block-repetition counters (`blocked_count`, `last_blocked_tick`, set and
+  incremented by the `GoalBlocked` arm and reset by `GoalSatisfied`) and exact satisfaction
+  evidence (`last_satisfied_evidence_ref`, set only by `GoalSatisfied`), all `#[serde(default)]`
+  so continuity snapshots predating them still load. These are lifecycle facts, not emotion
+  state.
 - Tick-driven lifecycle: salience decay, cooldown elapse, and inactivity retirement via
   `tick_events()`.
 - Context-neutral selection record `GoalSelection` (goal, relevance score, matched keywords
@@ -154,6 +159,32 @@ and—going forward—`qsf_realtime_server`), not in the crate.
   whole-history formation, and the sleep sweep, recording each decision as a
   `live-goal-formation` trace record per the contract in
   [Experiment.LiveGoalFormationAndCoherence.md](../Experiments/Experiment.LiveGoalFormationAndCoherence.md).
+- Display-only functional signals in `qsf_volition::signals`
+  ([crates/qsf_volition/src/signals.rs](../../crates/qsf_volition/src/signals.rs)): a pure,
+  deterministic `derive_signals(state, fixture) -> Vec<FunctionalSignal>` that reads recorded
+  `VolitionState` and emits named, evidence-derived readouts — `coherence_decline` (one per
+  entry in `declined_candidates`: candidate title, conflict, rationale, tick), `frustration`
+  (a goal `Blocked` at least `FRUSTRATION_BLOCKED_COUNT_THRESHOLD` times despite a prior
+  activation), `satisfaction` (a `GoalSatisfied` within `SATISFACTION_RECENCY_WINDOW_TICKS`
+  carrying its `last_satisfied_evidence_ref`), and `boredom` (every non-retired goal below
+  `BOREDOM_SALIENCE_THRESHOLD`, past a prior-activation / `BOREDOM_MIN_ELAPSED_TICKS`
+  cold-start guard). Each `FunctionalSignal { kind, intensity, evidence }` carries structured
+  `evidence` naming the exact recorded state that justifies it; there is deliberately no
+  `tension` kind (true tension remains reserved for an unresolved current conflict among
+  selected goals). Signals are recomputed on demand, never stored on state, and never a felt
+  claim. The gate is **structural**: the only consumers are the offline harness and the
+  realtime capture builder — no code path into arbitration, salience, selection, initiative,
+  context injection, or the model-visible `inspect_volition_state` tool. Offline-validated by
+  the `volition-emotion-signals` experiment
+  ([crates/qsf_app/src/experiments/volition_emotion_signals.rs](../../crates/qsf_app/src/experiments/volition_emotion_signals.rs)),
+  which re-derives every recorded signal from its own artifacts per the contract in
+  [Experiment.VolitionEmotionLikeSignals.md](../Experiments/Experiment.VolitionEmotionLikeSignals.md).
+  Surfaced to the operator panel only: a top-level `signals` list on `VolitionInspectionCapture`
+  ([crates/qsf_realtime_server/src/realtime/volition_inspection_capture.rs](../../crates/qsf_realtime_server/src/realtime/volition_inspection_capture.rs)),
+  populated by `derive_signals` in the capture builder and riding the existing `volition_state`
+  websocket message; nested `VolitionStateInspection` and the `inspect_volition_state` tool are
+  unchanged. Visualization-first stance recorded in the 2026-07-06 DecisionLog entry
+  "Volition functional signals are visualization-first and operator-panel only".
 
 **Not in this crate (by design):**
 

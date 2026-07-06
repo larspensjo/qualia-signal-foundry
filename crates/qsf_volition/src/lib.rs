@@ -47,5 +47,8 @@ pub use opportunity::*;
 mod shaping;
 pub use shaping::*;
 
+mod signals;
+pub use signals::*;
+
 mod stance;
 pub use stance::*;

@@ -32,6 +32,7 @@ use super::voice_loop::{VOICE_LOOP_DESCRIPTION, VoiceLoopExperiment};
 use super::volition_arbitration_conflict::VolitionArbitrationConflictExperiment;
 use super::volition_bounded_initiative_execution::VolitionBoundedInitiativeExecutionExperiment;
 use super::volition_continuity::VolitionContinuityExperiment;
+use super::volition_emotion_signals::VolitionEmotionSignalsExperiment;
 use super::volition_goal_coherence::VolitionGoalCoherenceExperiment;
 use super::volition_goal_fixture::VolitionGoalFixtureExperiment;
 use super::volition_mode_bias::VolitionModeBiasExperiment;
@@ -68,6 +69,7 @@ pub enum ExperimentName {
     VolitionContinuity,
     VolitionGoalCoherence,
     LiveGoalFormationAndCoherence,
+    VolitionEmotionSignals,
 }
 
 impl ExperimentName {
@@ -99,6 +101,7 @@ impl ExperimentName {
             Self::VolitionContinuity => "volition-continuity",
             Self::VolitionGoalCoherence => "volition-goal-coherence",
             Self::LiveGoalFormationAndCoherence => "live-goal-formation-and-coherence",
+            Self::VolitionEmotionSignals => "volition-emotion-signals",
         }
     }
 
@@ -177,6 +180,9 @@ impl ExperimentName {
             }
             Self::LiveGoalFormationAndCoherence => {
                 "Form candidate goals from trusted turns, detect contradictions in the same call, admit or reject deterministically, and carry a rejection as durable declined-candidate context — off the hot path, offline"
+            }
+            Self::VolitionEmotionSignals => {
+                "Derive the four functional signals (coherence_decline, frustration, satisfaction, boredom) from recorded volition state — each on and off — and re-derive every traced signal from its recorded state snapshot; offline, no arbitration/initiative wiring"
             }
         }
     }
@@ -435,6 +441,7 @@ fn experiment_for(name: ExperimentName) -> Box<dyn Experiment> {
         ExperimentName::LiveGoalFormationAndCoherence => {
             Box::new(LiveGoalFormationAndCoherenceExperiment)
         }
+        ExperimentName::VolitionEmotionSignals => Box::new(VolitionEmotionSignalsExperiment),
     }
 }
 

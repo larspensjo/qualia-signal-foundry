@@ -611,6 +611,7 @@ describe("volition state reducer", () => {
       lastInitiativeSuppressionReason: null,
       lastInitiativeRenderedLinePresent: true,
     },
+    signals: [],
   };
 
   it("sets latestVolitionState when capture matches the active session", () => {
@@ -777,6 +778,167 @@ describe("volition state message parsing", () => {
     },
   };
 
+  const signalsWire = [
+    {
+      kind: "coherence_decline",
+      intensity: 1.0,
+      evidence: {
+        coherence_decline: {
+          candidate_title: "Chase an unrelated tangent",
+          conflict: { kind: "conflicting_goal", goal_id: "serve-the-present-person" },
+          rationale: "would derail the current task",
+          tick: 2,
+        },
+      },
+    },
+    {
+      kind: "frustration",
+      intensity: 0.5,
+      evidence: {
+        frustration: {
+          goal_id: "assemble-world-picture",
+          blocked_count: 2,
+          last_blocked_tick: 3,
+          last_activated_tick: 1,
+        },
+      },
+    },
+    {
+      kind: "satisfaction",
+      intensity: 0.8,
+      evidence: {
+        satisfaction: {
+          goal_id: "serve-the-present-person",
+          last_satisfied_tick: 2,
+          evidence_ref: "trace: user thanked the assistant",
+        },
+      },
+    },
+    {
+      kind: "boredom",
+      intensity: 1.0,
+      evidence: {
+        boredom: {
+          inspected: [
+            { goal_id: "assemble-world-picture", salience: 0 },
+            { goal_id: "serve-the-present-person", salience: 1 },
+          ],
+          threshold: 5,
+          guard: "elapsed_ticks",
+        },
+      },
+    },
+  ];
+
+  it("parses top-level functional signals into camelCase per-kind evidence", () => {
+    const parsed = parseVolitionStateMessage(
+      JSON.stringify({ ...baseMessage, signals: signalsWire }),
+    );
+    expect(parsed?.signals).toEqual([
+      {
+        kind: "coherence_decline",
+        intensity: 1,
+        evidence: {
+          kind: "coherence_decline",
+          candidateTitle: "Chase an unrelated tangent",
+          conflict: { kind: "conflicting_goal", goalId: "serve-the-present-person" },
+          rationale: "would derail the current task",
+          tick: 2,
+        },
+      },
+      {
+        kind: "frustration",
+        intensity: 0.5,
+        evidence: {
+          kind: "frustration",
+          goalId: "assemble-world-picture",
+          blockedCount: 2,
+          lastBlockedTick: 3,
+          lastActivatedTick: 1,
+        },
+      },
+      {
+        kind: "satisfaction",
+        intensity: 0.8,
+        evidence: {
+          kind: "satisfaction",
+          goalId: "serve-the-present-person",
+          lastSatisfiedTick: 2,
+          evidenceRef: "trace: user thanked the assistant",
+        },
+      },
+      {
+        kind: "boredom",
+        intensity: 1,
+        evidence: {
+          kind: "boredom",
+          inspected: [
+            { goalId: "assemble-world-picture", salience: 0 },
+            { goalId: "serve-the-present-person", salience: 1 },
+          ],
+          threshold: 5,
+          guard: "elapsed_ticks",
+        },
+      },
+    ]);
+  });
+
+  it("defaults a missing signals key to an empty list (back-compat)", () => {
+    const parsed = parseVolitionStateMessage(JSON.stringify(baseMessage));
+    expect(parsed).not.toBeNull();
+    expect(parsed?.signals).toEqual([]);
+  });
+
+  it("drops malformed signal entries while keeping the message and valid signals", () => {
+    const malformed = [
+      signalsWire[1], // valid frustration
+      { kind: "frustration", intensity: 0.4, evidence: { frustration: { goal_id: "x" } } }, // missing fields
+      { intensity: "hot", evidence: { boredom: {} } }, // non-numeric intensity
+      "garbage",
+      null,
+      {
+        kind: "coherence_decline",
+        intensity: 0.9,
+        evidence: {
+          coherence_decline: {
+            candidate_title: "Overstate the status",
+            conflict: { kind: "protected_floor" },
+            rationale: "would breach the protected floor",
+            tick: 4,
+          },
+        },
+      }, // valid
+    ];
+    const parsed = parseVolitionStateMessage(
+      JSON.stringify({ ...baseMessage, signals: malformed }),
+    );
+    expect(parsed).not.toBeNull();
+    expect(parsed?.signals).toEqual([
+      {
+        kind: "frustration",
+        intensity: 0.5,
+        evidence: {
+          kind: "frustration",
+          goalId: "assemble-world-picture",
+          blockedCount: 2,
+          lastBlockedTick: 3,
+          lastActivatedTick: 1,
+        },
+      },
+      {
+        kind: "coherence_decline",
+        intensity: 0.9,
+        evidence: {
+          kind: "coherence_decline",
+          candidateTitle: "Overstate the status",
+          conflict: { kind: "protected_floor" },
+          rationale: "would breach the protected floor",
+          tick: 4,
+        },
+      },
+    ]);
+  });
+
   it("parses a well-formed state message with and without a decision", () => {
     expect(parseVolitionStateMessage(JSON.stringify(baseMessage))).toEqual({
       qsfSessionId: "session_1",
@@ -836,6 +998,7 @@ describe("volition state message parsing", () => {
         lastInitiativeSuppressionReason: null,
         lastInitiativeRenderedLinePresent: true,
       },
+      signals: [],
     });
 
     expect(parseVolitionStateMessage(JSON.stringify({ ...baseMessage, decision: null }))).toEqual({
@@ -870,6 +1033,7 @@ describe("volition state message parsing", () => {
         ],
       },
       decision: null,
+      signals: [],
     });
   });
 
@@ -1013,6 +1177,7 @@ describe("volition panel selector", () => {
       lastInitiativeSuppressionReason: null,
       lastInitiativeRenderedLinePresent: true,
     },
+    signals: [],
   };
 
   it("renders protected winner tiers and trace details without hard-coded ids", () => {
@@ -1025,7 +1190,7 @@ describe("volition panel selector", () => {
 
     expect(model.kind).toBe("decision");
     expect(model.banner).toBe("Decision captured for this trusted turn.");
-    expect(model.sections).toHaveLength(2);
+    expect(model.sections).toHaveLength(3);
     const decisionSection = model.sections[1];
     expect(decisionSection.title).toBe("Decision detail");
     const winnerTiers = decisionSection.rows.find((row) => row.label === "Winner tiers");
@@ -1088,7 +1253,7 @@ describe("volition panel selector", () => {
 
     expect(model.kind).toBe("snapshot");
     expect(model.banner).toBe("No volition decision this turn.");
-    expect(model.sections).toHaveLength(1);
+    expect(model.sections).toHaveLength(2);
     const snapshotSection = model.sections[0];
     expect(snapshotSection.rows.find((row) => row.label === "Tick")?.value).toBe("12");
     expect(snapshotSection.rows.find((row) => row.label === "Active goals")?.value).toContain(
@@ -1103,6 +1268,103 @@ describe("volition panel selector", () => {
     expect(model.headline).toBe("No volition state yet");
     expect(model.banner).toBe("Awaiting the first trusted turn.");
     expect(model.sections).toHaveLength(0);
+  });
+
+  it("renders a Functional signals section with concrete evidence for each kind", () => {
+    const state = {
+      ...INITIAL_STATE,
+      sessionId: "session_1",
+      latestVolitionState: {
+        ...sampleCapture,
+        signals: [
+          {
+            kind: "coherence_decline" as const,
+            intensity: 1,
+            evidence: {
+              kind: "coherence_decline" as const,
+              candidateTitle: "Chase a tangent",
+              conflict: { kind: "conflicting_goal" as const, goalId: "serve-the-present-person" },
+              rationale: "would derail the task",
+              tick: 2,
+            },
+          },
+          {
+            kind: "frustration" as const,
+            intensity: 0.5,
+            evidence: {
+              kind: "frustration" as const,
+              goalId: "assemble-world-picture",
+              blockedCount: 2,
+              lastBlockedTick: 3,
+              lastActivatedTick: 1,
+            },
+          },
+          {
+            kind: "satisfaction" as const,
+            intensity: 0.8,
+            evidence: {
+              kind: "satisfaction" as const,
+              goalId: "serve-the-present-person",
+              lastSatisfiedTick: 2,
+              evidenceRef: "trace: user thanked",
+            },
+          },
+          {
+            kind: "boredom" as const,
+            intensity: 1,
+            evidence: {
+              kind: "boredom" as const,
+              inspected: [{ goalId: "assemble-world-picture", salience: 0 }],
+              threshold: 5,
+              guard: "elapsed_ticks" as const,
+            },
+          },
+        ],
+      },
+    };
+    const model = selectVolitionPanelModel(state);
+    const section = model.sections.find((s) => s.title === "Functional signals");
+    expect(section).toBeDefined();
+    const rows = section?.rows ?? [];
+    expect(rows).toHaveLength(4);
+
+    const coherence = rows.find((row) => row.label === "Coherence decline");
+    expect(coherence?.value).toContain('declined "Chase a tangent"');
+    expect(coherence?.value).toContain("tick 2");
+    expect(coherence?.value).toContain("conflicts with goal serve-the-present-person");
+    expect(coherence?.value).toContain("would derail the task");
+    expect(coherence?.value).toContain("100%");
+
+    const frustration = rows.find((row) => row.label === "Frustration");
+    expect(frustration?.value).toContain("assemble-world-picture");
+    expect(frustration?.value).toContain("blocked 2 times");
+    expect(frustration?.value).toContain("last blocked tick 3");
+    expect(frustration?.value).toContain("last activated tick 1");
+    expect(frustration?.value).toContain("50%");
+
+    const satisfaction = rows.find((row) => row.label === "Satisfaction");
+    expect(satisfaction?.value).toContain("serve-the-present-person");
+    expect(satisfaction?.value).toContain("satisfied at tick 2");
+    expect(satisfaction?.value).toContain("trace: user thanked");
+    expect(satisfaction?.value).toContain("80%");
+
+    const boredom = rows.find((row) => row.label === "Boredom");
+    expect(boredom?.value).toContain("threshold 5");
+    expect(boredom?.value).toContain("assemble-world-picture salience 0");
+    expect(boredom?.value).toContain("elapsed ticks");
+    expect(boredom?.value).toContain("100%");
+  });
+
+  it("shows a single empty-state row in the Functional signals section when there are no signals", () => {
+    const state = {
+      ...INITIAL_STATE,
+      sessionId: "session_1",
+      latestVolitionState: { ...sampleCapture, signals: [] },
+    };
+    const model = selectVolitionPanelModel(state);
+    const section = model.sections.find((s) => s.title === "Functional signals");
+    expect(section).toBeDefined();
+    expect(section?.rows).toEqual([{ label: "Signals", value: "none" }]);
   });
 });
 
@@ -1144,6 +1406,7 @@ describe("volition verdict selector", () => {
       lastInitiativeSuppressionReason: null,
       lastInitiativeRenderedLinePresent: true,
     },
+    signals: [],
   };
 
   it("reports awaiting-first-turn when no capture has arrived", () => {
@@ -1278,6 +1541,7 @@ describe("injected volition text locator", () => {
       lastInitiativeSummaries: [],
     },
     decision: null,
+    signals: [],
   });
   const turnContextAtExchange = (
     exchangeIndex: number,

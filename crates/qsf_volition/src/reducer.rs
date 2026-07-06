@@ -22,6 +22,22 @@ pub struct GoalDynamicState {
     pub cooldown_until_tick: Option<u64>,
     /// The most recent initiative output for this goal, set by `InitiativeExecuted`.
     pub last_initiative_output: Option<InitiativeOutput>,
+    /// Number of `GoalBlocked` events since the last satisfaction. Reset to 0 by
+    /// `GoalSatisfied` so a later single block cannot re-trigger frustration from stale
+    /// history. `#[serde(default)]` so continuity snapshots persisted before this field
+    /// existed still deserialize.
+    #[serde(default)]
+    pub blocked_count: u32,
+    /// Tick of the most recent `GoalBlocked` event, cleared to `None` by `GoalSatisfied`.
+    /// `#[serde(default)]` for continuity back-compat.
+    #[serde(default)]
+    pub last_blocked_tick: Option<u64>,
+    /// Evidence from the most recent `GoalSatisfied` event, paired with `last_satisfied_tick`.
+    /// Distinct from `progress_evidence_refs`, which merges progress and satisfaction evidence
+    /// and so cannot serve as exact satisfaction evidence. `#[serde(default)]` for continuity
+    /// back-compat.
+    #[serde(default)]
+    pub last_satisfied_evidence_ref: Option<EvidenceRef>,
 }
 
 impl GoalDynamicState {
@@ -35,6 +51,9 @@ impl GoalDynamicState {
             last_satisfied_tick: None,
             cooldown_until_tick: None,
             last_initiative_output: None,
+            blocked_count: 0,
+            last_blocked_tick: None,
+            last_satisfied_evidence_ref: None,
         }
     }
 }
@@ -252,12 +271,19 @@ pub fn apply(mut state: VolitionState, event: VolitionEvent) -> VolitionState {
                 dynamic.salience = 0;
                 dynamic.last_satisfied_tick = Some(tick);
                 dynamic.cooldown_until_tick = Some(tick + COOLDOWN_SPAN_TICKS);
+                dynamic.last_satisfied_evidence_ref = Some(evidence.clone());
                 dynamic.progress_evidence_refs.push(evidence);
+                // Satisfaction resets since-last-satisfaction block history so a later
+                // single block cannot re-trigger frustration from stale counts.
+                dynamic.blocked_count = 0;
+                dynamic.last_blocked_tick = None;
             }
         }
-        VolitionEvent::GoalBlocked { goal_id, tick: _ } => {
+        VolitionEvent::GoalBlocked { goal_id, tick } => {
             if let Some(dynamic) = state.goals.get_mut(&goal_id) {
                 dynamic.status = GoalStatus::Blocked;
+                dynamic.blocked_count += 1;
+                dynamic.last_blocked_tick = Some(tick);
             }
         }
         VolitionEvent::GoalDecayed { goal_id, tick: _ } => {
@@ -842,6 +868,177 @@ mod tests {
         );
 
         assert_eq!(state.goal(goal_id).unwrap().status, GoalStatus::Retired);
+    }
+
+    // ── Blocked/satisfied lifecycle bookkeeping ──────────────────────────────
+
+    #[test]
+    fn goal_blocked_increments_count_and_sets_last_blocked_tick() {
+        let fixture = static_fixture();
+        let state = VolitionState::from_fixture(&fixture);
+        let goal_id = "clarify-weak-evidence-topic";
+
+        let state = apply(
+            state,
+            VolitionEvent::GoalBlocked {
+                goal_id: goal_id.to_string(),
+                tick: 4,
+            },
+        );
+
+        let dynamic = state.goal(goal_id).unwrap();
+        assert_eq!(dynamic.blocked_count, 1);
+        assert_eq!(dynamic.last_blocked_tick, Some(4));
+    }
+
+    #[test]
+    fn repeated_blocks_accumulate_blocked_count() {
+        let fixture = static_fixture();
+        let mut state = VolitionState::from_fixture(&fixture);
+        let goal_id = "clarify-weak-evidence-topic";
+
+        for tick in 1..=3 {
+            state = apply(
+                state,
+                VolitionEvent::GoalBlocked {
+                    goal_id: goal_id.to_string(),
+                    tick,
+                },
+            );
+        }
+
+        let dynamic = state.goal(goal_id).unwrap();
+        assert_eq!(dynamic.blocked_count, 3);
+        assert_eq!(
+            dynamic.last_blocked_tick,
+            Some(3),
+            "last_blocked_tick tracks the most recent block"
+        );
+    }
+
+    #[test]
+    fn goal_satisfied_sets_evidence_ref_and_resets_blocked_history() {
+        let fixture = static_fixture();
+        let mut state = VolitionState::from_fixture(&fixture);
+        let goal_id = "clarify-weak-evidence-topic";
+
+        for tick in 1..=2 {
+            state = apply(
+                state,
+                VolitionEvent::GoalBlocked {
+                    goal_id: goal_id.to_string(),
+                    tick,
+                },
+            );
+        }
+        assert_eq!(state.goal(goal_id).unwrap().blocked_count, 2);
+
+        let evidence = EvidenceRef::try_new("trace: satisfied").unwrap();
+        let state = apply(
+            state,
+            VolitionEvent::GoalSatisfied {
+                goal_id: goal_id.to_string(),
+                evidence: evidence.clone(),
+                tick: 3,
+            },
+        );
+
+        let dynamic = state.goal(goal_id).unwrap();
+        assert_eq!(
+            dynamic.last_satisfied_evidence_ref.as_ref(),
+            Some(&evidence)
+        );
+        assert_eq!(
+            dynamic.blocked_count, 0,
+            "satisfaction resets the blocked count"
+        );
+        assert_eq!(
+            dynamic.last_blocked_tick, None,
+            "satisfaction clears last_blocked_tick"
+        );
+    }
+
+    #[test]
+    fn reblocking_after_satisfaction_starts_from_reset_history() {
+        let fixture = static_fixture();
+        let mut state = VolitionState::from_fixture(&fixture);
+        let goal_id = "clarify-weak-evidence-topic";
+
+        for tick in 1..=3 {
+            state = apply(
+                state,
+                VolitionEvent::GoalBlocked {
+                    goal_id: goal_id.to_string(),
+                    tick,
+                },
+            );
+        }
+        let state = apply(
+            state,
+            VolitionEvent::GoalSatisfied {
+                goal_id: goal_id.to_string(),
+                evidence: EvidenceRef::try_new("trace: satisfied").unwrap(),
+                tick: 4,
+            },
+        );
+        let state = apply(
+            state,
+            VolitionEvent::GoalBlocked {
+                goal_id: goal_id.to_string(),
+                tick: 5,
+            },
+        );
+
+        let dynamic = state.goal(goal_id).unwrap();
+        assert_eq!(
+            dynamic.blocked_count, 1,
+            "a single block after satisfaction counts from a reset history"
+        );
+        assert_eq!(dynamic.last_blocked_tick, Some(5));
+    }
+
+    #[test]
+    fn goal_progress_observed_does_not_set_satisfied_evidence_ref() {
+        let fixture = static_fixture();
+        let state = VolitionState::from_fixture(&fixture);
+        let goal_id = "clarify-weak-evidence-topic";
+        let evidence = EvidenceRef::try_new("trace: progress").unwrap();
+
+        let state = apply(
+            state,
+            VolitionEvent::GoalProgressObserved {
+                goal_id: goal_id.to_string(),
+                evidence,
+                tick: 1,
+            },
+        );
+
+        assert_eq!(
+            state.goal(goal_id).unwrap().last_satisfied_evidence_ref,
+            None,
+            "progress evidence must not populate the satisfaction-only evidence field"
+        );
+    }
+
+    #[test]
+    fn goal_dynamic_state_serde_defaults_new_lifecycle_fields() {
+        // A snapshot serialized before the new lifecycle fields existed: it omits
+        // blocked_count, last_blocked_tick, and last_satisfied_evidence_ref.
+        let json = serde_json::json!({
+            "status": "accepted",
+            "salience": 0,
+            "reinforcement_count": 0,
+            "progress_evidence_refs": [],
+            "last_activated_tick": null,
+            "last_satisfied_tick": null,
+            "cooldown_until_tick": null,
+            "last_initiative_output": null
+        });
+
+        let dynamic: GoalDynamicState = serde_json::from_value(json).unwrap();
+        assert_eq!(dynamic.blocked_count, 0);
+        assert_eq!(dynamic.last_blocked_tick, None);
+        assert_eq!(dynamic.last_satisfied_evidence_ref, None);
     }
 
     // ── tick_events ──────────────────────────────────────────────────────────

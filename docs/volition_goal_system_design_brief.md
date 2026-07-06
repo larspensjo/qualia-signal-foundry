@@ -393,6 +393,11 @@ This delta should drive:
 
 ## 8. Emotion as Motivational Signal
 
+> **Status: Delivered (translated) — retired.** Translated to named, evidence-derived functional
+> signals (visualization-first, operator-panel only), not a felt state. See
+> [DecisionLog 2026-07-06](DecisionLog.md#2026-07-06---volition-functional-signals-are-visualization-first-and-operator-panel-only)
+> and [Experiment.VolitionEmotionLikeSignals.md](Experiments/Experiment.VolitionEmotionLikeSignals.md).
+
 > **Project note (Framing 4):** Adopt only as named, evidence-derived functional signals
 > computed from existing goal/delta state (frustration = repeatedly `Blocked`; satisfaction =
 > `GoalSatisfied` with an `EvidenceRef`; tension = unresolved arbitration conflict). They may
@@ -559,6 +564,12 @@ A goal may be marked resolved when:
 
 ## 11. Conflict Between Goals
 
+> **Status: Delivered** — goal conflict is handled by tiered `arbitrate_with_mode` and by goal
+> coherence (the model detects contradictions; the pure reducer resolves them). See the two
+> 2026-06-30 DecisionLog entries
+> ([adopted goals belong to the simulation](DecisionLog.md#2026-06-30---adopted-goals-belong-to-the-simulation-coherence-replaces-goal-provenance),
+> [goal coherence is model-judged off the hot path](DecisionLog.md#2026-06-30---goal-coherence-is-model-judged-off-the-hot-path-and-repaired-during-sleep)).
+
 The system should explicitly support goal conflict.
 
 Examples:
@@ -581,6 +592,12 @@ Example:
 ---
 
 ## 12. User Goals vs Simulator Goals
+
+> **Status: Not adopted — retired.** Goal provenance (user / simulator / shared) was declined:
+> every goal the simulation adopts belongs to the simulation, and coherence — owning a consistent
+> goal set and declining input that would make it incoherent — is what makes it read as a separate
+> agent. See
+> [DecisionLog 2026-06-30](DecisionLog.md#2026-06-30---adopted-goals-belong-to-the-simulation-coherence-replaces-goal-provenance).
 
 The simulator should distinguish between:
 

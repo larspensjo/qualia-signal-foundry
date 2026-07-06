@@ -257,6 +257,7 @@ output
 speech_input
 speech_output
 sleep
+volition
 latency
 cost
 error
@@ -304,11 +305,22 @@ Initial mappings:
 - `ToolCompleted` -> tool return signal
 - `ToolFailed` -> tool error signal
 - `OutputProduced` -> output signal
+- top-level realtime `VolitionInspectionCapture.signals` -> volition functional-signal
+  activation
+- `emotion-signal-derivation` traces -> replayable volition functional-signal
+  activation linked to derivation evidence
 - `ExperimentCompleted` -> session completion signal
 
 Trace records can enrich these mappings with selected fragments, omitted
 fragments, memory scores, association paths, latency, errors, and source
 references.
+
+Volition functional signals are already derived by the volition system, not by the
+dashboard. The projector may translate `coherence_decline`, `frustration`,
+`satisfaction`, and `boredom` into visual activations, but it must preserve the source
+evidence and must not infer new emotion-like labels from display state. `coherence_decline`
+is not rendered as true tension; true tension remains deferred until the runtime records an
+unresolved current conflict among selected goals.
 
 ## Visual Reference
 
@@ -404,8 +416,11 @@ Build:
 Verify:
 
 - Replay existing memory and tool experiment runs.
+- Replay the `volition-emotion-signals` run to verify evidence-backed volition
+  functional-signal activation.
 - Confirm visible activations correspond to source events.
 - Confirm selected/omitted memory and context fragments can be inspected.
+- Confirm volition activations link back to signal evidence rather than bare emotion words.
 - Confirm pausing and scrubbing do not change projected signals.
 - Compare replay against the run report and raw JSONL artifacts.
 
@@ -571,6 +586,8 @@ localhost artifact server only if needed.
 
 - docs/Assets/LiveActivationDashboard/concept-art-activation-map-2026-05-18.jpg
 - docs/Plans/Idea.LiveActivationDashboard.md
+- docs/Plans/Plan.VolitionMotivationalTexture.md
+- docs/Experiments/Experiment.VolitionEmotionLikeSignals.md
 - docs/Architecture/Architecture.StateAndObservability.md
 - docs/Architecture/Architecture.RuntimeLoop.md
 - docs/Architecture/Architecture.MemorySystem.md

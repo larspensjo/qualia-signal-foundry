@@ -849,6 +849,8 @@ mod tests {
             0,
             time::OffsetDateTime::from_unix_timestamp(1_700_000_000).expect("timestamp"),
             "request-ref".to_string(),
+            &state,
+            &fixture,
             inspection,
             None,
         );
@@ -897,6 +899,8 @@ mod tests {
             0,
             time::OffsetDateTime::from_unix_timestamp(1_700_000_000).expect("timestamp"),
             "request-ref".to_string(),
+            &state,
+            &fixture,
             build_state_inspection(&state, &fixture),
             None,
         );

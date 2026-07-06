@@ -160,6 +160,65 @@ export interface VolitionTurnDecisionSummary {
   lastInitiativeRenderedLinePresent: boolean;
 }
 
+/// The four functional-signal kinds. Display-only instrument readouts derived from recorded
+/// volition state; never felt states. Mirrors `qsf_volition::signals::SignalKind` (snake_case).
+export type VolitionSignalKind = "coherence_decline" | "frustration" | "satisfaction" | "boredom";
+
+/// Which guard admitted a `boredom` signal past the cold-start check. Mirrors
+/// `qsf_volition::signals::BoredomGuard` (snake_case).
+export type VolitionBoredomGuard = "prior_activation" | "elapsed_ticks";
+
+/// Why a candidate was declined by the coherence engine. Mirrors `qsf_volition::DeclineReason`,
+/// which serde-tags internally on `kind`.
+export type VolitionDeclineReason =
+  | { kind: "conflicting_goal"; goalId: string }
+  | { kind: "protected_floor" };
+
+/// A `(goal id, salience)` pair recorded in boredom evidence.
+export interface VolitionGoalSalience {
+  goalId: string;
+  salience: number;
+}
+
+/// Structured, per-kind evidence that justifies a functional signal. The wire form is serde
+/// externally tagged (`{ "frustration": { … } }`); this discriminated union flattens each
+/// variant's fields alongside a `kind` tag so consumers can switch on `kind` directly.
+export type VolitionSignalEvidence =
+  | {
+      kind: "coherence_decline";
+      candidateTitle: string;
+      conflict: VolitionDeclineReason;
+      rationale: string;
+      tick: number;
+    }
+  | {
+      kind: "frustration";
+      goalId: string;
+      blockedCount: number;
+      lastBlockedTick: number;
+      lastActivatedTick: number;
+    }
+  | {
+      kind: "satisfaction";
+      goalId: string;
+      lastSatisfiedTick: number;
+      evidenceRef: string;
+    }
+  | {
+      kind: "boredom";
+      inspected: VolitionGoalSalience[];
+      threshold: number;
+      guard: VolitionBoredomGuard;
+    };
+
+/// One derived functional signal: its `kind`, a display `intensity` in `[0, 1]`, and the
+/// structured `evidence` that justifies it. Mirrors `qsf_volition::signals::FunctionalSignal`.
+export interface VolitionFunctionalSignal {
+  kind: VolitionSignalKind;
+  intensity: number;
+  evidence: VolitionSignalEvidence;
+}
+
 export interface VolitionInspectionCapture {
   qsfSessionId: string;
   exchangeIndex: number;
@@ -167,6 +226,9 @@ export interface VolitionInspectionCapture {
   responseCreateEventRef: string;
   inspection: VolitionStateInspectionCapture;
   decision: VolitionTurnDecisionSummary | null;
+  /// Display-only functional signals riding the capture. Empty for older captures that
+  /// predate the field (the parser defaults a missing `signals` key to an empty list).
+  signals: VolitionFunctionalSignal[];
 }
 
 export interface VolitionPanelRow {
@@ -488,7 +550,151 @@ export function parseVolitionStateMessage(raw: string): VolitionInspectionCaptur
     responseCreateEventRef,
     inspection: parsedInspection,
     decision: parsedDecision,
+    signals: parseFunctionalSignals(parsed.signals),
   };
+}
+
+/// Parse the top-level `signals` array of a `volition_state` message. Defensive and non-fatal:
+/// a missing key or non-array value yields an empty list (back-compat with captures that predate
+/// the field), and any malformed entry is dropped rather than rejecting the whole message —
+/// signals are display-only decoration and must never null out an otherwise valid capture.
+function parseFunctionalSignals(value: unknown): VolitionFunctionalSignal[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+  const signals: VolitionFunctionalSignal[] = [];
+  for (const entry of value) {
+    const signal = parseFunctionalSignal(entry);
+    if (signal !== null) {
+      signals.push(signal);
+    }
+  }
+  return signals;
+}
+
+function parseFunctionalSignal(value: unknown): VolitionFunctionalSignal | null {
+  if (!isRecord(value) || typeof value.intensity !== "number") {
+    return null;
+  }
+  // The wire also carries a redundant top-level `kind`, but the externally-tagged evidence key is
+  // authoritative and always agrees with it (guaranteed server-side), so kind is taken from there.
+  const evidence = parseSignalEvidence(value.evidence);
+  if (evidence === null) {
+    return null;
+  }
+  return { kind: evidence.kind, intensity: value.intensity, evidence };
+}
+
+function parseSignalEvidence(value: unknown): VolitionSignalEvidence | null {
+  if (!isRecord(value)) {
+    return null;
+  }
+  const coherenceDecline = value.coherence_decline;
+  if (isRecord(coherenceDecline)) {
+    const conflict = parseDeclineReason(coherenceDecline.conflict);
+    if (
+      typeof coherenceDecline.candidate_title === "string" &&
+      conflict !== null &&
+      typeof coherenceDecline.rationale === "string" &&
+      typeof coherenceDecline.tick === "number"
+    ) {
+      return {
+        kind: "coherence_decline",
+        candidateTitle: coherenceDecline.candidate_title,
+        conflict,
+        rationale: coherenceDecline.rationale,
+        tick: coherenceDecline.tick,
+      };
+    }
+    return null;
+  }
+  const frustration = value.frustration;
+  if (isRecord(frustration)) {
+    if (
+      typeof frustration.goal_id === "string" &&
+      typeof frustration.blocked_count === "number" &&
+      typeof frustration.last_blocked_tick === "number" &&
+      typeof frustration.last_activated_tick === "number"
+    ) {
+      return {
+        kind: "frustration",
+        goalId: frustration.goal_id,
+        blockedCount: frustration.blocked_count,
+        lastBlockedTick: frustration.last_blocked_tick,
+        lastActivatedTick: frustration.last_activated_tick,
+      };
+    }
+    return null;
+  }
+  const satisfaction = value.satisfaction;
+  if (isRecord(satisfaction)) {
+    if (
+      typeof satisfaction.goal_id === "string" &&
+      typeof satisfaction.last_satisfied_tick === "number" &&
+      typeof satisfaction.evidence_ref === "string"
+    ) {
+      return {
+        kind: "satisfaction",
+        goalId: satisfaction.goal_id,
+        lastSatisfiedTick: satisfaction.last_satisfied_tick,
+        evidenceRef: satisfaction.evidence_ref,
+      };
+    }
+    return null;
+  }
+  const boredom = value.boredom;
+  if (isRecord(boredom)) {
+    const inspected = parseGoalSalienceArray(boredom.inspected);
+    if (
+      inspected !== null &&
+      typeof boredom.threshold === "number" &&
+      isBoredomGuard(boredom.guard)
+    ) {
+      return {
+        kind: "boredom",
+        inspected,
+        threshold: boredom.threshold,
+        guard: boredom.guard,
+      };
+    }
+    return null;
+  }
+  return null;
+}
+
+function parseDeclineReason(value: unknown): VolitionDeclineReason | null {
+  if (!isRecord(value)) {
+    return null;
+  }
+  if (value.kind === "conflicting_goal" && typeof value.goal_id === "string") {
+    return { kind: "conflicting_goal", goalId: value.goal_id };
+  }
+  if (value.kind === "protected_floor") {
+    return { kind: "protected_floor" };
+  }
+  return null;
+}
+
+function parseGoalSalienceArray(value: unknown): VolitionGoalSalience[] | null {
+  if (!Array.isArray(value)) {
+    return null;
+  }
+  const inspected: VolitionGoalSalience[] = [];
+  for (const entry of value) {
+    if (
+      !isRecord(entry) ||
+      typeof entry.goal_id !== "string" ||
+      typeof entry.salience !== "number"
+    ) {
+      return null;
+    }
+    inspected.push({ goalId: entry.goal_id, salience: entry.salience });
+  }
+  return inspected;
+}
+
+function isBoredomGuard(value: unknown): value is VolitionBoredomGuard {
+  return value === "prior_activation" || value === "elapsed_ticks";
 }
 
 function convertVolitionStateInspectionCapture(
@@ -1133,12 +1339,17 @@ export function selectVolitionPanelModel(state: ConversationState): VolitionPane
     },
   ];
 
+  const signalsSection: VolitionPanelSection = {
+    title: "Functional signals",
+    rows: formatSignalRows(capture.signals),
+  };
+
   if (capture.decision === null) {
     return {
       kind: "snapshot",
       headline: "Volition state",
       banner: "No volition decision this turn.",
-      sections: snapshotSections,
+      sections: snapshotSections.concat(signalsSection),
     };
   }
 
@@ -1172,52 +1383,55 @@ export function selectVolitionPanelModel(state: ConversationState): VolitionPane
       decision.winner === null
         ? "No goal qualified this turn."
         : "Decision captured for this trusted turn.",
-    sections: snapshotSections.concat({
-      title: "Decision detail",
-      rows: [
-        ...winnerRows,
-        {
-          label: "Mode bias outcomes",
-          value: formatModeBiasOutcomes(decision.modeBiasOutcomes),
-        },
-        {
-          label: "Selected goals",
-          value: formatIdList(decision.selectedGoalIds),
-        },
-        {
-          label: "Omitted/suppressed goals",
-          value: formatIdList(decision.omittedOrSuppressedGoalIds),
-        },
-        {
-          label: "Shaping intensity",
-          value: formatLabelValue(decision.shapingIntensity),
-        },
-        {
-          label: "Last initiative output",
-          value: decision.lastInitiativeOutputKind
-            ? formatLabelValue(decision.lastInitiativeOutputKind)
-            : "none",
-        },
-        {
-          label: "Last initiative surfaced",
-          value: yesNo(decision.lastInitiativeSurfaced),
-        },
-        {
-          label: "Suppression reason",
-          value: decision.lastInitiativeSuppressionReason
-            ? formatLabelValue(decision.lastInitiativeSuppressionReason)
-            : "none",
-        },
-        {
-          label: "Rendered line",
-          value: yesNo(decision.lastInitiativeRenderedLinePresent),
-        },
-        {
-          label: "Trace ref",
-          value: capture.responseCreateEventRef,
-        },
-      ],
-    }),
+    sections: snapshotSections.concat(
+      {
+        title: "Decision detail",
+        rows: [
+          ...winnerRows,
+          {
+            label: "Mode bias outcomes",
+            value: formatModeBiasOutcomes(decision.modeBiasOutcomes),
+          },
+          {
+            label: "Selected goals",
+            value: formatIdList(decision.selectedGoalIds),
+          },
+          {
+            label: "Omitted/suppressed goals",
+            value: formatIdList(decision.omittedOrSuppressedGoalIds),
+          },
+          {
+            label: "Shaping intensity",
+            value: formatLabelValue(decision.shapingIntensity),
+          },
+          {
+            label: "Last initiative output",
+            value: decision.lastInitiativeOutputKind
+              ? formatLabelValue(decision.lastInitiativeOutputKind)
+              : "none",
+          },
+          {
+            label: "Last initiative surfaced",
+            value: yesNo(decision.lastInitiativeSurfaced),
+          },
+          {
+            label: "Suppression reason",
+            value: decision.lastInitiativeSuppressionReason
+              ? formatLabelValue(decision.lastInitiativeSuppressionReason)
+              : "none",
+          },
+          {
+            label: "Rendered line",
+            value: yesNo(decision.lastInitiativeRenderedLinePresent),
+          },
+          {
+            label: "Trace ref",
+            value: capture.responseCreateEventRef,
+          },
+        ],
+      },
+      signalsSection,
+    ),
   };
 }
 
@@ -1268,6 +1482,82 @@ function formatModeBiasOutcomes(outcomes: VolitionModeBiasOutcomeCapture[]): str
 
 function formatIdList(ids: string[]): string {
   return ids.length === 0 ? "none" : ids.join(", ");
+}
+
+/// One panel row per functional signal, each carrying the concrete evidence that justifies it —
+/// a signal name never appears without its evidence. Empty captures render a single "none" row,
+/// matching the empty-state convention the other sections use for empty lists.
+function formatSignalRows(signals: VolitionFunctionalSignal[]): VolitionPanelRow[] {
+  if (signals.length === 0) {
+    return [{ label: "Signals", value: "none" }];
+  }
+  return signals.map((signal) => ({
+    label: signalKindLabel(signal.kind),
+    value: formatSignalEvidence(signal),
+  }));
+}
+
+/// Instrument-readout label for a signal kind. Sentence case to match the panel's other labels
+/// (e.g. "Active goals"); deliberately no wording implying a felt state.
+function signalKindLabel(kind: VolitionSignalKind): string {
+  switch (kind) {
+    case "coherence_decline":
+      return "Coherence decline";
+    case "frustration":
+      return "Frustration";
+    case "satisfaction":
+      return "Satisfaction";
+    case "boredom":
+      return "Boredom";
+  }
+}
+
+/// The evidence text for a signal row. Every branch names the recorded state (goal ids, ticks,
+/// counts, rationale, declined-candidate title, threshold) and ends with the display intensity, so
+/// the row reads as a verifiable readout rather than a bare emotion word.
+function formatSignalEvidence(signal: VolitionFunctionalSignal): string {
+  const intensity = formatSignalIntensity(signal.intensity);
+  const evidence = signal.evidence;
+  switch (evidence.kind) {
+    case "coherence_decline":
+      return `declined "${evidence.candidateTitle}" (tick ${evidence.tick}) — ${formatDeclineReason(evidence.conflict)} — ${evidence.rationale} · intensity ${intensity}`;
+    case "frustration":
+      return `goal ${evidence.goalId} blocked ${evidence.blockedCount} times despite activation (last blocked tick ${evidence.lastBlockedTick}, last activated tick ${evidence.lastActivatedTick}) · intensity ${intensity}`;
+    case "satisfaction":
+      return `goal ${evidence.goalId} satisfied at tick ${evidence.lastSatisfiedTick} (evidence: ${evidence.evidenceRef}) · intensity ${intensity}`;
+    case "boredom":
+      return `${evidence.inspected.length} non-retired goal(s) below engagement threshold ${evidence.threshold} via ${formatBoredomGuard(evidence.guard)} — ${formatInspectedSalience(evidence.inspected)} · intensity ${intensity}`;
+  }
+}
+
+function formatDeclineReason(reason: VolitionDeclineReason): string {
+  switch (reason.kind) {
+    case "conflicting_goal":
+      return `conflicts with goal ${reason.goalId}`;
+    case "protected_floor":
+      return "breaches the protected floor";
+  }
+}
+
+function formatBoredomGuard(guard: VolitionBoredomGuard): string {
+  switch (guard) {
+    case "prior_activation":
+      return "prior activation";
+    case "elapsed_ticks":
+      return "elapsed ticks";
+  }
+}
+
+function formatInspectedSalience(inspected: VolitionGoalSalience[]): string {
+  if (inspected.length === 0) {
+    return "no goals inspected";
+  }
+  return inspected.map((goal) => `${goal.goalId} salience ${goal.salience}`).join(", ");
+}
+
+/// Display the `[0, 1]` intensity as a rounded percentage — the display-friendly form for the panel.
+function formatSignalIntensity(intensity: number): string {
+  return `${Math.round(intensity * 100)}%`;
 }
 
 function yesNo(value: boolean): string {
