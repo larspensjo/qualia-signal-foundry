@@ -70,39 +70,32 @@ if (!root) {
 
 root.innerHTML = `
   <main class="shell">
-    <section class="hero">
-      <p class="eyebrow">QSF realtime voice</p>
-      <h1>Browser voice, server rendezvous.</h1>
-      <p class="lede">
-        The browser owns media, the server owns signaling and diagnostics, and the relay channel stays untrusted.
-      </p>
-      <div class="hero-metrics">
-        <div class="metric">
-          <span>Connection</span>
-          <strong data-role="connection">Idle</strong>
+    <header class="toolbar">
+      <p class="brand">QSF realtime voice</p>
+      <dl class="status-chips">
+        <div>
+          <dt>Connection</dt>
+          <dd data-role="connection">Idle</dd>
         </div>
-        <div class="metric">
-          <span>Runtime phase</span>
-          <strong data-role="phase">Idle</strong>
+        <div>
+          <dt>Phase</dt>
+          <dd data-role="phase">Idle</dd>
         </div>
-        <div class="metric">
-          <span>Session</span>
-          <strong data-role="session">—</strong>
+        <div>
+          <dt>Session</dt>
+          <dd data-role="session">—</dd>
         </div>
-      </div>
-    </section>
-
-    <section class="controls">
+      </dl>
       <button data-role="start" type="button">Start conversation</button>
       <button data-role="stop" type="button" disabled>Stop</button>
       <button data-role="mute" type="button" aria-pressed="false" title="Stop sending your microphone; the assistant stays live">Mute</button>
       <form data-role="text-form" class="text-turn-form">
-        <textarea data-role="text-input" rows="2" placeholder="Type a turn for noisy rooms"></textarea>
+        <textarea data-role="text-input" rows="1" placeholder="Type a turn for noisy rooms"></textarea>
         <button data-role="send-text" type="submit">Send text</button>
       </form>
       <p data-role="error" class="error" hidden></p>
       <p data-role="warning" class="warning" role="status" hidden></p>
-    </section>
+    </header>
 
     <section class="grid">
       <article class="panel transcript-panel">
