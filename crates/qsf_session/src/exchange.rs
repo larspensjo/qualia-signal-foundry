@@ -235,6 +235,10 @@ pub struct ToolExecutionRecord {
     pub permission_decision: ToolPermissionDecision,
     pub status: ToolExecutionStatus,
     pub result_summary: String,
+    /// Verbatim model-visible tool output (`output_text` of the function_call_output
+    /// payload); empty when execution failed before producing a result.
+    #[serde(default)]
+    pub output_text: String,
     #[serde(default)]
     pub error: Option<String>,
     pub requested_at: SystemTime,

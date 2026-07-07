@@ -289,6 +289,7 @@ fn sample_exchange(index: usize, completed: bool) -> Exchange {
         permission_decision: ToolPermissionDecision::Allowed,
         status: ToolExecutionStatus::Completed,
         result_summary: "summary".to_string(),
+        output_text: String::new(),
         error: None,
         requested_at: SystemTime::UNIX_EPOCH,
         completed_at: Some(SystemTime::UNIX_EPOCH),

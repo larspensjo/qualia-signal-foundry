@@ -286,6 +286,7 @@ pub(crate) async fn handle_response_done_event(
                         decision,
                         ToolExecutionStatus::Failed,
                         reason.clone(),
+                        String::new(),
                         Some(reason.clone()),
                         requested_at,
                         Some(SystemTime::now()),

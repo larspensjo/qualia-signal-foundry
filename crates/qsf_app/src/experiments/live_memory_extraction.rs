@@ -516,6 +516,7 @@ mod tests {
             permission_decision: ToolPermissionDecision::Allowed,
             status: ToolExecutionStatus::Completed,
             result_summary: "found a useful memory".to_string(),
+            output_text: String::new(),
             error: None,
             requested_at: SystemTime::UNIX_EPOCH,
             completed_at: Some(SystemTime::UNIX_EPOCH),

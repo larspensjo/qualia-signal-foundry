@@ -135,6 +135,7 @@ pub(crate) fn execute_realtime_tool_call(
         ToolPermissionDecision::Allowed,
         status,
         result_summary.clone(),
+        output_text.clone(),
         error.clone(),
         pending.requested_at,
         Some(SystemTime::now()),
@@ -174,4 +175,99 @@ pub(crate) fn aborted_tool_resolution(
     resolution.record.response_model_use = Some(response_model_use.clone());
     resolution.record.returning_event_id = event_id;
     resolution
+}
+
+#[cfg(test)]
+mod tests {
+    use std::time::SystemTime;
+
+    use qsf_session::ExchangeModelUse;
+    use qsf_volition::{VolitionState, realtime_seed_fixture};
+    use serde_json::Value;
+    use tempfile::TempDir;
+
+    use super::*;
+    use crate::diagnostics::DiagnosticWriter;
+    use crate::realtime::tools::{
+        RealtimeToolContext, ToolSessionSnapshot, VolitionStateSnapshot, build_tool_registry,
+        default_tool_definitions,
+    };
+    use crate::state::{AppState, BrowserSessionConfig, SessionIdMode, SessionRuntime};
+
+    fn state(tempdir: &TempDir) -> AppState {
+        AppState::new_with_realtime_ws_base_url(
+            "test-api-key",
+            "http://127.0.0.1:9999",
+            "wss://example.invalid/realtime",
+            tempdir.path().to_path_buf(),
+            SessionIdMode::Default,
+        )
+        .expect("state")
+    }
+
+    fn runtime(tempdir: &TempDir) -> SessionRuntime {
+        let diagnostics = DiagnosticWriter::create(tempdir.path().join("diagnostics.jsonl"))
+            .expect("diagnostics");
+        SessionRuntime::new(
+            "test-session".to_string(),
+            BrowserSessionConfig::default(),
+            diagnostics,
+        )
+    }
+
+    #[test]
+    fn execute_inspect_volition_persists_output_text() {
+        let tempdir = TempDir::new().expect("tempdir");
+        let state = state(&tempdir);
+        let runtime = runtime(&tempdir);
+        let registry = build_tool_registry(&default_tool_definitions());
+        let fixture = realtime_seed_fixture();
+        let volition = VolitionState::from_fixture(&fixture);
+        let ctx = RealtimeToolContext {
+            state,
+            qsf_session_id: "session-1".to_string(),
+            snapshot: ToolSessionSnapshot::from_runtime(&runtime),
+            volition: Some(VolitionStateSnapshot {
+                state: volition,
+                fixture,
+            }),
+            exchange_index: 0,
+            call_id: "call-1".to_string(),
+        };
+        let pending = PendingToolExecution {
+            name: "inspect_volition_state".to_string(),
+            call_id: "call-1".to_string(),
+            arguments: serde_json::json!({}),
+            arguments_summary: "{}".to_string(),
+            requested_at: SystemTime::UNIX_EPOCH,
+        };
+        let response_model_use = ExchangeModelUse {
+            provider_name: Some("openai_realtime".to_string()),
+            model_id: "test-model".to_string(),
+            latency_ms: 1,
+            input_tokens: 1,
+            cached_input_tokens: 0,
+            output_tokens: 1,
+            full_request_hash: qsf_session::ContentHash([0; 32]),
+            message_count: 1,
+        };
+
+        let resolution = execute_realtime_tool_call(
+            &registry,
+            &ctx,
+            0,
+            pending,
+            &response_model_use,
+            Some("event-1".to_string()),
+            "session-1",
+        );
+        let output: Value = serde_json::from_str(&resolution.record.output_text).unwrap();
+        assert!(output.get("note").is_some());
+        assert!(
+            output["note"]
+                .as_str()
+                .expect("note")
+                .starts_with("This is your own internal state")
+        );
+    }
 }

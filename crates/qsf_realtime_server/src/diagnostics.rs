@@ -111,6 +111,16 @@ pub enum DiagnosticRecord {
         note: String,
         artifact_reference: String,
     },
+    /// Verbatim model-visible request sequence for one trusted turn, persisted so
+    /// experiments can verify what was actually sent to the provider.
+    TurnContextCaptured {
+        qsf_session_id: String,
+        exchange_index: usize,
+        #[serde(with = "time::serde::rfc3339")]
+        recorded_at: OffsetDateTime,
+        request_hash: String,
+        messages: Vec<serde_json::Value>,
+    },
     DiagnosticExchangeRecorded {
         qsf_session_id: String,
         source: String,

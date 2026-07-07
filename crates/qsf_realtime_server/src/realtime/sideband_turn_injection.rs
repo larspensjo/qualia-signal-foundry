@@ -506,6 +506,13 @@ fn send_response_create_and_capture(
         request_hash.to_string(),
         turn_request_values,
     );
+    diagnostics.write(&crate::diagnostics::DiagnosticRecord::TurnContextCaptured {
+        qsf_session_id: qsf_session_id.to_string(),
+        exchange_index,
+        recorded_at: capture.captured_at,
+        request_hash: capture.request_hash.clone(),
+        messages: capture.messages.clone(),
+    })?;
     turn_context_tx.send_replace(Some(capture));
     volition_inspection_tx.send_replace(Some(volition_inspection_capture));
     runtime_state.current_request_hash = Some(request_hash);
@@ -531,6 +538,8 @@ fn has_genuine_opportunity_signal(
 
 #[cfg(test)]
 mod tests {
+    use std::fs;
+
     use super::*;
 
     fn dummy_volition_inspection_capture()
@@ -614,6 +623,23 @@ mod tests {
             "captured messages must be the verbatim turn_request_values in send order"
         );
         assert!(volition_inspection_rx.borrow().is_some());
+
+        let diagnostics_lines = fs::read_to_string(diagnostics.path()).expect("diagnostics log");
+        let parsed: Vec<serde_json::Value> = diagnostics_lines
+            .lines()
+            .map(|line| serde_json::from_str(line).expect("diagnostic record"))
+            .collect();
+        let turn_context_records: Vec<_> = parsed
+            .iter()
+            .filter(|record| record["kind"] == "turn_context_captured")
+            .collect();
+        assert_eq!(turn_context_records.len(), 1);
+        let record = turn_context_records[0];
+        assert_eq!(record["request_hash"], expected_hash_string);
+        assert_eq!(
+            record["messages"],
+            serde_json::Value::Array(expected_messages)
+        );
     }
 
     /// Verifies the failure-path contract: if `outbound_tx` is closed before
@@ -673,6 +699,13 @@ mod tests {
         assert!(
             volition_inspection_rx.borrow().is_none(),
             "volition inspection must not be published when send_json fails"
+        );
+
+        let diagnostics_lines = fs::read_to_string(diagnostics.path()).expect("diagnostics log");
+        assert!(
+            !diagnostics_lines.contains("\"kind\":\"turn_context_captured\"")
+                && !diagnostics_lines.contains("\"kind\": \"turn_context_captured\""),
+            "failed send must not persist a turn_context_captured record"
         );
     }
 }
