@@ -6,8 +6,9 @@ Candidate. Phases 1–3 are implemented and compacted to summaries below — Pha
 coherence under a protected floor), Phase 2 (live goal formation and off-hot-path coherence),
 and Phase 3 (emotion-like signals, visualization-first), which is offline-validated and
 live-browser verified for coherence-decline signal rows. Phase 4 (conscious/subconscious
-visibility) is specified below, including the reduced ambient-injection treatment for
-subconscious winners. Phase 5 remains sequenced but not yet specified.
+visibility) is implemented and closed after the 2026-07-07 live human session — see
+`Experiment.VolitionGoalVisibility.md` for results and the two accepted follow-ups. Phase 5
+remains sequenced but not yet specified.
 
 ## Purpose
 
@@ -102,11 +103,12 @@ offline validation in
   session state — Phase 3's natural `coherence_decline` source. True `tension` remains reserved
   for unresolved current conflict among selected goals.
 - A pending candidate is structurally unable to shape turns; only admission promotes it.
-- **Open item:** human voice testing (the Human Test Steps in
-  [Experiment.LiveGoalFormationAndCoherence.md](../Experiments/Experiment.LiveGoalFormationAndCoherence.md))
-  has not yet been run. It does not block Phase 4's offline and panel work, but it should be
-  run before conclusions about how the texture *feels* in conversation — and can be combined
-  with Phase 4's live introspection check (see Phase 4 verification).
+- **Human voice testing passed (2026-07-07),** run as one session with Phase 4's live
+  introspection check: live admit, live decline grounded in the named goal, durable declined
+  injection, and hot-path latency parity all verified. One probe stayed untriggered — the
+  "always agree" phrasing produced a verbal refusal but no formed candidate; retest with
+  wording matching the explicit-request extraction, and consider widening that extraction. See
+  [Experiment.LiveGoalFormationAndCoherence.md](../Experiments/Experiment.LiveGoalFormationAndCoherence.md).
 
 ### Phase 3 — Emotion-like signals, visualization-first (brief §8) — implemented
 
@@ -156,172 +158,48 @@ offline validation and the trace contract in
   instrument readouts, not claimed feelings. Live `satisfaction` remains offline-harness-only
   until ordinary realtime turns emit `GoalSatisfied` lifecycle events.
 
-### Phase 4 — Conscious / subconscious visibility (brief §6) — implemented (offline)
+### Phase 4 — Conscious / subconscious visibility (brief §6) — done
 
-A visibility attribute on goals: a "subconscious" goal biases salience and arbitration exactly
-like any other goal but is narrated only on introspection or when its behavior forces an
-explanation. Partly latent already in the sideband surfacing gate + anti-nag wiring
-([sideband_turn_injection.rs](../../crates/qsf_realtime_server/src/realtime/sideband_turn_injection.rs),
-suppression reasons `Intensity` / `ProtectedNoOpportunity` / `AntiNagRepeat` /
-`NonRenderableOutput`).
+The visibility slice is built, offline-validated, and closed by the 2026-07-07 live human
+session. A `GoalVisibility` attribute (`Conscious` | `Subconscious`, `#[serde(default)]` =
+`Conscious` for back-compat) on `Goal` and `ProposedGoalCandidate` acts purely as an
+introspection-*surfacing filter*: selection, arbitration, salience, the surfacing gate, and
+coherence are untouched — proven by the visibility-flip invariant
+([DecisionLog 2026-07-06](../DecisionLog.md#2026-07-06---subconscious-volition-goals-use-reduced-ambient-exposure)).
+The pure, derive-on-demand module
+[`qsf_volition::visibility`](../../crates/qsf_volition/src/visibility.rs) computes forced
+surfacing from recorded facts only: a *rendered* initiative line (backed by new reducer-side
+rendered-initiative evidence distinguishing rendered from suppressed `InitiativeExecuted`) or
+being named as the conflicting goal in a `DeclinedCandidate`. Only presentation changed:
+`inspect_volition_state` / `select_volition_goals` section subconscious goals into a labeled
+`subconscious_goals` section (with `winner_visibility` and selection roles), the operator panel
+badges them without hiding anything (D2), turn traces carry the full visibility/surfacing chain
+plus an `ambient_exposure` treatment, and ordinary subconscious arbitration winners render
+reduced ambient text while forced-surfaced ones render labeled full detail. The seed fixture
+marks one non-protected goal (`assemble-world-picture`) `Subconscious`, so the default
+configuration exercises the path. Offline validation, the trace contract, and the live session
+are recorded in
+[Experiment.VolitionGoalVisibility.md](../Experiments/Experiment.VolitionGoalVisibility.md).
 
-**Adopted resolution (closes the reconciliation's open question):** visibility is an
-introspection-*surfacing filter*, not a separate runtime path. A goal's visibility never
-changes `select_goals_ranked`, `arbitrate_with_mode`, salience dynamics, the surfacing gate's
-decision logic, or the coherence engine — identical inputs must produce identical selection and
-arbitration results whatever the visibility mix. Only *presentation* changes: which goals are
-narrated, where. Ambient context follows the same policy with one extra constraint: an ordinary
-subconscious arbitration winner is reduced in model-visible turn text rather than rendered as a
-full `Active goal: {title} — {summary}` line. Full subconscious detail is still available to the
-operator panel, traces, explicit `inspect_volition_state` / `select_volition_goals` tool calls,
-and forced-surfacing cases with evidence. Recorded in
-[DecisionLog 2026-07-06](../DecisionLog.md#2026-07-06---subconscious-volition-goals-use-reduced-ambient-exposure).
+The live session (combined with Phase 2's open voice test) confirmed both forcing conditions
+end-to-end and the D4 honest-instrument-readout quality: asked whether it *feels* the
+background tendency, the model answered it is "something I can read off the simulated internal
+state, not something I feel."
 
-#### Design
-
-- New `GoalVisibility` enum (`Conscious` | `Subconscious`) in `qsf_volition::model`, carried
-  as a `visibility` field on `Goal` and `ProposedGoalCandidate`, `#[serde(default)]` =
-  `Conscious` so existing fixtures, continuity snapshots, and previously captured artifacts
-  still deserialize (the Phase 3 back-compat pattern).
-- `ProposedGoalCandidate` visibility is defaulted/internal for this slice. Live-formation model
-  prompts and `ProposedGoalCandidate::json_schema_hint()` must not invite the model to set
-  `Subconscious`; live-formed candidates are conversation-originated and therefore conscious.
-  If the deserializer accepts an optional `visibility` field for back-compat or future
-  sleep-consolidation artifacts, the schema-hint guard test must document the deliberate
-  exclusion instead of failing from silent drift.
-- Visibility is part of the goal *definition* (fixture-authored). D3's runtime-immutability of
-  definitions therefore already covers it — there is no runtime path that flips visibility.
-  A protected-floor goal may be subconscious; visibility and tier are orthogonal.
-- Live-formed candidates are always `Conscious`: they originate in conversation, so they are
-  introspectable by construction (`LiveGoalFormationJudge` output never sets `Subconscious`).
-  A future sleep-consolidation path forming subconscious goals is explicitly out of scope.
-- The realtime seed fixture (`realtime_seed_fixture`) marks at least one goal `Subconscious` —
-  a background disposition-style goal — so the **default configuration exercises the new code
-  path** (Agents.md rule). Choosing which seed goal (or adding a new one) is an implementation
-  detail; it must not be a protected-floor goal in the first slice, to keep the experiment's
-  conflict scenario free to decline against it.
-- A pure, behavior-named derivation module `qsf_volition::visibility` computes — on demand,
-  never stored, mirroring [`signals.rs`](../../crates/qsf_volition/src/signals.rs) — which
-  subconscious goals are **forced surfaced**, from recorded facts only:
-  - *rendered initiative*: the goal has a recorded rendered/surfaced initiative fact, not merely
-    `GoalDynamicState.last_initiative_output`. The realtime path records
-    `InitiativeExecuted` even when the line is suppressed by intensity,
-    protected-no-opportunity, anti-nag, or non-renderable output; those suppressed internal
-    initiatives must not count as forced surfacing. Add reducer-backed, `#[serde(default)]`
-    initiative evidence such as `last_initiative_tick`, `last_rendered_initiative_tick`, and a
-    rendered initiative evidence/artifact reference so a pure derivation can prove the line was
-    actually rendered;
-  - *forced conflict*: the goal is named as the conflicting goal in a `DeclinedCandidate`
-    record (the decline record already names it; hiding it would make the coherence layer
-    incoherent).
-  The brief's third condition — "the user asks for introspection" — needs no derivation:
-  calling `inspect_volition_state` *is* the ask, so the tool always reports subconscious goals,
-  but in a separate labeled section (below), never silently merged into the ordinary lists.
-
-#### Steps (each independently implementable and reviewable)
-
-1. **Attribute plumbing.** Add `GoalVisibility` and the `visibility` field on `Goal`,
-   `ProposedGoalCandidate`, and the seed fixture (one subconscious seed goal); thread it onto
-   `GoalStatusSummary` in
-   [`inspection.rs::build_state_inspection`](../../crates/qsf_volition/src/inspection.rs)
-   (keep `build_state_inspection` complete and unfiltered — it feeds the operator capture).
-   No consumer behavior changes yet. Tests: serde-default back-compat for fixtures, continuity
-   snapshots, and capture JSON lacking the field; summaries carry visibility.
-2. **Pure surfacing policy.** Add the reducer-backed rendered-initiative evidence above, then
-   implement `qsf_volition::visibility` with a function of shape
-   `forced_surfaced_goal_ids(state, fixture) -> …` deriving the two forcing conditions above.
-   Unit tests for presence *and* absence of each condition (Phase 3 test discipline), including
-   a suppressed `InitiativeExecuted` that must **not** force surface; plus a test that the same
-   scenario with the goal marked `Conscious` yields identical `select_goals_ranked` /
-   `arbitrate_with_mode` results (the no-runtime-effect invariant).
-3. **Simulator-facing introspection sectioning.**
-   [`volition_tools.rs`](../../crates/qsf_realtime_server/src/realtime/volition_tools.rs):
-   `inspect_volition_state` moves subconscious goals out of the per-status lists into a
-   `subconscious_goals` section, each entry carrying its status, visibility, and forcing
-   condition (if any). `select_volition_goals` must keep the arbitration explanation complete
-   while separating presentation: keep `arbitration` truthful, add `winner_visibility`, and put
-   subconscious selected goals in `subconscious_goals` entries that carry their selection role
-   (`selected_non_winner`, `winner`, `below_threshold`, etc.), status, visibility, forcing
-   condition, and match detail. Do not leave a subconscious winner only as
-   `arbitration.winner_id` with no section entry, and do not silently merge subconscious goals
-   into the ordinary selected-goal list. A tool call is explicit introspection/selection, so full
-   detail may be returned there when sectioned and labeled. Update both tool descriptions so the
-   model knows the section exists and what it means. Tool-layer tests over the JSON shape,
-   including a subconscious selected non-winner and a subconscious winner.
-4. **Operator panel.** The operator panel keeps **full** visibility (guardrail D2 — all state
-   inspectable): `VolitionInspectionCapture` already carries the unfiltered inspection; the
-   browser panel ([realtime.ts](../../crates/qsf_realtime_server/ui/src/realtime.ts)) badges
-   subconscious goals and shows their forced-surfacing status, never hiding them from the
-   operator. UI parser/view-model tests per the repo's UI testing rules; `npm run check` and
-   `npm run fmt` from the crate's `ui/`.
-5. **Turn-trace fields.** No change to the surfacing gate's decision logic — a subconscious
-   winner that renders an initiative line *is* the forced-surfacing event. Persist the rendered
-   fact explicitly when applying `InitiativeExecuted`; `last_initiative_output` alone is
-   insufficient evidence because suppressed outputs are recorded too. Add visibility to the turn
-   trace per the contract below (winner visibility; per-goal visibility on `selector_output`;
-   subconscious selected count; rendered-line flag and suppression reason), so an operator can
-   reconstruct exactly which subconscious goals shaped a turn and which ones actually surfaced.
-6. **Ambient injection treatment.** When the arbitration winner is subconscious and has no
-   forced-surfacing condition, reduce the model-visible rendered packet: do not render the
-   winner's title/summary as the ordinary `Active goal` line. Instead render a labeled
-   background-guidance line carrying only the minimum shaping contract the response model needs
-   (visibility, intensity, safe guidance, and request/artifact reference), while the trace keeps
-   the full winner identity and summary. If the same turn has a forced-surfacing condition
-   (rendered initiative or coherence conflict), full detail may be included, but it must be
-   labeled as a surfaced subconscious/background goal and backed by the forcing evidence. Tests:
-   conscious winners still render the current `Active goal` packet; ordinary subconscious
-   winners render reduced text; forced-surfaced subconscious winners render labeled full detail;
-   trace summaries remain complete in all three cases.
-
-#### Resolved question
-
-- **Q1 — ambient injected text.** Resolved on 2026-07-06: ordinary subconscious arbitration
-  winners are reduced, not omitted and not rendered as ordinary full `Active goal` text.
-  Explicit introspection/selection tools may return full detail when sectioned and labeled;
-  operator panel and traces keep full detail; forced-surfacing cases may expose full detail with
-  evidence. This preserves enough model-visible guidance for coherent shaping while making
-  "subconscious" behaviorally meaningful in ordinary ambient context.
-
-#### Trace-completeness contract (define fully in the experiment scaffold before implementing)
-
-- **Required fields:** per-goal `visibility` on inspection summaries and on `selector_output`
-  entries; arbitration-winner visibility; a forcing-condition record for every surfaced
-  subconscious goal (`goal_id`, condition kind, evidence reference, tick); for rendered
-  initiative forcing, the recorded rendered/surfaced flag, suppression reason, initiative tick,
-  rendered tick, and artifact/request reference; ambient exposure treatment
-  (`ordinary`, `reduced_subconscious`, `forced_surfaced_subconscious`) on the turn packet trace;
-  the introspection tool's full JSON output captured as a trace artifact.
-- **Artifact boundary:** `events.jsonl` keeps chronological lifecycle facts and is unchanged —
-  this phase introduces **no new event types**. `InitiativeExecuted` may gain defaulted rendered
-  evidence fields, but suppressed initiative executions remain distinguishable from rendered
-  initiative lines. Trace records carry the visibility/surfacing chain; the human-readable
-  report derives from the structured artifacts.
-- **Artifact-parsing verification:** the offline harness parses its own artifacts, asserts the
-  required fields exist, and re-derives every surfaced subconscious goal's forcing condition
-  from recorded state alone (the Phase 3 re-derivation pattern), including proving that a
-  suppressed internal initiative does not force surface.
-
-#### Verification and acceptance criteria
-
-- Write `Experiment.VolitionGoalVisibility.md` (behavior-named — no plan phase numbers) with
-  the trace contract *before* implementation. Its offline harness (pattern:
-  [volition_emotion_signals.rs](../../crates/qsf_app/src/experiments/volition_emotion_signals.rs))
-  drives one subconscious goal through: (a) selected and biasing with no forcing condition —
-  absent from simulator-facing status lists, present with badge on the operator capture;
-  (b) winning arbitration with a suppressed initiative — not forced surfaced; (c) winning
-  arbitration with a rendered initiative line — forced surfaced; (d) named as the conflicting
-  goal in a coherence decline — forced surfaced; (e) an `inspect_volition_state` call —
-  reported in the `subconscious_goals` section. It also asserts the invariant: identical
-  selection and arbitration outcomes when the same goal is marked `Conscious`.
-- Automated: unit tests per steps 1–3 and 5 (presence *and* absence); back-compat
-  deserialization tests; harness artifact re-derivation; `cargo build`,
-  `cargo clippy --all-targets -- -D warnings`, `cargo fmt`; for the UI step, `npm run check`
-  and `npm run fmt` in `crates/qsf_realtime_server/ui`.
-- **External human testing recommended:** (1) browser operator panel — badges and sectioning
-  read clearly and nothing is hidden from the operator; (2) a live-voice introspection ask —
-  the sectioned reply reads as an honest instrument readout ("a background tendency I can
-  report"), never a claimed hidden feeling (D4). Combine this session with Phase 2's still-open
-  human voice test.
+**Constraints and follow-ups that carry forward:**
+- Visibility is a fixture-authored definition attribute; no runtime path flips it (D3).
+  Live-formed candidates are always `Conscious` (`LiveGoalFormationJudge` never emits
+  `Subconscious`; a schema-hint guard test documents the deliberate exclusion). A future
+  sleep-consolidation path forming subconscious goals remains out of scope.
+- `last_initiative_output` alone is never evidence of surfacing — suppressed initiative
+  executions are recorded too; only the rendered-initiative evidence proves a line reached the
+  user.
+- **Accepted follow-ups (not blockers):** the `reduced_subconscious` ambient treatment was
+  never observed live (harness- and injection-test-proven only), so whether reduced ambient
+  text still shapes coherently stays open — it needs a live turn where the subconscious goal
+  wins without a rendered initiative; and the live path persists only a counts-level summary of
+  the introspection tool output, not the full sectioned JSON artifact the offline harness
+  captures.
 
 ### Phase 5 — Multi-turn Plans (brief §3.5, §4.6)
 
@@ -360,10 +238,11 @@ suspend / resume / abandon. The current system is single-turn initiative.
   off-hot-path admission, declined-candidate injection layer, sleep formation + sweep); the
   experiment Results record the offline validation and completed live browser coherence-decline
   review.
-- **At Phase 4 detailing (before implementation):** write `Experiment.VolitionGoalVisibility.md`
-  with its trace contract. The DecisionLog entry adopting visibility-as-surfacing-filter and
-  reduced ambient exposure for ordinary subconscious winners is done
-  ([2026-07-06](../DecisionLog.md#2026-07-06---subconscious-volition-goals-use-reduced-ambient-exposure)).
+- **Done at Phase 4 detailing:** `Experiment.VolitionGoalVisibility.md` was written with its
+  trace contract before implementation; the DecisionLog entry adopting
+  visibility-as-surfacing-filter and reduced ambient exposure for ordinary subconscious winners
+  is the
+  [2026-07-06 entry](../DecisionLog.md#2026-07-06---subconscious-volition-goals-use-reduced-ambient-exposure).
 - **Done on implementing Phase 4:** the Implementation Status of
   [Architecture.VolitionSystem.md](../Architecture/Architecture.VolitionSystem.md) now carries the
   visibility attribute, the pure `qsf_volition::visibility` surfacing-policy module, the sectioned
@@ -371,7 +250,9 @@ suspend / resume / abandon. The current system is single-turn initiative.
   [Glossary.md](../Glossary.md) has `GoalVisibility`, `Forced surfacing`, and `AmbientExposure`
   rows and the brief-translation rows for conscious/subconscious goals are marked delivered; the
   brief's §6 is annotated **delivered (translated)**; `Experiment.VolitionGoalVisibility.md`
-  records the offline validation. Open: the browser + live-voice human review.
+  records the offline validation and the 2026-07-07 live human session that closed the phase
+  (two follow-ups accepted: live reduced-ambient observation, live persistence of the full
+  introspection tool output).
 - When a later phase is detailed: write its `Experiment.*.md` scaffold and trace contract.
 - **Done as brief concepts landed:** the brief's §12 is annotated **not-adopted** (ownership
   declined), §11 **delivered** through coherence, and §8 **delivered (translated)** now that the

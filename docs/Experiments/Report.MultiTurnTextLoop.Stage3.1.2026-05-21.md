@@ -85,7 +85,7 @@ with a capturing OpenAI-style client.
 
 ## Live OpenAI Recall
 
-A live OpenAI recall run was recorded in `docs/EngineeringDiary.md` on 2026-05-18:
+A live OpenAI recall run was recorded in `docs/EngineeringDiary.md` (now deprecated) on 2026-05-18:
 `runs/2026-05-18-174421-multi-turn-text-loop` completed with one `recall_turn`
 execution and a final verbatim `[Turn 0]` response.
 

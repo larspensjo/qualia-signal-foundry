@@ -43,20 +43,6 @@ mirrored in Architecture.RuntimeLoop.md.
 Consequences: Side-effect-producing operations (model calls, tool invocations, I/O) must
 not modify state directly. They must emit events that the reducer then processes.
 
-## 2026-05-09 - Diary and decision-log document contracts
-Decision: `EngineeringDiary.md` is the chronological "what happened" log (every
-submitted code change, plus research, planning, surprises, and observations) at a
-granularity of one entry per logical change. `DecisionLog.md` is reserved for deliberate
-commitments only.
-Context: The two documents had overlapping templates — the decision log accepted
-`Implementation` and `Bug Fix` types, which duplicated what the diary covered. The split
-makes each document's purpose unambiguous and lets the decision log stay short and
-authoritative.
-Consequences: Implementation summaries and bug-fix postmortems do not produce
-decision-log entries; a fix only earns one when it yields a durable rule, and the rule
-itself is the entry. Diary entries that implement a prior decision should reference it
-in their Refs line.
-
 ## 2026-05-10 - Transcript-first realtime speech integration
 Decision: The first real audio provider integration uses streaming transcription as
 partial and final transcript events. Full speech-to-speech realtime sessions and live
@@ -582,8 +568,7 @@ the shared module instead of copying the text-loop implementation.
 ## 2026-06-07 - Project-doc introspection v1 scope
 Decision: Project-doc introspection v1 is framed-self only, exposed to the
 `ConversationalResponder` role only, with no source-code access, no write effects,
-and a default allowlist that excludes `docs/Reviews/**` and
-`docs/EngineeringDiary.md`.
+and a default allowlist that excludes `docs/Reviews/**.
 Context: Self-reflection design and implementation planning narrowed the first
 live introspection channel to read-only project documentation so the responder
 can ground self-questions without broad repository access or autonomous

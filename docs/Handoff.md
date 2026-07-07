@@ -1,8 +1,9 @@
 # Handoff — Resume Here
 
-**Updated:** 2026-07-06 — Phase 4 conscious/subconscious visibility is built and offline-validated
-(`volition-goal-visibility` harness green); next is its external human review, then choosing between
-persona work and Phase 5 multi-turn Plans.
+**Updated:** 2026-07-07 — the conscious/subconscious visibility slice is closed: the live human
+session confirmed both forced-surfacing conditions and the honest-instrument-readout introspection
+reply, and the live goal-formation voice test passed (admit, boundaries decline, latency parity).
+Next is choosing between persona work and multi-turn Plans.
 
 <!--
 Rules (see ProjectWorkflow.md, "Handoff Discipline"):
@@ -16,25 +17,25 @@ Rules (see ProjectWorkflow.md, "Handoff Discipline"):
 
 ## Now — immediate action
 
-**Run the Phase 4 human review** — a browser operator-panel pass (subconscious badges and sectioning
-read clearly, nothing hidden) plus a live-voice introspection ask (the sectioned reply reads as an
-honest instrument readout, not a claimed hidden feeling), per the acceptance criteria in
-[Experiment.VolitionGoalVisibility.md](Experiments/Experiment.VolitionGoalVisibility.md).
-Why: the conscious/subconscious visibility slice is built and offline-validated; only the external
-human check remains before conclusions about how it *feels* in conversation.
-Alternate: combine this session with Phase 2's still-open live formation voice test in
-[Experiment.LiveGoalFormationAndCoherence.md](Experiments/Experiment.LiveGoalFormationAndCoherence.md).
+**Choose the next volition texture step** — decide between a fixture-level persona experiment and
+Phase 5 multi-turn Plans, then specify the chosen one.
+Why: Phases 1–4 of [Plan.VolitionMotivationalTexture.md](Plans/Plan.VolitionMotivationalTexture.md)
+are built and human-reviewed (visibility closed 2026-07-07); Phase 5 is sequenced but not yet
+specified, and persona tuning is a parallel option.
+Alternate: first close the small review follow-ups — a live turn exercising the
+`reduced_subconscious` ambient treatment, a rephrased always-agree decline probe, and persisting
+the introspection tool's full output on the live path (see
+[Experiment.VolitionGoalVisibility.md](Experiments/Experiment.VolitionGoalVisibility.md) and
+[Experiment.LiveGoalFormationAndCoherence.md](Experiments/Experiment.LiveGoalFormationAndCoherence.md)).
 
 ## Next — active plan
 
-**Choose the next volition texture step** — after the Phase 4 human review, decide between a
-fixture-level persona experiment and Phase 5 multi-turn Plans.
-Why: Phases 1–4 of [Plan.VolitionMotivationalTexture.md](Plans/Plan.VolitionMotivationalTexture.md)
-are built; Phase 5 (multi-turn Plans) is sequenced but not yet specified, and persona tuning is a
-parallel option.
-Alternate: elaborate a persona experiment from
-[Experiment.Backlog.md](Experiments/Experiment.Backlog.md) if fixture-level personality tuning
-becomes more urgent than Phase 5.
+**Specify the chosen track** — either elaborate `Experiment.PersonaTensionVariations` from
+[Experiment.Backlog.md](Experiments/Experiment.Backlog.md) or write the Phase 5 (multi-turn Plans)
+spec and experiment scaffold in
+[Plan.VolitionMotivationalTexture.md](Plans/Plan.VolitionMotivationalTexture.md).
+Why: the coherent-agent substrate (coherence, live formation, signals, visibility) is complete;
+what remains in the plan is the one unspecified phase, with persona work as the parallel option.
 
 ## Horizon — direction
 

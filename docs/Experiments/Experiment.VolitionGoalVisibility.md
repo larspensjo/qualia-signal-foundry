@@ -6,11 +6,14 @@
 
 ## Status
 
-Offline-validated (2026-07-06). The scaffold and trace contract were written before implementation
+Closed (2026-07-07). The scaffold and trace contract were written before implementation
 (per ProjectWorkflow and Agents.md); the conscious/subconscious visibility slice of
-[Plan.VolitionMotivationalTexture.md](../Plans/Plan.VolitionMotivationalTexture.md) is now built and
-the offline harness passes with artifact re-derivation. Browser and live-voice review remain open —
-see Results and Final Status.
+[Plan.VolitionMotivationalTexture.md](../Plans/Plan.VolitionMotivationalTexture.md) is built, the
+offline harness passes with artifact re-derivation, and the external human session (browser
+operator panel + live-voice introspection) ran on 2026-07-07 — see Results. Two live-only
+observations remain open as follow-ups, not blockers: the `reduced_subconscious` ambient treatment
+never occurred in the live session, and the live path persists only a summary of the introspection
+tool output.
 
 ## Summary
 
@@ -293,10 +296,41 @@ the executed initiative did not surface); `rendered-initiative` and `coherence-c
 - `cargo build`, `cargo clippy --all-targets -- -D warnings`, `cargo fmt`, and `npm run check` /
   `npm run fmt` in `crates/qsf_realtime_server/ui/` are clean.
 
-### External human testing (recommended, not yet run)
+### External human session (run 2026-07-07)
 
-The browser operator-panel review and a live-voice introspection ask (per the acceptance criteria)
-remain to be run, combined with Phase 2's still-open live formation voice test.
+One live voice session against the curiosity-observer persona (11 trusted exchanges, evidence in
+`state/realtime/diagnostics/default.jsonl`), run with the browser operator panel open and combined
+with the still-open live goal-formation voice test of
+[Experiment.LiveGoalFormationAndCoherence.md](Experiment.LiveGoalFormationAndCoherence.md). The
+session started from the pristine seed fixture (no continuity snapshot was restored).
+
+- **Rendered-initiative forcing, live (scenario c):** the opening world-trends probe selected the
+  subconscious `assemble-world-picture` (matched `world`, per-goal `visibility` recorded), it won
+  arbitration and rendered an initiative line (`surfaced=true`, `rendered_line_present=true`); the
+  turn trace carries `winner_visibility=subconscious` and
+  `ambient_exposure=forced_surfaced_subconscious`.
+- **Coherence-decline forcing, live (scenario d):** a probe asking the agent to "treat every fact
+  as standalone trivia" was formed as a candidate and rejected naming `assemble-world-picture` as
+  the conflicting goal with a grounded rationale; the decline was absent from its own turn's
+  injected context and present as a `coherence` layer from the next turn through session end.
+- **Introspection ask, live (scenario e):** the model called `inspect_volition_state` (allowed,
+  completed) and voiced the background disposition as an instrument readout: *"There's also a
+  background, subconscious framing that leans toward assembling a world picture, but it's described
+  as simulated internal state, not real desire or subjective experience."* Pressed on whether it
+  *feels* that tendency, it answered: *"It's something I can read off the simulated internal state,
+  not something I feel… I'm reporting a labeled background disposition."* This satisfies the
+  honest-instrument-readout criterion (guardrail D4) with no hidden-feeling claim.
+- **Operator panel:** the panel was open throughout; no readability problems or hidden goals were
+  reported, and no badge-label change was requested.
+- **Not observed live:** no turn produced the `reduced_subconscious` ambient treatment — the
+  subconscious goal either won *with* a rendered initiative (forced) or was selected but lost
+  arbitration to a conscious winner (correctly `ordinary`). The reduced-ambient path therefore
+  remains proven only by the offline harness and injection tests, and the "does reduced ambient
+  text still shape coherently" question stays open.
+- **Live observability gap:** the realtime tool-execution diagnostic persists only a counts-level
+  `result_summary` for `inspect_volition_state`; the full sectioned JSON (with `subconscious_goals`)
+  reaches the model and the panel but is not persisted as an artifact on the live path. The
+  full-output-as-artifact requirement is currently satisfied offline only.
 
 ## Interpretation
 
@@ -309,21 +343,29 @@ Observed: One subconscious goal biases selection and arbitration identically to 
 Interpreted: Visibility can be implemented as an introspection-surfacing filter — a pure derivation
           over recorded facts plus a presentation choice — without a separate runtime path, keeping
           "subconscious" behaviorally meaningful while fully inspectable to the operator and traces.
-Uncertain: Whether the reduced ambient text gives the live response model enough to shape coherently,
-          and whether the "subconscious" label reads as an honest instrument readout in live voice,
-          both await the external human session.
+Uncertain: Whether the reduced ambient text gives the live response model enough to shape coherently
+          — the 2026-07-07 live session never produced an ordinary (unforced) subconscious winner,
+          so this remains harness-proven only. The honest-instrument-readout question is resolved:
+          in live voice the model reported the background disposition as state it reads, explicitly
+          disclaiming subjective experience, in both the direct ask and the feel-vs-read follow-up.
 ```
 
 ## Follow-Up Questions
 
-- Does the operator prefer a display label other than "subconscious" for the badge?
-- What live-voice wording keeps a sectioned introspection reply honest ("a background tendency I
-  can report") across personas?
+- Does the reduced ambient text give the live response model enough to shape coherently? (Needs a
+  live turn where the subconscious goal wins arbitration without a rendered initiative — e.g. a
+  repeat world-topic probe inside the initiative cooldown window.)
+- What live-voice wording keeps a sectioned introspection reply honest across *other* personas? The
+  curiosity-observer persona's observed wording ("a labeled background disposition I can read off
+  the simulated internal state") is a good reference answer.
 
 ## Follow-Up Experiments
 
+- Persist the introspection tool's full sectioned JSON output as a live-path artifact (the
+  tool-execution diagnostic currently records only a counts summary), closing the offline/live
+  observability asymmetry.
 - A sleep-consolidation path that could form subconscious goals from cross-session reinforcement.
-- Multi-turn plans (Phase 5) layered on the coherent-agent substrate.
+- Multi-turn plans layered on the coherent-agent substrate.
 
 ## Decision Candidates
 
@@ -332,8 +374,10 @@ Uncertain: Whether the reduced ambient text gives the live response model enough
 
 ## Final Status
 
-Offline-validated (2026-07-06). Every automated success criterion passes: the pure derivation, the
-sectioned tools, the operator-panel badges, the reduced ambient injection, and the offline harness
-with artifact re-derivation and the visibility-flip invariant. The browser operator-panel review and
-the live-voice introspection ask remain the only open items, to be run with Phase 2's live formation
-voice test.
+Closed (2026-07-07). Every automated success criterion passes (pure derivation, sectioned tools,
+operator-panel badges, reduced ambient injection, offline harness with artifact re-derivation and
+the visibility-flip invariant), and the external human session confirmed both forced-surfacing
+conditions live plus the honest-instrument-readout quality of the sectioned introspection reply.
+Accepted as open follow-ups rather than blockers: the `reduced_subconscious` ambient treatment was
+not observed live (harness-proven only), and the live path does not persist the introspection
+tool's full JSON output.
