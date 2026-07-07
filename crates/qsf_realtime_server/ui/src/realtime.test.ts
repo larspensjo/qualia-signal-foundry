@@ -2029,7 +2029,7 @@ describe("volition verdict selector", () => {
     };
     const verdict = selectVolitionVerdict(state, {
       status: "found",
-      text: "Simulated volition context for this turn (internal state only; not a claim of real desire or consciousness).\nDeclined goal candidates (coherence): pursue an unrelated tangent — would derail the current task.",
+      text: "Your volition context for this turn (inner state; it shapes attention and framing only).\nDeclined goal candidates (coherence): pursue an unrelated tangent — would derail the current task.",
     });
     expect(verdict.kind).toBe("context_only");
     expect(verdict.line).toContain("still injected context");
@@ -2056,7 +2056,7 @@ describe("injected volition text locator", () => {
       content: [
         {
           type: "input_text",
-          text: "Simulated volition context for this turn (internal state only; not a claim of real desire or consciousness).\nActive goal: Serve the present person (serve-the-present-person) — be useful now.",
+          text: "Your volition context for this turn (inner state; it shapes attention and framing only).\nActive goal: Serve the present person (serve-the-present-person) — be useful now.",
         },
       ],
     },
@@ -2118,7 +2118,7 @@ describe("injected volition text locator", () => {
     };
     const text = expectFound(selectInjectedVolitionText(state));
     expect(text).toContain("Active goal: Serve the present person");
-    expect(text).toMatch(/^Simulated volition context for this turn/);
+    expect(text).toMatch(/^Your volition context for this turn/);
   });
 
   it("reports unavailable when the two captures describe different turns", () => {

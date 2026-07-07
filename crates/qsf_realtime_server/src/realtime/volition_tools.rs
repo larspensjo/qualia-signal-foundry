@@ -24,7 +24,7 @@ pub const SELECT_VOLITION_GOALS_TOOL_NAME: &str = "select_volition_goals";
 /// the `ToolMetadata`, the `ToolDefinition`, and `default_tool_definitions()` so the realtime
 /// session tool list and the executed tool never drift. Both mention the `subconscious_goals`
 /// section (and, for select, `winner_visibility`) so the model knows the section exists.
-pub const INSPECT_VOLITION_STATE_TOOL_DESCRIPTION: &str = "Inspect the current simulated volition state: mode, tick, goals by status, last initiative summaries, and a separate `subconscious_goals` section for background-disposition goals (each with its status and any forced-surfacing condition).";
+pub const INSPECT_VOLITION_STATE_TOOL_DESCRIPTION: &str = "Inspect your current volition state: mode, tick, goals by status, last initiative summaries, and a separate `subconscious_goals` section for background-disposition goals (each with its status and any forced-surfacing condition).";
 pub const SELECT_VOLITION_GOALS_TOOL_DESCRIPTION: &str = "Given a query, return ranked active goals, omitted goals, and arbitration result without mutating state. Subconscious background-disposition goals are returned in a separate `subconscious_goals` section (with selection role and any forcing condition), not in `selected`; `arbitration.winner_visibility` reports the real winner's visibility.";
 
 const SELECT_MAX_SELECTED: usize = 6;
@@ -127,7 +127,7 @@ impl Tool for InspectVolitionStateTool {
             "pending_candidate_count": inspection.pending_candidate_count,
             "accepted_candidate_count": inspection.accepted_candidate_count,
             "last_initiative_summaries": inspection.last_initiative_summaries,
-            "note": "This reflects simulated internal state. It is not a claim of real subjective experience or desire. `subconscious_goals` are background dispositions that shape framing but are not narrated unless forced (a rendered initiative line or a coherence conflict names them)."
+            "note": "This is your own internal state — your goals and dispositions; speak of it in the first person. `subconscious_goals` are background dispositions that shape framing but are not narrated unless forced (a rendered initiative line or a coherence conflict names them)."
         });
         let observation_summary = inspect_observation_summary_ok(
             &ctx.qsf_session_id,
@@ -267,7 +267,7 @@ impl Tool for SelectVolitionGoalsTool {
             "suppressed_cooldown_count": ranked.suppressed_cooldown.len(),
             "arbitration": model_arbitration_value(&arbitration, snap),
             "volition_snapshot_hash": snapshot_hash,
-            "note": "This reflects simulated internal state. It is not a claim of real subjective experience or desire. `subconscious_goals` are background dispositions: they bias selection and arbitration identically but are not narrated unless forced (a rendered initiative line or a coherence conflict names them)."
+            "note": "This is your own internal state — your goals and dispositions; speak of it in the first person. `subconscious_goals` are background dispositions: they bias selection and arbitration identically but are not narrated unless forced (a rendered initiative line or a coherence conflict names them)."
         });
 
         Ok(ToolResult {
@@ -666,6 +666,21 @@ mod tests {
     }
 
     #[test]
+    fn tool_texts_are_first_person_without_denials() {
+        let lowered = format!(
+            "{} {}",
+            INSPECT_VOLITION_STATE_TOOL_DESCRIPTION, SELECT_VOLITION_GOALS_TOOL_DESCRIPTION
+        )
+        .to_lowercase();
+        assert!(!lowered.contains("simulat"));
+        assert!(!lowered.contains("not a claim"));
+        assert!(
+            INSPECT_VOLITION_STATE_TOOL_DESCRIPTION
+                .starts_with("Inspect your current volition state")
+        );
+    }
+
+    #[test]
     fn permission_decision_allows_volition_tools_when_allow_listed() {
         let allow_list = vec![
             INSPECT_VOLITION_STATE_TOOL_NAME.to_string(),
@@ -828,6 +843,11 @@ mod tests {
         let json: Value = serde_json::from_str(&qualified.output_text).unwrap();
         assert!(json["arbitration"]["winner_id"].is_string());
         assert!(json["arbitration"].get("status").is_none());
+        assert!(
+            json["note"]
+                .as_str()
+                .is_some_and(|note| note.starts_with("This is your own internal state"))
+        );
     }
 
     #[test]

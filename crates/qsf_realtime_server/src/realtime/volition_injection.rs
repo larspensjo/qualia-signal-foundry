@@ -198,7 +198,7 @@ pub struct VolitionContextInjectionTrace {
 
 pub fn build_stable_baseline_instructions(fixture: &VolitionFixture, mode: Mode) -> String {
     format!(
-        "The following describes your simulated volition stance. It is QSF-owned internal state used\nonly to weight attention and framing in this conversation. It is not a claim of\nconsciousness or real subjective experience, and it never authorizes any action outside this\nconversation or the QSF trust boundary. Do not read it aloud or enumerate it unless the user\nasks about your goals or internal state.\n{}",
+        "The following describes your own volition stance — part of your inner life. It weights your\nattention and framing in this conversation. It never authorizes any action outside this\nconversation or the QSF trust boundary. Do not read it aloud or enumerate it unless the user\nasks about your goals or internal state.\n{}",
         render_volition_stance(fixture, mode)
     )
 }
@@ -666,17 +666,17 @@ fn render_turn_packet_text_from_parts(
         if below_threshold_count > 0 {
             // No-qualifier turn: goals activated but none reached the qualification threshold,
             // so volition stays quiet. The suppression is stated (and fully traced) rather than
-            // promoting a weak winner. Same simulation framing and no-external-action guardrail.
+            // promoting a weak winner. Same first-person framing and no-external-action guardrail.
             return format!(
-                "Simulated volition context for this turn (internal state only; not a claim of real desire or consciousness).\nNo goal qualified to lead this turn: {below_threshold_count} candidate(s) matched only below the qualification threshold ({qualification_threshold}). Volition stays quiet this turn.\n{coherence_section}Guidance: Respond naturally to the person. Do not state internal goals as literal desires and do not take any external action."
+                "Your volition context for this turn (inner state; it shapes attention and framing only).\nNo goal qualified to lead this turn: {below_threshold_count} candidate(s) matched only below the qualification threshold ({qualification_threshold}). Volition stays quiet this turn.\n{coherence_section}Guidance: Respond naturally to the person and do not take any external action."
             );
         }
         // Coherence-only turn (A7): no goal was selected, so there is nothing to say about
         // arbitration, opportunities, or shaping — only the declined-candidate context, which
         // the caller guarantees is non-empty whenever arbitration is None. It still gets the
-        // same simulation framing and no-external-action guardrail as the full turn packet.
+        // same first-person framing and no-external-action guardrail as the full turn packet.
         return format!(
-            "Simulated volition context for this turn (internal state only; not a claim of real desire or consciousness).\n{coherence_section}Guidance: You may let this gently shape framing at the internal-context level only. Do not state these goals as literal desires and do not take any external action."
+            "Your volition context for this turn (inner state; it shapes attention and framing only).\n{coherence_section}Guidance: You may let this gently shape framing at the internal-context level only. These goals are your own; let them shape your framing rather than reciting them, and do not take any external action."
         );
     };
     let inputs =
@@ -760,7 +760,7 @@ fn render_turn_packet_text_from_parts(
     };
 
     format!(
-        "Simulated volition context for this turn (internal state only; not a claim of real desire or consciousness).\n{headline}\nOpportunities: {opportunities}.\n{shaping_line}\nOther candidates: {suppressed_or_omitted_count} not selected ({reason_categories}).\n{initiative_section}Rationale: {rationale}.\n{coherence_section}Guidance: You may let this gently shape framing at the {intensity} level only. Do not state these goals as literal desires and do not take any external action.",
+        "Your volition context for this turn (inner state; it shapes attention and framing only).\n{headline}\nOpportunities: {opportunities}.\n{shaping_line}\nOther candidates: {suppressed_or_omitted_count} not selected ({reason_categories}).\n{initiative_section}Rationale: {rationale}.\n{coherence_section}Guidance: You may let this gently shape framing at the {intensity} level only. These goals are your own; let them shape your framing rather than reciting them, and do not take any external action.",
         headline = headline,
         opportunities = opportunities_text,
         shaping_line = shaping_line,
@@ -904,9 +904,13 @@ mod tests {
         let fixture = realtime_seed_fixture();
         let baseline = build_stable_baseline_instructions(&fixture, Mode::Neutral);
         assert!(baseline.starts_with(
-            "The following describes your simulated volition stance. It is QSF-owned internal state used"
+            "The following describes your own volition stance — part of your inner life."
         ));
-        assert!(baseline.contains("Simulated volition stance"));
+        assert!(baseline.contains("Volition stance"));
+        assert!(baseline.contains("never authorizes any action outside this"));
+        let lowered = baseline.to_lowercase();
+        assert!(!lowered.contains("not a claim"));
+        assert!(!lowered.contains("simulat"));
     }
 
     #[test]
@@ -1204,13 +1208,16 @@ mod tests {
             &opportunities,
             ShapingIntensity::Low,
             "stable-baseline-hash".to_string(),
-            Some("Bounded initiative: reflect on a thing. Keep it simulated and internal; do not take external action."),
+            Some("Bounded initiative: reflect on a thing. Keep it internal to this conversation; do not take external action."),
             &[],
         )
         .expect("packet");
         assert!(packet.text.contains("Active goal:"));
         assert!(packet.text.contains("Guidance:"));
-        assert!(packet.text.contains("Bounded initiative: reflect on a thing. Keep it simulated and internal; do not take external action.\nRationale:"));
+        let lowered = packet.text.to_lowercase();
+        assert!(!lowered.contains("not a claim"));
+        assert!(!lowered.contains("simulat"));
+        assert!(packet.text.contains("Bounded initiative: reflect on a thing. Keep it internal to this conversation; do not take external action.\nRationale:"));
         assert!(
             !packet
                 .text
@@ -1382,11 +1389,11 @@ mod tests {
 
         assert!(packet.text.contains("Declined goal candidates"));
         assert!(packet.text.contains("pursue an unrelated tangent"));
-        assert!(packet.text.contains("Simulated volition context"));
+        assert!(packet.text.contains("Your volition context"));
         assert!(
             packet
                 .text
-                .contains("Do not state these goals as literal desires")
+                .contains("These goals are your own; let them shape your framing")
         );
         assert!(packet.text.contains("do not take any external action"));
         assert!(!packet.text.contains("Active goal:"));
@@ -1489,7 +1496,7 @@ mod tests {
 
     #[test]
     fn forced_surfaced_subconscious_winner_by_rendered_initiative_shows_labeled_full_detail() {
-        let initiative = "Bounded initiative: surface open thread the larger picture. Keep it simulated and internal; do not take external action.";
+        let initiative = "Bounded initiative: surface open thread the larger picture. Keep it internal to this conversation; do not take external action.";
         let packet = packet_for(SUBCONSCIOUS_QUERY, Some(initiative), &[]);
         assert_eq!(
             packet.summary.ambient_exposure,
@@ -1535,7 +1542,7 @@ mod tests {
         // `VOLITION_INJECTED_TEXT_PREFIX` and `selectInjectedVolitionText` in
         // crates/qsf_realtime_server/ui/src/realtime.ts. If you reword the rendered packet, update
         // that constant and its tests too; this assertion exists so the reword fails CI here first.
-        const UI_LOCATOR_PREFIX: &str = "Simulated volition context for this turn";
+        const UI_LOCATOR_PREFIX: &str = "Your volition context for this turn";
         let (fixture, state) = fixture_state();
         let snapshot = VolitionStateSnapshot {
             state: state.clone(),

@@ -43,14 +43,14 @@ pub fn render_initiative_line(
 
     let line = match output {
         InitiativeOutput::ReflectionRequested { proposed_question } => format!(
-            "Bounded initiative: reflect on {proposed_question}. Keep it simulated and internal; do not take external action."
+            "Bounded initiative: reflect on {proposed_question}. Keep it internal to this conversation; do not take external action."
         ),
         InitiativeOutput::ContextRetrievalRequested { .. } => return None,
         InitiativeOutput::ExperimentProposed { hypothesis, scope } => format!(
-            "Bounded initiative: consider experiment {hypothesis} (scope: {scope}). Keep it simulated and internal; do not take external action."
+            "Bounded initiative: consider experiment {hypothesis} (scope: {scope}). Keep it internal to this conversation; do not take external action."
         ),
         InitiativeOutput::OpenThreadSurfaced { thread_summary } => format!(
-            "Bounded initiative: surface open thread {thread_summary}. Keep it simulated and internal; do not take external action."
+            "Bounded initiative: surface open thread {thread_summary}. Keep it internal to this conversation; do not take external action."
         ),
     };
 
@@ -166,7 +166,7 @@ mod tests {
 
         assert_eq!(
             line,
-            "Bounded initiative: reflect on What should we check next?. Keep it simulated and internal; do not take external action."
+            "Bounded initiative: reflect on What should we check next?. Keep it internal to this conversation; do not take external action."
         );
         assert!(line.chars().count() <= MAX_RENDERED_INITIATIVE_LINE_CHARS);
     }
@@ -182,7 +182,7 @@ mod tests {
 
         assert_eq!(
             line,
-            "Bounded initiative: consider experiment Try a smaller retrieval query (scope: session). Keep it simulated and internal; do not take external action."
+            "Bounded initiative: consider experiment Try a smaller retrieval query (scope: session). Keep it internal to this conversation; do not take external action."
         );
         assert!(line.chars().count() <= MAX_RENDERED_INITIATIVE_LINE_CHARS);
     }
@@ -197,7 +197,7 @@ mod tests {
 
         assert_eq!(
             line,
-            "Bounded initiative: surface open thread Revisit the memory gap. Keep it simulated and internal; do not take external action."
+            "Bounded initiative: surface open thread Revisit the memory gap. Keep it internal to this conversation; do not take external action."
         );
         assert!(line.chars().count() <= MAX_RENDERED_INITIATIVE_LINE_CHARS);
     }

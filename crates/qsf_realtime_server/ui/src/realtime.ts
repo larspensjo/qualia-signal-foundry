@@ -2338,7 +2338,7 @@ function formatLabelValue(value: string): string {
 /// in `crates/qsf_realtime_server/src/realtime/volition_injection.rs`; a Rust guard test
 /// (`packet_text_starts_with_ui_locator_prefix`) pins it so a reword there fails CI before this
 /// locator silently stops matching.
-export const VOLITION_INJECTED_TEXT_PREFIX = "Simulated volition context for this turn";
+export const VOLITION_INJECTED_TEXT_PREFIX = "Your volition context for this turn";
 
 /// Result of the injected-packet lookup (`selectInjectedVolitionText`, Task 2). Three states so no
 /// consumer can claim nothing was injected when the text is merely unavailable: `found` carries the

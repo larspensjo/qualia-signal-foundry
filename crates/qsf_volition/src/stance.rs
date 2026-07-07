@@ -9,7 +9,7 @@ pub fn render_volition_stance(fixture: &VolitionFixture, mode: Mode) -> String {
     let mut lines = Vec::new();
     lines.extend(wrap_paragraph(
         "",
-        "Simulated volition stance (internal state only — not a claim of real desire, consciousness, or subjective experience).",
+        "Volition stance (your inner tensions; they weight your attention and framing in this conversation).",
         RENDER_WIDTH,
         "",
     ));
@@ -103,12 +103,15 @@ mod tests {
     }
 
     #[test]
-    fn stance_does_not_claim_real_desire() {
+    fn stance_is_first_person_without_denials() {
         let fixture = realtime_seed_fixture();
         let rendered = render_volition_stance(&fixture, Mode::Neutral);
-        assert!(rendered.contains("not a claim of"));
-        assert!(rendered.contains("consciousness, or subjective experience"));
-        assert!(rendered.contains("not a claim of real desire"));
+        assert!(rendered.starts_with(
+            "Volition stance (your inner tensions; they weight your attention and framing"
+        ));
+        let lowered = rendered.to_lowercase();
+        assert!(!lowered.contains("not a claim"));
+        assert!(!lowered.contains("simulat"));
     }
 
     #[test]

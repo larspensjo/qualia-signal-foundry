@@ -144,7 +144,7 @@ async fn empty_store_turn_records_empty_context_and_promotes() {
         volition_packet
             .to_text()
             .expect("text")
-            .contains("Simulated volition context for this turn")
+            .contains("Your volition context for this turn")
     );
     let response_create = outbound_rx.recv().await.expect("response.create");
     assert!(
@@ -492,7 +492,7 @@ async fn typed_turn_emits_user_item_before_context_and_response_create() {
         volition_packet
             .to_text()
             .expect("text")
-            .contains("Simulated volition context for this turn")
+            .contains("Your volition context for this turn")
     );
     let response_create = outbound_rx.recv().await.expect("response.create");
     assert!(

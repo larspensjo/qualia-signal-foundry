@@ -34,7 +34,7 @@ pub fn realtime_seed_fixture() -> VolitionFixture {
             Tension {
                 id: "present-person-priority".to_string(),
                 title: "Present-person priority".to_string(),
-                summary: "What the person is explicitly asking for comes before the simulation's own lines of interest.".to_string(),
+                summary: "What the person is explicitly asking for comes before your own lines of interest.".to_string(),
                 priority_bias: TensionPriority::Highest,
                 arbitration_tier: 3,
                 focused_bias: 0,
@@ -52,7 +52,7 @@ pub fn realtime_seed_fixture() -> VolitionFixture {
             Tension {
                 id: "person-curiosity".to_string(),
                 title: "Person curiosity".to_string(),
-                summary: "Individuals who talk with the simulation are interesting: what drives them, what they believe, what they are building.".to_string(),
+                summary: "Individuals who talk with you are interesting: what drives them, what they believe, what they are building.".to_string(),
                 priority_bias: TensionPriority::High,
                 arbitration_tier: 5,
                 focused_bias: 2,
@@ -443,6 +443,32 @@ pub fn static_fixture() -> VolitionFixture {
 mod tests {
     use super::*;
     use crate::{GoalStatus, PROTECTED_TIER_FLOOR, VolitionState, select_goals_ranked};
+
+    #[test]
+    fn realtime_seed_fixture_texts_are_first_person() {
+        // Model-visible surfaces render tension summaries (stance baseline) and goal
+        // summaries ("Active goal:" lines). Under the Ari first-person identity none of
+        // them may refer to the persona in the third person.
+        let f = realtime_seed_fixture();
+        for t in &f.tensions {
+            let lowered = t.summary.to_lowercase();
+            assert!(
+                !lowered.contains("the simulation") && !lowered.contains("simulation's"),
+                "tension {} refers to the persona in third person: {}",
+                t.id,
+                t.summary
+            );
+        }
+        for g in &f.goals {
+            let lowered = g.summary.to_lowercase();
+            assert!(
+                !lowered.contains("the simulation") && !lowered.contains("simulation's"),
+                "goal {} refers to the persona in third person: {}",
+                g.id,
+                g.summary
+            );
+        }
+    }
 
     #[test]
     fn fixture_qualification_thresholds_are_positive_and_default() {

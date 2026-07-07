@@ -380,7 +380,7 @@ mod tests {
 
         assert!(!serialized.contains("OPENAI_API_KEY"));
         assert!(!serialized.contains("Bearer "));
-        assert!(!serialized.contains("The following describes your simulated volition stance"));
+        assert!(!serialized.contains("The following describes your own volition stance"));
         assert!(!serialized.contains("conversation.item.create"));
         assert!(!serialized.contains("response.create"));
         assert!(!serialized.contains("\"messages\""));
