@@ -105,23 +105,11 @@ describe("provider relay mapping", () => {
     });
   });
 
-  it("maps assistant output transcript completion to visible response text", () => {
-    const message = parseProviderDataChannelMessage(
-      JSON.stringify({
-        event_id: "evt_answer_done",
-        type: "response.output_audio_transcript.done",
-        response_id: "resp_1",
-        transcript: "I am checking the realtime loop.",
-      }),
-    );
-
-    expect(mapProviderMessageToRelayEnvelope("session_1", message)).toMatchObject({
-      qsf_session_id: "session_1",
-      event_id: "evt_answer_done",
-      kind: "response_completed",
-      response_id: "resp_1",
-      text: "I am checking the realtime loop.",
-    });
+  it("ignores per-part transcript completions so response.done stays the sole answer source", () => {
+    expect(providerTypeToRelayKind("response.audio_transcript.done")).toBeNull();
+    expect(providerTypeToRelayKind("response.output_audio_transcript.done")).toBeNull();
+    expect(providerTypeToRelayKind("response.text.done")).toBeNull();
+    expect(providerTypeToRelayKind("response.output_text.done")).toBeNull();
   });
 
   it("extracts assistant text from nested response output", () => {
@@ -347,6 +335,70 @@ describe("conversation reducer", () => {
     });
 
     expect(duplicateCompletion.transcript).toEqual([{ role: "assistant", text: "same answer" }]);
+  });
+
+  it("records a multi-part assistant answer as a single transcript entry", () => {
+    const providerSequence = [
+      { event_id: "evt_created", type: "response.created", response: { id: "resp_1" } },
+      {
+        event_id: "evt_part1_delta",
+        type: "response.output_audio_transcript.delta",
+        response_id: "resp_1",
+        delta: "Let me respond carefully.",
+      },
+      {
+        event_id: "evt_part1_done",
+        type: "response.output_audio_transcript.done",
+        response_id: "resp_1",
+        transcript: "Let me respond carefully.",
+      },
+      {
+        event_id: "evt_part2_delta",
+        type: "response.output_audio_transcript.delta",
+        response_id: "resp_1",
+        delta: "I don't experience consciousness.",
+      },
+      {
+        event_id: "evt_part2_done",
+        type: "response.output_audio_transcript.done",
+        response_id: "resp_1",
+        transcript: "I don't experience consciousness.",
+      },
+      {
+        event_id: "evt_response_done",
+        type: "response.done",
+        response: {
+          id: "resp_1",
+          status: "completed",
+          output: [
+            {
+              type: "message",
+              role: "assistant",
+              content: [
+                { type: "audio", transcript: "Let me respond carefully." },
+                { type: "audio", transcript: "I don't experience consciousness." },
+              ],
+            },
+          ],
+        },
+      },
+    ];
+
+    let state = INITIAL_STATE;
+    for (const raw of providerSequence) {
+      const message = parseProviderDataChannelMessage(JSON.stringify(raw));
+      const envelope = mapProviderMessageToRelayEnvelope("session_1", message);
+      if (envelope !== null) {
+        state = reduceConversationState(state, { type: "provider_envelope", envelope, atMs: 0 });
+      }
+    }
+
+    expect(state.transcript).toEqual([
+      {
+        role: "assistant",
+        text: "Let me respond carefully.\nI don't experience consciousness.",
+      },
+    ]);
   });
 
   it("returns to idle when a response is cancelled", () => {

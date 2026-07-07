@@ -250,31 +250,31 @@ export interface VolitionGoalSalience {
 /// variant's fields alongside a `kind` tag so consumers can switch on `kind` directly.
 export type VolitionSignalEvidence =
   | {
-    kind: "coherence_decline";
-    candidateTitle: string;
-    conflict: VolitionDeclineReason;
-    rationale: string;
-    tick: number;
-  }
+      kind: "coherence_decline";
+      candidateTitle: string;
+      conflict: VolitionDeclineReason;
+      rationale: string;
+      tick: number;
+    }
   | {
-    kind: "frustration";
-    goalId: string;
-    blockedCount: number;
-    lastBlockedTick: number;
-    lastActivatedTick: number;
-  }
+      kind: "frustration";
+      goalId: string;
+      blockedCount: number;
+      lastBlockedTick: number;
+      lastActivatedTick: number;
+    }
   | {
-    kind: "satisfaction";
-    goalId: string;
-    lastSatisfiedTick: number;
-    evidenceRef: string;
-  }
+      kind: "satisfaction";
+      goalId: string;
+      lastSatisfiedTick: number;
+      evidenceRef: string;
+    }
   | {
-    kind: "boredom";
-    inspected: VolitionGoalSalience[];
-    threshold: number;
-    guard: VolitionBoredomGuard;
-  };
+      kind: "boredom";
+      inspected: VolitionGoalSalience[];
+      threshold: number;
+      guard: VolitionBoredomGuard;
+    };
 
 /// One derived functional signal: its `kind`, a display `intensity` in `[0, 1]`, and the
 /// structured `evidence` that justifies it. Mirrors `qsf_volition::signals::FunctionalSignal`.
@@ -1050,13 +1050,13 @@ function convertVolitionTurnDecisionSummary(value: unknown): VolitionTurnDecisio
       wire.winner === null
         ? null
         : {
-          winnerGoalId: wire.winner.winner_goal_id,
-          winnerGoalTitle: wire.winner.winner_goal_title,
-          winnerEffectiveTier: wire.winner.winner_effective_tier,
-          winnerBiasedTier: wire.winner.winner_biased_tier,
-          protectedTierActive: wire.winner.protected_tier_active,
-          winnerVisibility: toGoalVisibility(wire.winner.winner_visibility),
-        },
+            winnerGoalId: wire.winner.winner_goal_id,
+            winnerGoalTitle: wire.winner.winner_goal_title,
+            winnerEffectiveTier: wire.winner.winner_effective_tier,
+            winnerBiasedTier: wire.winner.winner_biased_tier,
+            protectedTierActive: wire.winner.protected_tier_active,
+            winnerVisibility: toGoalVisibility(wire.winner.winner_visibility),
+          },
     qualificationThreshold: wire.qualification_threshold,
     belowThreshold: wire.below_threshold.map((candidate) => ({
       goalId: candidate.goal_id,
@@ -1759,7 +1759,7 @@ function relayTextFor(
 ): string | undefined {
   switch (kind) {
     case "response_completed":
-      return message.text ?? message.transcript;
+      return message.text;
     case "speech_playback_started":
       return message.delta ?? message.text;
     default:
@@ -1784,11 +1784,15 @@ export function providerTypeToRelayKind(type: string): RelayEventKind | null {
     case "response.text.delta":
     case "response.output_text.delta":
       return "speech_playback_started";
+    // Per-part transcript/text completions are intentionally not relayed:
+    // `response.done` is the single authoritative source of the final answer
+    // text. Mapping these to response_completed would append one transcript
+    // entry per content part plus the concatenated whole.
     case "response.audio_transcript.done":
     case "response.output_audio_transcript.done":
     case "response.text.done":
     case "response.output_text.done":
-      return "response_completed";
+      return null;
     case "response.audio.delta":
     case "response.output_audio.delta":
       return "speech_playback_started";
@@ -1948,29 +1952,29 @@ export function selectVolitionPanelModel(state: ConversationState): VolitionPane
   const winnerRows: VolitionPanelRow[] =
     decision.winner === null
       ? [
-        {
-          label: "Winner",
-          value: `no goal qualified (threshold ${decision.qualificationThreshold})`,
-        },
-        {
-          label: "Below threshold",
-          value: formatBelowThreshold(decision.belowThreshold),
-        },
-      ]
+          {
+            label: "Winner",
+            value: `no goal qualified (threshold ${decision.qualificationThreshold})`,
+          },
+          {
+            label: "Below threshold",
+            value: formatBelowThreshold(decision.belowThreshold),
+          },
+        ]
       : [
-        {
-          label: "Winner",
-          value: `${decision.winner.winnerGoalTitle} [${decision.winner.winnerGoalId}]`,
-        },
-        {
-          label: "Winner visibility",
-          value: formatLabelValue(decision.winner.winnerVisibility),
-        },
-        {
-          label: "Winner tiers",
-          value: `effective ${decision.winner.winnerEffectiveTier}, biased ${decision.winner.winnerBiasedTier}, protected ${yesNo(decision.winner.protectedTierActive)}`,
-        },
-      ];
+          {
+            label: "Winner",
+            value: `${decision.winner.winnerGoalTitle} [${decision.winner.winnerGoalId}]`,
+          },
+          {
+            label: "Winner visibility",
+            value: formatLabelValue(decision.winner.winnerVisibility),
+          },
+          {
+            label: "Winner tiers",
+            value: `effective ${decision.winner.winnerEffectiveTier}, biased ${decision.winner.winnerBiasedTier}, protected ${yesNo(decision.winner.protectedTierActive)}`,
+          },
+        ];
   return {
     kind: "decision",
     headline: "Volition state",
