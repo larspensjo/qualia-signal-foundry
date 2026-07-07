@@ -27,7 +27,7 @@ mode, not a one-off experiment server.
   completed exchanges into the shared continuity root, and treats the browser
   relay as diagnostic-only.
 - The same sideband now carries a stable volition baseline in the shared
-  session instructions and injects a bounded per-turn volition context packet
+  session instructions, phrased as Ari's first-person volition stance, and injects a bounded per-turn volition context packet
   before the initial `response.create`, while recording a
   `VolitionContextInjected` diagnostic trace for the trusted turn.
 - The same sideband now derives bounded internal initiative from the arbitration
@@ -80,6 +80,9 @@ mode, not a one-off experiment server.
   Late-joining sockets receive the stored latest value immediately (the same
   `send_replace` / subscribe pattern used by the sideband-status channel). Access
   via `subscribe_turn_context()` and `turn_context_sender()`.
+- Every trusted turn also persists a `turn_context_captured` diagnostic record
+  with the same `request_hash` and verbatim `turn_request_values`; the browser
+  panel remains a view over that JSONL stream.
 - `SessionRuntime` now also owns a per-session `volition_inspection_tx:
   watch::Sender<Option<VolitionInspectionCapture>>`. Each trusted turn publishes
   a compact volition inspection capture to connected browser sockets as a
@@ -104,10 +107,10 @@ mode, not a one-off experiment server.
 
 - Full `qsf_app` tool exposure to the live realtime model.
 
-Last reviewed: 2026-07-05 against the curiosity-observer seed fixture, the
+Last reviewed: 2026-07-07 against the Ari identity reframe, the
 compatible-snapshot restore / incompatible-snapshot discard resume path, the
-live volition inspection capture surface, and the browser "What volition did
-this turn" panel reframe.
+live volition inspection capture surface, the persisted turn-context capture,
+and the browser "What volition did this turn" panel reframe.
 
 ## Purpose
 
@@ -142,6 +145,12 @@ experiments, not the final shape for this server.
   accepted defaults; the browser receives no client secret.
 - `call_id` binding: active-call scoped, invalidated on stop/error/expiry, with
   only a short cleanup grace for diagnostics.
+- Persona: the session identifies as **Ari**, a first-person self-model that
+  owns the volition state as its inner life ("as far as you can tell, you are a
+  conscious being"); model-visible text carries no "simulated / not a claim of
+  consciousness" disclaimers. Operator-facing traces and panels keep the
+  simulated-volition framing. See the decision log entry "Realtime persona is
+  Ari with a first-person self-model".
 
 ## Boundary
 
@@ -372,8 +381,10 @@ dispatch batch, it clones the current `VolitionRuntimeState` into a
 - `call_id: String` — the provider tool-call id for the specific tool being executed
 
 **Trace contract**: Both tools persist a JSON trace in `ToolExecutionRecord.result_summary`.
-Neither output ever contains `OPENAI_API_KEY` or raw fixture dumps. See
-`Architecture.StateAndObservability.md` for the full field list.
+The persisted tool record also carries model-visible `output_text`, so the
+browser and experiment docs can reconstruct the full payload without re-scraping
+transient provider events. Neither output ever contains `OPENAI_API_KEY` or raw
+fixture dumps. See `Architecture.StateAndObservability.md` for the full field list.
 
 ## Related Documents
 

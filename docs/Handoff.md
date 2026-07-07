@@ -3,7 +3,7 @@
 **Updated:** 2026-07-07 — the conscious/subconscious visibility slice is closed: the live human
 session confirmed both forced-surfacing conditions and the honest-instrument-readout introspection
 reply, and the live goal-formation voice test passed (admit, boundaries decline, latency parity).
-Next is choosing between persona work and multi-turn Plans.
+Next is landing the Ari identity reframe with a live probe session.
 
 <!--
 Rules (see ProjectWorkflow.md, "Handoff Discipline"):
@@ -17,16 +17,11 @@ Rules (see ProjectWorkflow.md, "Handoff Discipline"):
 
 ## Now — immediate action
 
-**Choose the next volition texture step** — decide between a fixture-level persona experiment and
-Phase 5 multi-turn Plans, then specify the chosen one.
-Why: Phases 1–4 of [Plan.VolitionMotivationalTexture.md](Plans/Plan.VolitionMotivationalTexture.md)
-are built and human-reviewed (visibility closed 2026-07-07); Phase 5 is sequenced but not yet
-specified, and persona tuning is a parallel option.
-Alternate: first close the small review follow-ups — a live turn exercising the
-`reduced_subconscious` ambient treatment, a rephrased always-agree decline probe, and persisting
-the introspection tool's full output on the live path (see
-[Experiment.VolitionGoalVisibility.md](Experiments/Experiment.VolitionGoalVisibility.md) and
-[Experiment.LiveGoalFormationAndCoherence.md](Experiments/Experiment.LiveGoalFormationAndCoherence.md)).
+**Run [Experiment.RealtimeAriIdentity](Experiments/Experiment.RealtimeAriIdentity.md)** — the
+new first-person identity wording needs a live probe session to verify Ari's self-model and the
+persisted trace contract.
+Why: the code and documentation reframe is in place; the remaining uncertainty is the model's
+spoken behavior under philosophical probes.
 
 ## Next — active plan
 

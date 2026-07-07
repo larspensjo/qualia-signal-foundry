@@ -119,6 +119,12 @@ without exposing secrets or collapsing into a raw fixture dump.
 
 ## Injected Text Contract
 
+> **Superseded wording:** The exact rendered texts below predate the Ari first-person
+> identity reframe (see the decision log entry "Realtime persona is Ari with a first-person
+> self-model"). The structure, injection order, and trace contract are unchanged; the prose
+> prefix is now "Your volition context for this turn" and the denial parentheticals are
+> gone. Current exact texts live in `crates/qsf_realtime_server/src/realtime/volition_injection.rs`.
+
 The exact rendered text below is the contract asserted by tests. `render_volition_stance`
 in `qsf_volition` produces the context-neutral stance body from the configured fixture;
 the realtime adapter's `build_stable_baseline_instructions` wraps it with the
