@@ -35,6 +35,7 @@ use super::volition_continuity::VolitionContinuityExperiment;
 use super::volition_emotion_signals::VolitionEmotionSignalsExperiment;
 use super::volition_goal_coherence::VolitionGoalCoherenceExperiment;
 use super::volition_goal_fixture::VolitionGoalFixtureExperiment;
+use super::volition_goal_visibility::VolitionGoalVisibilityExperiment;
 use super::volition_mode_bias::VolitionModeBiasExperiment;
 use super::volition_reflection_goal_candidates::VolitionReflectionGoalCandidatesExperiment;
 use super::volition_salience_and_satisfaction::VolitionSalienceAndSatisfactionExperiment;
@@ -70,6 +71,7 @@ pub enum ExperimentName {
     VolitionGoalCoherence,
     LiveGoalFormationAndCoherence,
     VolitionEmotionSignals,
+    VolitionGoalVisibility,
 }
 
 impl ExperimentName {
@@ -102,6 +104,7 @@ impl ExperimentName {
             Self::VolitionGoalCoherence => "volition-goal-coherence",
             Self::LiveGoalFormationAndCoherence => "live-goal-formation-and-coherence",
             Self::VolitionEmotionSignals => "volition-emotion-signals",
+            Self::VolitionGoalVisibility => "volition-goal-visibility",
         }
     }
 
@@ -183,6 +186,9 @@ impl ExperimentName {
             }
             Self::VolitionEmotionSignals => {
                 "Derive the four functional signals (coherence_decline, frustration, satisfaction, boredom) from recorded volition state — each on and off — and re-derive every traced signal from its recorded state snapshot; offline, no arbitration/initiative wiring"
+            }
+            Self::VolitionGoalVisibility => {
+                "Drive one subconscious goal through selection, suppressed vs rendered initiative, coherence conflict, and introspection; prove forced-surfacing derives only from recorded state, that a suppressed initiative never forces surfacing, and that a visibility flip leaves selection and arbitration identical; offline"
             }
         }
     }
@@ -442,6 +448,7 @@ fn experiment_for(name: ExperimentName) -> Box<dyn Experiment> {
             Box::new(LiveGoalFormationAndCoherenceExperiment)
         }
         ExperimentName::VolitionEmotionSignals => Box::new(VolitionEmotionSignalsExperiment),
+        ExperimentName::VolitionGoalVisibility => Box::new(VolitionGoalVisibilityExperiment),
     }
 }
 

@@ -441,6 +441,7 @@ mod tests {
             evidence_refs: vec![],
             estimated_tokens: 10,
             source_reference: id.to_string(),
+            visibility: crate::GoalVisibility::Conscious,
         };
         GoalSelection {
             goal: goal.clone(),
@@ -480,6 +481,7 @@ mod tests {
             evidence_refs: vec![],
             estimated_tokens: 10,
             source_reference: id.to_string(),
+            visibility: crate::GoalVisibility::Conscious,
         };
         GoalSelection {
             goal: goal.clone(),

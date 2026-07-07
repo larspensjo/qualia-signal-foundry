@@ -503,6 +503,7 @@ mod tests {
             evidence_refs: vec!["tests".to_string()],
             estimated_tokens: 10,
             source_reference: "tests".to_string(),
+            visibility: crate::GoalVisibility::Conscious,
         };
         let reviewed_seed = ReviewedVolitionSeed {
             schema_version: crate::REVIEWED_VOLITION_SEED_SCHEMA_VERSION,

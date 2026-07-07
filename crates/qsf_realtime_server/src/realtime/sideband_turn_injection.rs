@@ -238,12 +238,22 @@ pub(crate) async fn inject_trusted_turn_context_and_response(
         let mut guard = session.lock().await;
         let state_snapshot_before =
             build_state_inspection(&guard.volition.state, &guard.volition.fixture);
+        // A rendered line records rendered-initiative evidence (the artifact reference of this
+        // turn's bounded-initiative diagnostic); a suppressed internal initiative leaves it None so
+        // a pure derivation can prove the subconscious goal's line actually surfaced.
+        let rendered_ref = rendered_line_present.then(|| {
+            qsf_volition::EvidenceRef::try_new(format!(
+                "exchange:{exchange_index}/diagnostic:realtime_bounded_initiative"
+            ))
+            .expect("artifact reference is non-empty")
+        });
         let initiative_event = VolitionEvent::InitiativeExecuted {
             goal_id: arbitration.winner.goal.id.clone(),
             effect: arbitration.winner.initiative.effect,
             output: output.clone(),
             rationale: arbitration.winner.initiative.rationale.clone(),
             tick: guard.volition.state.tick,
+            rendered_ref,
         };
         guard.volition.apply_events(vec![initiative_event]);
         let state_snapshot_after =
@@ -383,6 +393,8 @@ pub(crate) async fn inject_trusted_turn_context_and_response(
                     decision_suppression,
                     rendered_line_present,
                     intensity,
+                    &guard.volition.state,
+                    &guard.volition.fixture,
                 ))
             });
             build_volition_inspection_capture(

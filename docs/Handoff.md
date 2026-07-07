@@ -1,7 +1,8 @@
 # Handoff — Resume Here
 
-**Updated:** 2026-07-06 — emotion-like functional signals validated; next work is Phase 4
-conscious/subconscious visibility in the volition motivational texture plan.
+**Updated:** 2026-07-06 — Phase 4 conscious/subconscious visibility is built and offline-validated
+(`volition-goal-visibility` harness green); next is its external human review, then choosing between
+persona work and Phase 5 multi-turn Plans.
 
 <!--
 Rules (see ProjectWorkflow.md, "Handoff Discipline"):
@@ -15,31 +16,31 @@ Rules (see ProjectWorkflow.md, "Handoff Discipline"):
 
 ## Now — immediate action
 
-**Detail Phase 4 into an experiment scaffold** — turn the conscious/subconscious visibility slice
-in [Plan.VolitionMotivationalTexture.md](Plans/Plan.VolitionMotivationalTexture.md) into a
-self-contained `Experiment.*.md` before implementation.
-Why: Phase 4 is still only sequenced at plan level; ProjectWorkflow requires a testable
-experiment scaffold with verification steps and a trace contract before building behavior.
-Alternate: run the remaining Phase 2 formation voice test in
-[Experiment.LiveGoalFormationAndCoherence.md](Experiments/Experiment.LiveGoalFormationAndCoherence.md)
-if live conversational feel needs checking before Phase 4.
+**Run the Phase 4 human review** — a browser operator-panel pass (subconscious badges and sectioning
+read clearly, nothing hidden) plus a live-voice introspection ask (the sectioned reply reads as an
+honest instrument readout, not a claimed hidden feeling), per the acceptance criteria in
+[Experiment.VolitionGoalVisibility.md](Experiments/Experiment.VolitionGoalVisibility.md).
+Why: the conscious/subconscious visibility slice is built and offline-validated; only the external
+human check remains before conclusions about how it *feels* in conversation.
+Alternate: combine this session with Phase 2's still-open live formation voice test in
+[Experiment.LiveGoalFormationAndCoherence.md](Experiments/Experiment.LiveGoalFormationAndCoherence.md).
 
 ## Next — active plan
 
-**Implement Phase 4 conscious/subconscious visibility** — after the experiment scaffold is written,
-build it as an introspection-surfacing filter over goal selection/inspection rather than a separate
-runtime path.
-Why: [Plan.VolitionMotivationalTexture.md](Plans/Plan.VolitionMotivationalTexture.md) identifies
-Phase 4 as the next sequenced volition texture step after the now-closed functional-signals slice.
+**Choose the next volition texture step** — after the Phase 4 human review, decide between a
+fixture-level persona experiment and Phase 5 multi-turn Plans.
+Why: Phases 1–4 of [Plan.VolitionMotivationalTexture.md](Plans/Plan.VolitionMotivationalTexture.md)
+are built; Phase 5 (multi-turn Plans) is sequenced but not yet specified, and persona tuning is a
+parallel option.
 Alternate: elaborate a persona experiment from
 [Experiment.Backlog.md](Experiments/Experiment.Backlog.md) if fixture-level personality tuning
-becomes more urgent than Phase 4.
+becomes more urgent than Phase 5.
 
 ## Horizon — direction
 
-**Persona and longer-horizon volition structure** — after Phase 4, choose between fixture-level
-personality experiments and Phase 5 multi-turn plans.
-Why: Phase 4 completes the remaining visibility layer; the next uncertainty is whether more value
+**Persona and longer-horizon volition structure** — choose between fixture-level personality
+experiments and Phase 5 multi-turn plans.
+Why: the visibility layer is complete; the next uncertainty is whether more value
 comes from persona tuning or from adding explicit multi-turn plan state.
 Candidates: `Experiment.PersonaTensionVariations` in
 [Experiment.Backlog.md](Experiments/Experiment.Backlog.md), Phase 5 in

@@ -169,6 +169,7 @@ fn goal(id: &str, base_priority: u8) -> Goal {
         ],
         estimated_tokens: 10,
         source_reference: "docs/Experiments/Experiment.VolitionEmotionLikeSignals.md".to_string(),
+        visibility: qsf_volition::GoalVisibility::Conscious,
     }
 }
 

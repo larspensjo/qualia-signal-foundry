@@ -25,6 +25,7 @@ fn make_goal_for_arbitration(
         evidence_refs: vec![],
         estimated_tokens: 10,
         source_reference: id.to_string(),
+        visibility: qsf_volition::GoalVisibility::Conscious,
     };
     GoalSelection {
         goal: goal.clone(),

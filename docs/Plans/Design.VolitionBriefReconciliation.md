@@ -122,7 +122,7 @@ later.
 | Choose / maintain preferences (§4.2–4.3) | salience scoring + arbitration | Built |
 | Initiate topics / resist-redirect (§4.4–4.5) | bounded initiative + context injection in the live loop | **Built** (realtime) |
 | Unfinished business (§4.7) | `Blocked`/open-thread goals + cross-session persistence | **Built** — cross-session persistence live |
-| Conscious vs subconscious (§6) | goal-visibility attribute (surfaced only on introspection) | **Defer** — new |
+| Conscious vs subconscious (§6) | `GoalVisibility` attribute + forced-surfacing derivation (introspection-surfacing filter, reduced ambient exposure) | **Delivered (translated)** — `qsf_volition::visibility`, sectioned tools, operator badges, reduced ambient injection; validated by `Experiment.VolitionGoalVisibility.md` |
 | World model / desired state / delta (§7) | world-model→delta→initiative loop (Idea doc) | Built (compact form) |
 | Emotion as signal + visualization (§8) | derived functional signals (D4) + brain-state UI | **Defer** — new, gated |
 | Memory→goal formation (§9) | `propose_goal_candidates` from open questions | Built |

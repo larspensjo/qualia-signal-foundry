@@ -644,6 +644,7 @@ describe("volition state reducer", () => {
           salience: 9,
           cooldownUntilTick: null,
           lastActivatedTick: 11,
+          visibility: "conscious" as const,
         },
       ],
       acceptedGoals: [],
@@ -667,6 +668,7 @@ describe("volition state reducer", () => {
         winnerEffectiveTier: 2,
         winnerBiasedTier: 2,
         protectedTierActive: true,
+        winnerVisibility: "conscious" as const,
       },
       qualificationThreshold: 4,
       belowThreshold: [],
@@ -686,8 +688,11 @@ describe("volition state reducer", () => {
       lastInitiativeSurfaced: true,
       lastInitiativeSuppressionReason: null,
       lastInitiativeRenderedLinePresent: true,
+      ambientExposure: "ordinary" as const,
+      subconsciousSelectedCount: 0,
     },
     signals: [],
+    forcedSurfaced: [],
   };
 
   it("sets latestVolitionState when capture matches the active session", () => {
@@ -1031,6 +1036,7 @@ describe("volition state message parsing", () => {
             salience: 9,
             cooldownUntilTick: null,
             lastActivatedTick: 11,
+            visibility: "conscious" as const,
           },
         ],
         acceptedGoals: [],
@@ -1054,6 +1060,7 @@ describe("volition state message parsing", () => {
           winnerEffectiveTier: 2,
           winnerBiasedTier: 2,
           protectedTierActive: true,
+          winnerVisibility: "conscious" as const,
         },
         qualificationThreshold: 4,
         belowThreshold: [],
@@ -1073,8 +1080,11 @@ describe("volition state message parsing", () => {
         lastInitiativeSurfaced: true,
         lastInitiativeSuppressionReason: null,
         lastInitiativeRenderedLinePresent: true,
+        ambientExposure: "ordinary" as const,
+        subconsciousSelectedCount: 0,
       },
       signals: [],
+      forcedSurfaced: [],
     });
 
     expect(parseVolitionStateMessage(JSON.stringify({ ...baseMessage, decision: null }))).toEqual({
@@ -1092,6 +1102,7 @@ describe("volition state message parsing", () => {
             salience: 9,
             cooldownUntilTick: null,
             lastActivatedTick: 11,
+            visibility: "conscious" as const,
           },
         ],
         acceptedGoals: [],
@@ -1110,6 +1121,7 @@ describe("volition state message parsing", () => {
       },
       decision: null,
       signals: [],
+      forcedSurfaced: [],
     });
   });
 
@@ -1163,6 +1175,70 @@ describe("volition state message parsing", () => {
       ),
     ).toBeNull();
   });
+
+  it("parses goal visibility, winner visibility, ambient exposure, and forced surfacing", () => {
+    const message = {
+      ...baseMessage,
+      inspection: {
+        ...baseMessage.inspection,
+        accepted_goals: [
+          {
+            id: "assemble-world-picture",
+            title: "Assemble a world picture",
+            salience: 3,
+            cooldown_until_tick: null,
+            last_activated_tick: null,
+            visibility: "subconscious",
+          },
+        ],
+      },
+      decision: {
+        ...baseMessage.decision,
+        winner: { ...baseMessage.decision.winner, winner_visibility: "subconscious" },
+        ambient_exposure: "reduced_subconscious",
+        subconscious_selected_count: 1,
+      },
+      forced_surfaced: [
+        {
+          goal_id: "assemble-world-picture",
+          condition: {
+            kind: "coherence_conflict",
+            candidate_id: "cand-x",
+            candidate_title: "A tangent",
+            tick: 3,
+          },
+        },
+      ],
+    };
+    const parsed = parseVolitionStateMessage(JSON.stringify(message));
+    expect(parsed?.inspection.acceptedGoals[0].visibility).toBe("subconscious");
+    expect(parsed?.inspection.activeGoals[0].visibility).toBe("conscious");
+    expect(parsed?.decision?.winner?.winnerVisibility).toBe("subconscious");
+    expect(parsed?.decision?.ambientExposure).toBe("reduced_subconscious");
+    expect(parsed?.decision?.subconsciousSelectedCount).toBe(1);
+    expect(parsed?.forcedSurfaced).toEqual([
+      {
+        goalId: "assemble-world-picture",
+        condition: {
+          kind: "coherence_conflict",
+          candidateId: "cand-x",
+          candidateTitle: "A tangent",
+          tick: 3,
+        },
+      },
+    ]);
+  });
+
+  it("defaults visibility, exposure, and forced surfacing for captures that predate the fields", () => {
+    // baseMessage carries none of the new keys — the parser must default rather than reject.
+    const parsed = parseVolitionStateMessage(JSON.stringify(baseMessage));
+    expect(parsed).not.toBeNull();
+    expect(parsed?.inspection.activeGoals[0].visibility).toBe("conscious");
+    expect(parsed?.decision?.winner?.winnerVisibility).toBe("conscious");
+    expect(parsed?.decision?.ambientExposure).toBe("ordinary");
+    expect(parsed?.decision?.subconsciousSelectedCount).toBe(0);
+    expect(parsed?.forcedSurfaced).toEqual([]);
+  });
 });
 
 describe("sideband status message parsing", () => {
@@ -1210,6 +1286,7 @@ describe("volition panel selector", () => {
           salience: 9,
           cooldownUntilTick: null,
           lastActivatedTick: 11,
+          visibility: "conscious" as const,
         },
       ],
       acceptedGoals: [],
@@ -1233,6 +1310,7 @@ describe("volition panel selector", () => {
         winnerEffectiveTier: 2,
         winnerBiasedTier: 2,
         protectedTierActive: true,
+        winnerVisibility: "conscious" as const,
       },
       qualificationThreshold: 4,
       belowThreshold: [],
@@ -1252,8 +1330,11 @@ describe("volition panel selector", () => {
       lastInitiativeSurfaced: true,
       lastInitiativeSuppressionReason: null,
       lastInitiativeRenderedLinePresent: true,
+      ambientExposure: "ordinary" as const,
+      subconsciousSelectedCount: 0,
     },
     signals: [],
+    forcedSurfaced: [],
   };
 
   it("renders protected winner tiers and trace details without hard-coded ids", () => {
@@ -1301,6 +1382,8 @@ describe("volition panel selector", () => {
           lastInitiativeSurfaced: false,
           lastInitiativeSuppressionReason: "below_qualification_threshold" as const,
           lastInitiativeRenderedLinePresent: false,
+          ambientExposure: "ordinary" as const,
+          subconsciousSelectedCount: 0,
         },
       },
     };
@@ -1442,6 +1525,104 @@ describe("volition panel selector", () => {
     expect(section).toBeDefined();
     expect(section?.rows).toEqual([{ label: "Signals", value: "none" }]);
   });
+
+  it("badges a subconscious goal and shows its forced-surfacing status, never hiding it", () => {
+    const capture = {
+      ...sampleCapture,
+      inspection: {
+        ...sampleCapture.inspection,
+        acceptedGoals: [
+          {
+            id: "assemble-world-picture",
+            title: "Assemble a world picture",
+            salience: 3,
+            cooldownUntilTick: null,
+            lastActivatedTick: null,
+            visibility: "subconscious" as const,
+          },
+          {
+            id: "grow-the-library",
+            title: "Grow the library",
+            salience: 2,
+            cooldownUntilTick: null,
+            lastActivatedTick: null,
+            visibility: "conscious" as const,
+          },
+        ],
+      },
+      decision: {
+        ...sampleCapture.decision,
+        winner: {
+          ...sampleCapture.decision.winner,
+          winnerGoalId: "assemble-world-picture",
+          winnerGoalTitle: "Assemble a world picture",
+          winnerVisibility: "subconscious" as const,
+        },
+        ambientExposure: "forced_surfaced_subconscious" as const,
+        subconsciousSelectedCount: 1,
+      },
+      forcedSurfaced: [
+        {
+          goalId: "assemble-world-picture",
+          condition: {
+            kind: "rendered_initiative" as const,
+            tick: 2,
+            renderedRef: "exchange:1/diagnostic:realtime_bounded_initiative",
+          },
+        },
+      ],
+    };
+    const state = { ...INITIAL_STATE, sessionId: "session_1", latestVolitionState: capture };
+    const model = selectVolitionPanelModel(state);
+
+    const snapshot = model.sections.find((s) => s.title === "State snapshot");
+    const acceptedRow = snapshot?.rows.find((row) => row.label === "Accepted goals");
+    // The subconscious goal is labeled and surfaced — never hidden — and the conscious one is plain.
+    expect(acceptedRow?.value).toContain(
+      "Assemble a world picture [assemble-world-picture] (subconscious · surfaced: rendered initiative)",
+    );
+    expect(acceptedRow?.value).toContain("Grow the library [grow-the-library]");
+    expect(acceptedRow?.value).not.toContain("Grow the library [grow-the-library] (subconscious");
+
+    const decisionSection = model.sections.find((s) => s.title === "Decision detail");
+    expect(decisionSection?.rows.find((row) => row.label === "Winner visibility")?.value).toBe(
+      "Subconscious",
+    );
+    expect(decisionSection?.rows.find((row) => row.label === "Ambient exposure")?.value).toBe(
+      "Forced Surfaced Subconscious",
+    );
+    expect(decisionSection?.rows.find((row) => row.label === "Subconscious selected")?.value).toBe(
+      "1",
+    );
+  });
+
+  it("badges an ordinary subconscious goal without a surfaced marker", () => {
+    const capture = {
+      ...sampleCapture,
+      inspection: {
+        ...sampleCapture.inspection,
+        acceptedGoals: [
+          {
+            id: "assemble-world-picture",
+            title: "Assemble a world picture",
+            salience: 3,
+            cooldownUntilTick: null,
+            lastActivatedTick: null,
+            visibility: "subconscious" as const,
+          },
+        ],
+      },
+      forcedSurfaced: [],
+    };
+    const state = { ...INITIAL_STATE, sessionId: "session_1", latestVolitionState: capture };
+    const model = selectVolitionPanelModel(state);
+    const snapshot = model.sections.find((s) => s.title === "State snapshot");
+    const acceptedRow = snapshot?.rows.find((row) => row.label === "Accepted goals");
+    expect(acceptedRow?.value).toContain(
+      "Assemble a world picture [assemble-world-picture] (subconscious)",
+    );
+    expect(acceptedRow?.value).not.toContain("surfaced:");
+  });
 });
 
 describe("volition verdict selector", () => {
@@ -1470,6 +1651,7 @@ describe("volition verdict selector", () => {
         winnerEffectiveTier: 2,
         winnerBiasedTier: 2,
         protectedTierActive: true,
+        winnerVisibility: "conscious" as const,
       },
       qualificationThreshold: 4,
       belowThreshold: [],
@@ -1481,8 +1663,11 @@ describe("volition verdict selector", () => {
       lastInitiativeSurfaced: true,
       lastInitiativeSuppressionReason: null,
       lastInitiativeRenderedLinePresent: true,
+      ambientExposure: "ordinary" as const,
+      subconsciousSelectedCount: 0,
     },
     signals: [],
+    forcedSurfaced: [],
   };
 
   it("reports awaiting-first-turn when no capture has arrived", () => {
@@ -1514,6 +1699,8 @@ describe("volition verdict selector", () => {
           lastInitiativeSurfaced: false,
           lastInitiativeSuppressionReason: "anti_nag_repeat" as const,
           lastInitiativeRenderedLinePresent: false,
+          ambientExposure: "ordinary" as const,
+          subconsciousSelectedCount: 0,
         },
       },
     };
@@ -1618,6 +1805,7 @@ describe("injected volition text locator", () => {
     },
     decision: null,
     signals: [],
+    forcedSurfaced: [],
   });
   const turnContextAtExchange = (
     exchangeIndex: number,

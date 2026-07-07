@@ -1,8 +1,8 @@
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    ActivationKeyword, AllowedEffect, EvidenceRef, Goal, GoalScope, GoalStatus, Tension,
-    VolitionFixture, normalize_terms,
+    ActivationKeyword, AllowedEffect, EvidenceRef, Goal, GoalScope, GoalStatus, GoalVisibility,
+    Tension, VolitionFixture, normalize_terms,
 };
 
 /// A goal candidate proposed by a reflection step. Stays in `VolitionState::pending_candidates`
@@ -25,6 +25,12 @@ pub struct ProposedGoalCandidate {
     proposal_evidence: Vec<EvidenceRef>,
     source_description: String,
     activation_keywords: Vec<String>,
+    /// Narration visibility of the goal this candidate would become. Defaulted/internal for this
+    /// slice: live-formed candidates are conversation-originated and therefore always
+    /// `Conscious`, so `try_new` never takes it and the model-facing `json_schema_hint` never
+    /// invites the model to set it. The deserializer accepts an optional `visibility` field
+    /// (serde default `Conscious`) for back-compat and future sleep-consolidation artifacts.
+    visibility: GoalVisibility,
 }
 
 impl ProposedGoalCandidate {
@@ -57,6 +63,9 @@ impl ProposedGoalCandidate {
             proposal_evidence,
             source_description,
             activation_keywords,
+            // Live-formed candidates originate in conversation and are introspectable by
+            // construction, so they are always Conscious.
+            visibility: GoalVisibility::Conscious,
         })
     }
 
@@ -109,6 +118,10 @@ impl ProposedGoalCandidate {
         &self.activation_keywords
     }
 
+    pub fn visibility(&self) -> GoalVisibility {
+        self.visibility
+    }
+
     pub(crate) fn into_goal(self, acceptance_evidence: EvidenceRef) -> Goal {
         let mut evidence_refs: Vec<String> = self
             .proposal_evidence
@@ -134,6 +147,7 @@ impl ProposedGoalCandidate {
             evidence_refs,
             estimated_tokens: 20,
             source_reference: self.source_description,
+            visibility: self.visibility,
         }
     }
 }
@@ -154,6 +168,11 @@ struct ProposedGoalCandidateRaw {
     source_description: String,
     #[serde(default)]
     activation_keywords: Vec<String>,
+    /// Optional on the wire (serde default `Conscious`). Accepted for back-compat and possible
+    /// future sleep-consolidation artifacts; `json_schema_hint` deliberately does not name it so
+    /// the live-formation model cannot mark a conversation-originated candidate subconscious.
+    #[serde(default)]
+    visibility: GoalVisibility,
 }
 
 impl<'de> Deserialize<'de> for ProposedGoalCandidate {
@@ -162,7 +181,7 @@ impl<'de> Deserialize<'de> for ProposedGoalCandidate {
         D: serde::Deserializer<'de>,
     {
         let raw = ProposedGoalCandidateRaw::deserialize(deserializer)?;
-        Self::try_new(
+        let mut candidate = Self::try_new(
             raw.id,
             raw.title,
             raw.summary,
@@ -175,7 +194,11 @@ impl<'de> Deserialize<'de> for ProposedGoalCandidate {
             raw.source_description,
             raw.activation_keywords,
         )
-        .map_err(serde::de::Error::custom)
+        .map_err(serde::de::Error::custom)?;
+        // Preserve a deserialized visibility (default Conscious); `try_new` alone always yields
+        // Conscious, which is correct for live-formed candidates.
+        candidate.visibility = raw.visibility;
+        Ok(candidate)
     }
 }
 
@@ -424,6 +447,76 @@ mod tests {
                 "schema hint must document the `{field}` field"
             );
         }
+        // `visibility` is read by the deserializer but is DELIBERATELY excluded from the hint:
+        // live-formed candidates are conversation-originated and must stay Conscious, so the model
+        // is never invited to set it. This assertion documents the intentional gap so it reads as
+        // a decision, not silent drift (Plan.VolitionMotivationalTexture, Phase 4 design).
+        assert!(
+            !hint.contains("visibility"),
+            "schema hint must NOT name `visibility`: the model must not mark a live-formed \
+             candidate subconscious"
+        );
+    }
+
+    #[test]
+    fn proposed_goal_candidate_is_conscious_by_default() {
+        let evidence = EvidenceRef::try_new("open-question: test").unwrap();
+        let candidate = ProposedGoalCandidate::try_new(
+            "id".to_string(),
+            "Title".to_string(),
+            "Summary".to_string(),
+            vec![],
+            GoalScope::Session,
+            70,
+            vec![AllowedEffect::Reflect],
+            "done".to_string(),
+            vec![evidence],
+            "source".to_string(),
+            vec![],
+        )
+        .unwrap();
+        assert_eq!(candidate.visibility(), GoalVisibility::Conscious);
+        // into_goal carries the candidate's visibility through to the accepted Goal.
+        let goal = candidate.into_goal(EvidenceRef::try_new("accepted").unwrap());
+        assert_eq!(goal.visibility, GoalVisibility::Conscious);
+    }
+
+    #[test]
+    fn proposed_goal_candidate_deserializes_without_visibility_as_conscious() {
+        let json = serde_json::json!({
+            "id": "test-id",
+            "title": "Test",
+            "summary": "Summary",
+            "tension_ids": [],
+            "scope": "session",
+            "base_priority": 70,
+            "allowed_effects": [],
+            "satisfaction_condition_summary": "Resolved.",
+            "proposal_evidence": ["open-question: test"],
+            "source_description": "test"
+        });
+        let candidate: ProposedGoalCandidate = serde_json::from_value(json).unwrap();
+        assert_eq!(candidate.visibility(), GoalVisibility::Conscious);
+    }
+
+    #[test]
+    fn proposed_goal_candidate_deserializer_preserves_explicit_visibility() {
+        // Back-compat / future sleep-consolidation artifacts may carry visibility explicitly.
+        let json = serde_json::json!({
+            "id": "test-id",
+            "title": "Test",
+            "summary": "Summary",
+            "tension_ids": [],
+            "scope": "session",
+            "base_priority": 70,
+            "allowed_effects": [],
+            "satisfaction_condition_summary": "Resolved.",
+            "proposal_evidence": ["open-question: test"],
+            "source_description": "test",
+            "visibility": "subconscious"
+        });
+        let candidate: ProposedGoalCandidate = serde_json::from_value(json).unwrap();
+        assert_eq!(candidate.visibility(), GoalVisibility::Subconscious);
     }
 
     #[test]

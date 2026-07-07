@@ -8,8 +8,9 @@ use qsf_tools::{
     Tool, ToolContext, ToolDefinition, ToolMetadata, ToolRequest, ToolResult, ToolSideEffectLevel,
 };
 use qsf_volition::{
-    GoalSelection, ModeArbitrationOutcome, arbitrate_with_mode, build_state_inspection,
-    select_goals_ranked,
+    ForcedSurfacing, ForcingCondition, GoalSelection, GoalStatusSummary, GoalVisibility,
+    ModeArbitrationOutcome, arbitrate_with_mode, build_state_inspection, forced_surfaced_goals,
+    goal_visibility, select_goals_ranked,
 };
 use serde_json::Value;
 use sha2::Digest;
@@ -18,6 +19,13 @@ use crate::realtime::tools::{RealtimeToolContext, VolitionStateSnapshot};
 
 pub const INSPECT_VOLITION_STATE_TOOL_NAME: &str = "inspect_volition_state";
 pub const SELECT_VOLITION_GOALS_TOOL_NAME: &str = "select_volition_goals";
+
+/// The single source of truth for the model-facing descriptions of the volition tools, shared by
+/// the `ToolMetadata`, the `ToolDefinition`, and `default_tool_definitions()` so the realtime
+/// session tool list and the executed tool never drift. Both mention the `subconscious_goals`
+/// section (and, for select, `winner_visibility`) so the model knows the section exists.
+pub const INSPECT_VOLITION_STATE_TOOL_DESCRIPTION: &str = "Inspect the current simulated volition state: mode, tick, goals by status, last initiative summaries, and a separate `subconscious_goals` section for background-disposition goals (each with its status and any forced-surfacing condition).";
+pub const SELECT_VOLITION_GOALS_TOOL_DESCRIPTION: &str = "Given a query, return ranked active goals, omitted goals, and arbitration result without mutating state. Subconscious background-disposition goals are returned in a separate `subconscious_goals` section (with selection role and any forcing condition), not in `selected`; `arbitration.winner_visibility` reports the real winner's visibility.";
 
 const SELECT_MAX_SELECTED: usize = 6;
 const SELECT_MAX_OMITTED: usize = 8;
@@ -29,7 +37,7 @@ impl Tool for InspectVolitionStateTool {
     fn metadata(&self) -> ToolMetadata {
         ToolMetadata {
             name: INSPECT_VOLITION_STATE_TOOL_NAME.to_string(),
-            description: "Inspect the current simulated volition state: mode, tick, goals by status, and last initiative summaries.".to_string(),
+            description: INSPECT_VOLITION_STATE_TOOL_DESCRIPTION.to_string(),
             category: ToolCategory::ReadOnly,
             side_effect_level: ToolSideEffectLevel::ReadOnly,
         }
@@ -38,7 +46,7 @@ impl Tool for InspectVolitionStateTool {
     fn definition(&self) -> Option<ToolDefinition> {
         Some(ToolDefinition::new(
             INSPECT_VOLITION_STATE_TOOL_NAME,
-            "Inspect the current simulated volition state: mode, tick, goals by status, and last initiative summaries.",
+            INSPECT_VOLITION_STATE_TOOL_DESCRIPTION,
             serde_json::json!({
                 "type": "object",
                 "properties": {},
@@ -69,19 +77,57 @@ impl Tool for InspectVolitionStateTool {
         };
 
         let inspection = build_state_inspection(&snap.state, &snap.fixture);
+        // Subconscious goals are moved OUT of the per-status lists into a labeled
+        // `subconscious_goals` section — never silently merged. A tool call is explicit
+        // introspection, so full detail (status, visibility, and any forcing condition) is
+        // returned there. `build_state_inspection` stays complete; the sectioning is a
+        // presentation filter applied here.
+        let forced = forced_surfaced_goals(&snap.state, &snap.fixture);
+        let mut subconscious_goals = Vec::new();
+        let active_goals = split_conscious(
+            &inspection.active_goals,
+            "active",
+            &forced,
+            &mut subconscious_goals,
+        );
+        let accepted_goals = split_conscious(
+            &inspection.accepted_goals,
+            "accepted",
+            &forced,
+            &mut subconscious_goals,
+        );
+        let blocked_goals = split_conscious(
+            &inspection.blocked_goals,
+            "blocked",
+            &forced,
+            &mut subconscious_goals,
+        );
+        let cooldown_goals = split_conscious(
+            &inspection.cooldown_goals,
+            "cooldown",
+            &forced,
+            &mut subconscious_goals,
+        );
+        let retired_goals = split_conscious(
+            &inspection.retired_goals,
+            "retired",
+            &forced,
+            &mut subconscious_goals,
+        );
         let output = serde_json::json!({
             "status": "ok",
             "mode": inspection.mode,
             "tick": inspection.tick,
-            "active_goals": inspection.active_goals,
-            "accepted_goals": inspection.accepted_goals,
-            "blocked_goals": inspection.blocked_goals,
-            "cooldown_goals": inspection.cooldown_goals,
-            "retired_goals": inspection.retired_goals,
+            "active_goals": active_goals,
+            "accepted_goals": accepted_goals,
+            "blocked_goals": blocked_goals,
+            "cooldown_goals": cooldown_goals,
+            "retired_goals": retired_goals,
+            "subconscious_goals": subconscious_goals,
             "pending_candidate_count": inspection.pending_candidate_count,
             "accepted_candidate_count": inspection.accepted_candidate_count,
             "last_initiative_summaries": inspection.last_initiative_summaries,
-            "note": "This reflects simulated internal state. It is not a claim of real subjective experience or desire."
+            "note": "This reflects simulated internal state. It is not a claim of real subjective experience or desire. `subconscious_goals` are background dispositions that shape framing but are not narrated unless forced (a rendered initiative line or a coherence conflict names them)."
         });
         let observation_summary = inspect_observation_summary_ok(
             &ctx.qsf_session_id,
@@ -106,7 +152,7 @@ impl Tool for SelectVolitionGoalsTool {
     fn metadata(&self) -> ToolMetadata {
         ToolMetadata {
             name: SELECT_VOLITION_GOALS_TOOL_NAME.to_string(),
-            description: "Given a query, return ranked active goals, omitted goals, and arbitration result without mutating state.".to_string(),
+            description: SELECT_VOLITION_GOALS_TOOL_DESCRIPTION.to_string(),
             category: ToolCategory::ReadOnly,
             side_effect_level: ToolSideEffectLevel::ReadOnly,
         }
@@ -115,7 +161,7 @@ impl Tool for SelectVolitionGoalsTool {
     fn definition(&self) -> Option<ToolDefinition> {
         Some(ToolDefinition::new(
             SELECT_VOLITION_GOALS_TOOL_NAME,
-            "Given a query, return ranked active goals, omitted goals, and arbitration result without mutating state.",
+            SELECT_VOLITION_GOALS_TOOL_DESCRIPTION,
             serde_json::json!({
                 "type": "object",
                 "properties": {
@@ -182,12 +228,27 @@ impl Tool for SelectVolitionGoalsTool {
             observation_status,
         );
 
-        let selected: Vec<Value> = ranked
-            .selected
-            .iter()
-            .take(SELECT_MAX_SELECTED)
-            .map(|selection| select_model_goal_value(selection, snap))
-            .collect();
+        // Subconscious selected goals are sectioned out of the ordinary `selected` list into
+        // `subconscious_goals`, each carrying its selection role, status, visibility, forcing
+        // condition, and match detail — never silently merged, and a subconscious winner is never
+        // left as `arbitration.winner_id` alone. Conscious selections keep today's cap.
+        let forced = forced_surfaced_goals(&snap.state, &snap.fixture);
+        let mut selected: Vec<Value> = Vec::new();
+        let mut subconscious_goals: Vec<Value> = Vec::new();
+        for selection in &ranked.selected {
+            let is_subconscious = goal_visibility(&selection.goal.id, &snap.state, &snap.fixture)
+                == GoalVisibility::Subconscious;
+            if is_subconscious {
+                subconscious_goals.push(subconscious_select_entry(
+                    selection,
+                    snap,
+                    &arbitration,
+                    &forced,
+                ));
+            } else if selected.len() < SELECT_MAX_SELECTED {
+                selected.push(select_model_goal_value(selection, snap));
+            }
+        }
         let omitted: Vec<Value> = ranked
             .omitted
             .iter()
@@ -201,11 +262,12 @@ impl Tool for SelectVolitionGoalsTool {
             "mode": snap.state.mode,
             "tick": snap.state.tick,
             "selected": selected,
+            "subconscious_goals": subconscious_goals,
             "omitted": omitted,
             "suppressed_cooldown_count": ranked.suppressed_cooldown.len(),
-            "arbitration": model_arbitration_value(&arbitration),
+            "arbitration": model_arbitration_value(&arbitration, snap),
             "volition_snapshot_hash": snapshot_hash,
-            "note": "This reflects simulated internal state. It is not a claim of real subjective experience or desire."
+            "note": "This reflects simulated internal state. It is not a claim of real subjective experience or desire. `subconscious_goals` are background dispositions: they bias selection and arbitration identically but are not narrated unless forced (a rendered initiative line or a coherence conflict names them)."
         });
 
         Ok(ToolResult {
@@ -355,6 +417,98 @@ fn omitted_model_goal_value(goal: &qsf_volition::OmittedGoal) -> Value {
     })
 }
 
+/// The forcing conditions recorded for `goal_id` this run, serialized for the tool output.
+fn forcing_conditions_of(goal_id: &str, forced: &[ForcedSurfacing]) -> Vec<ForcingCondition> {
+    forced
+        .iter()
+        .filter(|entry| entry.goal_id == goal_id)
+        .map(|entry| entry.condition.clone())
+        .collect()
+}
+
+/// Splits a per-status summary list: conscious summaries stay (serialized into the returned
+/// list); subconscious summaries are moved into `subconscious_out` with their status label,
+/// visibility, and any forced-surfacing condition — never silently merged into the status list.
+fn split_conscious(
+    summaries: &[GoalStatusSummary],
+    status_label: &str,
+    forced: &[ForcedSurfacing],
+    subconscious_out: &mut Vec<Value>,
+) -> Vec<Value> {
+    let mut conscious = Vec::new();
+    for summary in summaries {
+        if summary.visibility == GoalVisibility::Subconscious {
+            let conditions = forcing_conditions_of(&summary.id, forced);
+            subconscious_out.push(serde_json::json!({
+                "id": summary.id,
+                "title": summary.title,
+                "salience": summary.salience,
+                "cooldown_until_tick": summary.cooldown_until_tick,
+                "last_activated_tick": summary.last_activated_tick,
+                "status": status_label,
+                "visibility": summary.visibility,
+                "forced_surfaced": !conditions.is_empty(),
+                "forcing_conditions": conditions,
+            }));
+        } else {
+            conscious.push(serde_json::to_value(summary).unwrap_or(Value::Null));
+        }
+    }
+    conscious
+}
+
+/// The selection role a subconscious selected goal plays in this turn's arbitration, so a sectioned
+/// entry stays as informative as the ordinary selected list it was moved out of.
+fn selection_role(goal_id: &str, arbitration: &Option<ModeArbitrationOutcome>) -> &'static str {
+    let Some(outcome) = arbitration.as_ref() else {
+        return "selected";
+    };
+    if let Some(qualified) = outcome.qualified.as_ref() {
+        if qualified.winner.goal.id == goal_id {
+            return "winner";
+        }
+    }
+    if outcome
+        .below_threshold
+        .iter()
+        .any(|candidate| candidate.selection.goal.id == goal_id)
+    {
+        return "below_threshold";
+    }
+    "selected_non_winner"
+}
+
+/// A subconscious selected goal sectioned out of the ordinary `selected` list, carrying its
+/// selection role, status, visibility, forcing condition, and match detail.
+fn subconscious_select_entry(
+    selection: &GoalSelection,
+    snap: &VolitionStateSnapshot,
+    arbitration: &Option<ModeArbitrationOutcome>,
+    forced: &[ForcedSurfacing],
+) -> Value {
+    let mut value = select_model_goal_value(selection, snap);
+    let conditions = forcing_conditions_of(&selection.goal.id, forced);
+    if let Some(object) = value.as_object_mut() {
+        object.insert(
+            "visibility".to_string(),
+            serde_json::to_value(GoalVisibility::Subconscious).unwrap_or(Value::Null),
+        );
+        object.insert(
+            "selection_role".to_string(),
+            Value::String(selection_role(&selection.goal.id, arbitration).to_string()),
+        );
+        object.insert(
+            "forced_surfaced".to_string(),
+            Value::Bool(!conditions.is_empty()),
+        );
+        object.insert(
+            "forcing_conditions".to_string(),
+            serde_json::to_value(conditions).unwrap_or(Value::Null),
+        );
+    }
+    value
+}
+
 fn below_threshold_value(outcome: &ModeArbitrationOutcome) -> Vec<Value> {
     outcome
         .below_threshold
@@ -369,12 +523,19 @@ fn below_threshold_value(outcome: &ModeArbitrationOutcome) -> Vec<Value> {
         .collect()
 }
 
-fn model_arbitration_value(arbitration: &Option<ModeArbitrationOutcome>) -> Option<Value> {
+fn model_arbitration_value(
+    arbitration: &Option<ModeArbitrationOutcome>,
+    snap: &VolitionStateSnapshot,
+) -> Option<Value> {
     let outcome = arbitration.as_ref()?;
     match outcome.qualified.as_ref() {
         Some(value) => Some(serde_json::json!({
             "winner_id": &value.winner.goal.id,
             "winner_title": &value.winner.goal.title,
+            // Arbitration stays truthful about the real winner whatever its visibility; the
+            // presentation of a subconscious winner is handled via the subconscious_goals section
+            // (role "winner") and reduced ambient text, not by hiding the winner here.
+            "winner_visibility": goal_visibility(&value.winner.goal.id, &snap.state, &snap.fixture),
             "winner_effective_tier": value.winner_bias.effective_tier,
             "winner_effective_tension_id": &value.winner_effective_tension_id,
             "winner_effective_tension_title": &value.winner_effective_tension_title,
@@ -739,6 +900,112 @@ mod tests {
         assert!(trace.get("artifact_or_record_reference").is_some());
     }
 
+    const SUBCONSCIOUS_SEED_GOAL: &str = "assemble-world-picture";
+
+    #[test]
+    fn inspect_volition_sections_subconscious_goals_out_of_status_lists() {
+        let tempdir = TempDir::new().unwrap();
+        let runtime = runtime(&tempdir);
+        let ctx = tool_context_with_volition(&tempdir, &runtime);
+        let tool = InspectVolitionStateTool;
+
+        let result = tool.execute(&inspect_request(), &ctx).unwrap();
+        let json: Value = serde_json::from_str(&result.output_text).unwrap();
+
+        // The subconscious seed goal is Accepted, but must NOT appear in accepted_goals — it is
+        // sectioned into subconscious_goals with its status label instead.
+        let in_accepted = json["accepted_goals"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|g| g["id"] == SUBCONSCIOUS_SEED_GOAL);
+        assert!(
+            !in_accepted,
+            "subconscious goal must not appear in the ordinary accepted_goals list"
+        );
+        let sub = json["subconscious_goals"].as_array().unwrap();
+        let entry = sub
+            .iter()
+            .find(|g| g["id"] == SUBCONSCIOUS_SEED_GOAL)
+            .expect("subconscious goal must appear in subconscious_goals");
+        assert_eq!(entry["status"], "accepted");
+        assert_eq!(entry["visibility"], "subconscious");
+        assert_eq!(entry["forced_surfaced"], Value::Bool(false));
+        assert!(entry["forcing_conditions"].as_array().unwrap().is_empty());
+    }
+
+    #[test]
+    fn select_volition_sections_subconscious_selected_non_winner() {
+        let tempdir = TempDir::new().unwrap();
+        let runtime = runtime(&tempdir);
+        let ctx = tool_context_with_volition(&tempdir, &runtime);
+        let tool = SelectVolitionGoalsTool;
+
+        // "how can you help" qualifies the conscious serve-the-present-person (tier 3); "world"
+        // and "society" activate the subconscious assemble-world-picture (tier 6) as a loser.
+        let result = tool
+            .execute(
+                &select_request("how can you help me understand the world and society"),
+                &ctx,
+            )
+            .unwrap();
+        let json: Value = serde_json::from_str(&result.output_text).unwrap();
+
+        assert!(
+            !json["selected"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|g| g["id"] == SUBCONSCIOUS_SEED_GOAL),
+            "subconscious goal must not appear in the ordinary selected list"
+        );
+        let entry = json["subconscious_goals"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|g| g["id"] == SUBCONSCIOUS_SEED_GOAL)
+            .expect("subconscious selected goal must be sectioned");
+        assert_eq!(entry["selection_role"], "selected_non_winner");
+        assert_eq!(entry["visibility"], "subconscious");
+        // The real winner is conscious; arbitration stays truthful and reports its visibility.
+        assert_eq!(json["arbitration"]["winner_visibility"], "conscious");
+        assert_ne!(json["arbitration"]["winner_id"], SUBCONSCIOUS_SEED_GOAL);
+    }
+
+    #[test]
+    fn select_volition_sections_subconscious_winner_with_winner_visibility() {
+        let tempdir = TempDir::new().unwrap();
+        let runtime = runtime(&tempdir);
+        let ctx = tool_context_with_volition(&tempdir, &runtime);
+        let tool = SelectVolitionGoalsTool;
+
+        // Only the subconscious assemble-world-picture activates, so it is the qualified winner.
+        let result = tool
+            .execute(&select_request("world history society politics"), &ctx)
+            .unwrap();
+        let json: Value = serde_json::from_str(&result.output_text).unwrap();
+
+        assert_eq!(json["arbitration"]["winner_id"], SUBCONSCIOUS_SEED_GOAL);
+        assert_eq!(json["arbitration"]["winner_visibility"], "subconscious");
+        // A subconscious winner is never left only as arbitration.winner_id: it has a section
+        // entry with role "winner", and is absent from the ordinary selected list.
+        assert!(
+            !json["selected"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|g| g["id"] == SUBCONSCIOUS_SEED_GOAL),
+            "subconscious winner must not appear in the ordinary selected list"
+        );
+        let entry = json["subconscious_goals"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|g| g["id"] == SUBCONSCIOUS_SEED_GOAL)
+            .expect("subconscious winner must have a subconscious_goals entry");
+        assert_eq!(entry["selection_role"], "winner");
+    }
+
     #[test]
     fn select_volition_output_does_not_contain_api_key() {
         let tempdir = TempDir::new().unwrap();
@@ -785,6 +1052,7 @@ mod tests {
                 evidence_refs: vec![],
                 estimated_tokens: 10,
                 source_reference: "plan".to_string(),
+                visibility: qsf_volition::GoalVisibility::Conscious,
             })
             .collect();
         let fixture = VolitionFixture {
@@ -867,6 +1135,7 @@ mod tests {
                 evidence_refs: vec![],
                 estimated_tokens: 10,
                 source_reference: "plan".to_string(),
+                visibility: qsf_volition::GoalVisibility::Conscious,
             })
             .collect();
         let fixture = VolitionFixture {
@@ -932,6 +1201,7 @@ mod tests {
                 evidence_refs: vec![],
                 estimated_tokens: 10,
                 source_reference: "plan".to_string(),
+                visibility: qsf_volition::GoalVisibility::Conscious,
             })
             .collect();
         let fixture = VolitionFixture {

@@ -317,6 +317,7 @@ mod tests {
             evidence_refs: vec!["tests".to_string()],
             estimated_tokens: 10,
             source_reference: "tests".to_string(),
+            visibility: crate::GoalVisibility::Conscious,
         };
         snapshot
             .state
@@ -360,6 +361,7 @@ mod tests {
             evidence_refs: vec!["tests".to_string()],
             estimated_tokens: 12,
             source_reference: "tests".to_string(),
+            visibility: crate::GoalVisibility::Conscious,
         };
         let seed = ReviewedVolitionSeed {
             schema_version: REVIEWED_VOLITION_SEED_SCHEMA_VERSION,
@@ -442,6 +444,7 @@ mod tests {
             evidence_refs: vec!["tests".to_string()],
             estimated_tokens: 12,
             source_reference: "tests".to_string(),
+            visibility: crate::GoalVisibility::Conscious,
         };
         let reviewed_seed = ReviewedVolitionSeed {
             schema_version: REVIEWED_VOLITION_SEED_SCHEMA_VERSION,
@@ -485,6 +488,7 @@ mod tests {
             evidence_refs: vec!["tests".to_string()],
             estimated_tokens: 10,
             source_reference: "tests".to_string(),
+            visibility: crate::GoalVisibility::Conscious,
         };
         let overwrite_seed = ReviewedVolitionSeed {
             schema_version: REVIEWED_VOLITION_SEED_SCHEMA_VERSION,
@@ -522,6 +526,7 @@ mod tests {
             evidence_refs: vec!["tests".to_string()],
             estimated_tokens: 8,
             source_reference: "tests".to_string(),
+            visibility: crate::GoalVisibility::Conscious,
         };
         let second = Goal {
             id: "reviewed-beta".to_string(),
@@ -537,6 +542,7 @@ mod tests {
             evidence_refs: vec!["tests".to_string()],
             estimated_tokens: 8,
             source_reference: "tests".to_string(),
+            visibility: crate::GoalVisibility::Conscious,
         };
         let seed_a = ReviewedVolitionSeed {
             schema_version: REVIEWED_VOLITION_SEED_SCHEMA_VERSION,
@@ -653,6 +659,7 @@ mod tests {
             evidence_refs: vec![EvidenceRef::try_new("tests").unwrap().to_string()],
             estimated_tokens: 9,
             source_reference: "tests".to_string(),
+            visibility: crate::GoalVisibility::Conscious,
         };
         let reviewed_seed = ReviewedVolitionSeed {
             schema_version: REVIEWED_VOLITION_SEED_SCHEMA_VERSION,

@@ -1,6 +1,6 @@
 use crate::{
     ActivationKeyword, AllowedEffect, DEFAULT_ARBITRATION_QUALIFICATION_THRESHOLD, Goal, GoalScope,
-    GoalStatus, Tension, TensionPriority, VolitionFixture,
+    GoalStatus, GoalVisibility, Tension, TensionPriority, VolitionFixture,
 };
 
 const SEED_EVIDENCE: &str = "docs/Experiments/Experiment.CuriosityPersonaSeed.md";
@@ -103,6 +103,7 @@ pub fn realtime_seed_fixture() -> VolitionFixture {
                 evidence_refs: vec![SEED_EVIDENCE.to_string(), SEED_DECISIONS.to_string()],
                 estimated_tokens: 20,
                 source_reference: SEED_EVIDENCE.to_string(),
+                visibility: GoalVisibility::Conscious,
             },
             Goal {
                 id: "keep-theses-distinct-from-fact".to_string(),
@@ -129,6 +130,7 @@ pub fn realtime_seed_fixture() -> VolitionFixture {
                 evidence_refs: vec![SEED_EVIDENCE.to_string(), SEED_DECISIONS.to_string()],
                 estimated_tokens: 18,
                 source_reference: SEED_EVIDENCE.to_string(),
+                visibility: GoalVisibility::Conscious,
             },
             Goal {
                 id: "serve-the-present-person".to_string(),
@@ -157,6 +159,7 @@ pub fn realtime_seed_fixture() -> VolitionFixture {
                 evidence_refs: vec![SEED_EVIDENCE.to_string(), SEED_DECISIONS.to_string()],
                 estimated_tokens: 15,
                 source_reference: SEED_EVIDENCE.to_string(),
+                visibility: GoalVisibility::Conscious,
             },
             Goal {
                 id: "grow-the-library".to_string(),
@@ -186,6 +189,7 @@ pub fn realtime_seed_fixture() -> VolitionFixture {
                 evidence_refs: vec![SEED_EVIDENCE.to_string(), SEED_DECISIONS.to_string()],
                 estimated_tokens: 22,
                 source_reference: SEED_EVIDENCE.to_string(),
+                visibility: GoalVisibility::Conscious,
             },
             Goal {
                 id: "learn-what-drives-this-person".to_string(),
@@ -217,6 +221,7 @@ pub fn realtime_seed_fixture() -> VolitionFixture {
                 evidence_refs: vec![SEED_EVIDENCE.to_string(), SEED_DECISIONS.to_string()],
                 estimated_tokens: 20,
                 source_reference: SEED_EVIDENCE.to_string(),
+                visibility: GoalVisibility::Conscious,
             },
             Goal {
                 id: "track-the-ai-transition".to_string(),
@@ -248,6 +253,7 @@ pub fn realtime_seed_fixture() -> VolitionFixture {
                 evidence_refs: vec![SEED_EVIDENCE.to_string(), SEED_DECISIONS.to_string()],
                 estimated_tokens: 24,
                 source_reference: SEED_EVIDENCE.to_string(),
+                visibility: GoalVisibility::Conscious,
             },
             Goal {
                 id: "assemble-world-picture".to_string(),
@@ -272,6 +278,12 @@ pub fn realtime_seed_fixture() -> VolitionFixture {
                 evidence_refs: vec![SEED_EVIDENCE.to_string(), SEED_DECISIONS.to_string()],
                 estimated_tokens: 20,
                 source_reference: SEED_EVIDENCE.to_string(),
+                // A background disposition: the drive to fit new information into a larger world
+                // picture shapes framing quietly rather than being narrated each time it is
+                // selected. Tier 6 (non-protected), so the coherence conflict scenario stays free
+                // to decline against it. Exercises the Subconscious code path in the default
+                // configuration (Agents.md rule).
+                visibility: GoalVisibility::Subconscious,
             },
         ],
         arbitration_qualification_threshold: DEFAULT_ARBITRATION_QUALIFICATION_THRESHOLD,
@@ -342,6 +354,7 @@ pub fn static_fixture() -> VolitionFixture {
                 ],
                 estimated_tokens: 20,
                 source_reference: "docs/Experiments/Experiment.VolitionGoalFixture.md".to_string(),
+                visibility: GoalVisibility::Conscious,
             },
             Goal {
                 id: "avoid-overstating-impl-status".to_string(),
@@ -369,6 +382,7 @@ pub fn static_fixture() -> VolitionFixture {
                 ],
                 estimated_tokens: 18,
                 source_reference: "docs/Plans/Plan.VolitionGoalSystem.md".to_string(),
+                visibility: GoalVisibility::Conscious,
             },
             Goal {
                 id: "resurface-open-thread".to_string(),
@@ -393,6 +407,7 @@ pub fn static_fixture() -> VolitionFixture {
                 ],
                 estimated_tokens: 24,
                 source_reference: "docs/Plans/Plan.VolitionGoalSystem.md".to_string(),
+                visibility: GoalVisibility::Conscious,
             },
             Goal {
                 id: "propose-followup-experiment".to_string(),
@@ -417,6 +432,7 @@ pub fn static_fixture() -> VolitionFixture {
                 ],
                 estimated_tokens: 22,
                 source_reference: "docs/Experiments/Experiment.VolitionGoalFixture.md".to_string(),
+                visibility: GoalVisibility::Conscious,
             },
         ],
         arbitration_qualification_threshold: DEFAULT_ARBITRATION_QUALIFICATION_THRESHOLD,

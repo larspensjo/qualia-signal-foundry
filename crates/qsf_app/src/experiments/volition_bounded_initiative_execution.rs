@@ -239,6 +239,7 @@ impl Experiment for VolitionBoundedInitiativeExecutionExperiment {
                 output: initiative_output.clone(),
                 rationale: rationale.clone(),
                 tick: 4,
+                rendered_ref: None,
             },
         );
 
@@ -703,6 +704,7 @@ mod tests {
                 output: output.clone(),
                 rationale: "test".to_string(),
                 tick: 4,
+                rendered_ref: None,
             },
         );
 

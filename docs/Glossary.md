@@ -118,6 +118,9 @@ External or informal wording -> project vocabulary -> verify status against code
 | VolitionEvent | A pure reducer event that changes volition state, such as `GoalActivated`, `GoalBlocked`, `GoalSatisfied`, `GoalRetired`, or `ModeChanged`. | motivational update, lifecycle update | Built |
 | GoalStatus | The lifecycle status of a goal: `Proposed`, `Accepted`, `Active`, `Blocked`, `Satisfied`, `Cooldown`, or `Retired`. | goal lifecycle | Built |
 | GoalScope | Where a goal applies: `Input`, `Session`, or `Project`. | local/session/persistent goal | Built |
+| GoalVisibility | A goal-definition attribute (`Conscious` or `Subconscious`) that governs narration only, never selection or arbitration. A `Subconscious` goal biases behavior identically but is surfaced (in introspection tools, the operator panel, and ambient text) only when forced by a rendered initiative line or a coherence conflict naming it; ordinary subconscious ambient exposure is reduced. Live-formed candidates are always `Conscious`. | conscious/subconscious goal, background disposition | Built |
+| Forced surfacing | The pure derivation (`qsf_volition::visibility::forced_surfaced_goals`) of which subconscious goals must be narrated this run, from recorded facts only (a rendered initiative or a naming `DeclinedCandidate`); a suppressed internal initiative never forces it. | must explain a hidden goal | Built |
+| AmbientExposure | How a turn's arbitration winner is exposed in model-visible text: `ordinary` (conscious winner), `reduced_subconscious` (subconscious, no forcing — identity withheld), or `forced_surfaced_subconscious` (subconscious, forced — full labeled detail). | how much of the goal to say | Built |
 | EvidenceRef | A non-empty reference to evidence supporting a goal, progress update, satisfaction, or candidate acceptance. | justification, grounding, trace evidence | Built |
 | Salience | Integer points that make a goal more or less prominent over ticks. It rises on activation/progress and decays over time. | importance, emotional intensity, unresolvedness | Built |
 | GoalSelection | A context-neutral selected goal: goal, relevance score, matched terms, and proposed initiative. | chosen goal, selected intention | Built |
@@ -152,8 +155,8 @@ External or informal wording -> project vocabulary -> verify status against code
 | Initiate topics | Bounded initiative + realtime context injection | Offline structure exists; live conversational initiation is later work. |
 | Resist or redirect | Shaping intensity with protected-tier cap | Designed next; must be rare, trace-backed, and subordinate to protected tiers. |
 | Unfinished business | `Blocked` goals, open-thread goals, persistence/continuity | Partly built. Cross-session persistence is an open ordering decision. |
-| Conscious goals | Inspectable goals | Built for ordinary goal inspection. A formal visibility attribute is deferred. |
-| Subconscious goals | Goal visibility/filtering attribute | Deferred. If added, it must not create untraceable hidden motives. |
+| Conscious goals | `GoalVisibility::Conscious` | Delivered. The default visibility; narrated wherever selected or winning. |
+| Subconscious goals | `GoalVisibility::Subconscious` + forced surfacing | Delivered (translated). A background disposition that biases behavior identically but is narrated only when forced (rendered initiative or coherence conflict); the operator panel and traces keep full detail, so there are no untraceable hidden motives. |
 | World model | Compact structured current state | Built only in narrow forms: current input, memories, traces, open questions, runtime state. Not a full simulated reality. |
 | Desired state | Goal/tension concern summary | Represented through goals and their satisfaction conditions. |
 | Delta | `DetectedDelta` or opportunity/context-injection trace | Built in compact offline form; planned for realtime influence. |

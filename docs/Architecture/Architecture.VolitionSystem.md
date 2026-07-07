@@ -185,6 +185,33 @@ and—going forward—`qsf_realtime_server`), not in the crate.
   websocket message; nested `VolitionStateInspection` and the `inspect_volition_state` tool are
   unchanged. Visualization-first stance recorded in the 2026-07-06 DecisionLog entry
   "Volition functional signals are visualization-first and operator-panel only".
+- Conscious/subconscious goal visibility as an introspection-surfacing filter. `GoalVisibility`
+  (`Conscious` | `Subconscious`, `#[serde(default) = Conscious]`) is part of the goal *definition*
+  on `Goal` (fixture-authored; D3 runtime-immutability already covers it) and on
+  `ProposedGoalCandidate` (defaulted/internal — live-formed candidates stay `Conscious`, and
+  `json_schema_hint` deliberately omits it). Visibility never changes `select_goals_ranked`,
+  `arbitrate_with_mode`, salience, the surfacing gate, or coherence — only *presentation*. A pure,
+  never-stored `qsf_volition::visibility`
+  ([crates/qsf_volition/src/visibility.rs](../../crates/qsf_volition/src/visibility.rs)) derives —
+  from recorded facts only — which subconscious goals are **forced surfaced**:
+  `forced_surfaced_goals(state, fixture)` returns a `RenderedInitiative` condition (a *rendered*
+  initiative line, proven by reducer-backed `last_rendered_initiative_tick` /
+  `last_rendered_initiative_ref`, distinct from a suppressed internal `last_initiative_tick`) or a
+  `CoherenceConflict` condition (the goal named in a `DeclinedCandidate`). The realtime layer
+  applies this as three surfaces: `inspect_volition_state` / `select_volition_goals` section
+  subconscious goals into a labeled `subconscious_goals` block with their forcing condition and
+  selection role (never merged into the ordinary lists), the operator panel keeps **full** detail
+  and badges them (`VolitionInspectionCapture` gains `forced_surfaced`; the decision summary gains
+  `winner_visibility` / `ambient_exposure`), and ambient turn injection reduces an ordinary
+  subconscious winner to a labeled background-guidance line (withholding title/summary/id) via
+  `AmbientExposure` (`ordinary` / `reduced_subconscious` / `forced_surfaced_subconscious`) while
+  the trace keeps the full winner identity. Offline-validated by the `volition-goal-visibility`
+  experiment
+  ([crates/qsf_app/src/experiments/volition_goal_visibility.rs](../../crates/qsf_app/src/experiments/volition_goal_visibility.rs)),
+  which re-derives every forcing condition and the visibility-flip invariant from recorded state
+  per [Experiment.VolitionGoalVisibility.md](../Experiments/Experiment.VolitionGoalVisibility.md).
+  Stance recorded in the 2026-07-06 DecisionLog entry "Subconscious volition goals use reduced
+  ambient exposure".
 
 **Not in this crate (by design):**
 

@@ -130,12 +130,38 @@ export type VolitionSuppressionReason =
   | "non_renderable_output"
   | "below_qualification_threshold";
 
+/// Narration visibility of a goal. Mirrors `qsf_volition::GoalVisibility` (snake_case). A
+/// `subconscious` goal biases selection and arbitration identically to a `conscious` one but is a
+/// background disposition surfaced only on introspection or when forced.
+export type VolitionGoalVisibility = "conscious" | "subconscious";
+
 export interface VolitionGoalStatusSummary {
   id: string;
   title: string;
   salience: number;
   cooldownUntilTick: number | null;
   lastActivatedTick: number | null;
+  visibility: VolitionGoalVisibility;
+}
+
+/// How the arbitration winner was exposed in this turn's model-visible text. Mirrors
+/// `AmbientExposure` (snake_case).
+export type VolitionAmbientExposure =
+  | "ordinary"
+  | "reduced_subconscious"
+  | "forced_surfaced_subconscious";
+
+/// Which recorded fact forces a subconscious goal to surface. Mirrors
+/// `qsf_volition::ForcingCondition`, which serde-tags internally on `kind`.
+export type VolitionForcingCondition =
+  | { kind: "rendered_initiative"; tick: number; renderedRef: string | null }
+  | { kind: "coherence_conflict"; candidateId: string; candidateTitle: string; tick: number };
+
+/// One subconscious goal forced to surface, with the condition forcing it. Mirrors
+/// `qsf_volition::ForcedSurfacing`.
+export interface VolitionForcedSurfacing {
+  goalId: string;
+  condition: VolitionForcingCondition;
 }
 
 export interface VolitionInitiativeSummary {
@@ -171,6 +197,7 @@ export interface VolitionTurnWinnerSummary {
   winnerEffectiveTier: number;
   winnerBiasedTier: number;
   protectedTierActive: boolean;
+  winnerVisibility: VolitionGoalVisibility;
 }
 
 export type KeywordWeightClass = "weak" | "normal" | "strong";
@@ -194,6 +221,8 @@ export interface VolitionTurnDecisionSummary {
   lastInitiativeSurfaced: boolean;
   lastInitiativeSuppressionReason: VolitionSuppressionReason | null;
   lastInitiativeRenderedLinePresent: boolean;
+  ambientExposure: VolitionAmbientExposure;
+  subconsciousSelectedCount: number;
 }
 
 /// The four functional-signal kinds. Display-only instrument readouts derived from recorded
@@ -265,6 +294,10 @@ export interface VolitionInspectionCapture {
   /// Display-only functional signals riding the capture. Empty for older captures that
   /// predate the field (the parser defaults a missing `signals` key to an empty list).
   signals: VolitionFunctionalSignal[];
+  /// Subconscious goals forced to surface this run, with the condition forcing each. Empty for
+  /// older captures that predate the field. Operator-panel only — used to badge which
+  /// subconscious goals surfaced and why.
+  forcedSurfaced: VolitionForcedSurfacing[];
 }
 
 export interface VolitionPanelRow {
@@ -596,7 +629,62 @@ export function parseVolitionStateMessage(raw: string): VolitionInspectionCaptur
     inspection: parsedInspection,
     decision: parsedDecision,
     signals: parseFunctionalSignals(parsed.signals),
+    forcedSurfaced: parseForcedSurfaced(parsed.forced_surfaced),
   };
+}
+
+/// Parse the top-level `forced_surfaced` array of a `volition_state` message. Defensive and
+/// non-fatal, like `parseFunctionalSignals`: a missing key or malformed entry yields an empty
+/// list / dropped entry rather than nulling out the capture — forced-surfacing is display-only.
+function parseForcedSurfaced(value: unknown): VolitionForcedSurfacing[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+  const forced: VolitionForcedSurfacing[] = [];
+  for (const entry of value) {
+    const parsed = parseForcedSurfacing(entry);
+    if (parsed !== null) {
+      forced.push(parsed);
+    }
+  }
+  return forced;
+}
+
+function parseForcedSurfacing(value: unknown): VolitionForcedSurfacing | null {
+  if (!isRecord(value) || typeof value.goal_id !== "string") {
+    return null;
+  }
+  const condition = parseForcingCondition(value.condition);
+  if (condition === null) {
+    return null;
+  }
+  return { goalId: value.goal_id, condition };
+}
+
+function parseForcingCondition(value: unknown): VolitionForcingCondition | null {
+  if (!isRecord(value) || typeof value.kind !== "string" || typeof value.tick !== "number") {
+    return null;
+  }
+  if (value.kind === "rendered_initiative") {
+    return {
+      kind: "rendered_initiative",
+      tick: value.tick,
+      renderedRef: typeof value.rendered_ref === "string" ? value.rendered_ref : null,
+    };
+  }
+  if (
+    value.kind === "coherence_conflict" &&
+    typeof value.candidate_id === "string" &&
+    typeof value.candidate_title === "string"
+  ) {
+    return {
+      kind: "coherence_conflict",
+      candidateId: value.candidate_id,
+      candidateTitle: value.candidate_title,
+      tick: value.tick,
+    };
+  }
+  return null;
 }
 
 /// Parse the top-level `signals` array of a `volition_state` message. Defensive and non-fatal:
@@ -819,6 +907,7 @@ function convertVolitionTurnDecisionSummary(value: unknown): VolitionTurnDecisio
       winner_effective_tier: number;
       winner_biased_tier: number;
       protected_tier_active: boolean;
+      winner_visibility?: unknown;
     } | null;
     qualification_threshold: number;
     below_threshold: Array<{
@@ -841,6 +930,8 @@ function convertVolitionTurnDecisionSummary(value: unknown): VolitionTurnDecisio
     last_initiative_surfaced: boolean;
     last_initiative_suppression_reason: VolitionSuppressionReason | null;
     last_initiative_rendered_line_present: boolean;
+    ambient_exposure?: unknown;
+    subconscious_selected_count?: unknown;
   };
   return {
     winner:
@@ -852,6 +943,7 @@ function convertVolitionTurnDecisionSummary(value: unknown): VolitionTurnDecisio
             winnerEffectiveTier: wire.winner.winner_effective_tier,
             winnerBiasedTier: wire.winner.winner_biased_tier,
             protectedTierActive: wire.winner.protected_tier_active,
+            winnerVisibility: toGoalVisibility(wire.winner.winner_visibility),
           },
     qualificationThreshold: wire.qualification_threshold,
     belowThreshold: wire.below_threshold.map((candidate) => ({
@@ -871,7 +963,18 @@ function convertVolitionTurnDecisionSummary(value: unknown): VolitionTurnDecisio
     lastInitiativeSurfaced: wire.last_initiative_surfaced,
     lastInitiativeSuppressionReason: wire.last_initiative_suppression_reason,
     lastInitiativeRenderedLinePresent: wire.last_initiative_rendered_line_present,
+    ambientExposure: toAmbientExposure(wire.ambient_exposure),
+    subconsciousSelectedCount:
+      typeof wire.subconscious_selected_count === "number" ? wire.subconscious_selected_count : 0,
   };
+}
+
+/// Coerce a wire `ambient_exposure` value, defaulting to `"ordinary"` for missing/unknown
+/// (back-compat with captures that predate the field).
+function toAmbientExposure(value: unknown): VolitionAmbientExposure {
+  return value === "reduced_subconscious" || value === "forced_surfaced_subconscious"
+    ? value
+    : "ordinary";
 }
 
 function isVolitionStateInspectionCapture(value: unknown): boolean {
@@ -977,6 +1080,7 @@ function convertVolitionGoalStatusSummary(value: {
   salience: number;
   cooldown_until_tick: number | null;
   last_activated_tick: number | null;
+  visibility?: unknown;
 }): VolitionGoalStatusSummary {
   return {
     id: value.id,
@@ -984,7 +1088,14 @@ function convertVolitionGoalStatusSummary(value: {
     salience: value.salience,
     cooldownUntilTick: value.cooldown_until_tick,
     lastActivatedTick: value.last_activated_tick,
+    visibility: toGoalVisibility(value.visibility),
   };
+}
+
+/// Coerce a wire `visibility` value to a `VolitionGoalVisibility`, defaulting to `"conscious"`
+/// for a missing/unknown value (back-compat with captures that predate the field).
+function toGoalVisibility(value: unknown): VolitionGoalVisibility {
+  return value === "subconscious" ? "subconscious" : "conscious";
 }
 
 function isVolitionInitiativeSummary(value: unknown): value is VolitionInitiativeSummary {
@@ -1671,11 +1782,26 @@ export function selectVolitionPanelModel(state: ConversationState): VolitionPane
       rows: [
         { label: "Mode", value: formatLabelValue(capture.inspection.mode) },
         { label: "Tick", value: String(capture.inspection.tick) },
-        { label: "Active goals", value: formatGoalSummaries(capture.inspection.activeGoals) },
-        { label: "Accepted goals", value: formatGoalSummaries(capture.inspection.acceptedGoals) },
-        { label: "Blocked goals", value: formatGoalSummaries(capture.inspection.blockedGoals) },
-        { label: "Cooldown goals", value: formatGoalSummaries(capture.inspection.cooldownGoals) },
-        { label: "Retired goals", value: formatGoalSummaries(capture.inspection.retiredGoals) },
+        {
+          label: "Active goals",
+          value: formatGoalSummaries(capture.inspection.activeGoals, capture.forcedSurfaced),
+        },
+        {
+          label: "Accepted goals",
+          value: formatGoalSummaries(capture.inspection.acceptedGoals, capture.forcedSurfaced),
+        },
+        {
+          label: "Blocked goals",
+          value: formatGoalSummaries(capture.inspection.blockedGoals, capture.forcedSurfaced),
+        },
+        {
+          label: "Cooldown goals",
+          value: formatGoalSummaries(capture.inspection.cooldownGoals, capture.forcedSurfaced),
+        },
+        {
+          label: "Retired goals",
+          value: formatGoalSummaries(capture.inspection.retiredGoals, capture.forcedSurfaced),
+        },
         {
           label: "Pending candidates",
           value: String(capture.inspection.pendingCandidateCount),
@@ -1723,6 +1849,10 @@ export function selectVolitionPanelModel(state: ConversationState): VolitionPane
           {
             label: "Winner",
             value: `${decision.winner.winnerGoalTitle} [${decision.winner.winnerGoalId}]`,
+          },
+          {
+            label: "Winner visibility",
+            value: formatLabelValue(decision.winner.winnerVisibility),
           },
           {
             label: "Winner tiers",
@@ -1778,6 +1908,14 @@ export function selectVolitionPanelModel(state: ConversationState): VolitionPane
             value: yesNo(decision.lastInitiativeRenderedLinePresent),
           },
           {
+            label: "Ambient exposure",
+            value: formatLabelValue(decision.ambientExposure),
+          },
+          {
+            label: "Subconscious selected",
+            value: String(decision.subconsciousSelectedCount),
+          },
+          {
             label: "Trace ref",
             value: capture.responseCreateEventRef,
           },
@@ -1802,11 +1940,39 @@ function formatBelowThreshold(candidates: VolitionBelowThresholdSummary[]): stri
     .join("; ");
 }
 
-function formatGoalSummaries(goals: VolitionGoalStatusSummary[]): string {
+function formatGoalSummaries(
+  goals: VolitionGoalStatusSummary[],
+  forcedSurfaced: VolitionForcedSurfacing[],
+): string {
   if (goals.length === 0) {
     return "none";
   }
-  return goals.map((goal) => `${goal.title} [${goal.id}]`).join("; ");
+  return goals
+    .map((goal) => `${goal.title} [${goal.id}]${goalVisibilityBadge(goal, forcedSurfaced)}`)
+    .join("; ");
+}
+
+/// A short badge appended to a subconscious goal so the operator can see it is a background
+/// disposition and whether it is forced surfaced (and why). Conscious goals get no badge, so the
+/// panel never hides a subconscious goal — it labels it (guardrail D2).
+function goalVisibilityBadge(
+  goal: VolitionGoalStatusSummary,
+  forcedSurfaced: VolitionForcedSurfacing[],
+): string {
+  if (goal.visibility !== "subconscious") {
+    return "";
+  }
+  const reasons = forcedSurfaced
+    .filter((entry) => entry.goalId === goal.id)
+    .map((entry) => forcingConditionLabel(entry.condition));
+  if (reasons.length === 0) {
+    return " (subconscious)";
+  }
+  return ` (subconscious · surfaced: ${reasons.join(", ")})`;
+}
+
+function forcingConditionLabel(condition: VolitionForcingCondition): string {
+  return condition.kind === "rendered_initiative" ? "rendered initiative" : "coherence conflict";
 }
 
 function formatInitiativeSummaries(summaries: VolitionInitiativeSummary[]): string {

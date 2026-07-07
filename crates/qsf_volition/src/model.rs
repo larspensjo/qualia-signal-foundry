@@ -172,6 +172,37 @@ pub struct Goal {
     pub evidence_refs: Vec<String>,
     pub estimated_tokens: usize,
     pub source_reference: String,
+    /// Whether this goal is narrated in ordinary output (`Conscious`) or kept as a background
+    /// disposition surfaced only on introspection or when its behavior forces an explanation
+    /// (`Subconscious`). Part of the goal *definition* (fixture-authored), so D3's
+    /// runtime-immutability of definitions already covers it — no runtime path flips it.
+    /// Visibility never changes selection, arbitration, salience, or coherence; it is a
+    /// presentation/surfacing filter only. `#[serde(default)]` = `Conscious` so existing
+    /// fixtures, continuity snapshots, and previously captured artifacts still deserialize.
+    #[serde(default)]
+    pub visibility: GoalVisibility,
+}
+
+/// A goal's narration visibility. `Conscious` goals are narrated wherever they are selected or
+/// win arbitration; `Subconscious` goals bias salience and arbitration identically but are
+/// narrated only on introspection or forced surfacing (a rendered initiative line or a coherence
+/// conflict that names them). Orthogonal to arbitration tier — a protected goal may be
+/// subconscious. See [`crate::visibility`] for the pure forced-surfacing derivation.
+#[derive(Clone, Copy, Debug, Default, Deserialize, Eq, Hash, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum GoalVisibility {
+    #[default]
+    Conscious,
+    Subconscious,
+}
+
+impl fmt::Display for GoalVisibility {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str(match self {
+            Self::Conscious => "conscious",
+            Self::Subconscious => "subconscious",
+        })
+    }
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, PartialEq, Serialize)]
@@ -275,5 +306,66 @@ mod tests {
         assert_eq!(KeywordWeightClass::Weak.weight(), 1);
         assert_eq!(KeywordWeightClass::Normal.weight(), 4);
         assert_eq!(KeywordWeightClass::Strong.weight(), 8);
+    }
+
+    #[test]
+    fn goal_visibility_defaults_to_conscious() {
+        assert_eq!(GoalVisibility::default(), GoalVisibility::Conscious);
+    }
+
+    #[test]
+    fn goal_visibility_serializes_snake_case() {
+        assert_eq!(
+            serde_json::to_value(GoalVisibility::Conscious).unwrap(),
+            serde_json::json!("conscious")
+        );
+        assert_eq!(
+            serde_json::to_value(GoalVisibility::Subconscious).unwrap(),
+            serde_json::json!("subconscious")
+        );
+    }
+
+    #[test]
+    fn goal_deserializes_without_visibility_as_conscious() {
+        // A goal serialized before the visibility field existed (fixture / continuity snapshot).
+        let json = serde_json::json!({
+            "id": "g1",
+            "title": "G1",
+            "summary": "s",
+            "tension_ids": [],
+            "status": "accepted",
+            "scope": "session",
+            "base_priority": 70,
+            "activation_keywords": [],
+            "allowed_effects": [],
+            "satisfaction_condition_summary": "done",
+            "evidence_refs": [],
+            "estimated_tokens": 10,
+            "source_reference": "plan"
+        });
+        let goal: Goal = serde_json::from_value(json).unwrap();
+        assert_eq!(goal.visibility, GoalVisibility::Conscious);
+    }
+
+    #[test]
+    fn goal_roundtrips_subconscious_visibility() {
+        let json = serde_json::json!({
+            "id": "g1",
+            "title": "G1",
+            "summary": "s",
+            "tension_ids": [],
+            "status": "accepted",
+            "scope": "session",
+            "base_priority": 70,
+            "activation_keywords": [],
+            "allowed_effects": [],
+            "satisfaction_condition_summary": "done",
+            "evidence_refs": [],
+            "estimated_tokens": 10,
+            "source_reference": "plan",
+            "visibility": "subconscious"
+        });
+        let goal: Goal = serde_json::from_value(json).unwrap();
+        assert_eq!(goal.visibility, GoalVisibility::Subconscious);
     }
 }

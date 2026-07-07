@@ -52,3 +52,6 @@ pub use signals::*;
 
 mod stance;
 pub use stance::*;
+
+mod visibility;
+pub use visibility::*;

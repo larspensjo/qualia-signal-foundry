@@ -25,6 +25,7 @@ mod volition_continuity;
 mod volition_emotion_signals;
 mod volition_goal_coherence;
 mod volition_goal_fixture;
+mod volition_goal_visibility;
 mod volition_mode_bias;
 mod volition_reflection_goal_candidates;
 mod volition_salience_and_satisfaction;

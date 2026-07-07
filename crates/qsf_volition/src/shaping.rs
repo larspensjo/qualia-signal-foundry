@@ -239,6 +239,7 @@ mod tests {
                 evidence_refs: vec![],
                 estimated_tokens: 10,
                 source_reference: "test".to_string(),
+                visibility: crate::GoalVisibility::Conscious,
             }],
             arbitration_qualification_threshold: DEFAULT_ARBITRATION_QUALIFICATION_THRESHOLD,
         };

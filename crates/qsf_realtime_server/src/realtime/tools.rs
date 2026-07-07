@@ -17,8 +17,9 @@ use serde::Serialize;
 use crate::diagnostics::DiagnosticTrust;
 use crate::realtime::memory_store::load_session_memory_store;
 use crate::realtime::volition_tools::{
-    INSPECT_VOLITION_STATE_TOOL_NAME, InspectVolitionStateTool, SELECT_VOLITION_GOALS_TOOL_NAME,
-    SelectVolitionGoalsTool,
+    INSPECT_VOLITION_STATE_TOOL_DESCRIPTION, INSPECT_VOLITION_STATE_TOOL_NAME,
+    InspectVolitionStateTool, SELECT_VOLITION_GOALS_TOOL_DESCRIPTION,
+    SELECT_VOLITION_GOALS_TOOL_NAME, SelectVolitionGoalsTool,
 };
 use crate::state::{AppState, SessionRuntime};
 
@@ -150,7 +151,7 @@ pub fn default_tool_definitions() -> Vec<RealtimeToolDefinition> {
         ),
         RealtimeToolDefinition::function(
             INSPECT_VOLITION_STATE_TOOL_NAME,
-            "Inspect the current simulated volition state: mode, tick, goals by status, and last initiative summaries.",
+            INSPECT_VOLITION_STATE_TOOL_DESCRIPTION,
             serde_json::json!({
                 "type": "object",
                 "properties": {},
@@ -159,7 +160,7 @@ pub fn default_tool_definitions() -> Vec<RealtimeToolDefinition> {
         ),
         RealtimeToolDefinition::function(
             SELECT_VOLITION_GOALS_TOOL_NAME,
-            "Given a query, return ranked active goals, omitted goals, and arbitration result without mutating state.",
+            SELECT_VOLITION_GOALS_TOOL_DESCRIPTION,
             serde_json::json!({
                 "type": "object",
                 "properties": {
@@ -860,6 +861,37 @@ mod tests {
             names
                 .iter()
                 .any(|name| name == SELECT_VOLITION_GOALS_TOOL_NAME)
+        );
+    }
+
+    #[test]
+    fn default_volition_tool_descriptions_mention_subconscious_section() {
+        // The realtime session tool list is the model-facing surface: it must tell the model that
+        // subconscious goals are sectioned out, and that select reports the winner's visibility.
+        let definitions = default_tool_definitions();
+        let description_of = |name: &str| {
+            definitions
+                .iter()
+                .find(|definition| definition.name == name)
+                .unwrap_or_else(|| panic!("{name} must be in default_tool_definitions"))
+                .description
+                .clone()
+        };
+
+        let inspect = description_of(INSPECT_VOLITION_STATE_TOOL_NAME);
+        assert!(
+            inspect.contains("subconscious_goals"),
+            "inspect description must mention the subconscious_goals section: {inspect}"
+        );
+
+        let select = description_of(SELECT_VOLITION_GOALS_TOOL_NAME);
+        assert!(
+            select.contains("subconscious_goals"),
+            "select description must mention the subconscious_goals section: {select}"
+        );
+        assert!(
+            select.contains("winner_visibility"),
+            "select description must mention winner_visibility: {select}"
         );
     }
 

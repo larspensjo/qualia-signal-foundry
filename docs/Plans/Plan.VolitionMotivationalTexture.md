@@ -156,7 +156,7 @@ offline validation and the trace contract in
   instrument readouts, not claimed feelings. Live `satisfaction` remains offline-harness-only
   until ordinary realtime turns emit `GoalSatisfied` lifecycle events.
 
-### Phase 4 — Conscious / subconscious visibility (brief §6) — current
+### Phase 4 — Conscious / subconscious visibility (brief §6) — implemented (offline)
 
 A visibility attribute on goals: a "subconscious" goal biases salience and arbitration exactly
 like any other goal but is narrated only on introspection or when its behavior forces an
@@ -364,11 +364,14 @@ suspend / resume / abandon. The current system is single-turn initiative.
   with its trace contract. The DecisionLog entry adopting visibility-as-surfacing-filter and
   reduced ambient exposure for ordinary subconscious winners is done
   ([2026-07-06](../DecisionLog.md#2026-07-06---subconscious-volition-goals-use-reduced-ambient-exposure)).
-- **On implementing Phase 4:** refresh the Implementation Status of
-  [Architecture.VolitionSystem.md](../Architecture/Architecture.VolitionSystem.md) with the
-  visibility attribute, the pure surfacing-policy module, and the sectioned introspection
-  surface; add `GoalVisibility` to [Glossary.md](../Glossary.md); annotate the brief's §6
-  **delivered (translated)**.
+- **Done on implementing Phase 4:** the Implementation Status of
+  [Architecture.VolitionSystem.md](../Architecture/Architecture.VolitionSystem.md) now carries the
+  visibility attribute, the pure `qsf_volition::visibility` surfacing-policy module, the sectioned
+  introspection surface, the operator-panel badges, and the reduced ambient injection;
+  [Glossary.md](../Glossary.md) has `GoalVisibility`, `Forced surfacing`, and `AmbientExposure`
+  rows and the brief-translation rows for conscious/subconscious goals are marked delivered; the
+  brief's §6 is annotated **delivered (translated)**; `Experiment.VolitionGoalVisibility.md`
+  records the offline validation. Open: the browser + live-voice human review.
 - When a later phase is detailed: write its `Experiment.*.md` scaffold and trace contract.
 - **Done as brief concepts landed:** the brief's §12 is annotated **not-adopted** (ownership
   declined), §11 **delivered** through coherence, and §8 **delivered (translated)** now that the

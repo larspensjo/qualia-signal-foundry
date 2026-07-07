@@ -139,6 +139,7 @@ fn initiative_executed_sets_goal_active_and_records_tick() {
             output,
             rationale: "test rationale".to_string(),
             tick: 3,
+            rendered_ref: None,
         },
     );
 
@@ -165,6 +166,7 @@ fn initiative_executed_stores_output_in_dynamic_state() {
             output: expected_output.clone(),
             rationale: "test".to_string(),
             tick: 1,
+            rendered_ref: None,
         },
     );
 
@@ -191,6 +193,7 @@ fn initiative_executed_unknown_goal_id_is_noop_on_goals() {
             output,
             rationale: "test".to_string(),
             tick: 1,
+            rendered_ref: None,
         },
     );
 

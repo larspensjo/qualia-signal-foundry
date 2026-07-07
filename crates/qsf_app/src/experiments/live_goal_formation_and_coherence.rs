@@ -327,6 +327,7 @@ fn goal(id: &str, tension_id: &str, base_priority: u8) -> Goal {
         estimated_tokens: 10,
         source_reference: "docs/Experiments/Experiment.LiveGoalFormationAndCoherence.md"
             .to_string(),
+        visibility: qsf_volition::GoalVisibility::Conscious,
     }
 }
 

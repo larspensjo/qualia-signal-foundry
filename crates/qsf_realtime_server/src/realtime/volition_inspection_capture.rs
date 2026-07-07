@@ -1,12 +1,15 @@
 use qsf_volition::{
-    ActivationKeyword, FunctionalSignal, InitiativeOutput, ModeArbitrationOutcome,
-    RankedSelectionResult, ShapingIntensity, VolitionFixture, VolitionState,
-    VolitionStateInspection, VolitionSuppressionReason, derive_signals,
+    ActivationKeyword, ForcedSurfacing, FunctionalSignal, GoalVisibility, InitiativeOutput,
+    ModeArbitrationOutcome, RankedSelectionResult, ShapingIntensity, VolitionFixture,
+    VolitionState, VolitionStateInspection, VolitionSuppressionReason, derive_signals,
+    forced_surfaced_goals, goal_visibility,
 };
 use serde::{Deserialize, Serialize};
 use time::OffsetDateTime;
 
-use crate::realtime::volition_injection::{VolitionModeBiasOutcome, build_mode_bias_outcomes};
+use crate::realtime::volition_injection::{
+    AmbientExposure, VolitionModeBiasOutcome, build_mode_bias_outcomes, compute_ambient_exposure,
+};
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 pub struct VolitionTurnWinnerSummary {
@@ -15,6 +18,11 @@ pub struct VolitionTurnWinnerSummary {
     pub winner_effective_tier: u8,
     pub winner_biased_tier: u8,
     pub protected_tier_active: bool,
+    /// The winner's narration visibility. The operator panel badges a subconscious winner and
+    /// reads `ambient_exposure` to show how it was exposed this turn. `#[serde(default)]` =
+    /// `Conscious` for captures serialized before this field.
+    #[serde(default)]
+    pub winner_visibility: GoalVisibility,
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
@@ -39,6 +47,18 @@ pub struct VolitionTurnDecisionSummary {
     pub last_initiative_surfaced: bool,
     pub last_initiative_suppression_reason: Option<VolitionSuppressionReason>,
     pub last_initiative_rendered_line_present: bool,
+    /// How this turn's winner was exposed in the model-visible text: `ordinary` for a conscious
+    /// winner, `reduced_subconscious` / `forced_surfaced_subconscious` for a subconscious winner.
+    /// `#[serde(default)]` = `Ordinary` for captures serialized before this field.
+    #[serde(default = "default_ambient_exposure_capture")]
+    pub ambient_exposure: AmbientExposure,
+    /// Count of selected goals that are subconscious dispositions this turn.
+    #[serde(default)]
+    pub subconscious_selected_count: usize,
+}
+
+fn default_ambient_exposure_capture() -> AmbientExposure {
+    AmbientExposure::Ordinary
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
@@ -56,6 +76,13 @@ pub struct VolitionInspectionCapture {
     /// parseable.
     #[serde(default)]
     pub signals: Vec<FunctionalSignal>,
+    /// Subconscious goals forced to surface this run, with the recorded condition forcing each
+    /// (rendered initiative or coherence conflict). Derived via
+    /// [`forced_surfaced_goals`](qsf_volition::forced_surfaced_goals) so the operator panel can
+    /// badge which subconscious goals are surfaced and why, without hiding any. Operator-panel
+    /// only. `#[serde(default)]` keeps previously captured JSON parseable.
+    #[serde(default)]
+    pub forced_surfaced: Vec<ForcedSurfacing>,
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -67,6 +94,8 @@ pub fn build_volition_turn_decision_summary(
     suppression_reason: Option<VolitionSuppressionReason>,
     rendered_line_present: bool,
     shaping_intensity: ShapingIntensity,
+    state: &VolitionState,
+    fixture: &VolitionFixture,
 ) -> VolitionTurnDecisionSummary {
     // The winner block and mode-bias outcomes derive from the qualified result; on a
     // no-qualifier turn there is no `ModeArbitrationResult` (below-threshold candidates never
@@ -80,7 +109,22 @@ pub fn build_volition_turn_decision_summary(
             winner_effective_tier: arbitration.winner_bias.effective_tier,
             winner_biased_tier: arbitration.winner_bias.biased_tier,
             protected_tier_active: arbitration.winner_bias.protected,
+            winner_visibility: goal_visibility(&arbitration.winner.goal.id, state, fixture),
         });
+    let winner_visibility = winner.as_ref().map(|w| w.winner_visibility);
+    let ambient_exposure = compute_ambient_exposure(
+        winner_visibility,
+        winner.as_ref().map(|w| w.winner_goal_id.as_str()),
+        rendered_line_present,
+        &state.declined_candidates,
+    );
+    let subconscious_selected_count = ranked
+        .selected
+        .iter()
+        .filter(|selection| {
+            goal_visibility(&selection.goal.id, state, fixture) == GoalVisibility::Subconscious
+        })
+        .count();
     let mode_bias_outcomes = outcome
         .qualified
         .as_ref()
@@ -114,6 +158,8 @@ pub fn build_volition_turn_decision_summary(
         last_initiative_surfaced: surfaced,
         last_initiative_suppression_reason: suppression_reason,
         last_initiative_rendered_line_present: rendered_line_present,
+        ambient_exposure,
+        subconscious_selected_count,
     }
 }
 
@@ -128,9 +174,12 @@ pub fn build_volition_inspection_capture(
     inspection: VolitionStateInspection,
     decision: Option<VolitionTurnDecisionSummary>,
 ) -> VolitionInspectionCapture {
-    // Signals are derived here, in the single capture-builder site, so the operator panel is the
-    // only surface that ever sees them. `derive_signals` reads the live session state/fixture.
+    // Signals and forced-surfacing are derived here, in the single capture-builder site, so the
+    // operator panel is the only surface that ever sees them. Both read the live session
+    // state/fixture. `forced_surfaced` lets the panel badge which subconscious goals are surfaced
+    // and why, without hiding any (guardrail D2).
     let signals = derive_signals(state, fixture);
+    let forced_surfaced = forced_surfaced_goals(state, fixture);
     VolitionInspectionCapture {
         qsf_session_id,
         exchange_index,
@@ -139,6 +188,7 @@ pub fn build_volition_inspection_capture(
         inspection,
         decision,
         signals,
+        forced_surfaced,
     }
 }
 
@@ -232,6 +282,8 @@ mod tests {
             Some(VolitionSuppressionReason::Intensity),
             false,
             intensity,
+            &state,
+            &fixture,
         );
         let capture = build_volition_inspection_capture(
             "session-123".to_string(),
@@ -311,6 +363,8 @@ mod tests {
             Some(VolitionSuppressionReason::Intensity),
             false,
             intensity,
+            &state,
+            &fixture,
         );
         let capture = build_volition_inspection_capture(
             "session-123".to_string(),
@@ -358,6 +412,8 @@ mod tests {
                 Some(VolitionSuppressionReason::Intensity),
                 false,
                 ShapingIntensity::None,
+                &state,
+                &fixture,
             )),
         );
 
@@ -386,6 +442,8 @@ mod tests {
             Some(VolitionSuppressionReason::BelowQualificationThreshold),
             false,
             ShapingIntensity::None,
+            &state,
+            &fixture,
         );
         assert!(decision.winner.is_none());
         assert_eq!(
@@ -507,6 +565,102 @@ mod tests {
             !value["signals"].as_array().unwrap().is_empty(),
             "signals array must carry the derived signals"
         );
+    }
+
+    // ── visibility on the capture (Phase 4, steps 4-6) ───────────────────────
+
+    #[test]
+    fn decision_reports_subconscious_winner_visibility_and_reduced_exposure() {
+        let fixture = realtime_seed_fixture();
+        let state = VolitionState::from_fixture(&fixture);
+        // "world history society politics" activates only the subconscious world-picture goal.
+        let ranked = select_goals_ranked("world history society politics", &state, &fixture);
+        let outcome =
+            arbitrate_with_mode(ranked.selected.clone(), &fixture, Mode::Neutral).unwrap();
+        assert_eq!(
+            outcome.qualified.as_ref().unwrap().winner.goal.id,
+            "assemble-world-picture"
+        );
+        let decision = build_volition_turn_decision_summary(
+            &ranked,
+            &outcome,
+            None,
+            false,
+            None,
+            false,
+            ShapingIntensity::Low,
+            &state,
+            &fixture,
+        );
+        let winner = decision.winner.expect("winner");
+        assert_eq!(winner.winner_visibility, GoalVisibility::Subconscious);
+        assert_eq!(
+            decision.ambient_exposure,
+            AmbientExposure::ReducedSubconscious
+        );
+        assert_eq!(decision.subconscious_selected_count, 1);
+    }
+
+    #[test]
+    fn capture_reports_forced_surfaced_subconscious_goal() {
+        let fixture = realtime_seed_fixture();
+        // The subconscious goal renders an initiative line → forced surfaced.
+        let state = qsf_volition::apply(
+            VolitionState::from_fixture(&fixture),
+            qsf_volition::VolitionEvent::InitiativeExecuted {
+                goal_id: "assemble-world-picture".to_string(),
+                effect: qsf_volition::AllowedEffect::Reflect,
+                output: InitiativeOutput::ReflectionRequested {
+                    proposed_question: "How does this fit the larger picture?".to_string(),
+                },
+                rationale: "test".to_string(),
+                tick: 2,
+                rendered_ref: Some(
+                    qsf_volition::EvidenceRef::try_new("exchange:1/diagnostic:x").unwrap(),
+                ),
+            },
+        );
+        let capture = build_volition_inspection_capture(
+            "session-123".to_string(),
+            7,
+            OffsetDateTime::from_unix_timestamp(1_700_000_000).expect("timestamp"),
+            "request-ref".to_string(),
+            &state,
+            &fixture,
+            build_state_inspection(&state, &fixture),
+            None,
+        );
+        assert!(
+            capture
+                .forced_surfaced
+                .iter()
+                .any(|f| f.goal_id == "assemble-world-picture"),
+            "the rendered subconscious goal must be reported forced surfaced on the capture"
+        );
+    }
+
+    #[test]
+    fn capture_json_without_forced_surfaced_still_deserializes() {
+        let fixture = realtime_seed_fixture();
+        let state = VolitionState::from_fixture(&fixture);
+        let capture = build_volition_inspection_capture(
+            "session-123".to_string(),
+            7,
+            OffsetDateTime::from_unix_timestamp(1_700_000_000).expect("timestamp"),
+            "request-ref".to_string(),
+            &state,
+            &fixture,
+            build_state_inspection(&state, &fixture),
+            None,
+        );
+        let mut value = serde_json::to_value(&capture).expect("json");
+        value
+            .as_object_mut()
+            .expect("object")
+            .remove("forced_surfaced");
+        let restored: VolitionInspectionCapture =
+            serde_json::from_value(value).expect("back-compat deserialize without forced_surfaced");
+        assert!(restored.forced_surfaced.is_empty());
     }
 
     #[test]

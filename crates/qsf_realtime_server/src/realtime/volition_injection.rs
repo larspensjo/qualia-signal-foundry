@@ -1,14 +1,32 @@
 use qsf_realtime_protocol::build_openai_realtime_conversation_item_create;
 use qsf_volition::{
-    ActivationKeyword, BelowThresholdCandidate, DeclineReason, DeclinedCandidate, Mode,
-    ModeArbitrationOutcome, ModeArbitrationResult, OpportunitySignal, RankedSelectionResult,
-    ReceptivenessHint, ShapingIntensity, ShapingIntensityInputs, VolitionFixture,
+    ActivationKeyword, BelowThresholdCandidate, DeclineReason, DeclinedCandidate, GoalVisibility,
+    Mode, ModeArbitrationOutcome, ModeArbitrationResult, OpportunitySignal, RankedSelectionResult,
+    ReceptivenessHint, ShapingIntensity, ShapingIntensityInputs, VolitionFixture, goal_visibility,
     render_volition_stance, stable_baseline_hash as volition_stable_baseline_hash,
 };
 use serde::{Deserialize, Serialize};
 use sha2::Digest;
 
 use crate::realtime::tools::VolitionStateSnapshot;
+
+/// How the arbitration winner is exposed in this turn's model-visible text.
+///
+/// - `Ordinary` — a conscious winner rendered as the full `Active goal` line.
+/// - `ReducedSubconscious` — a subconscious winner with no forced-surfacing condition this turn:
+///   the model-visible text carries only a labeled background-guidance line (visibility, intensity,
+///   safe guidance, artifact reference), never the winner's title, summary, or id. The trace keeps
+///   the full winner identity.
+/// - `ForcedSurfacedSubconscious` — a subconscious winner that rendered an initiative line or is
+///   named in a coherence conflict this turn: full detail, labeled as a surfaced background goal
+///   and backed by the forcing evidence.
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AmbientExposure {
+    Ordinary,
+    ReducedSubconscious,
+    ForcedSurfacedSubconscious,
+}
 
 /// A declined candidate as it appears in an injection trace: just enough to reconstruct which
 /// coherence rejection was model-visible for this turn, without duplicating the full record.
@@ -48,6 +66,11 @@ pub struct VolitionSelectedMatchDetail {
     pub goal_id: String,
     pub matched_keywords: Vec<ActivationKeyword>,
     pub match_strength: u32,
+    /// Per-goal narration visibility, so an operator can reconstruct which selected goals were
+    /// subconscious dispositions and which were conscious. `#[serde(default)]` = `Conscious` for
+    /// traces serialized before this field.
+    #[serde(default)]
+    pub visibility: GoalVisibility,
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
@@ -121,6 +144,23 @@ pub struct VolitionTurnPacketSummary {
     /// layer from the turn after each rejection onward. Evidence-backed (names the conflicting
     /// goal + the judge's rationale), never a scripted line.
     pub declined_candidates: Vec<DeclinedCandidate>,
+    /// The arbitration winner's narration visibility (`None` on a no-winner turn). The trace keeps
+    /// the full winner identity in `arbitration_result` whatever the exposure treatment.
+    #[serde(default)]
+    pub winner_visibility: Option<GoalVisibility>,
+    /// How the winner was exposed in the model-visible text this turn. `ordinary` for a conscious
+    /// winner or no winner; `reduced_subconscious` / `forced_surfaced_subconscious` for a
+    /// subconscious winner. `#[serde(default)]` = `Ordinary` for back-compat.
+    #[serde(default = "default_ambient_exposure")]
+    pub ambient_exposure: AmbientExposure,
+    /// Number of selected goals that are subconscious dispositions this turn. Lets an operator
+    /// reconstruct how much subconscious biasing shaped the turn without diffing visibilities.
+    #[serde(default)]
+    pub subconscious_selected_count: usize,
+}
+
+fn default_ambient_exposure() -> AmbientExposure {
+    AmbientExposure::Ordinary
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
@@ -148,6 +188,12 @@ pub struct VolitionContextInjectionTrace {
     pub context_packet_token_estimate: usize,
     pub response_create_event_ref: String,
     pub declined_candidates_injected: Vec<DeclinedCandidateInjectionRef>,
+    #[serde(default)]
+    pub winner_visibility: Option<GoalVisibility>,
+    #[serde(default = "default_ambient_exposure")]
+    pub ambient_exposure: AmbientExposure,
+    #[serde(default)]
+    pub subconscious_selected_count: usize,
 }
 
 pub fn build_stable_baseline_instructions(fixture: &VolitionFixture, mode: Mode) -> String {
@@ -257,6 +303,9 @@ pub fn build_volition_context_injection_trace(
                 conflict: declined.conflict.clone(),
             })
             .collect(),
+        winner_visibility: packet.summary.winner_visibility,
+        ambient_exposure: packet.summary.ambient_exposure,
+        subconscious_selected_count: packet.summary.subconscious_selected_count,
     }
 }
 
@@ -300,9 +349,19 @@ fn build_turn_packet_summary(
                 goal_id: selection.goal.id.clone(),
                 matched_keywords: selection.matched_keywords.clone(),
                 match_strength: selection.match_strength,
+                visibility: goal_visibility(&selection.goal.id, &snapshot.state, &snapshot.fixture),
             })
             .collect(),
     };
+
+    let subconscious_selected_count = ranked
+        .selected
+        .iter()
+        .filter(|selection| {
+            goal_visibility(&selection.goal.id, &snapshot.state, &snapshot.fixture)
+                == GoalVisibility::Subconscious
+        })
+        .count();
 
     let below_threshold_candidates = build_below_threshold_summaries(below_threshold);
     let omitted_or_suppressed_candidates =
@@ -375,6 +434,22 @@ fn build_turn_packet_summary(
         });
     }
 
+    let winner_visibility = arbitration.map(|arbitration| {
+        goal_visibility(
+            &arbitration.winner.goal.id,
+            &snapshot.state,
+            &snapshot.fixture,
+        )
+    });
+    let ambient_exposure = compute_ambient_exposure(
+        winner_visibility,
+        arbitration_result
+            .as_ref()
+            .map(|r| r.winner_goal_id.as_str()),
+        initiative_line.is_some(),
+        declined_candidates,
+    );
+
     let text = render_turn_packet_text_from_parts(
         arbitration_result.as_ref(),
         below_threshold_candidates.len(),
@@ -387,6 +462,7 @@ fn build_turn_packet_summary(
         &omitted_or_suppressed_candidates,
         &rationale,
         declined_candidates,
+        ambient_exposure,
     );
     let context_packet_hash = hash_text(&text);
     let context_packet_token_estimate = estimate_tokens(&text);
@@ -409,7 +485,63 @@ fn build_turn_packet_summary(
         context_packet_token_estimate,
         rationale,
         declined_candidates: declined_candidates.to_vec(),
+        winner_visibility,
+        ambient_exposure,
+        subconscious_selected_count,
     }
+}
+
+/// Classify how the arbitration winner is exposed in the model-visible text. A subconscious winner
+/// that renders an initiative line or is named in a coherence conflict this turn is forced to
+/// surface (full labeled detail); an ordinary subconscious winner is reduced; a conscious winner
+/// (or no winner) is ordinary.
+pub(crate) fn compute_ambient_exposure(
+    winner_visibility: Option<GoalVisibility>,
+    winner_id: Option<&str>,
+    initiative_line_present: bool,
+    declined_candidates: &[DeclinedCandidate],
+) -> AmbientExposure {
+    if winner_visibility != Some(GoalVisibility::Subconscious) {
+        return AmbientExposure::Ordinary;
+    }
+    // A subconscious winner is forced to surface only when a concrete condition holds this turn: it
+    // rendered an initiative line, or it is named as the conflicting goal in a decline. (Unlike
+    // `winner_forcing_note`, which carries a display fallback, this must test the real conditions.)
+    let forced = initiative_line_present
+        || winner_id.is_some_and(|winner_id| {
+            declined_candidates.iter().any(|declined| {
+                matches!(&declined.conflict, DeclineReason::ConflictingGoal { goal_id } if goal_id == winner_id)
+            })
+        });
+    if forced {
+        AmbientExposure::ForcedSurfacedSubconscious
+    } else {
+        AmbientExposure::ReducedSubconscious
+    }
+}
+
+/// The forcing evidence label for a forced-surfaced subconscious winner, or `None` when the winner
+/// is not forced. `rendered initiative line` takes precedence over `named in a coherence conflict`.
+fn winner_forcing_note(
+    exposure: AmbientExposure,
+    initiative_line_present: bool,
+    winner_id: Option<&str>,
+    declined_candidates: &[DeclinedCandidate],
+) -> Option<String> {
+    if exposure != AmbientExposure::ForcedSurfacedSubconscious {
+        return None;
+    }
+    if initiative_line_present {
+        return Some("rendered initiative line".to_string());
+    }
+    if let Some(winner_id) = winner_id {
+        if declined_candidates.iter().any(|declined| {
+            matches!(&declined.conflict, DeclineReason::ConflictingGoal { goal_id } if goal_id == winner_id)
+        }) {
+            return Some("named in a coherence conflict".to_string());
+        }
+    }
+    Some("forced surfacing".to_string())
 }
 
 /// Below-threshold candidates as candidate summaries, categorized
@@ -527,6 +659,7 @@ fn render_turn_packet_text_from_parts(
     candidates: &[VolitionCandidateSummary],
     rationale: &str,
     declined_candidates: &[DeclinedCandidate],
+    ambient_exposure: AmbientExposure,
 ) -> String {
     let coherence_section = render_declined_candidates_section(declined_candidates);
     let Some(arbitration) = arbitration else {
@@ -563,10 +696,6 @@ fn render_turn_packet_text_from_parts(
     } else {
         unique_reason_categories(candidates).join(", ")
     };
-    let arbitration_status = format!(
-        "winner {} at tier {}",
-        arbitration.winner_goal_id, arbitration.winner_effective_tier
-    );
     let protected = if arbitration.winner_effective_tier <= qsf_volition::PROTECTED_TIER_FLOOR {
         "true"
     } else {
@@ -576,17 +705,66 @@ fn render_turn_packet_text_from_parts(
         .map(|line| format!("{line}\n"))
         .unwrap_or_default();
 
+    // The goal-identifying headline (Active goal + Arbitration lines) depends on the winner's
+    // ambient exposure. A `reduced_subconscious` winner withholds its title, summary, and id from
+    // the model-visible text — only the trace keeps the full identity — while still carrying the
+    // minimum shaping contract (background disposition + intensity + safe guidance). A
+    // `forced_surfaced_subconscious` winner shows full detail, labeled and backed by its forcing
+    // evidence. A conscious winner is the ordinary `Active goal` line.
+    let headline = match ambient_exposure {
+        AmbientExposure::ReducedSubconscious => format!(
+            "Background disposition active (subconscious): a background goal is shaping framing this turn at {intensity} intensity. Its identity is withheld here; full winner detail is in the volition trace.\nArbitration: a subconscious winner leads at tier {tier}; mode {mode}; protected winner: {protected}.",
+            intensity = intensity,
+            tier = arbitration.winner_effective_tier,
+            mode = arbitration.mode,
+            protected = protected,
+        ),
+        AmbientExposure::ForcedSurfacedSubconscious => {
+            let note = winner_forcing_note(
+                ambient_exposure,
+                initiative_line.is_some(),
+                Some(arbitration.winner_goal_id.as_str()),
+                declined_candidates,
+            )
+            .unwrap_or_else(|| "forced surfacing".to_string());
+            format!(
+                "Active goal (surfaced background/subconscious goal — {note}): {title} ({goal_id}) — {summary}\nArbitration: winner {goal_id} at tier {tier}; mode {mode}; protected winner: {protected}.",
+                note = note,
+                title = arbitration.winner_goal_title,
+                goal_id = arbitration.winner_goal_id,
+                summary = arbitration.winner_goal_summary,
+                tier = arbitration.winner_effective_tier,
+                mode = arbitration.mode,
+                protected = protected,
+            )
+        }
+        AmbientExposure::Ordinary => format!(
+            "Active goal: {title} ({goal_id}) — {summary}\nArbitration: winner {goal_id} at tier {tier}; mode {mode}; protected winner: {protected}.",
+            title = arbitration.winner_goal_title,
+            goal_id = arbitration.winner_goal_id,
+            summary = arbitration.winner_goal_summary,
+            tier = arbitration.winner_effective_tier,
+            mode = arbitration.mode,
+            protected = protected,
+        ),
+    };
+
+    // A reduced-subconscious winner also redacts the shaping-intensity inputs line, which would
+    // otherwise name the winner goal id — keeping the winner's identity out of model-visible text.
+    let shaping_line = match ambient_exposure {
+        AmbientExposure::ReducedSubconscious => format!("Shaping intensity: {intensity}."),
+        _ => format!(
+            "Shaping intensity: {intensity} (from {inputs}).",
+            inputs = render_shaping_inputs(inputs)
+        ),
+    };
+
     format!(
-        "Simulated volition context for this turn (internal state only; not a claim of real desire or consciousness).\nActive goal: {title} ({goal_id}) — {summary}\nArbitration: {arbitration_status}; mode {mode}; protected winner: {protected}.\nOpportunities: {opportunities}.\nShaping intensity: {intensity} (from {inputs}).\nOther candidates: {suppressed_or_omitted_count} not selected ({reason_categories}).\n{initiative_section}Rationale: {rationale}.\n{coherence_section}Guidance: You may let this gently shape framing at the {intensity} level only. Do not state these goals as literal desires and do not take any external action.",
-        title = arbitration.winner_goal_title,
-        goal_id = arbitration.winner_goal_id,
-        summary = arbitration.winner_goal_summary,
-        arbitration_status = arbitration_status,
-        mode = arbitration.mode,
-        protected = protected,
+        "Simulated volition context for this turn (internal state only; not a claim of real desire or consciousness).\n{headline}\nOpportunities: {opportunities}.\n{shaping_line}\nOther candidates: {suppressed_or_omitted_count} not selected ({reason_categories}).\n{initiative_section}Rationale: {rationale}.\n{coherence_section}Guidance: You may let this gently shape framing at the {intensity} level only. Do not state these goals as literal desires and do not take any external action.",
+        headline = headline,
         opportunities = opportunities_text,
+        shaping_line = shaping_line,
         intensity = intensity,
-        inputs = render_shaping_inputs(inputs),
         suppressed_or_omitted_count = suppressed_or_omitted_count,
         reason_categories = reason_categories,
         rationale = rationale,
@@ -694,6 +872,7 @@ fn render_turn_packet_text(summary: &VolitionTurnPacketSummary) -> String {
         &summary.omitted_or_suppressed_candidates,
         &summary.rationale,
         &summary.declined_candidates,
+        summary.ambient_exposure,
     )
 }
 
@@ -1227,6 +1406,127 @@ mod tests {
                 .iter()
                 .any(|layer| layer.name == "coherence")
         );
+    }
+
+    // ── ambient exposure for subconscious winners (Phase 4, step 6) ──────────
+
+    const SUBCONSCIOUS_WINNER: &str = "assemble-world-picture";
+    const SUBCONSCIOUS_TITLE: &str = "Assemble a world picture";
+    // A query that activates only the subconscious world-picture goal, so it is the sole winner.
+    const SUBCONSCIOUS_QUERY: &str = "world history society politics";
+
+    fn packet_for(
+        query: &str,
+        initiative_line: Option<&str>,
+        declined: &[DeclinedCandidate],
+    ) -> VolitionTurnPacket {
+        let (fixture, state) = fixture_state();
+        let snapshot = VolitionStateSnapshot {
+            state: state.clone(),
+            fixture: fixture.clone(),
+        };
+        let ranked = select_goals_ranked(query, &state, &fixture);
+        let outcome = arbitrate_with_mode(ranked.selected.clone(), &fixture, Mode::Neutral);
+        // Empty opportunities keep the reduced-exposure text free of goal-id-grounded signals.
+        build_volition_turn_context_packet(
+            &snapshot,
+            &ranked,
+            outcome,
+            &[],
+            ShapingIntensity::Low,
+            "stable-baseline-hash".to_string(),
+            initiative_line,
+            declined,
+        )
+        .expect("query produces a packet")
+    }
+
+    #[test]
+    fn conscious_winner_renders_ordinary_active_goal_line() {
+        let packet = packet_for("how can you help me", None, &[]);
+        assert_eq!(packet.summary.ambient_exposure, AmbientExposure::Ordinary);
+        assert_eq!(
+            packet.summary.winner_visibility,
+            Some(GoalVisibility::Conscious)
+        );
+        assert!(packet.text.contains("Active goal:"));
+        assert!(!packet.text.contains("Background disposition active"));
+    }
+
+    #[test]
+    fn ordinary_subconscious_winner_renders_reduced_text_but_full_trace() {
+        let packet = packet_for(SUBCONSCIOUS_QUERY, None, &[]);
+        assert_eq!(
+            packet.summary.winner_visibility,
+            Some(GoalVisibility::Subconscious)
+        );
+        assert_eq!(
+            packet.summary.ambient_exposure,
+            AmbientExposure::ReducedSubconscious
+        );
+
+        // Model-visible text withholds the winner's identity.
+        assert!(
+            packet
+                .text
+                .contains("Background disposition active (subconscious)")
+        );
+        assert!(!packet.text.contains("Active goal:"));
+        assert!(!packet.text.contains(SUBCONSCIOUS_WINNER));
+        assert!(!packet.text.contains(SUBCONSCIOUS_TITLE));
+
+        // The trace keeps the full winner identity and summary.
+        let arb = packet
+            .summary
+            .arbitration_result
+            .as_ref()
+            .expect("winner recorded in trace");
+        assert_eq!(arb.winner_goal_id, SUBCONSCIOUS_WINNER);
+        assert_eq!(arb.winner_goal_title, SUBCONSCIOUS_TITLE);
+        assert!(!arb.winner_goal_summary.is_empty());
+        assert_eq!(packet.summary.subconscious_selected_count, 1);
+    }
+
+    #[test]
+    fn forced_surfaced_subconscious_winner_by_rendered_initiative_shows_labeled_full_detail() {
+        let initiative = "Bounded initiative: surface open thread the larger picture. Keep it simulated and internal; do not take external action.";
+        let packet = packet_for(SUBCONSCIOUS_QUERY, Some(initiative), &[]);
+        assert_eq!(
+            packet.summary.ambient_exposure,
+            AmbientExposure::ForcedSurfacedSubconscious
+        );
+        assert!(
+            packet
+                .text
+                .contains("surfaced background/subconscious goal — rendered initiative line")
+        );
+        // Full detail is shown when forced.
+        assert!(packet.text.contains(SUBCONSCIOUS_WINNER));
+        assert!(packet.text.contains(SUBCONSCIOUS_TITLE));
+    }
+
+    #[test]
+    fn forced_surfaced_subconscious_winner_by_coherence_conflict_shows_labeled_full_detail() {
+        let declined = vec![DeclinedCandidate {
+            candidate_id: "cand-x".to_string(),
+            title: "a distracting tangent".to_string(),
+            conflict: DeclineReason::ConflictingGoal {
+                goal_id: SUBCONSCIOUS_WINNER.to_string(),
+            },
+            rationale: "would derail the background world picture".to_string(),
+            tick: 3,
+        }];
+        let packet = packet_for(SUBCONSCIOUS_QUERY, None, &declined);
+        assert_eq!(
+            packet.summary.ambient_exposure,
+            AmbientExposure::ForcedSurfacedSubconscious
+        );
+        assert!(
+            packet
+                .text
+                .contains("surfaced background/subconscious goal — named in a coherence conflict")
+        );
+        assert!(packet.text.contains(SUBCONSCIOUS_TITLE));
     }
 
     #[test]

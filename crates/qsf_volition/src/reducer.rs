@@ -38,6 +38,23 @@ pub struct GoalDynamicState {
     /// back-compat.
     #[serde(default)]
     pub last_satisfied_evidence_ref: Option<EvidenceRef>,
+    /// Tick of the most recent `InitiativeExecuted` for this goal, **whether or not** its line was
+    /// rendered. Distinct from `last_activated_tick` (also set by `GoalActivated`). `None` until
+    /// an initiative executes. `#[serde(default)]` for continuity back-compat.
+    #[serde(default)]
+    pub last_initiative_tick: Option<u64>,
+    /// Tick of the most recent initiative whose line was actually **rendered** (surfaced) into
+    /// model-visible turn text. Suppressed internal initiatives (intensity, protected-no-
+    /// opportunity, anti-nag, non-renderable output) set `last_initiative_tick` but leave this
+    /// `None`, so a pure derivation can prove a subconscious goal's line surfaced rather than
+    /// merely executed. `#[serde(default)]` for continuity back-compat.
+    #[serde(default)]
+    pub last_rendered_initiative_tick: Option<u64>,
+    /// Artifact/request reference of the most recent rendered initiative, paired with
+    /// `last_rendered_initiative_tick`. `None` when no initiative has rendered.
+    /// `#[serde(default)]` for continuity back-compat.
+    #[serde(default)]
+    pub last_rendered_initiative_ref: Option<EvidenceRef>,
 }
 
 impl GoalDynamicState {
@@ -54,6 +71,9 @@ impl GoalDynamicState {
             blocked_count: 0,
             last_blocked_tick: None,
             last_satisfied_evidence_ref: None,
+            last_initiative_tick: None,
+            last_rendered_initiative_tick: None,
+            last_rendered_initiative_ref: None,
         }
     }
 }
@@ -222,12 +242,21 @@ pub enum VolitionEvent {
     },
     /// Records a bounded internal initiative output. Sets the goal to Active and stores
     /// the output in `GoalDynamicState::last_initiative_output`. Executes no external effect.
+    ///
+    /// `rendered_ref` distinguishes a rendered initiative line from a suppressed internal one:
+    /// `Some(artifact_ref)` means the line surfaced into model-visible turn text (the reducer
+    /// records `last_rendered_initiative_tick` / `last_rendered_initiative_ref`); `None` means the
+    /// initiative executed but its line was suppressed (intensity, protected-no-opportunity,
+    /// anti-nag, non-renderable output). `#[serde(default)]` so events serialized before this
+    /// field existed still deserialize as suppressed.
     InitiativeExecuted {
         goal_id: String,
         effect: AllowedEffect,
         output: InitiativeOutput,
         rationale: String,
         tick: u64,
+        #[serde(default)]
+        rendered_ref: Option<EvidenceRef>,
     },
     /// Sets the active arbitration bias mode via the pure reducer. Replayable and traceable.
     ModeChanged {
@@ -361,12 +390,21 @@ pub fn apply(mut state: VolitionState, event: VolitionEvent) -> VolitionState {
             goal_id,
             output,
             tick,
+            rendered_ref,
             ..
         } => {
             if let Some(dynamic) = state.goals.get_mut(&goal_id) {
                 dynamic.status = GoalStatus::Active;
                 dynamic.last_activated_tick = Some(tick);
                 dynamic.last_initiative_output = Some(output);
+                dynamic.last_initiative_tick = Some(tick);
+                // Only a rendered line (Some ref) records rendered-initiative evidence; a
+                // suppressed internal initiative leaves the rendered fields untouched so a pure
+                // derivation can prove the line actually surfaced.
+                if let Some(rendered_ref) = rendered_ref {
+                    dynamic.last_rendered_initiative_tick = Some(tick);
+                    dynamic.last_rendered_initiative_ref = Some(rendered_ref);
+                }
             }
         }
         VolitionEvent::ModeChanged { mode, .. } => {
@@ -405,6 +443,24 @@ pub fn effective_tier_from_tension_ids(tension_ids: &[String], fixture: &Volitio
         .map(|t| t.arbitration_tier)
         .min()
         .unwrap_or(u8::MAX)
+}
+
+/// Resolves a goal's narration [`GoalVisibility`] from its definition — the fixture's static
+/// goals or, failing that, `state`'s accepted candidates — defaulting to `Conscious` for an
+/// unknown id. Visibility is a definition attribute (never dynamic), so this is the single
+/// correct way to tell whether a goal is subconscious, mirroring [`goal_effective_tier`].
+pub fn goal_visibility(
+    goal_id: &str,
+    state: &VolitionState,
+    fixture: &VolitionFixture,
+) -> crate::GoalVisibility {
+    fixture
+        .goals
+        .iter()
+        .find(|g| g.id == goal_id)
+        .map(|g| g.visibility)
+        .or_else(|| state.accepted_candidates.get(goal_id).map(|g| g.visibility))
+        .unwrap_or_default()
 }
 
 /// Returns the minimum arbitration tier across a goal's parent tensions, resolving
@@ -1645,6 +1701,7 @@ mod tests {
                 output,
                 rationale: "test rationale".to_string(),
                 tick: 3,
+                rendered_ref: None,
             },
         );
 
@@ -1671,6 +1728,7 @@ mod tests {
                 output: expected_output.clone(),
                 rationale: "test".to_string(),
                 tick: 1,
+                rendered_ref: None,
             },
         );
 
@@ -1697,6 +1755,7 @@ mod tests {
                 output,
                 rationale: "test".to_string(),
                 tick: 1,
+                rendered_ref: None,
             },
         );
 

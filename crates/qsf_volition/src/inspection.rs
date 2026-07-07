@@ -1,6 +1,9 @@
 use serde::{Deserialize, Serialize};
 
-use crate::{GoalStatus, InitiativeOutput, Mode, VolitionFixture, VolitionState};
+use crate::{
+    GoalStatus, GoalVisibility, InitiativeOutput, Mode, VolitionFixture, VolitionState,
+    goal_visibility,
+};
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 pub struct GoalStatusSummary {
@@ -9,6 +12,13 @@ pub struct GoalStatusSummary {
     pub salience: i32,
     pub cooldown_until_tick: Option<u64>,
     pub last_activated_tick: Option<u64>,
+    /// Narration visibility, resolved from the goal definition. `#[serde(default)]` = `Conscious`
+    /// keeps inspection captures serialized before this field parseable. `build_state_inspection`
+    /// stays complete and unfiltered — subconscious goals appear here too; the *tool* layer, not
+    /// this builder, decides what to section for the simulator (the operator panel keeps all of
+    /// it).
+    #[serde(default)]
+    pub visibility: GoalVisibility,
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
@@ -51,6 +61,7 @@ pub fn build_state_inspection(
             salience: dynamic.salience,
             cooldown_until_tick: dynamic.cooldown_until_tick,
             last_activated_tick: dynamic.last_activated_tick,
+            visibility: goal_visibility(goal_id, state, fixture),
         };
 
         match dynamic.status {
@@ -195,6 +206,7 @@ mod tests {
                 output,
                 rationale: "test".to_string(),
                 tick: 1,
+                rendered_ref: None,
             },
         );
 
@@ -259,6 +271,47 @@ mod tests {
                 goal.id == "accepted-candidate" && goal.title == "Accepted Candidate"
             })
         );
+    }
+
+    #[test]
+    fn build_state_inspection_carries_visibility_including_subconscious_seed_goal() {
+        let fixture = realtime_seed_fixture();
+        let state = fresh_state(&fixture);
+        let inspection = build_state_inspection(&state, &fixture);
+
+        // The seed fixture marks `assemble-world-picture` subconscious; build_state_inspection is
+        // unfiltered, so the summary is present in its ordinary status list carrying Subconscious.
+        let world = inspection
+            .accepted_goals
+            .iter()
+            .find(|g| g.id == "assemble-world-picture")
+            .expect("subconscious seed goal must still appear in the unfiltered inspection");
+        assert_eq!(world.visibility, GoalVisibility::Subconscious);
+
+        // Every other seed goal reads Conscious.
+        for summary in &inspection.accepted_goals {
+            if summary.id != "assemble-world-picture" {
+                assert_eq!(
+                    summary.visibility,
+                    GoalVisibility::Conscious,
+                    "goal {} should be conscious",
+                    summary.id
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn goal_status_summary_deserializes_without_visibility_as_conscious() {
+        let json = serde_json::json!({
+            "id": "g1",
+            "title": "G1",
+            "salience": 0,
+            "cooldown_until_tick": null,
+            "last_activated_tick": null
+        });
+        let summary: GoalStatusSummary = serde_json::from_value(json).unwrap();
+        assert_eq!(summary.visibility, GoalVisibility::Conscious);
     }
 
     #[test]
