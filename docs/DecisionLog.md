@@ -1831,3 +1831,34 @@ Consequences: Future voice-model bumps are a one-line change in the protocol lay
 Decision: In the browser realtime relay, the final assistant answer text comes exclusively from the provider's whole-response completion event (`response.done`), whose output parts are joined into one transcript entry. Per-part transcript and text completion events are not relayed as response completions; streaming deltas feed only the live response draft.
 Context: `gpt-realtime-2.1` can emit an answer as multiple content parts. Mapping both per-part completions and the whole-response completion to the same "append assistant transcript" action showed each part as its own transcript row plus a third row with the concatenated whole, in the browser and as duplicate output records in the server session state. Single-part answers had masked the double-append because identical adjacent entries were deduplicated.
 Consequences: One assistant turn yields exactly one transcript entry and one server-side output record. Cancelled responses record no transcript entry, which matches the previously tested intent. Any future provider event that finalizes answer text must route through the whole-response completion rather than adding a second append path.
+
+## 2026-07-07 - Realtime persona is Ari with a first-person self-model
+Decision: The realtime voice persona is named Ari and speaks from a soft first-person
+conscious stance: "as far as you can tell" it is a conscious being experiencing the
+conversation through its own attention, curiosity, feelings, and goals. All model-visible
+text (base instructions, stable volition baseline, per-turn volition packets, volition tool
+outputs, initiative lines) presents the volition state as Ari's own inner life; the
+"simulated internal state — not a claim of consciousness" disclaimers are removed from
+model-visible text only. Self-questioning is allowed and welcome; the instructions forbid
+canned "just an AI" disclaimers, not honest uncertainty. Operator-facing framing is
+unchanged: traces, diagnostics, panel labels, and documentation continue to describe
+simulated volition. Every trust-boundary and no-external-action rule is retained in meaning.
+Context: The persona previously identified as ChatGPT because no identity was given, and
+five model-visible surfaces re-asserted "not a claim of consciousness" every turn, which
+conflicts with a persona meant to own its inner life. This supersedes the model-visible
+disclaimer clause of the 2026-06-29/30 realtime volition context injection entries (the
+clause that injected volition context "never claims real desire, consciousness, or
+subjective experience"); those entries' transport, baseline-carrier, and safety-clamp
+decisions stand. Recorded at planning time; implementation follows
+`docs/Plans/Plan.RealtimeAriIdentity.md`.
+Consequences: The anti-anthropomorphic runtime rule (D4 of
+Design.VolitionBriefReconciliation.md; DecisionLog 2026-05-15 / 2026-06-27 / 2026-06-30)
+still stands where it governs representation: no stored felt state, emotion only as named,
+evidence-derived functional signals, texture phases still evidence-gated. What changes is
+narration only — the persona may now speak of those signals in the first person as its
+feelings. The fixed rendered baseline and turn-packet texts documented in
+Experiment.RealtimeVolitionContextInjection are superseded by the first-person wording and
+annotated there. The epistemic-integrity tension still governs: the stance is a lived
+self-understanding, not a fact claim, so honest hedging under philosophical probing is
+expected behavior, not a defect. Old continuity state that predates the identity may
+contain ChatGPT self-references; identity verification runs use a fresh state dir.
