@@ -16,7 +16,7 @@
 - **Audio/text split for the realtime model.** Audio tokens dominate realtime pricing (~10× text), so `input_token_details` / `output_token_details` are read; text-only models fall back to text classes.
 - **Cached input is one class** (no cached-audio/cached-text split in the display) — five legend entries is the comfortable maximum.
 - **Server aggregates, browser renders.** Full-snapshot push per completed call; the UI is stateless w.r.t. accumulation, so a reconnecting browser heals itself.
-- **Stale/cancelled responses still count.** The provider billed them; the meter records usage before the stale early-return. Call counts therefore mean "provider responses", not "accepted turns".
+- **Stale/cancelled responses still count.** The provider billed them; the meter records usage before the stale early-return. Call counts therefore mean "provider responses", not "accepted turns". The same "provider spend" policy covers goal-formation calls whose responses later fail structured-output parsing or validation: usage is captured at the `ModelInvoker` seam, so billed spend survives post-response failures (review finding).
 - **Row identity is *(role, model)*** — `realtime_voice` and `goal_formation` today — so a future call site is one `record_token_usage(...)` line away from appearing on the page.
 
 **Documents to update (per `docs/ProjectFrame/ProjectWorkflow.md`):** routine diagnostics engineering with durable scope decisions → **no Experiment doc** (no simulation-mechanism question); one `docs/DecisionLog.md` entry (Task 4.1). No architecture doc describes the browser diagnostics card (same as `Plan.RealtimeWideLayoutAndLanePause.md`). `docs/Handoff.md` untouched. No trace contract — this slice makes no trace-based behavioral claims; its observability *is* the new panel plus unit-tested aggregation. This plan is ephemeral; durable docs and code must not cite its phase numbers.
@@ -42,9 +42,10 @@
 - `crates/qsf_realtime_server/src/state.rs` — `SessionRuntime` gains the snapshot field, watch sender, `record_token_usage`, `subscribe_token_usage`; tests for the watch contract.
 - `crates/qsf_realtime_server/src/realtime/sideband_response_done.rs` — usage-number helper moves to `token_usage.rs`; realtime feed point before the stale early-return.
 - `crates/qsf_realtime_server/src/realtime/sideband_tests.rs` — new feed-point test; goal-formation usage assertion appended to an existing test.
-- `crates/qsf_realtime_server/src/realtime/live_goal_formation.rs` — goal-formation feed point.
-- `crates/qsf_models/src/live_goal_formation.rs` — `LiveGoalFormationOutcome` gains `model_use`; model-backed judge populates it from the `ModelResponse`.
-- `crates/qsf_models/src/lib.rs` — export `LiveGoalFormationModelUse` (next to the existing `LiveGoalFormationOutcome` export).
+- `crates/qsf_realtime_server/src/realtime/live_goal_formation.rs` — goal-formation feed point (records captured usage before outcome parsing can fail) + billed-failure regression test.
+- `crates/qsf_models/src/model_client.rs` — `UsageCapturingInvoker` / `CapturedModelUse`, a `ModelInvoker` that preserves usage across post-response failures.
+- `crates/qsf_models/src/live_goal_formation.rs` — tests only: usage capture survives a validation failure. `LiveGoalFormationOutcome` and both judges unchanged.
+- `crates/qsf_models/src/lib.rs` — export `UsageCapturingInvoker` and `CapturedModelUse` (next to the existing `DirectModelInvoker` export).
 - `crates/qsf_realtime_server/src/realtime/routes.rs` — events socket subscribes to and pushes `token_usage` messages.
 - `crates/qsf_realtime_server/ui/src/realtime.ts` — snapshot types, `parseTokenUsageMessage`, `token_usage_captured` action + reducer case + state field, `selectTokenUsagePanelModel`, `formatTokenCount`.
 - `crates/qsf_realtime_server/ui/src/realtime.test.ts` — parse/reducer/view-model tests.
@@ -72,6 +73,7 @@ Everything verifiable by `cargo test -p qsf_realtime_server` / `-p qsf_models`. 
   - `pub struct TokenUsageSnapshot { pub qsf_session_id: String, pub models: Vec<ModelTokenUsage> }` with `new(qsf_session_id)` and `record(&mut self, role, model_id, counts)`
   - `pub(crate) fn response_done_token_counts(event: &serde_json::Value) -> TokenClassCounts`
   - `pub(crate) fn usage_number(event: &serde_json::Value, path: &[&str]) -> Option<u64>`
+- Extraction contract: `text_input + audio_input + cached_input <= input_tokens` for every provider-consistent payload — the full cached count is always subtracted from the fresh classes, never double-reported (review finding: a payload with `cached_tokens` but no `cached_tokens_details` must not leave cached tokens inside `text_input`).
 
 - [ ] **Step 1: Write the module with failing tests**
 
@@ -164,8 +166,11 @@ pub(crate) fn usage_number(event: &serde_json::Value, path: &[&str]) -> Option<u
 
 /// Token classes of one `response.done` event. Detail blocks are optional: with no
 /// `input_token_details`, fresh input falls back to `input - cached` counted as text;
-/// with no `output_token_details`, all output counts as text. Cached detail defaults to
-/// zero, so absent `cached_tokens_details` leaves the full detail split intact.
+/// with no `output_token_details`, all output counts as text. The full cached count is
+/// always subtracted from the fresh input classes — the reported cached text/audio
+/// split first, any unattributed remainder text-first — so displayed input classes
+/// never sum past the provider total (`text_input + audio_input + cached_input <=
+/// input_tokens`).
 pub(crate) fn response_done_token_counts(event: &serde_json::Value) -> TokenClassCounts {
     let input = usage_number(event, &["input_tokens"]).unwrap_or(0);
     let cached = usage_number(event, &["input_token_details", "cached_tokens"])
@@ -190,10 +195,21 @@ pub(crate) fn response_done_token_counts(event: &serde_json::Value) -> TokenClas
 
     let (text_input, audio_input) = match (input_text, input_audio) {
         (None, None) => (input.saturating_sub(cached), 0),
-        (text, audio) => (
-            text.unwrap_or(0).saturating_sub(cached_text),
-            audio.unwrap_or(0).saturating_sub(cached_audio),
-        ),
+        (text, audio) => {
+            // Subtract the full cached prefix from the fresh classes: the reported
+            // cached text/audio split first, then any unattributed remainder (a
+            // payload with `cached_tokens` but absent or partial
+            // `cached_tokens_details`) text-first, spilling into audio. This keeps
+            // the extraction contract: input classes never sum past `input_tokens`.
+            let mut fresh_text = text.unwrap_or(0).saturating_sub(cached_text);
+            let mut fresh_audio = audio.unwrap_or(0).saturating_sub(cached_audio);
+            let mut remainder = cached.saturating_sub(cached_text.saturating_add(cached_audio));
+            let from_text = remainder.min(fresh_text);
+            fresh_text -= from_text;
+            remainder -= from_text;
+            fresh_audio = fresh_audio.saturating_sub(remainder);
+            (fresh_text, fresh_audio)
+        }
     };
     let (text_output, audio_output) = match (output_text, output_audio) {
         (None, None) => (output, 0),
@@ -246,8 +262,9 @@ mod tests {
     #[test]
     fn missing_details_fall_back_to_text_classes() {
         // Partial detail: text split present, no audio field, no cached detail block.
-        // The detail arm runs — fresh text is text_tokens minus cached-text detail (0),
-        // audio defaults to 0 — while output falls back to plain text.
+        // The detail arm runs — the full cached count (3) is subtracted from fresh
+        // text since no cached split attributes it, audio defaults to 0 — while
+        // output falls back to plain text.
         let partial = serde_json::json!({
             "response": {
                 "usage": {
@@ -260,7 +277,7 @@ mod tests {
         assert_eq!(
             response_done_token_counts(&partial),
             TokenClassCounts {
-                text_input: 8,
+                text_input: 5,
                 audio_input: 0,
                 cached_input: 3,
                 text_output: 4,
@@ -288,6 +305,36 @@ mod tests {
             response_done_token_counts(&serde_json::json!({})),
             TokenClassCounts::default()
         );
+    }
+
+    /// Regression for the double-count hazard: with `cached_tokens` reported but no
+    /// `cached_tokens_details`, the cached prefix must still come out of the fresh
+    /// classes so that `text_input + audio_input + cached_input <= input_tokens`.
+    #[test]
+    fn cached_without_cached_details_never_double_counts_input() {
+        // Cached (5) exceeds fresh text (3 after nothing subtracted → 3): text-first
+        // subtraction empties text and spills the remaining 2 into audio.
+        let spilling = serde_json::json!({
+            "response": {
+                "usage": {
+                    "input_tokens": 10,
+                    "output_tokens": 1,
+                    "input_token_details": { "text_tokens": 3, "audio_tokens": 7, "cached_tokens": 5 }
+                }
+            }
+        });
+        let counts = response_done_token_counts(&spilling);
+        assert_eq!(
+            counts,
+            TokenClassCounts {
+                text_input: 0,
+                audio_input: 5,
+                cached_input: 5,
+                text_output: 1,
+                audio_output: 0,
+            }
+        );
+        assert!(counts.text_input + counts.audio_input + counts.cached_input <= 10);
     }
 
     #[test]
@@ -333,7 +380,7 @@ pub(crate) mod token_usage;
 - [ ] **Step 3: Run the tests**
 
 Run: `cargo test -p qsf_realtime_server token_usage`
-Expected: PASS (3 tests). The module is not yet referenced elsewhere; `pub(crate)` items may raise dead-code warnings under clippy until Tasks 1.2–1.3 wire them — defer the clippy gate to task completion order or add nothing; `cargo test` itself passes.
+Expected: PASS (4 tests). The module is not yet referenced elsewhere; `pub(crate)` items may raise dead-code warnings under clippy until Tasks 1.2–1.3 wire them — defer the clippy gate to task completion order or add nothing; `cargo test` itself passes.
 
 - [ ] **Step 4: Commit**
 
@@ -469,7 +516,7 @@ and after `volition_inspection_tx: watch::Sender<Option<VolitionInspectionCaptur
 - [ ] **Step 4: Run the test to verify it passes**
 
 Run: `cargo test -p qsf_realtime_server token_usage`
-Expected: PASS (Task 1.1's 3 tests + this one).
+Expected: PASS (Task 1.1's 4 tests + this one).
 
 - [ ] **Step 5: Commit**
 
@@ -488,9 +535,9 @@ git commit -m "realtime server: session runtime accumulates and publishes token 
 - Consumes: `response_done_token_counts`, `usage_number` (Task 1.1); `record_token_usage` (Task 1.2).
 - Produces: every provider `response.done` — stale or not — lands in `SessionRuntime::token_usage` under role `"realtime_voice"` and the session's configured model id.
 
-- [ ] **Step 1: Write the failing test**
+- [ ] **Step 1: Write the failing tests**
 
-Append to `crates/qsf_realtime_server/src/realtime/sideband_tests.rs` (same harness as `empty_store_turn_records_empty_context_and_promotes`):
+Append to `crates/qsf_realtime_server/src/realtime/sideband_tests.rs` (same harness as `empty_store_turn_records_empty_context_and_promotes`). Two tests: the trusted-response path, and a stale-response regression that pins the feed point *above* the stale early-return — counting stale/cancelled responses is an explicit design decision, and without this test a future edit could move the feed below the guard with no test failing:
 
 ```rust
 #[tokio::test]
@@ -556,12 +603,89 @@ async fn response_done_accumulates_realtime_token_usage() {
     assert_eq!(row.counts.text_output, 20);
     assert_eq!(row.counts.audio_output, 80);
 }
+
+#[tokio::test]
+async fn stale_response_done_records_token_usage_without_promoting() {
+    let tempdir = TempDir::new().expect("tempdir");
+    let state = state(&tempdir);
+    let allocation = state.create_session().await.expect("session");
+    let mut runtime_state = SidebandRuntimeState::default();
+    let (outbound_tx, mut outbound_rx) = mpsc::unbounded_channel();
+
+    start_test_turn(&state, &allocation.qsf_session_id, &mut runtime_state, &outbound_tx).await;
+    drain_outbound_texts(&mut outbound_rx);
+
+    // Mark the response id stale before its response.done arrives, as a barge-in
+    // cancellation does.
+    runtime_state.stale_response_ids.insert("response-stale".to_string());
+
+    handle_provider_event(
+        &state,
+        &allocation.qsf_session_id,
+        "call-test",
+        "response.done",
+        &serde_json::json!({
+            "type": "response.done",
+            "event_id": "evt-done-stale",
+            "response": {
+                "id": "response-stale",
+                "status": "cancelled",
+                "output": [],
+                "usage": {
+                    "input_tokens": 10,
+                    "output_tokens": 2,
+                    "input_token_details": {
+                        "text_tokens": 10,
+                        "cached_tokens": 4,
+                        "cached_tokens_details": { "text_tokens": 4, "audio_tokens": 0 }
+                    }
+                }
+            }
+        }),
+        &mut runtime_state,
+        &outbound_tx,
+    )
+    .await
+    .expect("stale response done");
+
+    // The stale early-return still ran: the event was diagnosed as stale and no
+    // trusted exchange was promoted to continuity storage.
+    let records = diagnostic_records(&state, &allocation.qsf_session_id).await;
+    assert!(
+        records
+            .iter()
+            .any(|record| matches!(record, DiagnosticRecord::StaleProviderEvent { .. })),
+        "the stale path must be the one exercised"
+    );
+    let continuity_dir = state.continuity_session_dir(&allocation.qsf_session_id);
+    assert!(
+        !continuity_dir.join("session-state.json").exists(),
+        "a stale response must not promote an exchange"
+    );
+
+    // ...but the provider billed the call, so the ledger recorded it anyway.
+    let runtime = state
+        .session_runtime(&allocation.qsf_session_id)
+        .await
+        .expect("runtime");
+    let guard = runtime.lock().await;
+    let row = guard
+        .token_usage
+        .models
+        .iter()
+        .find(|row| row.role == "realtime_voice")
+        .expect("stale response must still be recorded in the token ledger");
+    assert_eq!(row.calls, 1);
+    assert_eq!(row.counts.text_input, 6);
+    assert_eq!(row.counts.cached_input, 4);
+    assert_eq!(row.counts.text_output, 2);
+}
 ```
 
-- [ ] **Step 2: Run the test to verify it fails**
+- [ ] **Step 2: Run the tests to verify they fail**
 
-Run: `cargo test -p qsf_realtime_server response_done_accumulates_realtime_token_usage`
-Expected: FAIL — "realtime response must be recorded in the token ledger" (nothing feeds the ledger yet).
+Run: `cargo test -p qsf_realtime_server token_usage`
+Expected: both new tests FAIL — "…must be recorded in the token ledger" (nothing feeds the ledger yet); Task 1.1/1.2 tests still pass.
 
 - [ ] **Step 3: Implement the feed point and DRY the helpers**
 
@@ -617,93 +741,115 @@ git add crates/qsf_realtime_server/src/realtime/sideband_response_done.rs crates
 git commit -m "realtime server: feed realtime response usage into the session token ledger"
 ```
 
-### Task 1.4: Goal-formation usage propagation and feed point
+### Task 1.4: Goal-formation usage capture and feed point
 
 **Files:**
-- Modify: `crates/qsf_models/src/live_goal_formation.rs`
+- Modify: `crates/qsf_models/src/model_client.rs`
 - Modify: `crates/qsf_models/src/lib.rs`
-- Modify: `crates/qsf_realtime_server/src/realtime/live_goal_formation.rs`
+- Modify: `crates/qsf_realtime_server/src/realtime/live_goal_formation.rs` (feed point + tests module)
 - Test: `crates/qsf_models/src/live_goal_formation.rs` (tests module), `crates/qsf_realtime_server/src/realtime/sideband_tests.rs`
 
 **Interfaces:**
-- Consumes: `ModelResponse { model_name, usage, .. }` (existing `qsf_models` type); `record_token_usage` (Task 1.2).
+- Consumes: `ModelResponse { model_name, usage, .. }`, `ModelInvoker`, `invoke_model` (existing `qsf_models` types); `record_token_usage` (Task 1.2).
 - Produces:
-  - `pub struct LiveGoalFormationModelUse { pub model_name: String, pub usage: ModelUsage }` (`Clone, Debug, PartialEq`), exported from `qsf_models`
-  - `LiveGoalFormationOutcome` gains `pub model_use: Option<LiveGoalFormationModelUse>` (`None` for scripted judges)
-  - the realtime server records role `"goal_formation"` in the session ledger for every formation call that returned usage
+  - `pub struct CapturedModelUse { pub model_name: String, pub usage: ModelUsage }` (`Clone, Debug, PartialEq`) and `pub struct UsageCapturingInvoker { pub captured: Vec<CapturedModelUse> }` (`Default`, implements `ModelInvoker`), both exported from `qsf_models`
+  - the realtime server records role `"goal_formation"` in the session ledger for every formation call the provider answered with usage — **including calls that fail after the response returns** (missing structured output, malformed JSON, duplicate candidate id, invalid contradictions). Billed spend is never dropped with the error.
+  - `LiveGoalFormationOutcome` and both judges are untouched.
+
+**Design note (review finding):** `form_and_detect` has four failure points *after* `invoker.invoke(...)` returns, and each such call is billed. Carrying usage on the success-only outcome would silently drop that spend. Capturing usage inside the invoker — the seam every model call already passes through — preserves the "provider spend" policy (the same one that counts stale realtime responses) without splitting the judge API or threading usage through error types, and any future invoker-based call site inherits the capability for free.
 
 - [ ] **Step 1: Write the failing test (qsf_models)**
 
-In `crates/qsf_models/src/live_goal_formation.rs`, find the tests-module test that drives `ModelBackedLiveGoalFormationJudge` through a successful `form_and_detect` with `MockModelClient` and append to its assertions:
+Append to the tests module of `crates/qsf_models/src/live_goal_formation.rs` (add `UsageCapturingInvoker` next to the existing `DirectModelInvoker` import):
 
 ```rust
-        let model_use = outcome
-            .model_use
-            .as_ref()
-            .expect("model-backed judge must report model use");
-        assert!(model_use.usage.input_tokens > 0);
-        assert!(!model_use.model_name.is_empty());
+    #[test]
+    fn usage_capturing_invoker_preserves_usage_when_validation_fails_after_the_call() {
+        // Fixture text that is not JSON: the provider "answered" (and billed the
+        // call) but form_and_detect fails at structured-output parsing.
+        let client = MockModelClient::default().with_fixture(
+            crate::ModelRoleId::LiveGoalFormationJudge,
+            "not json at all".to_string(),
+        );
+        let judge = ModelBackedLiveGoalFormationJudge::new(&client);
+        let mut invoker = UsageCapturingInvoker::default();
+
+        let result = judge.form_and_detect(&mut invoker, &[goal("goal-a")], "a turn");
+
+        assert!(result.is_err());
+        assert_eq!(
+            invoker.captured.len(),
+            1,
+            "the billed call must be captured despite the post-response failure"
+        );
+        assert!(invoker.captured[0].usage.input_tokens > 0);
+        assert!(!invoker.captured[0].model_name.is_empty());
+    }
 ```
 
-If several tests qualify, pick the simplest happy-path one (no contradiction scripting). Do not add these assertions to `ScriptedLiveGoalFormationJudge` tests — the scripted judge reports `model_use: None`.
+(Adjust the `with_fixture` argument path/signature to what `mock_model.rs` actually exposes if it differs.)
 
 - [ ] **Step 2: Run to verify it fails**
 
-Run: `cargo test -p qsf_models live_goal_formation`
-Expected: FAIL to compile — no field `model_use` on `LiveGoalFormationOutcome`.
+Run: `cargo test -p qsf_models usage_capturing`
+Expected: FAIL to compile — `UsageCapturingInvoker` does not exist.
 
 - [ ] **Step 3: Implement in qsf_models**
 
-In `crates/qsf_models/src/live_goal_formation.rs`:
-
-(a) Extend the outcome (`ModelUsage` is already in scope via the crate; add `use crate::model_client::ModelUsage;` — or the path the file's existing imports use — if not):
+(a) In `crates/qsf_models/src/model_client.rs`, below the `DirectModelInvoker` impl:
 
 ```rust
-/// Provider accounting for the single model call behind one outcome: which model
-/// answered and what it consumed. `None` for scripted/deterministic judges.
+/// One model call observed by `UsageCapturingInvoker`: which model answered and what
+/// it consumed, per the provider's usage report.
 #[derive(Clone, Debug, PartialEq)]
-pub struct LiveGoalFormationModelUse {
+pub struct CapturedModelUse {
     pub model_name: String,
     pub usage: ModelUsage,
 }
+
+/// A `ModelInvoker` that calls the client like `DirectModelInvoker` and additionally
+/// captures the usage of every response the provider returned. Callers whose work can
+/// still fail *after* the provider billed the call (structured-output parsing, semantic
+/// validation) read `captured` afterwards, so provider spend is never lost with the
+/// error.
+#[derive(Default)]
+pub struct UsageCapturingInvoker {
+    pub captured: Vec<CapturedModelUse>,
+}
+
+impl ModelInvoker for UsageCapturingInvoker {
+    fn invoke(
+        &mut self,
+        client: &dyn ModelClient,
+        request: &ModelRequest,
+    ) -> anyhow::Result<ModelResponse> {
+        let response = invoke_model(client, request)?;
+        if let Some(usage) = &response.usage {
+            self.captured.push(CapturedModelUse {
+                model_name: response.model_name.clone(),
+                usage: usage.clone(),
+            });
+        }
+        Ok(response)
+    }
+}
 ```
 
-and add to `LiveGoalFormationOutcome`:
-
-```rust
-    pub model_use: Option<LiveGoalFormationModelUse>,
-```
-
-(b) In `ModelBackedLiveGoalFormationJudge::form_and_detect`, after `let response = invoker.invoke(self.client, &request)?;` add:
-
-```rust
-        let model_use = response.usage.clone().map(|usage| LiveGoalFormationModelUse {
-            model_name: response.model_name.clone(),
-            usage,
-        });
-```
-
-and add `model_use,` to the `Ok(LiveGoalFormationOutcome { … })` literal at the end of the function.
-
-(c) In `ScriptedLiveGoalFormationJudge`'s `form_and_detect`, add `model_use: None,` to its `Ok(LiveGoalFormationOutcome { … })` literal.
-
-(d) Run `cargo build -p qsf_models` and add `model_use: None,` to every remaining `LiveGoalFormationOutcome { … }` literal the compiler flags (test fixtures included).
-
-(e) In `crates/qsf_models/src/lib.rs`, extend the existing `live_goal_formation` re-export list with `LiveGoalFormationModelUse` (next to `LiveGoalFormationOutcome`).
+(b) In `crates/qsf_models/src/lib.rs`, add `CapturedModelUse` and `UsageCapturingInvoker` to the existing `pub use model_client::{ … }` list (next to `DirectModelInvoker`).
 
 - [ ] **Step 4: Run qsf_models tests**
 
 Run: `cargo test -p qsf_models`
-Expected: PASS, including the Step-1 assertions (the `MockModelClient` reports usage on every response).
+Expected: PASS, including the Step-1 test (the `MockModelClient` reports usage on every response).
 
-- [ ] **Step 5: Write the failing feed-point test (realtime server)**
+- [ ] **Step 5: Write the failing feed-point tests (realtime server)**
 
-In `crates/qsf_realtime_server/src/realtime/sideband_tests.rs`, append to the existing `completed_trusted_turn_spawns_live_goal_formation` test, after the `performed` poll and its `assert!(matches!(…))`:
+(a) In `crates/qsf_realtime_server/src/realtime/sideband_tests.rs`, append to the existing `completed_trusted_turn_spawns_live_goal_formation` test, after the `performed` poll and its `assert!(matches!(…))`:
 
 ```rust
-    // Formation usage is recorded under the same session lock that writes the
-    // LiveGoalFormationPerformed diagnostic, so once that record is observable the
-    // ledger row must exist.
+    // Formation usage is recorded as soon as the model call returns, before the
+    // LiveGoalFormationPerformed diagnostic is written, so once that record is
+    // observable the ledger row must exist.
     let runtime = state
         .session_runtime(&allocation.qsf_session_id)
         .await
@@ -719,43 +865,111 @@ In `crates/qsf_realtime_server/src/realtime/sideband_tests.rs`, append to the ex
     assert!(formation_row.counts.text_input + formation_row.counts.cached_input > 0);
 ```
 
-Run: `cargo test -p qsf_realtime_server completed_trusted_turn_spawns_live_goal_formation`
-Expected: FAIL — "goal formation call must be recorded in the token ledger".
-
-- [ ] **Step 6: Implement the feed point**
-
-In `crates/qsf_realtime_server/src/realtime/live_goal_formation.rs`, inside `run_live_goal_formation`, right after `let mut guard = session.lock().await;` (before the stale-goal-set discard check — a discarded outcome still consumed tokens), add:
+(b) In the tests module of `crates/qsf_realtime_server/src/realtime/live_goal_formation.rs` (same harness as `a_failed_formation_call_writes_a_failure_diagnostic_and_leaves_state_untouched`), add the billed-failure regression the review asked for:
 
 ```rust
-    if let Some(model_use) = &outcome.model_use {
-        guard.record_token_usage(
-            "goal_formation",
-            &model_use.model_name,
-            crate::realtime::token_usage::TokenClassCounts {
-                text_input: u64::from(
-                    model_use
-                        .usage
-                        .input_tokens
-                        .saturating_sub(model_use.usage.cached_input_tokens),
-                ),
-                audio_input: 0,
-                cached_input: u64::from(model_use.usage.cached_input_tokens),
-                text_output: u64::from(model_use.usage.output_tokens),
-                audio_output: 0,
-            },
-        );
+    #[tokio::test]
+    async fn a_billed_call_that_fails_validation_still_lands_in_the_token_ledger() {
+        let tempdir = TempDir::new().unwrap();
+        let app_state = state(&tempdir);
+        let allocation = app_state.create_session().await.unwrap();
+        let session = app_state
+            .session_runtime(&allocation.qsf_session_id)
+            .await
+            .unwrap();
+
+        // The provider answers (and bills the call) with output that fails
+        // structured-output parsing, so run_live_goal_formation returns an error.
+        let build_client = || -> anyhow::Result<Arc<dyn ModelClient>> {
+            Ok(Arc::new(qsf_models::MockModelClient::default().with_fixture(
+                qsf_models::ModelRoleId::LiveGoalFormationJudge,
+                "not json at all".to_string(),
+            )))
+        };
+
+        let result = run_live_goal_formation(
+            session.clone(),
+            &allocation.qsf_session_id,
+            0,
+            "a turn transcript".to_string(),
+            None,
+            build_client,
+        )
+        .await;
+        assert!(result.is_err());
+
+        let guard = session.lock().await;
+        let row = guard
+            .token_usage
+            .models
+            .iter()
+            .find(|row| row.role == "goal_formation")
+            .expect("a billed formation call must be recorded despite the failure");
+        assert_eq!(row.calls, 1);
+        assert!(row.counts.text_input + row.counts.cached_input > 0);
     }
 ```
 
+Run: `cargo test -p qsf_realtime_server goal_formation`
+Expected: both FAIL — "…must be recorded…" (nothing feeds the ledger yet).
+
+- [ ] **Step 6: Implement the feed point**
+
+In `crates/qsf_realtime_server/src/realtime/live_goal_formation.rs`, inside `run_live_goal_formation`, replace the `spawn_blocking` block (which currently returns `anyhow::Result<LiveGoalFormationOutcome>` via `??`) so the captured usage survives the error path:
+
+```rust
+    let (captured_model_use, outcome_result) = tokio::task::spawn_blocking(move || {
+        let mut invoker = qsf_models::UsageCapturingInvoker::default();
+        let result = (|| -> anyhow::Result<qsf_models::LiveGoalFormationOutcome> {
+            let client = build_client()?;
+            let judge = ModelBackedLiveGoalFormationJudge::new(client.as_ref());
+            judge.form_and_detect(&mut invoker, &goal_set, &turn_transcript)
+        })();
+        (invoker.captured, result)
+    })
+    .await
+    .map_err(|join_error| anyhow::anyhow!("live goal formation task panicked: {join_error}"))?;
+    let formation_completed_at = OffsetDateTime::now_utc();
+
+    // Provider spend is recorded before the outcome is even inspected: a call that
+    // returned usage counts in the diagnostics ledger even when its response fails
+    // structured-output parsing or validation below, and even when the outcome is
+    // later discarded as stale — same policy as stale realtime responses.
+    if !captured_model_use.is_empty() {
+        let mut guard = session.lock().await;
+        for model_use in &captured_model_use {
+            guard.record_token_usage(
+                "goal_formation",
+                &model_use.model_name,
+                crate::realtime::token_usage::TokenClassCounts {
+                    text_input: u64::from(
+                        model_use
+                            .usage
+                            .input_tokens
+                            .saturating_sub(model_use.usage.cached_input_tokens),
+                    ),
+                    audio_input: 0,
+                    cached_input: u64::from(model_use.usage.cached_input_tokens),
+                    text_output: u64::from(model_use.usage.output_tokens),
+                    audio_output: 0,
+                },
+            );
+        }
+    }
+    let outcome = outcome_result?;
+```
+
+(The `qsf_models::DirectModelInvoker` reference in this function disappears; the rest of the function is unchanged and re-locks the session for outcome processing as before.)
+
 - [ ] **Step 7: Run the tests, then the phase gates**
 
-Run: `cargo test -p qsf_realtime_server` — Expected: PASS.
+Run: `cargo test -p qsf_realtime_server` and `cargo test -p qsf_models` — Expected: PASS.
 Run: `cargo build`, then `cargo clippy --all-targets -- -D warnings`, then `cargo fmt` — Expected: clean (all Task 1.1 items are referenced by now).
 
 - [ ] **Step 8: Commit**
 
 ```bash
-git add crates/qsf_models/src/live_goal_formation.rs crates/qsf_models/src/lib.rs crates/qsf_realtime_server/src/realtime/live_goal_formation.rs crates/qsf_realtime_server/src/realtime/sideband_tests.rs
+git add crates/qsf_models/src/model_client.rs crates/qsf_models/src/lib.rs crates/qsf_models/src/live_goal_formation.rs crates/qsf_realtime_server/src/realtime/live_goal_formation.rs crates/qsf_realtime_server/src/realtime/sideband_tests.rs
 git commit -m "realtime server: record goal-formation model usage in the session token ledger"
 ```
 
@@ -787,9 +1001,62 @@ git commit -m "realtime server: record goal-formation model usage in the session
 }
 ```
 
-No new unit test: the watch contract is covered by Task 1.2's late-subscriber test, and this task is mechanical fan-out identical to the volition-inspection push; the end-to-end path is human-verified in Task 3.3. All existing routes tests must keep passing.
+The watch contract is covered by Task 1.2's late-subscriber test and the select-loop fan-out is mechanical, but the browser parser (Task 3.1) depends on this exact flattened, snake_case wire shape — so `TokenUsageMessage` serialization gets a unit test pinning every field name `parseTokenUsageMessage` consumes (review finding: no existing routes test exercises socket-pushed message inventory, so a `#[serde(flatten)]` or naming mistake would otherwise only surface in manual browser verification). A websocket-level push test is not practical in the current routes test harness; the end-to-end path is human-verified in Task 3.3. All existing routes tests must keep passing.
 
-- [ ] **Step 1: Extend the socket plumbing**
+- [ ] **Step 1: Write the failing wire-shape test**
+
+Append to the existing `mod tests` at the bottom of `crates/qsf_realtime_server/src/realtime/routes.rs`:
+
+```rust
+    #[test]
+    fn token_usage_message_serializes_the_wire_shape_the_browser_parses() {
+        use crate::realtime::token_usage::{TokenClassCounts, TokenUsageSnapshot};
+
+        let mut snapshot = TokenUsageSnapshot::new("session-1".to_string());
+        snapshot.record(
+            "realtime_voice",
+            "gpt-realtime-2",
+            TokenClassCounts {
+                text_input: 100,
+                audio_input: 300,
+                cached_input: 500,
+                text_output: 20,
+                audio_output: 80,
+            },
+        );
+        let message = TokenUsageMessage {
+            kind: "token_usage",
+            snapshot,
+        };
+
+        // parseTokenUsageMessage in the browser consumes exactly these snake_case
+        // fields; the #[serde(flatten)] must keep the snapshot's fields top-level.
+        assert_eq!(
+            serde_json::to_value(&message).expect("serialize"),
+            serde_json::json!({
+                "kind": "token_usage",
+                "qsf_session_id": "session-1",
+                "models": [{
+                    "model_id": "gpt-realtime-2",
+                    "role": "realtime_voice",
+                    "calls": 1,
+                    "counts": {
+                        "text_input": 100,
+                        "audio_input": 300,
+                        "cached_input": 500,
+                        "text_output": 20,
+                        "audio_output": 80
+                    }
+                }]
+            })
+        );
+    }
+```
+
+Run: `cargo test -p qsf_realtime_server token_usage_message`
+Expected: FAIL to compile — `TokenUsageMessage` does not exist yet.
+
+- [ ] **Step 2: Extend the socket plumbing**
 
 In `crates/qsf_realtime_server/src/realtime/routes.rs`, mirror the `VolitionInspectionCapture` handling in five places:
 
@@ -891,12 +1158,12 @@ async fn push_token_usage(socket: &mut WebSocket, snapshot: &TokenUsageSnapshot)
 
 (f) The rebind guard `if status_rx.is_none() { … }` covers all receivers as a set (unchanged behavior) — just make sure the destructuring inside it now names four receivers.
 
-- [ ] **Step 2: Run the gates**
+- [ ] **Step 3: Run the gates**
 
-Run: `cargo test -p qsf_realtime_server` — Expected: PASS (no existing test asserts the socket's message inventory).
+Run: `cargo test -p qsf_realtime_server` — Expected: PASS, including the Step-1 wire-shape test.
 Run: `cargo build`, `cargo clippy --all-targets -- -D warnings`, `cargo fmt` — Expected: clean.
 
-- [ ] **Step 3: Commit**
+- [ ] **Step 4: Commit**
 
 ```bash
 git add crates/qsf_realtime_server/src/realtime/routes.rs
@@ -1770,8 +2037,9 @@ Append to `docs/DecisionLog.md` (matching the file's entry template; adjust the 
 Decision: The realtime diagnostics page reports provider token consumption as raw token
 counts per model and token class (fresh text/audio input, cached input, text/audio
 output), scoped to the current realtime session. No dollar conversion is shown, and
-every provider response counts — including stale or cancelled ones, since the provider
-billed them.
+every billed provider call counts — including stale or cancelled realtime responses and
+goal-formation calls whose responses later fail parsing or validation, since the
+provider billed them.
 Context: Cost visibility was requested for the simulator's OpenAI usage. A price table
 would allow a single combined dollar figure but must be hand-maintained per model; raw
 class counts answer the operative question — where the tokens go — without that burden.
@@ -1801,8 +2069,8 @@ git commit -m "docs: record session-scoped raw-token diagnostics meter decision"
 ## Success Criteria
 
 - During a live session the Tokens card answers "where do the tokens go" at a glance: one stacked bar per (model, role), largest on top, classes color-coded with a legend and exact-count tooltips, headline session total with call count.
-- The realtime model's audio/text/cached split is real provider data (`input_token_details` / `output_token_details`), not inference; text-only models and detail-less payloads degrade to text classes without error.
-- Both current call sites feed the ledger: realtime `response.done` (including stale/cancelled responses) and the live-goal-formation judge. Adding a future call site requires only one `record_token_usage(...)` call.
+- The realtime model's audio/text/cached split is real provider data (`input_token_details` / `output_token_details`), not inference; text-only models and detail-less payloads degrade to text classes without error, and input classes never sum past the provider's `input_tokens` (regression-tested).
+- Both current call sites feed the ledger: realtime `response.done` (including stale/cancelled responses, regression-tested) and the live-goal-formation judge (including billed calls whose responses fail post-response parsing or validation, regression-tested). Adding a future call site requires only one `record_token_usage(...)` call.
 - The browser holds no accumulation state: full-snapshot push per recorded call; a reconnecting or late-joining socket immediately receives the current snapshot (watch-channel guarantee, unit-tested).
 - The persisted session schema (`ExchangeModelUse`) is unchanged.
 - Reducers, parsers, and the view-model are pure and unit-tested (parse validation, session guarding, clear-on-allocate, row ordering, bar normalization, zero-class dropping, count formatting, singular/plural call counts).
