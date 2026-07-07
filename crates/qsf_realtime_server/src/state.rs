@@ -15,6 +15,7 @@ use uuid::Uuid;
 use crate::cli::Args;
 use crate::diagnostics::{DiagnosticRecord, DiagnosticTrust, DiagnosticWriter};
 use crate::realtime::live_goal_formation::PendingLiveGoalFormation;
+use crate::realtime::token_usage::{TokenClassCounts, TokenUsageSnapshot};
 use crate::realtime::turn_context::TurnContextCapture;
 use crate::realtime::volition_injection::build_stable_baseline_instructions;
 use crate::realtime::volition_inspection_capture::VolitionInspectionCapture;
@@ -516,9 +517,13 @@ pub struct SessionRuntime {
     /// formation is in flight is queued rather than dropped (see
     /// `crate::realtime::live_goal_formation`).
     pub(crate) live_goal_formation_queue: VecDeque<PendingLiveGoalFormation>,
+    /// Session token ledger for the diagnostics Tokens panel. Mutated only through
+    /// `record_token_usage`, which also publishes the snapshot to `token_usage_tx`.
+    pub token_usage: TokenUsageSnapshot,
     status_tx: watch::Sender<SidebandStatus>,
     turn_context_tx: watch::Sender<Option<TurnContextCapture>>,
     volition_inspection_tx: watch::Sender<Option<VolitionInspectionCapture>>,
+    token_usage_tx: watch::Sender<Option<TokenUsageSnapshot>>,
 }
 
 impl SessionRuntime {
@@ -532,6 +537,7 @@ impl SessionRuntime {
             QsfRealtimeSessionConfig::from_browser_config(&config),
         );
         let tool_registry = crate::realtime::tools::build_tool_registry(&config.tools);
+        let token_usage = TokenUsageSnapshot::new(qsf_session_id.clone());
         Self {
             qsf_session_id,
             config,
@@ -552,9 +558,11 @@ impl SessionRuntime {
             volition: crate::realtime::volition::VolitionRuntimeState::new(),
             live_goal_formation_in_flight: false,
             live_goal_formation_queue: VecDeque::new(),
+            token_usage,
             status_tx: watch::channel(SidebandStatus::default()).0,
             turn_context_tx: watch::channel(None).0,
             volition_inspection_tx: watch::channel(None).0,
+            token_usage_tx: watch::channel(None).0,
         }
     }
 
@@ -591,6 +599,21 @@ impl SessionRuntime {
     /// `SessionRuntime` can publish captures without holding a `MutexGuard`.
     pub fn volition_inspection_sender(&self) -> watch::Sender<Option<VolitionInspectionCapture>> {
         self.volition_inspection_tx.clone()
+    }
+
+    /// Subscribe to token-usage snapshots. A late-joining subscriber immediately
+    /// observes the most recent snapshot stored in the channel, even if it was
+    /// published before this call (watch channel guarantee).
+    pub fn subscribe_token_usage(&self) -> watch::Receiver<Option<TokenUsageSnapshot>> {
+        self.token_usage_tx.subscribe()
+    }
+
+    /// Record one completed model call in the session token ledger and publish the
+    /// updated snapshot to any events-socket subscribers.
+    pub fn record_token_usage(&mut self, role: &str, model_id: &str, counts: TokenClassCounts) {
+        self.token_usage.record(role, model_id, counts);
+        self.token_usage_tx
+            .send_replace(Some(self.token_usage.clone()));
     }
 
     /// Record the current sideband health and notify any status subscribers.
@@ -913,5 +936,50 @@ mod tests {
         let received_b = runtime_b.subscribe_volition_inspection().borrow().clone();
         assert!(received_a.is_some());
         assert!(received_b.is_none());
+    }
+
+    #[test]
+    fn token_usage_watch_holds_snapshot_for_late_subscriber() {
+        use crate::realtime::token_usage::TokenClassCounts;
+
+        let tempdir = tempfile::tempdir().expect("tempdir");
+        let diagnostics =
+            DiagnosticWriter::create(tempdir.path().join("test.jsonl")).expect("diagnostics");
+        let mut runtime = SessionRuntime::new(
+            "test-session".to_string(),
+            BrowserSessionConfig::default(),
+            diagnostics,
+        );
+
+        runtime.record_token_usage(
+            "realtime_voice",
+            "gpt-realtime-2",
+            TokenClassCounts {
+                text_input: 10,
+                audio_input: 20,
+                cached_input: 5,
+                text_output: 3,
+                audio_output: 7,
+            },
+        );
+        runtime.record_token_usage(
+            "realtime_voice",
+            "gpt-realtime-2",
+            TokenClassCounts {
+                text_input: 1,
+                ..TokenClassCounts::default()
+            },
+        );
+
+        let rx = runtime.subscribe_token_usage();
+        let snapshot = rx
+            .borrow()
+            .clone()
+            .expect("late subscriber must see stored snapshot");
+        assert_eq!(snapshot.qsf_session_id, "test-session");
+        assert_eq!(snapshot.models.len(), 1);
+        assert_eq!(snapshot.models[0].calls, 2);
+        assert_eq!(snapshot.models[0].counts.text_input, 11);
+        assert_eq!(snapshot.models[0].counts.audio_output, 7);
     }
 }

@@ -10,6 +10,7 @@ import {
   mapProviderMessageToRelayEnvelope,
   parseProviderDataChannelMessage,
   parseSidebandStatusMessage,
+  parseTokenUsageMessage,
   parseTurnContextMessage,
   parseVolitionStateMessage,
   reduceConversationState,
@@ -19,8 +20,10 @@ import {
   selectEventTickerModel,
   selectInjectedVolitionText,
   selectMuteButton,
+  selectTokenUsagePanelModel,
   selectVolitionPanelModel,
   selectVolitionVerdict,
+  type TokenUsagePanelModel,
   type VolitionPanelModel,
   type VolitionPanelRow,
   type VolitionPanelSection,
@@ -43,6 +46,7 @@ interface UiRefs {
   warningBanner: HTMLElement;
   remoteAudio: HTMLAudioElement;
   volitionStateBody: HTMLElement;
+  tokenUsageBody: HTMLElement;
   phaseLaneCanvas: HTMLCanvasElement;
   phaseLaneTip: HTMLElement;
 }
@@ -140,21 +144,31 @@ root.innerHTML = `
       </aside>
     </section>
 
-    <section class="panel phase-strip">
-      <div class="phase-strip-header">
-        <h2>Phase timeline</h2>
-        <ul class="phase-lane-legend" aria-hidden="true">
-          <li><i style="background: var(--phase-idle)"></i>idle</li>
-          <li><i style="background: var(--phase-listening)"></i>listening</li>
-          <li><i style="background: var(--phase-thinking)"></i>thinking</li>
-          <li><i style="background: var(--phase-speaking)"></i>speaking</li>
-          <li><i class="legend-gap"></i>skipped idle</li>
-        </ul>
-      </div>
-      <div class="phase-lane-wrap">
-        <canvas data-role="phase-lane" aria-label="Runtime phase timeline, last 60 seconds of activity"></canvas>
-        <div data-role="phase-lane-tip" class="phase-lane-tip" hidden></div>
-      </div>
+    <section class="bottom-strip">
+      <section class="panel phase-strip">
+        <div class="phase-strip-header">
+          <h2>Phase timeline</h2>
+          <ul class="phase-lane-legend" aria-hidden="true">
+            <li><i style="background: var(--phase-idle)"></i>idle</li>
+            <li><i style="background: var(--phase-listening)"></i>listening</li>
+            <li><i style="background: var(--phase-thinking)"></i>thinking</li>
+            <li><i style="background: var(--phase-speaking)"></i>speaking</li>
+            <li><i class="legend-gap"></i>skipped idle</li>
+          </ul>
+        </div>
+        <div class="phase-lane-wrap">
+          <canvas data-role="phase-lane" aria-label="Runtime phase timeline, last 60 seconds of activity"></canvas>
+          <div data-role="phase-lane-tip" class="phase-lane-tip" hidden></div>
+        </div>
+      </section>
+
+      <aside class="panel token-panel">
+        <div class="panel-header">
+          <h2>Tokens</h2>
+          <span class="status-pill muted">Session totals</span>
+        </div>
+        <div data-role="token-usage-body" class="token-usage-body"></div>
+      </aside>
     </section>
 
     <audio data-role="remote-audio" autoplay playsinline></audio>
@@ -229,6 +243,10 @@ async function startConversation(options: ConversationStartOptions): Promise<boo
       const volitionState = parseVolitionStateMessage(raw);
       if (volitionState !== null) {
         dispatch({ type: "volition_state_captured", capture: volitionState });
+      }
+      const tokenUsage = parseTokenUsageMessage(raw);
+      if (tokenUsage !== null) {
+        dispatch({ type: "token_usage_captured", snapshot: tokenUsage });
       }
     });
     relaySocket.addEventListener("close", () => {
@@ -546,6 +564,7 @@ function render() {
     injectedVolition,
     selectVolitionPanelModel(state),
   );
+  renderTokenUsagePanel(refs.tokenUsageBody, selectTokenUsagePanelModel(state));
 }
 
 function scrollTranscriptToLatest() {
@@ -655,6 +674,7 @@ function collectRefs(container: HTMLElement): UiRefs {
     warningBanner: query<HTMLElement>('[data-role="warning"]'),
     remoteAudio: query<HTMLAudioElement>('[data-role="remote-audio"]'),
     volitionStateBody: query<HTMLElement>('[data-role="volition-state-body"]'),
+    tokenUsageBody: query<HTMLElement>('[data-role="token-usage-body"]'),
     phaseLaneCanvas: query<HTMLCanvasElement>('[data-role="phase-lane"]'),
     phaseLaneTip: query<HTMLElement>('[data-role="phase-lane-tip"]'),
   };
@@ -725,6 +745,68 @@ function renderWhyThisAnswerPanel(
   renderCompactScoringPanel(scoringBody, model);
   scoring.appendChild(scoringBody);
   container.appendChild(scoring);
+}
+
+function renderTokenUsagePanel(container: HTMLElement, model: TokenUsagePanelModel) {
+  container.replaceChildren();
+
+  if (model.kind === "empty") {
+    const empty = document.createElement("p");
+    empty.className = "token-usage-empty";
+    empty.textContent = "No model calls yet.";
+    container.appendChild(empty);
+    return;
+  }
+
+  const hero = document.createElement("p");
+  hero.className = "token-hero";
+  const heroValue = document.createElement("strong");
+  heroValue.textContent = model.heroLabel;
+  const heroDetail = document.createElement("span");
+  heroDetail.textContent = model.heroDetail;
+  hero.append(heroValue, heroDetail);
+  container.appendChild(hero);
+
+  const legend = document.createElement("ul");
+  legend.className = "token-legend";
+  for (const entry of model.legend) {
+    const item = document.createElement("li");
+    const chip = document.createElement("i");
+    chip.className = `token-seg-${entry.className}`;
+    const text = document.createElement("span");
+    text.textContent = entry.label;
+    item.append(chip, text);
+    legend.appendChild(item);
+  }
+  container.appendChild(legend);
+
+  for (const row of model.rows) {
+    const rowElement = document.createElement("div");
+    rowElement.className = "token-model-row";
+    const head = document.createElement("div");
+    head.className = "token-model-head";
+    const name = document.createElement("span");
+    name.className = "token-model-name";
+    name.textContent = row.name;
+    const total = document.createElement("span");
+    total.className = "token-model-total";
+    total.textContent = row.totalLabel;
+    head.append(name, total);
+
+    const bar = document.createElement("div");
+    bar.className = "token-bar";
+    bar.style.width = `${row.barPercent}%`;
+    for (const segment of row.segments) {
+      const segmentElement = document.createElement("i");
+      segmentElement.className = `token-seg-${segment.className}`;
+      segmentElement.style.width = `${segment.widthPercent}%`;
+      segmentElement.title = segment.exactLabel;
+      bar.appendChild(segmentElement);
+    }
+
+    rowElement.append(head, bar);
+    container.appendChild(rowElement);
+  }
 }
 
 function renderCompactScoringPanel(container: HTMLElement, model: VolitionPanelModel) {

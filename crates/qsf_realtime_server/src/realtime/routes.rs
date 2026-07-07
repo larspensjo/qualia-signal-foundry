@@ -17,6 +17,7 @@ use serde_json::Value;
 use time::OffsetDateTime;
 
 use crate::diagnostics::DiagnosticRecord;
+use crate::realtime::token_usage::TokenUsageSnapshot;
 use crate::realtime::turn_context::TurnContextCapture;
 use crate::realtime::volition_inspection_capture::VolitionInspectionCapture;
 use crate::state::{AppState, CallBinding, SessionRuntime, SidebandStatus};
@@ -386,9 +387,10 @@ async fn handle_events_socket(
     let mut turn_context_rx: Option<watch::Receiver<Option<TurnContextCapture>>> = None;
     let mut volition_inspection_rx: Option<watch::Receiver<Option<VolitionInspectionCapture>>> =
         None;
+    let mut token_usage_rx: Option<watch::Receiver<Option<TokenUsageSnapshot>>> = None;
     let mut bound_session: Option<String> = session_hint;
     if let Some(id) = bound_session.clone() {
-        if let Some((srx, tcrx, virx)) = subscribe_session(&state, &id).await {
+        if let Some((srx, tcrx, virx, trx)) = subscribe_session(&state, &id).await {
             let status = srx.borrow().clone();
             push_status(&mut socket, &id, &status).await;
             status_rx = Some(srx);
@@ -402,6 +404,11 @@ async fn handle_events_socket(
                 push_volition_inspection(&mut socket, &capture).await;
             }
             volition_inspection_rx = Some(virx);
+            let initial_token_usage = trx.borrow().clone();
+            if let Some(capture) = initial_token_usage {
+                push_token_usage(&mut socket, &capture).await;
+            }
+            token_usage_rx = Some(trx);
         }
     }
 
@@ -420,6 +427,12 @@ async fn handle_events_socket(
         };
         let volition_inspection_changed = async {
             match volition_inspection_rx.as_mut() {
+                Some(rx) => rx.changed().await,
+                None => std::future::pending::<Result<(), watch::error::RecvError>>().await,
+            }
+        };
+        let token_usage_changed = async {
+            match token_usage_rx.as_mut() {
                 Some(rx) => rx.changed().await,
                 None => std::future::pending::<Result<(), watch::error::RecvError>>().await,
             }
@@ -471,6 +484,22 @@ async fn handle_events_socket(
                     }
                     // Sender dropped (session removed): stop watching, keep relaying.
                     Err(_) => volition_inspection_rx = None,
+                }
+            }
+            tu_result = token_usage_changed => {
+                match tu_result {
+                    Ok(()) => {
+                        let capture = token_usage_rx
+                            .as_ref()
+                            .expect("token usage receiver present when change observed")
+                            .borrow()
+                            .clone();
+                        if let Some(capture) = capture {
+                            push_token_usage(&mut socket, &capture).await;
+                        }
+                    }
+                    // Sender dropped (session removed): stop watching, keep relaying.
+                    Err(_) => token_usage_rx = None,
                 }
             }
             incoming = socket.next() => {
@@ -534,7 +563,7 @@ async fn handle_events_socket(
                             .ok();
 
                         if status_rx.is_none() {
-                            if let Some((srx, tcrx, virx)) =
+                            if let Some((srx, tcrx, virx, trx)) =
                                 subscribe_session(&state, &qsf_session_id).await
                             {
                                 let status = srx.borrow().clone();
@@ -550,6 +579,11 @@ async fn handle_events_socket(
                                     push_volition_inspection(&mut socket, &capture).await;
                                 }
                                 volition_inspection_rx = Some(virx);
+                                let initial_token_usage = trx.borrow().clone();
+                                if let Some(capture) = initial_token_usage {
+                                    push_token_usage(&mut socket, &capture).await;
+                                }
+                                token_usage_rx = Some(trx);
                             }
                         }
                     }
@@ -572,6 +606,7 @@ async fn subscribe_session(
     watch::Receiver<SidebandStatus>,
     watch::Receiver<Option<TurnContextCapture>>,
     watch::Receiver<Option<VolitionInspectionCapture>>,
+    watch::Receiver<Option<TokenUsageSnapshot>>,
 )> {
     let session = state.session_runtime(qsf_session_id).await?;
     let guard = session.lock().await;
@@ -579,6 +614,7 @@ async fn subscribe_session(
         guard.subscribe_status(),
         guard.subscribe_turn_context(),
         guard.subscribe_volition_inspection(),
+        guard.subscribe_token_usage(),
     ))
 }
 
@@ -633,6 +669,23 @@ async fn push_volition_inspection(socket: &mut WebSocket, capture: &VolitionInsp
     let message = VolitionInspectionMessage {
         kind: "volition_state",
         capture: capture.clone(),
+    };
+    if let Ok(text) = serde_json::to_string(&message) {
+        socket.send(Message::Text(text.into())).await.ok();
+    }
+}
+
+#[derive(Debug, Serialize)]
+struct TokenUsageMessage {
+    kind: &'static str,
+    #[serde(flatten)]
+    snapshot: TokenUsageSnapshot,
+}
+
+async fn push_token_usage(socket: &mut WebSocket, snapshot: &TokenUsageSnapshot) {
+    let message = TokenUsageMessage {
+        kind: "token_usage",
+        snapshot: snapshot.clone(),
     };
     if let Ok(text) = serde_json::to_string(&message) {
         socket.send(Message::Text(text.into())).await.ok();
@@ -1470,6 +1523,48 @@ mod tests {
         assert_eq!(
             extract_call_id(Some(&location)).as_deref(),
             Some("call_query")
+        );
+    }
+
+    #[test]
+    fn token_usage_message_serializes_the_wire_shape_the_browser_parses() {
+        use crate::realtime::token_usage::{TokenClassCounts, TokenUsageSnapshot};
+
+        let mut snapshot = TokenUsageSnapshot::new("session-1".to_string());
+        snapshot.record(
+            "realtime_voice",
+            "gpt-realtime-2",
+            TokenClassCounts {
+                text_input: 100,
+                audio_input: 300,
+                cached_input: 500,
+                text_output: 20,
+                audio_output: 80,
+            },
+        );
+        let message = TokenUsageMessage {
+            kind: "token_usage",
+            snapshot,
+        };
+
+        assert_eq!(
+            serde_json::to_value(&message).expect("serialize"),
+            serde_json::json!({
+                "kind": "token_usage",
+                "qsf_session_id": "session-1",
+                "models": [{
+                    "model_id": "gpt-realtime-2",
+                    "role": "realtime_voice",
+                    "calls": 1,
+                    "counts": {
+                        "text_input": 100,
+                        "audio_input": 300,
+                        "cached_input": 500,
+                        "text_output": 20,
+                        "audio_output": 80
+                    }
+                }]
+            })
         );
     }
 

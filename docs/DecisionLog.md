@@ -722,10 +722,6 @@ but those docs are evidence and test harnesses. README, launcher documentation,
 and future operator workflows should distinguish current experiment-centric
 development from the target realtime conversation mode. The exact launcher command
 name can be decided when the realtime server/UI entry point is implemented.
-Refs: README.md, docs/ProjectFrame/ProjectVision.md,
-docs/Plans/Plan.RealtimeVoiceConversation.md,
-docs/Plans/Design.RealtimeVoiceConversation.md,
-docs/Architecture/Architecture.RealtimeSessionServer.md, scripts/qsf.ps1
 
 ## 2026-06-09 - qsf_session extraction shipped with qsf_app compatibility wrappers
 Decision: `qsf_session` owns the pure session contracts, including the live and
@@ -739,9 +735,6 @@ update. The resume loader also had to preserve the existing schema-upgrade log i
 Consequences: Future crates such as the realtime server can depend on
 `qsf_session` without the heavy `qsf_app` graph. `qsf_app` remains the thin facade
 for existing call sites until later phases replace them.
-Refs: crates/qsf_session/src/*, crates/qsf_app/src/session/*,
-docs/Plans/Design.RealtimeVoiceConversation.md,
-docs/Architecture/Architecture.StateAndObservability.md
 
 ## 2026-06-09 - Realtime WebRTC uses a server-side SDP exchange, not ephemeral tokens
 Decision: `qsf_realtime_server` initializes the browser realtime call via a
@@ -773,10 +766,6 @@ until the server-side sideband validates it.
 Reverses: "Browser realtime voice uses a dedicated live server" (ephemeral-token
 minting) and "Realtime browser voice MVP defaults" (browser client-secret lifetime),
 both 2026-06-09.
-Refs: docs/Plans/Plan.RealtimeVoiceConversation.md,
-docs/Plans/Design.RealtimeVoiceConversation.md,
-docs/Architecture/Architecture.RealtimeSessionServer.md,
-https://developers.openai.com/api/docs/guides/realtime-webrtc
 
 ## 2026-06-09 - Realtime browser UI lives under qsf_realtime_server/ui
 Decision: The live browser surface for realtime voice conversation lives in a
@@ -787,8 +776,6 @@ concerns, and the realtime server needs its own build and verification boundary.
 Consequences: Launcher wiring, frontend checks, and UI assets for the realtime
 slice target the dedicated crate-local UI directory instead of reusing the
 inspection server UI.
-Refs: crates/qsf_realtime_server/ui/*,
-docs/Architecture/Architecture.RealtimeSessionServer.md
 
 ## 2026-06-09 - Browser relay artifacts stay diagnostic-only and self-describing
 Decision: Browser-relayed provider events are persisted only as untrusted
@@ -802,10 +789,6 @@ on storage location alone.
 Consequences: Browser relay events do not feed sleep consolidation or continuity
 promotion. Diagnostic persistence must record `call_id`, `event_id`, `item_id`,
 `previous_item_id`, and `response_id` alongside the exchange payload.
-Refs: crates/qsf_realtime_server/src/diagnostics.rs,
-crates/qsf_realtime_server/src/realtime/routes.rs,
-crates/qsf_session/src/exchange.rs,
-docs/Architecture/Architecture.StateAndObservability.md
 
 ## 2026-06-09 - Realtime reducer overlap finalizes the prior exchange
 Decision: When a new user turn arrives before the previous response finishes,
@@ -818,8 +801,6 @@ the face of duplicate or stale provider events.
 Consequences: The live reducer keeps one active exchange at a time, suppresses
 stale response ids after interruption or completion, and leaves provider event
 `event_id` deduplication to the server translator boundary.
-Refs: crates/qsf_session/src/live_state.rs,
-crates/qsf_realtime_server/src/realtime/routes.rs
 
 ## 2026-06-09 - Provider drift: `reasoning_effort` is not forwarded to OpenAI realtime calls
 Decision: The accepted browser realtime session default `reasoning_effort = medium` is
@@ -837,9 +818,6 @@ regression test asserts it is absent from the forwarded body while the
 browser-facing default keeps it. Remaining accepted defaults
 (`gpt-realtime-2`/`marin`/`["audio"]`/`server_vad`) are unverified past this
 point and may surface further drift on continued live testing.
-Refs: crates/qsf_realtime_server/src/state.rs,
-crates/qsf_realtime_server/src/realtime/routes.rs,
-docs/Plans/Plan.RealtimeVoiceConversation.md
 
 ## 2026-06-09 - Live Activation Dashboard merges into the realtime operator page
 Decision: The live activation dashboard and the live voice-conversation controls are one
@@ -862,9 +840,6 @@ endpoint but emits no presentation signals. Live tail and offline replay share o
 TypeScript projector over one event schema (deterministic, Vitest-tested). A blinded,
 replay-only/metadata-only mode stays available to avoid live-dashboard experiment bias.
 The read-only memory association browser remains a separate surface, foldable in later.
-Refs: docs/Plans/Idea.LiveActivationDashboard.md,
-docs/Plans/Design.LiveActivationDashboard.md,
-docs/Architecture/Architecture.RealtimeSessionServer.md, crates/qsf_realtime_server/ui/
 
 ## 2026-06-10 - Realtime memory and protocol helpers live in lean shared crates
 Decision: Retrieval scoring lives in `qsf_memory`, context assembly lives in
@@ -877,9 +852,6 @@ the server boundary and allows the live sideband to reuse them directly.
 Consequences: `qsf_app` keeps compatibility facades, but the source of truth for
 retrieval, context assembly, and realtime protocol payloads now lives in the lean
 crates. Future shared logic should follow the same dependency direction.
-Refs: crates/qsf_memory/src/retrieval.rs, crates/qsf_memory/src/co_retrieval.rs,
-crates/qsf_context/src/lib.rs, crates/qsf_realtime_protocol/src/lib.rs,
-crates/qsf_session/src/context.rs, crates/qsf_app/src/context/mod.rs
 
 ## 2026-06-10 - Sideband uses the server-captured call_id websocket with bearer auth
 Decision: The realtime sideband connects to
@@ -891,9 +863,6 @@ the live docs during implementation to confirm the server-side attach shape.
 Consequences: The browser never receives a credential. The realtime server must
 keep the key server-side, build the websocket URL from the captured `call_id`,
 and treat any drift from this attach shape as a docs-updating event.
-Refs: crates/qsf_realtime_server/src/realtime/sideband.rs,
-docs/Architecture/Architecture.RealtimeSessionServer.md,
-https://developers.openai.com/api/docs/guides/realtime-server-controls
 
 ## 2026-06-10 - Authoritative realtime sideband supersedes the browser relay
 Decision: The server-side sideband attached to the server-captured `call_id` is
@@ -1860,4 +1829,10 @@ winner identity preserved trace-side even when rendered text is reduced. Tool ou
 subconscious goals must section and label them instead of silently merging them into ordinary
 goal lists. Suppressed internal initiatives do not count as forced surfacing; only rendered
 initiative lines or other evidence-backed forcing conditions may justify full surfaced detail.
-Refs: docs/Plans/Plan.VolitionMotivationalTexture.md
+
+## 2026-07-07 - Realtime diagnostics track session token usage by model and class
+Decision: The realtime diagnostics page now shows a session-scoped Tokens card fed by a server-side token ledger. The ledger records provider-reported usage per `(role, model)` and splits counts into fresh text/audio input, cached input, and text/audio output. The meter counts completed realtime responses even when they are cancelled or stale, and it also preserves goal-formation spend captured at the model-invoker seam when a billed call later fails validation.
+
+Context: The realtime page already exposed turn, volition, and phase diagnostics, but token spend was only available as raw per-call data on the server. The new card makes the session total visible without introducing a dollar table or changing persisted exchange schema.
+
+Consequences: Reconnecting browsers heal from the latest token snapshot over the events socket, and operators can compare realtime voice spend against goal-formation spend within a session. The split remains diagnostics-only; it does not feed arbitration or persisted exchange records.

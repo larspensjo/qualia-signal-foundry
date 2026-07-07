@@ -4,12 +4,14 @@ import {
   type ConversationState,
   DEFAULT_SESSION_CONFIG,
   EVENT_LOG_LIMIT,
+  formatTokenCount,
   INITIAL_STATE,
   MICROPHONE_AUDIO_CONSTRAINTS,
   mapProviderMessageToRelayEnvelope,
   PHASE_LANE_WINDOW_MS,
   parseProviderDataChannelMessage,
   parseSidebandStatusMessage,
+  parseTokenUsageMessage,
   parseTurnContextMessage,
   parseVolitionStateMessage,
   providerTypeToRelayKind,
@@ -21,8 +23,10 @@ import {
   selectInjectedVolitionText,
   selectMuteButton,
   selectPhaseLaneModel,
+  selectTokenUsagePanelModel,
   selectVolitionPanelModel,
   selectVolitionVerdict,
+  type TokenUsageSnapshot,
 } from "./realtime";
 
 function envelopeOfKind(kind: RelayEventKind): RelayEnvelope {
@@ -1194,6 +1198,95 @@ describe("sideband status message parsing", () => {
   });
 });
 
+describe("token usage capture", () => {
+  const snapshot: TokenUsageSnapshot = {
+    qsfSessionId: "session-1",
+    models: [
+      {
+        modelId: "gpt-realtime-2",
+        role: "realtime_voice",
+        calls: 3,
+        counts: {
+          textInput: 100,
+          audioInput: 300,
+          cachedInput: 500,
+          textOutput: 20,
+          audioOutput: 80,
+        },
+      },
+    ],
+  };
+
+  it("parses a token_usage message", () => {
+    const raw = JSON.stringify({
+      kind: "token_usage",
+      qsf_session_id: "session-1",
+      models: [
+        {
+          model_id: "gpt-realtime-2",
+          role: "realtime_voice",
+          calls: 3,
+          counts: {
+            text_input: 100,
+            audio_input: 300,
+            cached_input: 500,
+            text_output: 20,
+            audio_output: 80,
+          },
+        },
+      ],
+    });
+    expect(parseTokenUsageMessage(raw)).toEqual(snapshot);
+  });
+
+  it("returns null for other kinds, malformed models, and malformed counts", () => {
+    expect(parseTokenUsageMessage("{not-json")).toBeNull();
+    expect(parseTokenUsageMessage(JSON.stringify({ kind: "sideband_status" }))).toBeNull();
+    expect(
+      parseTokenUsageMessage(
+        JSON.stringify({ kind: "token_usage", qsf_session_id: "s", models: "nope" }),
+      ),
+    ).toBeNull();
+    expect(
+      parseTokenUsageMessage(
+        JSON.stringify({
+          kind: "token_usage",
+          qsf_session_id: "s",
+          models: [{ model_id: "m", role: "r", calls: 1, counts: { text_input: "1" } }],
+        }),
+      ),
+    ).toBeNull();
+  });
+
+  it("stores captures for the active session and ignores others", () => {
+    const active = { ...INITIAL_STATE, sessionId: "session-1" };
+    const captured = reduceConversationState(active, { type: "token_usage_captured", snapshot });
+    expect(captured.latestTokenUsage).toEqual(snapshot);
+
+    const mismatched = reduceConversationState(
+      { ...INITIAL_STATE, sessionId: "other-session" },
+      { type: "token_usage_captured", snapshot },
+    );
+    expect(mismatched.latestTokenUsage).toBeNull();
+  });
+
+  it("clears the snapshot when a new session is allocated and keeps it after stop", () => {
+    const populated: ConversationState = {
+      ...INITIAL_STATE,
+      sessionId: "session-1",
+      latestTokenUsage: snapshot,
+    };
+    const reallocated = reduceConversationState(populated, {
+      type: "session_allocated",
+      sessionId: "session-2",
+    });
+    expect(reallocated.latestTokenUsage).toBeNull();
+
+    const stopped = reduceConversationState(populated, { type: "stopped", atMs: 1_000 });
+    expect(stopped.latestTokenUsage).toEqual(snapshot);
+  });
+});
+
 describe("volition panel selector", () => {
   const sampleCapture = {
     qsfSessionId: "session_1",
@@ -1441,6 +1534,144 @@ describe("volition panel selector", () => {
     const section = model.sections.find((s) => s.title === "Functional signals");
     expect(section).toBeDefined();
     expect(section?.rows).toEqual([{ label: "Signals", value: "none" }]);
+  });
+});
+
+describe("selectTokenUsagePanelModel", () => {
+  it("reports the empty state before any recorded call", () => {
+    expect(selectTokenUsagePanelModel(INITIAL_STATE)).toEqual({
+      kind: "empty",
+      heroLabel: "0",
+      heroDetail: "",
+      legend: [],
+      rows: [],
+    });
+  });
+
+  it("orders rows by total, scales bars to the largest row, and drops zero classes", () => {
+    const state: ConversationState = {
+      ...INITIAL_STATE,
+      sessionId: "session-1",
+      latestTokenUsage: {
+        qsfSessionId: "session-1",
+        models: [
+          {
+            modelId: "gpt-5-mini",
+            role: "goal_formation",
+            calls: 2,
+            counts: {
+              textInput: 40,
+              audioInput: 0,
+              cachedInput: 50,
+              textOutput: 10,
+              audioOutput: 0,
+            },
+          },
+          {
+            modelId: "gpt-realtime-2",
+            role: "realtime_voice",
+            calls: 3,
+            counts: {
+              textInput: 100,
+              audioInput: 300,
+              cachedInput: 500,
+              textOutput: 20,
+              audioOutput: 80,
+            },
+          },
+        ],
+      },
+    };
+
+    const model = selectTokenUsagePanelModel(state);
+    expect(model.kind).toBe("data");
+    expect(model.heroLabel).toBe("1.1k");
+    expect(model.heroDetail).toBe("session total · 5 model calls");
+    expect(model.rows.map((row) => row.name)).toEqual([
+      "gpt-realtime-2 · voice",
+      "gpt-5-mini · goal formation",
+    ]);
+    expect(model.rows[0].totalLabel).toBe("1.0k");
+    expect(model.rows[0].barPercent).toBe(100);
+    expect(model.rows[1].barPercent).toBe((100 * 100) / 1_000);
+    expect(
+      model.rows[0].segments.map((segment) => [segment.className, segment.widthPercent]),
+    ).toEqual([
+      ["audio-in", (300 * 100) / 1_000],
+      ["text-in", (100 * 100) / 1_000],
+      ["cached-in", (500 * 100) / 1_000],
+      ["audio-out", (80 * 100) / 1_000],
+      ["text-out", (20 * 100) / 1_000],
+    ]);
+    expect(model.rows[1].segments.map((segment) => segment.className)).toEqual([
+      "text-in",
+      "cached-in",
+      "text-out",
+    ]);
+    expect(model.rows[0].segments[0].exactLabel).toBe("audio in — 300 tokens");
+    expect(model.legend.map((entry) => entry.className)).toEqual([
+      "audio-in",
+      "text-in",
+      "cached-in",
+      "audio-out",
+      "text-out",
+    ]);
+  });
+
+  it("treats an all-zero snapshot as empty and singularizes one call", () => {
+    const zero: ConversationState = {
+      ...INITIAL_STATE,
+      sessionId: "session-1",
+      latestTokenUsage: {
+        qsfSessionId: "session-1",
+        models: [
+          {
+            modelId: "gpt-realtime-2",
+            role: "realtime_voice",
+            calls: 1,
+            counts: {
+              textInput: 0,
+              audioInput: 0,
+              cachedInput: 0,
+              textOutput: 0,
+              audioOutput: 0,
+            },
+          },
+        ],
+      },
+    };
+    expect(selectTokenUsagePanelModel(zero).kind).toBe("empty");
+
+    const single: ConversationState = {
+      ...INITIAL_STATE,
+      sessionId: "session-1",
+      latestTokenUsage: {
+        qsfSessionId: "session-1",
+        models: [
+          {
+            modelId: "gpt-realtime-2",
+            role: "realtime_voice",
+            calls: 1,
+            counts: {
+              textInput: 7,
+              audioInput: 0,
+              cachedInput: 0,
+              textOutput: 2,
+              audioOutput: 0,
+            },
+          },
+        ],
+      },
+    };
+    expect(selectTokenUsagePanelModel(single).heroDetail).toBe("session total · 1 model call");
+  });
+
+  it("formats token counts compactly", () => {
+    expect(formatTokenCount(0)).toBe("0");
+    expect(formatTokenCount(941)).toBe("941");
+    expect(formatTokenCount(1_100)).toBe("1.1k");
+    expect(formatTokenCount(241_900)).toBe("241.9k");
+    expect(formatTokenCount(1_200_000)).toBe("1.20M");
   });
 });
 

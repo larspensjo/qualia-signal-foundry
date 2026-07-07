@@ -359,6 +359,41 @@ impl ModelInvoker for DirectModelInvoker {
     }
 }
 
+/// One model call observed by `UsageCapturingInvoker`: which model answered and what
+/// it consumed, per the provider's usage report.
+#[derive(Clone, Debug, PartialEq)]
+pub struct CapturedModelUse {
+    pub model_name: String,
+    pub usage: ModelUsage,
+}
+
+/// A `ModelInvoker` that calls the client like `DirectModelInvoker` and additionally
+/// captures the usage of every response the provider returned. Callers whose work can
+/// still fail *after* the provider billed the call (structured-output parsing, semantic
+/// validation) read `captured` afterwards, so provider spend is never lost with the
+/// error.
+#[derive(Default)]
+pub struct UsageCapturingInvoker {
+    pub captured: Vec<CapturedModelUse>,
+}
+
+impl ModelInvoker for UsageCapturingInvoker {
+    fn invoke(
+        &mut self,
+        client: &dyn ModelClient,
+        request: &ModelRequest,
+    ) -> anyhow::Result<ModelResponse> {
+        let response = invoke_model(client, request)?;
+        if let Some(usage) = &response.usage {
+            self.captured.push(CapturedModelUse {
+                model_name: response.model_name.clone(),
+                usage: usage.clone(),
+            });
+        }
+        Ok(response)
+    }
+}
+
 pub fn summarize_text(text: &str, max_chars: usize) -> String {
     let char_count = text.chars().count();
     if char_count <= max_chars {

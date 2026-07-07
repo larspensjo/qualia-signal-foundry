@@ -9,6 +9,7 @@ mod sideband_provider_event;
 mod sideband_response_done;
 mod sideband_tool_execution;
 mod sideband_turn_injection;
+pub(crate) mod token_usage;
 pub(crate) mod tools;
 pub(crate) mod turn_context;
 pub(crate) mod turn_integrity;
