@@ -284,6 +284,178 @@ async fn completed_trusted_turn_spawns_live_goal_formation() {
             ..
         }
     ));
+
+    let runtime = state
+        .session_runtime(&allocation.qsf_session_id)
+        .await
+        .expect("runtime");
+    let guard = runtime.lock().await;
+    let formation_row = guard
+        .token_usage
+        .models
+        .iter()
+        .find(|row| row.role == "goal_formation")
+        .expect("goal formation call must be recorded in the token ledger");
+    assert_eq!(formation_row.calls, 1);
+    assert!(formation_row.counts.text_input + formation_row.counts.cached_input > 0);
+}
+
+#[tokio::test]
+async fn response_done_accumulates_realtime_token_usage() {
+    let tempdir = TempDir::new().expect("tempdir");
+    let state = state(&tempdir);
+    let allocation = state.create_session().await.expect("session");
+    let mut runtime_state = SidebandRuntimeState::default();
+    let (outbound_tx, mut outbound_rx) = mpsc::unbounded_channel();
+
+    start_test_turn(
+        &state,
+        &allocation.qsf_session_id,
+        &mut runtime_state,
+        &outbound_tx,
+    )
+    .await;
+    drain_outbound_texts(&mut outbound_rx);
+
+    handle_provider_event(
+        &state,
+        &allocation.qsf_session_id,
+        "call-test",
+        "response.done",
+        &serde_json::json!({
+            "type": "response.done",
+            "event_id": "evt-done",
+            "response": {
+                "id": "response-usage",
+                "status": "completed",
+                "output": [{
+                    "content": [{
+                        "type": "output_text",
+                        "text": "hi"
+                    }]
+                }],
+                "usage": {
+                    "input_tokens": 900,
+                    "output_tokens": 100,
+                    "input_token_details": {
+                        "text_tokens": 300,
+                        "audio_tokens": 600,
+                        "cached_tokens": 500,
+                        "cached_tokens_details": { "text_tokens": 200, "audio_tokens": 300 }
+                    },
+                    "output_token_details": { "text_tokens": 20, "audio_tokens": 80 }
+                }
+            }
+        }),
+        &mut runtime_state,
+        &outbound_tx,
+    )
+    .await
+    .expect("response done");
+
+    let runtime = state
+        .session_runtime(&allocation.qsf_session_id)
+        .await
+        .expect("runtime");
+    let guard = runtime.lock().await;
+    let row = guard
+        .token_usage
+        .models
+        .iter()
+        .find(|row| row.role == "realtime_voice")
+        .expect("realtime response must be recorded in the token ledger");
+    assert_eq!(row.model_id, guard.config.model);
+    assert_eq!(row.calls, 1);
+    assert_eq!(row.counts.text_input, 100);
+    assert_eq!(row.counts.audio_input, 300);
+    assert_eq!(row.counts.cached_input, 500);
+    assert_eq!(row.counts.text_output, 20);
+    assert_eq!(row.counts.audio_output, 80);
+}
+
+#[tokio::test]
+async fn stale_response_done_records_token_usage_without_promoting() {
+    let tempdir = TempDir::new().expect("tempdir");
+    let state = state(&tempdir);
+    let allocation = state.create_session().await.expect("session");
+    let mut runtime_state = SidebandRuntimeState::default();
+    let (outbound_tx, mut outbound_rx) = mpsc::unbounded_channel();
+
+    start_test_turn(
+        &state,
+        &allocation.qsf_session_id,
+        &mut runtime_state,
+        &outbound_tx,
+    )
+    .await;
+    drain_outbound_texts(&mut outbound_rx);
+
+    // Mark the response id stale before its response.done arrives, as a barge-in
+    // cancellation does.
+    runtime_state
+        .stale_response_ids
+        .insert("response-stale".to_string());
+
+    handle_provider_event(
+        &state,
+        &allocation.qsf_session_id,
+        "call-test",
+        "response.done",
+        &serde_json::json!({
+            "type": "response.done",
+            "event_id": "evt-done-stale",
+            "response": {
+                "id": "response-stale",
+                "status": "cancelled",
+                "output": [],
+                "usage": {
+                    "input_tokens": 10,
+                    "output_tokens": 2,
+                    "input_token_details": {
+                        "text_tokens": 10,
+                        "cached_tokens": 4,
+                        "cached_tokens_details": { "text_tokens": 4, "audio_tokens": 0 }
+                    }
+                }
+            }
+        }),
+        &mut runtime_state,
+        &outbound_tx,
+    )
+    .await
+    .expect("stale response done");
+
+    // The stale early-return still ran: the event was diagnosed as stale and no
+    // trusted exchange was promoted to continuity storage.
+    let records = diagnostic_records(&state, &allocation.qsf_session_id).await;
+    assert!(
+        records
+            .iter()
+            .any(|record| matches!(record, DiagnosticRecord::StaleProviderEvent { .. })),
+        "the stale path must be the one exercised"
+    );
+    let continuity_dir = state.continuity_session_dir(&allocation.qsf_session_id);
+    assert!(
+        !continuity_dir.join("session-state.json").exists(),
+        "a stale response must not promote an exchange"
+    );
+
+    // ...but the provider billed the call, so the ledger recorded it anyway.
+    let runtime = state
+        .session_runtime(&allocation.qsf_session_id)
+        .await
+        .expect("runtime");
+    let guard = runtime.lock().await;
+    let row = guard
+        .token_usage
+        .models
+        .iter()
+        .find(|row| row.role == "realtime_voice")
+        .expect("stale response must still be recorded in the token ledger");
+    assert_eq!(row.calls, 1);
+    assert_eq!(row.counts.text_input, 6);
+    assert_eq!(row.counts.cached_input, 4);
+    assert_eq!(row.counts.text_output, 2);
 }
 
 #[tokio::test]

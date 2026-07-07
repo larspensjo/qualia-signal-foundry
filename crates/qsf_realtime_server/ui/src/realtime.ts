@@ -250,31 +250,31 @@ export interface VolitionGoalSalience {
 /// variant's fields alongside a `kind` tag so consumers can switch on `kind` directly.
 export type VolitionSignalEvidence =
   | {
-      kind: "coherence_decline";
-      candidateTitle: string;
-      conflict: VolitionDeclineReason;
-      rationale: string;
-      tick: number;
-    }
+    kind: "coherence_decline";
+    candidateTitle: string;
+    conflict: VolitionDeclineReason;
+    rationale: string;
+    tick: number;
+  }
   | {
-      kind: "frustration";
-      goalId: string;
-      blockedCount: number;
-      lastBlockedTick: number;
-      lastActivatedTick: number;
-    }
+    kind: "frustration";
+    goalId: string;
+    blockedCount: number;
+    lastBlockedTick: number;
+    lastActivatedTick: number;
+  }
   | {
-      kind: "satisfaction";
-      goalId: string;
-      lastSatisfiedTick: number;
-      evidenceRef: string;
-    }
+    kind: "satisfaction";
+    goalId: string;
+    lastSatisfiedTick: number;
+    evidenceRef: string;
+  }
   | {
-      kind: "boredom";
-      inspected: VolitionGoalSalience[];
-      threshold: number;
-      guard: VolitionBoredomGuard;
-    };
+    kind: "boredom";
+    inspected: VolitionGoalSalience[];
+    threshold: number;
+    guard: VolitionBoredomGuard;
+  };
 
 /// One derived functional signal: its `kind`, a display `intensity` in `[0, 1]`, and the
 /// structured `evidence` that justifies it. Mirrors `qsf_volition::signals::FunctionalSignal`.
@@ -339,6 +339,7 @@ export interface ConversationState {
   warning: string | null;
   latestTurnContext: TurnContextCapture | null;
   latestVolitionState: VolitionInspectionCapture | null;
+  latestTokenUsage: TokenUsageSnapshot | null;
 }
 
 export type ConversationAction =
@@ -352,7 +353,8 @@ export type ConversationAction =
   | { type: "stop_requested"; atMs: number }
   | { type: "stopped"; atMs: number }
   | { type: "turn_context_captured"; capture: TurnContextCapture }
-  | { type: "volition_state_captured"; capture: VolitionInspectionCapture };
+  | { type: "volition_state_captured"; capture: VolitionInspectionCapture }
+  | { type: "token_usage_captured"; snapshot: TokenUsageSnapshot };
 
 /// Server-originated status message pushed over the events socket, distinct
 /// from relay acks by its `kind` discriminator.
@@ -371,6 +373,30 @@ export interface TurnContextCapture {
   capturedAt: string; // RFC 3339 string
   requestHash: string;
   messages: unknown[];
+}
+
+/// Token counts split by the classes the Tokens panel displays. "Fresh" input
+/// excludes cached tokens; `cachedInput` is the full cached prefix (audio + text).
+export interface TokenClassCounts {
+  textInput: number;
+  audioInput: number;
+  cachedInput: number;
+  textOutput: number;
+  audioOutput: number;
+}
+
+/// Accumulated usage of one (role, model) pair, as aggregated server-side.
+export interface ModelTokenUsage {
+  modelId: string;
+  role: string;
+  calls: number;
+  counts: TokenClassCounts;
+}
+
+/// One session-scoped token ledger snapshot pushed over the events socket.
+export interface TokenUsageSnapshot {
+  qsfSessionId: string;
+  models: ModelTokenUsage[];
 }
 
 const DEFAULT_DEGRADED_WARNING =
@@ -418,6 +444,7 @@ export const INITIAL_STATE: ConversationState = {
   warning: null,
   latestTurnContext: null,
   latestVolitionState: null,
+  latestTokenUsage: null,
 };
 
 export function reduceConversationState(
@@ -447,6 +474,7 @@ export function reduceConversationState(
         phaseTimeline: [],
         latestTurnContext: null,
         latestVolitionState: null,
+        latestTokenUsage: null,
       };
     case "connection_ready":
       return {
@@ -513,6 +541,17 @@ export function reduceConversationState(
       return {
         ...state,
         latestVolitionState: action.capture,
+      };
+    case "token_usage_captured":
+      // Ignore captures for a session other than the active one: a queued
+      // message from a closed socket must not overwrite state after stop or
+      // during a newly allocated session.
+      if (action.snapshot.qsfSessionId !== state.sessionId) {
+        return state;
+      }
+      return {
+        ...state,
+        latestTokenUsage: action.snapshot,
       };
   }
 }
@@ -685,6 +724,79 @@ function parseForcingCondition(value: unknown): VolitionForcingCondition | null 
     };
   }
   return null;
+}
+
+function parseTokenClassCounts(value: unknown): TokenClassCounts | null {
+  if (!isRecord(value)) {
+    return null;
+  }
+  const { text_input, audio_input, cached_input, text_output, audio_output } = value;
+  if (
+    typeof text_input !== "number" ||
+    typeof audio_input !== "number" ||
+    typeof cached_input !== "number" ||
+    typeof text_output !== "number" ||
+    typeof audio_output !== "number"
+  ) {
+    return null;
+  }
+  return {
+    textInput: text_input,
+    audioInput: audio_input,
+    cachedInput: cached_input,
+    textOutput: text_output,
+    audioOutput: audio_output,
+  };
+}
+
+/// Parse a server→browser events-socket message, returning a token-usage snapshot
+/// when the message has `kind: "token_usage"` and all required fields are present
+/// and correctly typed. Returns `null` for any other message.
+///
+/// Wire format uses snake_case field names; this function maps them to camelCase
+/// TypeScript properties.
+export function parseTokenUsageMessage(raw: string): TokenUsageSnapshot | null {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    return null;
+  }
+  if (!isRecord(parsed) || parsed.kind !== "token_usage") {
+    return null;
+  }
+  const qsfSessionId = parsed.qsf_session_id;
+  const models = parsed.models;
+  if (typeof qsfSessionId !== "string" || !Array.isArray(models)) {
+    return null;
+  }
+
+  const parsedModels: ModelTokenUsage[] = [];
+  for (const entry of models) {
+    if (!isRecord(entry)) {
+      return null;
+    }
+    const counts = parseTokenClassCounts(entry.counts);
+    if (
+      typeof entry.model_id !== "string" ||
+      typeof entry.role !== "string" ||
+      typeof entry.calls !== "number" ||
+      counts === null
+    ) {
+      return null;
+    }
+    parsedModels.push({
+      modelId: entry.model_id,
+      role: entry.role,
+      calls: entry.calls,
+      counts,
+    });
+  }
+
+  return {
+    qsfSessionId,
+    models: parsedModels,
+  };
 }
 
 /// Parse the top-level `signals` array of a `volition_state` message. Defensive and non-fatal:
@@ -938,13 +1050,13 @@ function convertVolitionTurnDecisionSummary(value: unknown): VolitionTurnDecisio
       wire.winner === null
         ? null
         : {
-            winnerGoalId: wire.winner.winner_goal_id,
-            winnerGoalTitle: wire.winner.winner_goal_title,
-            winnerEffectiveTier: wire.winner.winner_effective_tier,
-            winnerBiasedTier: wire.winner.winner_biased_tier,
-            protectedTierActive: wire.winner.protected_tier_active,
-            winnerVisibility: toGoalVisibility(wire.winner.winner_visibility),
-          },
+          winnerGoalId: wire.winner.winner_goal_id,
+          winnerGoalTitle: wire.winner.winner_goal_title,
+          winnerEffectiveTier: wire.winner.winner_effective_tier,
+          winnerBiasedTier: wire.winner.winner_biased_tier,
+          protectedTierActive: wire.winner.protected_tier_active,
+          winnerVisibility: toGoalVisibility(wire.winner.winner_visibility),
+        },
     qualificationThreshold: wire.qualification_threshold,
     belowThreshold: wire.below_threshold.map((candidate) => ({
       goalId: candidate.goal_id,
@@ -1836,29 +1948,29 @@ export function selectVolitionPanelModel(state: ConversationState): VolitionPane
   const winnerRows: VolitionPanelRow[] =
     decision.winner === null
       ? [
-          {
-            label: "Winner",
-            value: `no goal qualified (threshold ${decision.qualificationThreshold})`,
-          },
-          {
-            label: "Below threshold",
-            value: formatBelowThreshold(decision.belowThreshold),
-          },
-        ]
+        {
+          label: "Winner",
+          value: `no goal qualified (threshold ${decision.qualificationThreshold})`,
+        },
+        {
+          label: "Below threshold",
+          value: formatBelowThreshold(decision.belowThreshold),
+        },
+      ]
       : [
-          {
-            label: "Winner",
-            value: `${decision.winner.winnerGoalTitle} [${decision.winner.winnerGoalId}]`,
-          },
-          {
-            label: "Winner visibility",
-            value: formatLabelValue(decision.winner.winnerVisibility),
-          },
-          {
-            label: "Winner tiers",
-            value: `effective ${decision.winner.winnerEffectiveTier}, biased ${decision.winner.winnerBiasedTier}, protected ${yesNo(decision.winner.protectedTierActive)}`,
-          },
-        ];
+        {
+          label: "Winner",
+          value: `${decision.winner.winnerGoalTitle} [${decision.winner.winnerGoalId}]`,
+        },
+        {
+          label: "Winner visibility",
+          value: formatLabelValue(decision.winner.winnerVisibility),
+        },
+        {
+          label: "Winner tiers",
+          value: `effective ${decision.winner.winnerEffectiveTier}, biased ${decision.winner.winnerBiasedTier}, protected ${yesNo(decision.winner.protectedTierActive)}`,
+        },
+      ];
   return {
     kind: "decision",
     headline: "Volition state",
@@ -1923,6 +2035,132 @@ export function selectVolitionPanelModel(state: ConversationState): VolitionPane
       },
       signalsSection,
     ),
+  };
+}
+
+/// Fixed display order of token classes: inputs before outputs, audio before
+/// text within each direction, cached input between. The className suffixes
+/// double as CSS hooks (`token-seg-<className>`).
+const TOKEN_CLASS_ORDER = [
+  { key: "audioInput", className: "audio-in", label: "audio in" },
+  { key: "textInput", className: "text-in", label: "text in" },
+  { key: "cachedInput", className: "cached-in", label: "cached in" },
+  { key: "audioOutput", className: "audio-out", label: "audio out" },
+  { key: "textOutput", className: "text-out", label: "text out" },
+] as const;
+
+const TOKEN_ROLE_LABELS: Record<string, string> = {
+  realtime_voice: "voice",
+  goal_formation: "goal formation",
+};
+
+export interface TokenUsageSegmentModel {
+  className: string;
+  label: string;
+  tokens: number;
+  exactLabel: string;
+  widthPercent: number;
+}
+
+export interface TokenUsageRowModel {
+  name: string;
+  totalLabel: string;
+  barPercent: number;
+  segments: TokenUsageSegmentModel[];
+}
+
+export interface TokenUsageLegendEntry {
+  className: string;
+  label: string;
+}
+
+export interface TokenUsagePanelModel {
+  kind: "empty" | "data";
+  heroLabel: string;
+  heroDetail: string;
+  legend: TokenUsageLegendEntry[];
+  rows: TokenUsageRowModel[];
+}
+
+/// Compact token-count formatting for headline and row totals: exact under 1k,
+/// one decimal in k, two decimals in M.
+export function formatTokenCount(tokens: number): string {
+  if (tokens < 1_000) {
+    return String(tokens);
+  }
+  if (tokens < 1_000_000) {
+    return `${(tokens / 1_000).toFixed(1)}k`;
+  }
+  return `${(tokens / 1_000_000).toFixed(2)}M`;
+}
+
+function tokenClassTotal(counts: TokenClassCounts): number {
+  return (
+    counts.textInput +
+    counts.audioInput +
+    counts.cachedInput +
+    counts.textOutput +
+    counts.audioOutput
+  );
+}
+
+/// View-model for the Tokens panel: rows sorted by total descending (stable, so
+/// equal totals keep server order), bar lengths normalized to the largest row,
+/// segments in fixed class order with zero classes dropped, and a legend listing
+/// only the classes present anywhere. All formatting decisions live here; the
+/// render function only builds DOM.
+export function selectTokenUsagePanelModel(state: ConversationState): TokenUsagePanelModel {
+  const models = state.latestTokenUsage?.models ?? [];
+  const grandTotal = models.reduce((sum, model) => sum + tokenClassTotal(model.counts), 0);
+  if (grandTotal === 0) {
+    return { kind: "empty", heroLabel: "0", heroDetail: "", legend: [], rows: [] };
+  }
+
+  const totalCalls = models.reduce((sum, model) => sum + model.calls, 0);
+  const ranked = models
+    .map((model, index) => ({
+      model,
+      index,
+      total: tokenClassTotal(model.counts),
+    }))
+    .sort((a, b) => b.total - a.total || a.index - b.index);
+  const maxTotal = ranked[0]?.total ?? 0;
+
+  const rows: TokenUsageRowModel[] = ranked.map(({ model, total }) => {
+    const rowTotal = total;
+    const roleLabel = TOKEN_ROLE_LABELS[model.role] ?? formatLabelValue(model.role);
+    const segments: TokenUsageSegmentModel[] = [];
+    for (const tokenClass of TOKEN_CLASS_ORDER) {
+      const tokens = model.counts[tokenClass.key];
+      if (tokens === 0) {
+        continue;
+      }
+      segments.push({
+        className: tokenClass.className,
+        label: tokenClass.label,
+        tokens,
+        exactLabel: `${tokenClass.label} — ${tokens.toLocaleString("en-US")} tokens`,
+        widthPercent: (tokens * 100) / rowTotal,
+      });
+    }
+    return {
+      name: `${model.modelId} · ${roleLabel}`,
+      totalLabel: formatTokenCount(rowTotal),
+      barPercent: maxTotal === 0 ? 0 : (rowTotal * 100) / maxTotal,
+      segments,
+    };
+  });
+
+  const legend: TokenUsageLegendEntry[] = TOKEN_CLASS_ORDER.filter((tokenClass) =>
+    models.some((model) => model.counts[tokenClass.key] > 0),
+  ).map((tokenClass) => ({ className: tokenClass.className, label: tokenClass.label }));
+
+  return {
+    kind: "data",
+    heroLabel: formatTokenCount(grandTotal),
+    heroDetail: `session total · ${totalCalls} model call${totalCalls === 1 ? "" : "s"}`,
+    legend,
+    rows,
   };
 }
 

@@ -16,9 +16,9 @@ pub use live_goal_formation::{
 };
 pub use mock_model::{MockModelClient, format_exchange_transcript};
 pub use model_client::{
-    DirectModelInvoker, ModelClient, ModelInvoker, ModelMessage, ModelMessageRole, ModelRequest,
-    ModelResponse, ModelResponseFormat, ModelToolCall, ModelToolDefinition, ModelUsage,
-    invoke_model, summarize_text,
+    CapturedModelUse, DirectModelInvoker, ModelClient, ModelInvoker, ModelMessage,
+    ModelMessageRole, ModelRequest, ModelResponse, ModelResponseFormat, ModelToolCall,
+    ModelToolDefinition, ModelUsage, UsageCapturingInvoker, invoke_model, summarize_text,
 };
 pub use model_role::{ModelOutputExpectation, ModelRole, ModelRoleId};
 pub use openai_provider::{

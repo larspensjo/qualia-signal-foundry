@@ -16,8 +16,9 @@ use time::OffsetDateTime;
 use tokio::sync::Mutex;
 
 use qsf_models::{
-    LiveGoalFormationJudge, ModelBackedLiveGoalFormationJudge, ModelClient,
-    coherence_judge_goal_set, live_goal_formation_stable_prefix_hash,
+    CapturedModelUse, LiveGoalFormationJudge, ModelBackedLiveGoalFormationJudge, ModelClient,
+    ModelUsage, UsageCapturingInvoker, coherence_judge_goal_set,
+    live_goal_formation_stable_prefix_hash,
 };
 use qsf_volition::{
     AdmissionResolution, Contradiction, DeclinedCandidate, VolitionEvent, apply,
@@ -73,6 +74,23 @@ pub(crate) struct PendingLiveGoalFormation {
     exchange_index: usize,
     turn_transcript: String,
     response_dispatched_at: Option<OffsetDateTime>,
+}
+
+struct LiveGoalFormationCallResult {
+    outcome: anyhow::Result<qsf_models::LiveGoalFormationOutcome>,
+    captured: Vec<CapturedModelUse>,
+}
+
+fn token_counts_from_model_usage(
+    usage: &ModelUsage,
+) -> crate::realtime::token_usage::TokenClassCounts {
+    crate::realtime::token_usage::TokenClassCounts {
+        text_input: usage.input_tokens.saturating_sub(usage.cached_input_tokens) as u64,
+        audio_input: 0,
+        cached_input: usage.cached_input_tokens as u64,
+        text_output: usage.output_tokens as u64,
+        audio_output: 0,
+    }
 }
 
 /// Builds the model client used for one formation call. Boxed so the per-item worker loop can
@@ -261,17 +279,36 @@ where
     let formation_started_at = OffsetDateTime::now_utc();
     // `goal_set` is not read again after this point, so it moves into the blocking task
     // directly rather than being cloned first.
-    let outcome = tokio::task::spawn_blocking(
-        move || -> anyhow::Result<qsf_models::LiveGoalFormationOutcome> {
-            let client = build_client()?;
+    let call_result = tokio::task::spawn_blocking(move || match build_client() {
+        Ok(client) => {
             let judge = ModelBackedLiveGoalFormationJudge::new(client.as_ref());
-            let mut invoker = qsf_models::DirectModelInvoker;
-            judge.form_and_detect(&mut invoker, &goal_set, &turn_transcript)
+            let mut invoker = UsageCapturingInvoker::default();
+            let outcome = judge.form_and_detect(&mut invoker, &goal_set, &turn_transcript);
+            LiveGoalFormationCallResult {
+                outcome,
+                captured: invoker.captured,
+            }
+        }
+        Err(error) => LiveGoalFormationCallResult {
+            outcome: Err(error),
+            captured: Vec::new(),
         },
-    )
+    })
     .await
-    .map_err(|join_error| anyhow::anyhow!("live goal formation task panicked: {join_error}"))??;
+    .map_err(|join_error| anyhow::anyhow!("live goal formation task panicked: {join_error}"))?;
     let formation_completed_at = OffsetDateTime::now_utc();
+    let LiveGoalFormationCallResult { outcome, captured } = call_result;
+    if !captured.is_empty() {
+        let mut guard = session.lock().await;
+        for captured_use in captured {
+            guard.record_token_usage(
+                "goal_formation",
+                &captured_use.model_name,
+                token_counts_from_model_usage(&captured_use.usage),
+            );
+        }
+    }
+    let outcome = outcome?;
 
     let (events, resolution) = match &outcome.proposed_candidate {
         Some(candidate) => {
@@ -715,6 +752,49 @@ mod tests {
             "a failed formation call must not mutate volition state"
         );
         assert!(guard.volition.last_goal_set_prefix_hash.is_none());
+    }
+
+    #[tokio::test]
+    async fn a_billed_call_that_fails_validation_still_lands_in_the_token_ledger() {
+        let tempdir = TempDir::new().unwrap();
+        let app_state = state(&tempdir);
+        let allocation = app_state.create_session().await.unwrap();
+        let session = app_state
+            .session_runtime(&allocation.qsf_session_id)
+            .await
+            .unwrap();
+
+        // The provider answers (and bills the call) with output that fails
+        // structured-output parsing, so run_live_goal_formation returns an error.
+        let build_client = || -> anyhow::Result<Arc<dyn ModelClient>> {
+            Ok(Arc::new(
+                qsf_models::MockModelClient::default().with_fixture(
+                    qsf_models::ModelRoleId::LiveGoalFormationJudge,
+                    "not json at all".to_string(),
+                ),
+            ))
+        };
+
+        let result = run_live_goal_formation(
+            session.clone(),
+            &allocation.qsf_session_id,
+            0,
+            "a turn transcript".to_string(),
+            None,
+            build_client,
+        )
+        .await;
+        assert!(result.is_err());
+
+        let guard = session.lock().await;
+        let row = guard
+            .token_usage
+            .models
+            .iter()
+            .find(|row| row.role == "goal_formation")
+            .expect("a billed formation call must be recorded despite the failure");
+        assert_eq!(row.calls, 1);
+        assert!(row.counts.text_input + row.counts.cached_input > 0);
     }
 
     #[tokio::test]

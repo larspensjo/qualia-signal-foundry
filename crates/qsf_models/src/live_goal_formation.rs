@@ -344,7 +344,7 @@ impl LiveGoalFormationJudge for ModelBackedLiveGoalFormationJudge<'_> {
 mod tests {
     use super::*;
     use crate::MockModelClient;
-    use crate::model_client::DirectModelInvoker;
+    use crate::model_client::{DirectModelInvoker, UsageCapturingInvoker};
     use qsf_volition::{AllowedEffect, EvidenceRef, GoalScope};
 
     fn goal(id: &str) -> CoherenceJudgeGoalRef {
@@ -620,6 +620,27 @@ mod tests {
             rendered.contains("goal-new"),
             "error must include the raw response body: {rendered}"
         );
+    }
+
+    #[test]
+    fn usage_capturing_invoker_preserves_usage_when_validation_fails_after_the_call() {
+        let client = MockModelClient::default().with_fixture(
+            ModelRoleId::LiveGoalFormationJudge,
+            "not json at all".to_string(),
+        );
+        let judge = ModelBackedLiveGoalFormationJudge::new(&client);
+        let mut invoker = UsageCapturingInvoker::default();
+
+        let result = judge.form_and_detect(&mut invoker, &[goal("goal-a")], "a turn");
+
+        assert!(result.is_err());
+        assert_eq!(
+            invoker.captured.len(),
+            1,
+            "the billed call must be captured despite the post-response failure"
+        );
+        assert!(invoker.captured[0].usage.input_tokens > 0);
+        assert!(!invoker.captured[0].model_name.is_empty());
     }
 
     #[test]

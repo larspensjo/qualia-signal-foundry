@@ -24,6 +24,7 @@ use crate::realtime::sideband_tool_execution::{
     PendingToolExecution, aborted_tool_resolution, execute_realtime_tool_call,
     extract_response_function_call_attempts,
 };
+use crate::realtime::token_usage::{response_done_token_counts, usage_number};
 use crate::realtime::tools::{
     self, RealtimeToolContext, ToolSessionSnapshot, VolitionStateSnapshot, tool_allow_list,
     tool_permission_decision,
@@ -32,25 +33,17 @@ use crate::realtime::turn_integrity::TurnPhase;
 use crate::state::{AppState, SessionRuntime};
 
 fn response_usage_input_tokens(event: &serde_json::Value) -> u32 {
-    response_usage_number(event, &["input_tokens"]).unwrap_or(0) as u32
+    usage_number(event, &["input_tokens"]).unwrap_or(0) as u32
 }
 
 fn response_usage_cached_input_tokens(event: &serde_json::Value) -> u32 {
-    response_usage_number(event, &["input_token_details", "cached_tokens"])
-        .or_else(|| response_usage_number(event, &["cached_input_tokens"]))
+    usage_number(event, &["input_token_details", "cached_tokens"])
+        .or_else(|| usage_number(event, &["cached_input_tokens"]))
         .unwrap_or(0) as u32
 }
 
 fn response_usage_output_tokens(event: &serde_json::Value) -> u32 {
-    response_usage_number(event, &["output_tokens"]).unwrap_or(0) as u32
-}
-
-fn response_usage_number(event: &serde_json::Value, path: &[&str]) -> Option<u64> {
-    let mut current = event.get("response")?.get("usage")?;
-    for segment in path {
-        current = current.get(segment)?;
-    }
-    current.as_u64()
+    usage_number(event, &["output_tokens"]).unwrap_or(0) as u32
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -88,6 +81,9 @@ pub(crate) async fn handle_response_done_event(
         (Some(pending_exchange), Some(current_exchange)) => pending_exchange != current_exchange,
         _ => true,
     };
+    let model_id = guard.config.model.clone();
+    let token_usage_counts = response_done_token_counts(event);
+    guard.record_token_usage("realtime_voice", &model_id, token_usage_counts);
     if response_is_stale || exchange_is_stale {
         guard
             .diagnostics
@@ -111,7 +107,6 @@ pub(crate) async fn handle_response_done_event(
     }
 
     let exchange_index = ensure_authoritative_exchange(&mut guard);
-    let model_id = guard.config.model.clone();
     let completed_at = SystemTime::now();
     let response_started_at = runtime_state
         .response_started_at
@@ -518,7 +513,22 @@ pub(crate) async fn handle_response_done_event(
 
 #[cfg(test)]
 mod tests {
+    use tempfile::TempDir;
+
     use super::*;
+    use crate::realtime::sideband::SidebandRuntimeState;
+    use crate::state::{AppState, SessionIdMode};
+
+    fn state(tempdir: &TempDir) -> AppState {
+        AppState::new_with_realtime_ws_base_url(
+            "test-api-key",
+            "http://127.0.0.1:9999",
+            "wss://example.invalid/realtime",
+            tempdir.path().to_path_buf(),
+            SessionIdMode::Default,
+        )
+        .expect("state")
+    }
 
     #[test]
     fn response_usage_extractors_tolerate_missing_fields() {
@@ -537,5 +547,66 @@ mod tests {
         assert_eq!(response_usage_input_tokens(&event), 3);
         assert_eq!(response_usage_cached_input_tokens(&event), 1);
         assert_eq!(response_usage_output_tokens(&event), 4);
+    }
+
+    #[tokio::test]
+    async fn stale_response_still_records_usage() {
+        let tempdir = TempDir::new().expect("tempdir");
+        let state = state(&tempdir);
+        let allocation = state.create_session().await.expect("session");
+        let runtime = state
+            .session_runtime(&allocation.qsf_session_id)
+            .await
+            .expect("runtime");
+        let guard = runtime.lock().await;
+        let mut runtime_state = SidebandRuntimeState {
+            response_id: Some("response-stale".to_string()),
+            ..Default::default()
+        };
+        runtime_state
+            .stale_response_ids
+            .insert("response-stale".to_string());
+        let (outbound_tx, _outbound_rx) = tokio::sync::mpsc::unbounded_channel();
+
+        handle_response_done_event(
+            &state,
+            &allocation.qsf_session_id,
+            "call-1",
+            &serde_json::json!({
+                "type": "response.done",
+                "event_id": "evt-stale",
+                "response": {
+                    "id": "response-stale",
+                    "status": "cancelled",
+                    "usage": {
+                        "input_tokens": 10,
+                        "output_tokens": 4,
+                        "input_token_details": {
+                            "text_tokens": 8,
+                            "cached_tokens": 3
+                        }
+                    }
+                }
+            }),
+            runtime.clone(),
+            guard,
+            &mut runtime_state,
+            &outbound_tx,
+        )
+        .await
+        .expect("stale response should still be handled");
+
+        let guard = runtime.lock().await;
+        let row = guard
+            .token_usage
+            .models
+            .iter()
+            .find(|row| row.role == "realtime_voice")
+            .expect("realtime usage must be recorded before stale return");
+        assert_eq!(row.model_id, guard.config.model);
+        assert_eq!(row.calls, 1);
+        assert_eq!(row.counts.text_input, 5);
+        assert_eq!(row.counts.cached_input, 3);
+        assert_eq!(row.counts.text_output, 4);
     }
 }
