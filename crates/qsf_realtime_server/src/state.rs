@@ -3,7 +3,9 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use anyhow::Context;
-use qsf_realtime_protocol::{OPENAI_REALTIME_WS_BASE_URL, RealtimeToolDefinition};
+use qsf_realtime_protocol::{
+    OPENAI_REALTIME_VOICE_MODEL, OPENAI_REALTIME_WS_BASE_URL, RealtimeToolDefinition,
+};
 use qsf_session::LiveSessionState;
 use qsf_session::{MemorySourceConfig, SessionConfig as QsfSessionConfig, SessionState};
 use qsf_volition::{Mode, VolitionContinuitySnapshot, realtime_seed_fixture};
@@ -392,7 +394,7 @@ impl Default for BrowserSessionConfig {
     fn default() -> Self {
         Self {
             kind: "realtime".to_string(),
-            model: "gpt-realtime-2".to_string(),
+            model: OPENAI_REALTIME_VOICE_MODEL.to_string(),
             voice: "marin".to_string(),
             reasoning_effort: "medium".to_string(),
             output_modalities: vec!["audio".to_string()],
@@ -953,7 +955,7 @@ mod tests {
 
         runtime.record_token_usage(
             "realtime_voice",
-            "gpt-realtime-2",
+            OPENAI_REALTIME_VOICE_MODEL,
             TokenClassCounts {
                 text_input: 10,
                 audio_input: 20,
@@ -964,7 +966,7 @@ mod tests {
         );
         runtime.record_token_usage(
             "realtime_voice",
-            "gpt-realtime-2",
+            OPENAI_REALTIME_VOICE_MODEL,
             TokenClassCounts {
                 text_input: 1,
                 ..TokenClassCounts::default()

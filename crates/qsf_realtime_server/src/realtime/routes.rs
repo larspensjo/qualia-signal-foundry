@@ -1013,6 +1013,7 @@ mod tests {
     use axum::body::{Body, Bytes, to_bytes};
     use axum::http::{HeaderMap, Request};
     use axum::routing::post;
+    use qsf_realtime_protocol::OPENAI_REALTIME_VOICE_MODEL;
     use serde_json::json;
     use tower::ServiceExt;
 
@@ -1055,7 +1056,7 @@ mod tests {
         let json: serde_json::Value = serde_json::from_slice(&body).expect("json");
         let body_text = String::from_utf8(body.to_vec()).expect("utf8");
 
-        assert_eq!(json["session"]["model"], "gpt-realtime-2");
+        assert_eq!(json["session"]["model"], OPENAI_REALTIME_VOICE_MODEL);
         assert_eq!(json["session"]["voice"], "marin");
         assert_eq!(json["session"]["reasoning_effort"], "medium");
         assert_eq!(
@@ -1533,7 +1534,7 @@ mod tests {
         let mut snapshot = TokenUsageSnapshot::new("session-1".to_string());
         snapshot.record(
             "realtime_voice",
-            "gpt-realtime-2",
+            OPENAI_REALTIME_VOICE_MODEL,
             TokenClassCounts {
                 text_input: 100,
                 audio_input: 300,
@@ -1553,7 +1554,7 @@ mod tests {
                 "kind": "token_usage",
                 "qsf_session_id": "session-1",
                 "models": [{
-                    "model_id": "gpt-realtime-2",
+                    "model_id": OPENAI_REALTIME_VOICE_MODEL,
                     "role": "realtime_voice",
                     "calls": 1,
                     "counts": {

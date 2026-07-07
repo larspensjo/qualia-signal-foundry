@@ -1,5 +1,6 @@
 use tempfile::TempDir;
 
+use qsf_realtime_protocol::OPENAI_REALTIME_VOICE_MODEL;
 use qsf_session::{ExchangeModelUse, ExchangeOutput, ResumeMode};
 
 use super::*;
@@ -45,7 +46,7 @@ async fn promote_trusted_exchange_writes_continuity_state() {
             tool_executions: vec![],
             model: Some(ExchangeModelUse {
                 provider_name: Some("openai_realtime".to_string()),
-                model_id: "gpt-realtime-2".to_string(),
+                model_id: OPENAI_REALTIME_VOICE_MODEL.to_string(),
                 latency_ms: 10,
                 input_tokens: 1,
                 cached_input_tokens: 0,
@@ -202,7 +203,7 @@ fn completed_exchange(index: usize, user_input: &str, assistant_response: &str) 
         tool_executions: vec![],
         model: Some(ExchangeModelUse {
             provider_name: Some("openai_realtime".to_string()),
-            model_id: "gpt-realtime-2".to_string(),
+            model_id: OPENAI_REALTIME_VOICE_MODEL.to_string(),
             latency_ms: 10,
             input_tokens: 1,
             cached_input_tokens: 0,

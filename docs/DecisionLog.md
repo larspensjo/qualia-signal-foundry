@@ -1821,3 +1821,8 @@ Decision: The realtime diagnostics page now shows a session-scoped Tokens card f
 Context: The realtime page already exposed turn, volition, and phase diagnostics, but token spend was only available as raw per-call data on the server. The new card makes the session total visible without introducing a dollar table or changing persisted exchange schema.
 
 Consequences: Reconnecting browsers heal from the latest token snapshot over the events socket, and operators can compare realtime voice spend against goal-formation spend within a session. The split remains diagnostics-only; it does not feed arbitration or persisted exchange records.
+
+## 2026-07-07 - Realtime voice model default is gpt-realtime-2.1 with a single source of truth
+Decision: The default OpenAI realtime voice model is `gpt-realtime-2.1`, and the model id is defined in exactly one place, the shared realtime protocol layer, from which the app and the realtime session server both consume it.
+Context: OpenAI released `gpt-realtime-2.1` (2026-07-06) as an incremental upgrade over `gpt-realtime-2` with improved alphanumeric recognition, silence/noise handling, and interruption behavior, at unchanged pricing and with no session schema changes. The previous default was duplicated as a string literal across the app, server, and protocol crates.
+Consequences: Future voice-model bumps are a one-line change in the protocol layer. Runtime code and tests reference the shared constant instead of repeating the literal; documentation states the current model id where it describes accepted defaults.

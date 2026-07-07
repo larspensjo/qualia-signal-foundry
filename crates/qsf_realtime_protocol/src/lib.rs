@@ -2,6 +2,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 pub const OPENAI_REALTIME_WS_BASE_URL: &str = "wss://api.openai.com/v1/realtime";
+pub const OPENAI_REALTIME_VOICE_MODEL: &str = "gpt-realtime-2.1";
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct RealtimeToolDefinition {
@@ -381,7 +382,7 @@ mod tests {
     #[test]
     fn voice_session_update_includes_requested_transcription_model() {
         let update = build_openai_realtime_voice_session_update(
-            "gpt-realtime-2",
+            OPENAI_REALTIME_VOICE_MODEL,
             "marin",
             "Speak briefly.",
             &["audio".to_string()],
@@ -402,7 +403,7 @@ mod tests {
     #[test]
     fn conversation_session_update_disables_auto_response_when_requested() {
         let update = build_openai_realtime_conversation_session_update(
-            "gpt-realtime-2",
+            OPENAI_REALTIME_VOICE_MODEL,
             "marin",
             "Speak briefly.",
             &["audio".to_string()],
@@ -428,7 +429,7 @@ mod tests {
     #[test]
     fn conversation_session_update_enables_requested_transcription_model() {
         let update = build_openai_realtime_conversation_session_update(
-            "gpt-realtime-2",
+            OPENAI_REALTIME_VOICE_MODEL,
             "marin",
             "Speak briefly.",
             &["audio".to_string()],
@@ -479,7 +480,7 @@ mod tests {
     #[test]
     fn conversation_session_update_includes_tool_definitions() {
         let update = build_openai_realtime_conversation_session_update(
-            "gpt-realtime-2",
+            OPENAI_REALTIME_VOICE_MODEL,
             "marin",
             "Speak briefly.",
             &["audio".to_string()],

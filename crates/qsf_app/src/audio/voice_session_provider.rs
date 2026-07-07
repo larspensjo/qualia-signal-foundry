@@ -10,7 +10,7 @@ use super::{
     total_latency_ms,
 };
 
-pub const OPENAI_REALTIME_VOICE_MODEL: &str = "gpt-realtime-2";
+pub use qsf_realtime_protocol::OPENAI_REALTIME_VOICE_MODEL;
 pub const REALTIME_SESSION_PROVIDER_ENV_VAR: &str = "QSF_REALTIME_SESSION_PROVIDER";
 pub const REALTIME_SESSION_INPUT_SOURCE_ENV_VAR: &str = "QSF_REALTIME_SESSION_INPUT_SOURCE";
 pub const REALTIME_SESSION_WAV_PATH_ENV_VAR: &str = "QSF_REALTIME_SESSION_WAV_PATH";

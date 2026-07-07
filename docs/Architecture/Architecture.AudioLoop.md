@@ -26,7 +26,7 @@ human-verified end-to-end barge-in evaluation still pending.
 - `SpeechOutputProvider` (metadata-only by default), preserving the invariant that
   `SpeechPlaybackRequested.text` equals `OutputProduced.message`
   ([audio/speech_output_provider.rs](../../crates/qsf_app/src/audio/speech_output_provider.rs))
-- `VoiceSessionProvider` for `gpt-realtime-2` speech-to-speech sessions, with tool
+- `VoiceSessionProvider` for `gpt-realtime-2.1` speech-to-speech sessions, with tool
   requests routed into QSF events and persisted shared exchange records rather than
   executed directly
   ([audio/voice_session_provider.rs](../../crates/qsf_app/src/audio/voice_session_provider.rs))
@@ -288,7 +288,7 @@ SpeechOutputProvider
   -> future render-only TTS provider after the simulated boundary is proven
 
 RealtimeSessionProvider
-  -> existing gpt-realtime-2 one-shot adapter
+  -> existing gpt-realtime-2.1 one-shot adapter
   -> browser realtime voice preview transport via qsf_realtime_server
 
 TranslationProvider

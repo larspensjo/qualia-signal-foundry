@@ -132,6 +132,8 @@ pub(crate) fn response_done_token_counts(event: &serde_json::Value) -> TokenClas
 
 #[cfg(test)]
 mod tests {
+    use qsf_realtime_protocol::OPENAI_REALTIME_VOICE_MODEL;
+
     use super::*;
 
     #[test]
@@ -241,11 +243,11 @@ mod tests {
             text_output: 3,
             audio_output: 7,
         };
-        snapshot.record("realtime_voice", "gpt-realtime-2", counts);
+        snapshot.record("realtime_voice", OPENAI_REALTIME_VOICE_MODEL, counts);
         snapshot.record("goal_formation", "gpt-5-mini", counts);
         snapshot.record(
             "realtime_voice",
-            "gpt-realtime-2",
+            OPENAI_REALTIME_VOICE_MODEL,
             TokenClassCounts {
                 text_input: 1,
                 ..TokenClassCounts::default()

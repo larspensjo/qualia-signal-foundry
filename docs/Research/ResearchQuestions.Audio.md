@@ -41,7 +41,7 @@ Current implementation direction:
 - Keep the existing streaming transcription and text-owned voice paths as the
   deterministic, inspectable foundation.
 - Use `gpt-realtime-whisper` for transcript-only realtime speech-to-text work.
-- Build the first browser speech-to-speech slice with `gpt-realtime-2`, voice
+- Build browser speech-to-speech slices with `gpt-realtime-2.1`, voice
   `marin`, medium reasoning effort, audio output, and provider `server_vad` with
   automatic response creation and interruption enabled.
 - Treat browser-relayed provider events as diagnostic-only; use the server-side

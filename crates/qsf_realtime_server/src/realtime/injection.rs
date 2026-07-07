@@ -107,6 +107,7 @@ mod tests {
         AssociationPath, RetrievalScore, RetrievalStrategy, RetrievedMemory,
     };
     use qsf_memory::{MemoryRecord, MemoryRecordKind};
+    use qsf_realtime_protocol::OPENAI_REALTIME_VOICE_MODEL;
     use time::OffsetDateTime;
 
     use super::*;
@@ -150,7 +151,7 @@ mod tests {
     fn empty_retrieval_returns_no_injection() {
         let output_modalities = vec!["audio".to_string()];
         let request = MemoryInjectionRequest {
-            model: "gpt-realtime-2",
+            model: OPENAI_REALTIME_VOICE_MODEL,
             voice: "marin",
             base_instructions: "Speak briefly.",
             output_modalities: &output_modalities,
@@ -178,7 +179,7 @@ mod tests {
         ];
         let output_modalities = vec!["audio".to_string()];
         let request = MemoryInjectionRequest {
-            model: "gpt-realtime-2",
+            model: OPENAI_REALTIME_VOICE_MODEL,
             voice: "marin",
             base_instructions: "Speak briefly.",
             output_modalities: &output_modalities,
@@ -219,7 +220,7 @@ mod tests {
         let memories = vec![retrieved_memory("memory-a", "Only memory", 18)];
         let output_modalities = vec!["audio".to_string()];
         let request = MemoryInjectionRequest {
-            model: "gpt-realtime-2",
+            model: OPENAI_REALTIME_VOICE_MODEL,
             voice: "marin",
             base_instructions: "Speak briefly.",
             output_modalities: &output_modalities,

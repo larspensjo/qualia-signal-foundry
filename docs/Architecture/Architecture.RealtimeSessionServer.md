@@ -124,7 +124,9 @@ experiments, not the final shape for this server.
 
 - Crate: `qsf_realtime_server`.
 - Browser media: WebRTC, owned by the browser.
-- Model: `gpt-realtime-2`.
+- Model: `gpt-realtime-2.1`, defined once as
+  `qsf_realtime_protocol::OPENAI_REALTIME_VOICE_MODEL` and consumed by both
+  `qsf_realtime_server` and `qsf_app`.
 - Voice: `marin`.
 - Reasoning effort: `medium`.
 - Output modality: `["audio"]`.
