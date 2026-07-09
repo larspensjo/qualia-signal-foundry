@@ -230,6 +230,9 @@ pub enum GoalScope {
 pub enum AllowedEffect {
     Reflect,
     RetrieveContext,
+    /// Request a read-only consultation of the external world corpus. The volition domain only
+    /// emits the request; the realtime adapter owns the external read and its trace.
+    ConsultWorld,
     ProposeExperiment,
     SurfaceOpenThread,
 }
@@ -263,6 +266,7 @@ impl fmt::Display for AllowedEffect {
         formatter.write_str(match self {
             Self::Reflect => "reflect",
             Self::RetrieveContext => "retrieve-context",
+            Self::ConsultWorld => "consult-world",
             Self::ProposeExperiment => "propose-experiment",
             Self::SurfaceOpenThread => "surface-open-thread",
         })

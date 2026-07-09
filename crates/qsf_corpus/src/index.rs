@@ -111,32 +111,55 @@ impl CorpusIndex {
     /// Runs a lexical lookup at a supplied time, useful for deterministic callers and tests.
     pub fn query_at(&self, query: &str, limit: usize, now: OffsetDateTime) -> CorpusQueryResult {
         let started_at = Instant::now();
-        let query_terms = tokenize(query);
-        let mut scores = BTreeMap::<usize, (f64, BTreeSet<String>)>::new();
+        let query_terms = tokenize(query).into_iter().collect::<Vec<_>>();
+        // A common term can match almost the entire corpus. Keep the scoring representation
+        // dense and defer both provenance cloning and ranking to the bounded result set; the
+        // former implementation allocated one ordered map and one ordered term set per match,
+        // then sorted every candidate even when the caller asked for only a handful.
+        let mut scores = vec![0.0_f64; self.articles.len()];
+        let mut matched_term_indexes = vec![Vec::<usize>::new(); self.articles.len()];
+        let mut matched_articles = Vec::new();
 
-        for term in query_terms {
-            let Some(postings) = self.postings.get(&term) else {
+        for (term_index, term) in query_terms.iter().enumerate() {
+            let Some(postings) = self.postings.get(term) else {
                 continue;
             };
             for (article_index, posting) in postings {
                 let score = (f64::from(posting.title_hits) * 3.0)
                     + f64::from(posting.body_hits)
                     + f64::from(posting.metadata_hits);
-                let entry = scores
-                    .entry(*article_index)
-                    .or_insert_with(|| (0.0, BTreeSet::new()));
-                entry.0 += score;
-                entry.1.insert(term.clone());
+                if scores[*article_index] == 0.0 {
+                    matched_articles.push(*article_index);
+                }
+                scores[*article_index] += score;
+                matched_term_indexes[*article_index].push(term_index);
             }
         }
 
-        let mut candidates = scores
+        let candidate_order = |left: &usize, right: &usize| {
+            let left_article = &self.articles[*left];
+            let right_article = &self.articles[*right];
+            scores[*right]
+                .total_cmp(&scores[*left])
+                .then_with(|| right_article.fetched_utc.cmp(&left_article.fetched_utc))
+                .then_with(|| left_article.content_hash.cmp(&right_article.content_hash))
+        };
+        if matched_articles.len() > limit {
+            matched_articles.select_nth_unstable_by(limit, candidate_order);
+            matched_articles.truncate(limit);
+        }
+        matched_articles.sort_unstable_by(candidate_order);
+
+        let candidates = matched_articles
             .into_iter()
-            .map(|(article_index, (score, matched_terms))| {
+            .map(|article_index| {
                 let article = &self.articles[article_index];
                 QueryCandidate {
-                    score,
-                    matched_terms: matched_terms.into_iter().collect(),
+                    score: scores[article_index],
+                    matched_terms: matched_term_indexes[article_index]
+                        .iter()
+                        .map(|term_index| query_terms[*term_index].clone())
+                        .collect(),
                     content_hash: article.content_hash.clone(),
                     title: article.title.clone(),
                     url: article.url.clone(),
@@ -146,14 +169,6 @@ impl CorpusIndex {
                 }
             })
             .collect::<Vec<_>>();
-        candidates.sort_by(|left, right| {
-            right
-                .score
-                .total_cmp(&left.score)
-                .then_with(|| right.fetched_utc.cmp(&left.fetched_utc))
-                .then_with(|| left.content_hash.cmp(&right.content_hash))
-        });
-        candidates.truncate(limit);
 
         let elapsed = started_at.elapsed();
         CorpusQueryResult {
@@ -254,6 +269,24 @@ mod tests {
         assert!(
             result.latency_ms < 300,
             "lookup took {} ms",
+            result.latency_ms
+        );
+    }
+
+    #[test]
+    fn common_term_lookup_only_materializes_the_requested_top_candidates() {
+        let index = CorpusIndex::new(
+            (0..6_500)
+                .map(|id| article(id, &format!("AI update {id}"), "AI transition news"))
+                .collect(),
+        );
+
+        let result = index.query("ai transition", 3);
+
+        assert_eq!(result.candidates.len(), 3);
+        assert!(
+            result.latency_ms < 300,
+            "common-term lookup took {} ms",
             result.latency_ms
         );
     }

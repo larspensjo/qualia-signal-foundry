@@ -46,6 +46,9 @@ pub fn render_initiative_line(
             "Bounded initiative: reflect on {proposed_question}. Keep it internal to this conversation; do not take external action."
         ),
         InitiativeOutput::ContextRetrievalRequested { .. } => return None,
+        // The request is pure. The world-consultation adapter supplies the honest first-person
+        // line only after it has actually performed a read and selected a source.
+        InitiativeOutput::WorldConsultationRequested { .. } => return None,
         InitiativeOutput::ExperimentProposed { hypothesis, scope } => format!(
             "Bounded initiative: consider experiment {hypothesis} (scope: {scope}). Keep it internal to this conversation; do not take external action."
         ),

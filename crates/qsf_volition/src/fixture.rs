@@ -245,6 +245,7 @@ pub fn realtime_seed_fixture() -> VolitionFixture {
                     ActivationKeyword::normal("replace"),
                 ],
                 allowed_effects: vec![
+                    AllowedEffect::ConsultWorld,
                     AllowedEffect::Reflect,
                     AllowedEffect::SurfaceOpenThread,
                     AllowedEffect::ProposeExperiment,
@@ -273,7 +274,11 @@ pub fn realtime_seed_fixture() -> VolitionFixture {
                     ActivationKeyword::normal("trend"),
                     ActivationKeyword::weak("happen"),
                 ],
-                allowed_effects: vec![AllowedEffect::Reflect, AllowedEffect::SurfaceOpenThread],
+                allowed_effects: vec![
+                    AllowedEffect::ConsultWorld,
+                    AllowedEffect::Reflect,
+                    AllowedEffect::SurfaceOpenThread,
+                ],
                 satisfaction_condition_summary: "Something was connected into a larger explanation, or a sharp open question about it was named.".to_string(),
                 evidence_refs: vec![SEED_EVIDENCE.to_string(), SEED_DECISIONS.to_string()],
                 estimated_tokens: 20,

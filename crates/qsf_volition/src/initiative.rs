@@ -13,6 +13,12 @@ pub enum InitiativeOutput {
     ContextRetrievalRequested {
         query_terms: Vec<String>,
     },
+    /// A pure request to consult the read-only external world corpus. The caller may add
+    /// current-topic terms from the actual turn, but this domain output records the activation
+    /// terms that grounded the request.
+    WorldConsultationRequested {
+        query_terms: Vec<WorldQueryTerm>,
+    },
     ExperimentProposed {
         hypothesis: String,
         scope: GoalScope,
@@ -20,6 +26,22 @@ pub enum InitiativeOutput {
     OpenThreadSurfaced {
         thread_summary: String,
     },
+}
+
+/// Provenance of a lexical term in a world-corpus consultation. The lack of an open-question
+/// substrate is intentional and visible: v1 distinguishes goal activation from current topic.
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum WorldQueryTermSource {
+    GoalActivation,
+    CurrentTopic,
+}
+
+/// A consultation term with its derivation source, kept serializable for adapter traces.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct WorldQueryTerm {
+    pub term: String,
+    pub source: WorldQueryTermSource,
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
@@ -146,6 +168,17 @@ pub fn execute_initiative(initiative: &InitiativeProposal, goal: &Goal) -> Initi
         AllowedEffect::RetrieveContext => InitiativeOutput::ContextRetrievalRequested {
             query_terms: initiative.matched_terms.clone(),
         },
+        AllowedEffect::ConsultWorld => InitiativeOutput::WorldConsultationRequested {
+            query_terms: initiative
+                .matched_terms
+                .iter()
+                .cloned()
+                .map(|term| WorldQueryTerm {
+                    term,
+                    source: WorldQueryTermSource::GoalActivation,
+                })
+                .collect(),
+        },
         AllowedEffect::ProposeExperiment => InitiativeOutput::ExperimentProposed {
             hypothesis: format!(
                 "Experiment hypothesis for '{}': {}",
@@ -235,6 +268,42 @@ mod tests {
         assert!(
             matches!(output, InitiativeOutput::ExperimentProposed { .. }),
             "ProposeExperiment effect must produce ExperimentProposed"
+        );
+    }
+
+    #[test]
+    fn execute_initiative_consult_world_preserves_goal_activation_provenance() {
+        let fixture = crate::realtime_seed_fixture();
+        let goal = fixture
+            .goals
+            .iter()
+            .find(|goal| goal.id == "assemble-world-picture")
+            .unwrap();
+        let initiative = InitiativeProposal {
+            goal_id: goal.id.clone(),
+            goal_title: goal.title.clone(),
+            effect: AllowedEffect::ConsultWorld,
+            rationale: "test".to_string(),
+            matched_terms: vec!["world".to_string(), "trend".to_string()],
+            scope: goal.scope,
+        };
+
+        let output = execute_initiative(&initiative, goal);
+
+        assert_eq!(
+            output,
+            InitiativeOutput::WorldConsultationRequested {
+                query_terms: vec![
+                    WorldQueryTerm {
+                        term: "world".to_string(),
+                        source: WorldQueryTermSource::GoalActivation,
+                    },
+                    WorldQueryTerm {
+                        term: "trend".to_string(),
+                        source: WorldQueryTermSource::GoalActivation,
+                    },
+                ],
+            }
         );
     }
 

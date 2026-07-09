@@ -206,6 +206,7 @@ fn initiative_output_kind(output: &InitiativeOutput) -> &'static str {
     match output {
         InitiativeOutput::ReflectionRequested { .. } => "reflection_requested",
         InitiativeOutput::ContextRetrievalRequested { .. } => "context_retrieval_requested",
+        InitiativeOutput::WorldConsultationRequested { .. } => "world_consultation_requested",
         InitiativeOutput::ExperimentProposed { .. } => "experiment_proposed",
         InitiativeOutput::OpenThreadSurfaced { .. } => "open_thread_surfaced",
     }

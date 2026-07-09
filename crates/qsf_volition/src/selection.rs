@@ -82,8 +82,9 @@ pub const STRONG_MATCH_MIN_DISTINCT_NON_WEAK_TERMS: usize = 2;
 /// Choose which allowed effect a goal fires for this match. A goal that permits
 /// `ProposeExperiment` on a rich match (match strength at or above
 /// `STRONG_MATCH_STRENGTH_THRESHOLD` and at least `STRONG_MATCH_MIN_DISTINCT_NON_WEAK_TERMS`
-/// distinct non-Weak matched terms) proposes; otherwise the goal takes its first allowed
-/// effect (`Reflect` by convention). Generic infrastructure — no persona-specific terms in code.
+/// distinct non-Weak matched terms) proposes; otherwise the goal takes its first allowed effect.
+/// A world-facing fixture places `ConsultWorld` first, so a thinner relevant match consults
+/// rather than inventing a reflection. Generic infrastructure — no persona-specific terms in code.
 pub fn select_effect_for_goal(goal: &Goal, matched: &[ActivationKeyword]) -> AllowedEffect {
     let allows_propose = goal
         .allowed_effects
@@ -500,22 +501,22 @@ mod tests {
             select_effect_for_goal(goal, &two_normal),
             AllowedEffect::ProposeExperiment
         );
-        // A single Strong term scores 8 but is not a rich match — reflects.
+        // A single Strong term scores 8 but is not a rich match — consults.
         let single_strong = vec![ActivationKeyword::strong("ai")];
         assert_eq!(
             select_effect_for_goal(goal, &single_strong),
-            AllowedEffect::Reflect
+            AllowedEffect::ConsultWorld
         );
-        // A duplicated Normal term scores 8 but is one distinct term — reflects.
+        // A duplicated Normal term scores 8 but is one distinct term — consults.
         let duplicated_normal = vec![
             ActivationKeyword::normal("job"),
             ActivationKeyword::normal("job"),
         ];
         assert_eq!(
             select_effect_for_goal(goal, &duplicated_normal),
-            AllowedEffect::Reflect
+            AllowedEffect::ConsultWorld
         );
-        // Weak-word combinations never fire regardless of count.
+        // Weak-word combinations do not become experiment proposals, but may still consult.
         let weak_pile = vec![
             ActivationKeyword::weak("future"),
             ActivationKeyword::weak("power"),
@@ -524,7 +525,7 @@ mod tests {
         ];
         assert_eq!(
             select_effect_for_goal(goal, &weak_pile),
-            AllowedEffect::Reflect
+            AllowedEffect::ConsultWorld
         );
     }
 
@@ -547,7 +548,10 @@ mod tests {
         );
 
         let thin = vec![ActivationKeyword::normal("future")];
-        assert_eq!(select_effect_for_goal(goal, &thin), AllowedEffect::Reflect);
+        assert_eq!(
+            select_effect_for_goal(goal, &thin),
+            AllowedEffect::ConsultWorld
+        );
     }
 
     #[test]

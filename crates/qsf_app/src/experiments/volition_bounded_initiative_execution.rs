@@ -462,6 +462,7 @@ fn initiative_output_kind(output: &InitiativeOutput) -> &'static str {
     match output {
         InitiativeOutput::ReflectionRequested { .. } => "ReflectionRequested",
         InitiativeOutput::ContextRetrievalRequested { .. } => "ContextRetrievalRequested",
+        InitiativeOutput::WorldConsultationRequested { .. } => "WorldConsultationRequested",
         InitiativeOutput::ExperimentProposed { .. } => "ExperimentProposed",
         InitiativeOutput::OpenThreadSurfaced { .. } => "OpenThreadSurfaced",
     }
@@ -770,6 +771,10 @@ mod tests {
                 (
                     AllowedEffect::RetrieveContext,
                     InitiativeOutput::ContextRetrievalRequested { .. },
+                ) => {}
+                (
+                    AllowedEffect::ConsultWorld,
+                    InitiativeOutput::WorldConsultationRequested { .. },
                 ) => {}
                 (AllowedEffect::ProposeExperiment, InitiativeOutput::ExperimentProposed { .. }) => {
                 }

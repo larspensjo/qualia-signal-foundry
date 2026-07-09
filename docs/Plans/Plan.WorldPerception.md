@@ -118,9 +118,10 @@ parses the marker/frontmatter contract, builds the deterministic lexical index, 
 content-hash ledger, and owns the shared untrusted-external wrapper used by later live/sleep
 adapters. It is exposed through `qsf_app ingest-world` / `qsf.ps1 world-ingest`.
 The WPFM output ingested 6,304 articles at schema version 1 with no skipped files; the second
-run reused all 6,304 content hashes. The current real-corpus query probe is 17 ms and index
-rebuild is about 9.6 s. This validates compatibility and incremental parsing, but query latency
-needs profiling against the live budget before the consultation adapter is enabled.
+run reused all 6,304 content hashes. The current real-corpus query probe was optimized from
+17 ms to 2 ms (development build) and index rebuild is about 9.6 s. This validates compatibility,
+incremental parsing, and the single-digit-ms gate for a guarded consultation adapter; the live
+experiment still owns the inline verdict.
 
 The smallest standalone slice: everything needed to turn a WPFM `output/` folder into a
 queryable in-memory index, verifiable entirely offline. No volition, no live path yet.
