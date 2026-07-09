@@ -28,6 +28,7 @@ Describe "qsf.ps1 argument completion" {
         $completions | Should -Contain "workbench"
         $completions | Should -Contain "realtime"
         $completions | Should -Contain "sleep"
+        $completions | Should -Contain "world-ingest"
         $completions | Should -Contain "doctor"
         $completions | Should -Contain "list"
         $completions | Should -Contain "help"
@@ -127,6 +128,27 @@ Describe "qsf.ps1 argument completion" {
 
         $completions | Should -Contain "state/realtime"
         $completions | Should -Contain "state/session"
+    }
+
+    It "completes the default world corpus ledger" {
+        $completions = Complete-QsfInput -InputText ".\scripts\qsf.ps1 world-ingest -WorldCorpusLedger "
+
+        $completions | Should -Contain "state/world-corpus/index.json"
+    }
+
+    It "completes an explicitly configured world corpus path" {
+        $previous = [System.Environment]::GetEnvironmentVariable("QSF_WORLD_CORPUS_PATH", "Process")
+        $configuredPath = Join-Path $TestDrive "world-corpus-output"
+        try {
+            [System.Environment]::SetEnvironmentVariable("QSF_WORLD_CORPUS_PATH", $configuredPath, "Process")
+
+            $completions = Complete-QsfInput -InputText ".\scripts\qsf.ps1 world-ingest -WorldCorpusPath "
+
+            $completions | Should -Contain $configuredPath
+        }
+        finally {
+            [System.Environment]::SetEnvironmentVariable("QSF_WORLD_CORPUS_PATH", $previous, "Process")
+        }
     }
 
     It "completes the restore command" {

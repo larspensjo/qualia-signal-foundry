@@ -1,9 +1,8 @@
 # Handoff — Resume Here
 
-**Updated:** 2026-07-07 — the conscious/subconscious visibility slice is closed: the live human
-session confirmed both forced-surfacing conditions and the honest-instrument-readout introspection
-reply, and the live goal-formation voice test passed (admit, boundaries decline, latency parity).
-Next is landing the Ari identity reframe with a live probe session.
+**Updated:** 2026-07-09 — the world corpus ingested the real WPFM output (6,304 articles;
+schema v1; no skipped files) and the content-hash ledger fully reused it on the next run. The
+17 ms real-corpus query probe needs profiling against the live budget before consultation.
 
 <!--
 Rules (see ProjectWorkflow.md, "Handoff Discipline"):
@@ -17,29 +16,21 @@ Rules (see ProjectWorkflow.md, "Handoff Discipline"):
 
 ## Now — immediate action
 
-**Run [Experiment.RealtimeAriIdentity](Experiments/Experiment.RealtimeAriIdentity.md)** — the
-new first-person identity wording needs a live probe session to verify Ari's self-model and the
-persisted trace contract.
-Why: the code and documentation reframe is in place; the remaining uncertainty is the model's
-spoken behavior under philosophical probes.
+**Profile the real-corpus lexical query in [Plan.WorldPerception](Plans/Plan.WorldPerception.md)**
+before the live adapter is built.
+Why: ingestion correctness is confirmed, but the 17 ms query probe is above the intended
+single-digit-ms live-path target.
 
 ## Next — active plan
 
-**Specify the chosen track** — either elaborate `Experiment.PersonaTensionVariations` from
-[Experiment.Backlog.md](Experiments/Experiment.Backlog.md) or write the Phase 5 (multi-turn Plans)
-spec and experiment scaffold in
-[Plan.VolitionMotivationalTexture.md](Plans/Plan.VolitionMotivationalTexture.md).
-Why: the coherent-agent substrate (coherence, live formation, signals, visibility) is complete;
-what remains in the plan is the one unspecified phase, with persona work as the parallel option.
+**Build the live world-consultation experiment in
+[Plan.WorldPerception](Plans/Plan.WorldPerception.md)** after query latency is characterized.
+Why: the corpus boundary is deterministic and inspectable; the remaining question is whether
+curiosity-driven consultation can inject a correctly attributed fact within the live latency budget.
 
 ## Horizon — direction
 
-**Persona and longer-horizon volition structure** — choose between fixture-level personality
-experiments and Phase 5 multi-turn plans.
-Why: the visibility layer is complete; the next uncertainty is whether more value
-comes from persona tuning or from adding explicit multi-turn plan state.
-Candidates: `Experiment.PersonaTensionVariations` in
-[Experiment.Backlog.md](Experiments/Experiment.Backlog.md), Phase 5 in
-[Plan.VolitionMotivationalTexture.md](Plans/Plan.VolitionMotivationalTexture.md), and
-[Architecture.VolitionSystem.md](Architecture/Architecture.VolitionSystem.md) (Persona And Fixture
-Experimentation).
+**World-memory consolidation** — add provenance/trust-tier memory fields only after live
+consultation has been observed.
+Why: durable external facts need evidence-based eligibility, decay, and supersession rules rather
+than carrying unreviewed corpus text directly into memory.

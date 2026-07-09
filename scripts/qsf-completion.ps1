@@ -14,6 +14,7 @@ $script:QsfCompletionCommands = @(
     "workbench",
     "realtime",
     "sleep",
+    "world-ingest",
     "restore",
     "doctor",
     "list",
@@ -40,6 +41,10 @@ $script:QsfCompletionSessionMemorySources = @(
 $script:QsfCompletionProviders = @(
     "openai",
     "mock"
+)
+
+$script:QsfCompletionWorldCorpusLedgers = @(
+    "state/world-corpus/index.json"
 )
 
 $script:QsfCompletionExperiments = @(
@@ -162,6 +167,24 @@ function Get-QsfCompletionStateDirs {
     }
 
     return @($paths | Where-Object { $_ -ne "state/backups" } | Sort-Object -Unique)
+}
+
+function Get-QsfCompletionWorldCorpusPaths {
+    $paths = [System.Collections.Generic.List[string]]::new()
+    $configured = [System.Environment]::GetEnvironmentVariable("QSF_WORLD_CORPUS_PATH", "Process")
+    if (-not [string]::IsNullOrWhiteSpace($configured)) {
+        $paths.Add($configured)
+    }
+
+    # WPFM is normally checked out beside QSF. Offer the producer output only when it is present;
+    # completion must not manufacture a path that the launcher would immediately degrade from.
+    $workspaceParent = Split-Path -Parent $script:QsfCompletionProjectRoot
+    $siblingOutput = Join-Path $workspaceParent "web_page_filet_mignon/output"
+    if (Test-Path -LiteralPath $siblingOutput -PathType Container) {
+        $paths.Add($siblingOutput)
+    }
+
+    return @($paths | Sort-Object -Unique)
 }
 
 function Get-QsfCompletionBackupNames {
@@ -307,6 +330,14 @@ $qsfCompleter = {
             }
             "-StateDir" {
                 Select-QsfCompletionMatches -Values (Get-QsfCompletionStateDirs) -WordToComplete $wordToComplete
+                return
+            }
+            "-WorldCorpusPath" {
+                Select-QsfCompletionMatches -Values (Get-QsfCompletionWorldCorpusPaths) -WordToComplete $wordToComplete
+                return
+            }
+            "-WorldCorpusLedger" {
+                Select-QsfCompletionMatches -Values $script:QsfCompletionWorldCorpusLedgers -WordToComplete $wordToComplete
                 return
             }
         }

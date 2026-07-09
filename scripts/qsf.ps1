@@ -23,7 +23,9 @@ param(
     [string]$BindHost = "127.0.0.1",
     [int]$Port = 3939,
     [switch]$Workbench,
-    [switch]$RandomSessionId
+    [switch]$RandomSessionId,
+    [string]$WorldCorpusPath = "",
+    [string]$WorldCorpusLedger = "state/world-corpus/index.json"
 )
 
 $ErrorActionPreference = "Stop"
@@ -81,7 +83,8 @@ $script:QsfKnownManagedEnvironmentVariables = @(
     "QSF_TRANSCRIPT_PROVIDER",
     "QSF_TRANSCRIPT_WAV_PATH",
     "QSF_VOICE_MEMORY_FILE",
-    "QSF_VOICE_MEMORY_SOURCE"
+    "QSF_VOICE_MEMORY_SOURCE",
+    "QSF_WORLD_CORPUS_PATH"
 )
 
 function Format-Command {
@@ -398,6 +401,23 @@ function Get-SleepEnvironmentDelta {
     }
 }
 
+function Get-WorldCorpusIngestEnvironmentDelta {
+    $envSets = [ordered]@{}
+    if (-not [string]::IsNullOrWhiteSpace($WorldCorpusPath)) {
+        $envSets["QSF_WORLD_CORPUS_PATH"] = $WorldCorpusPath
+    }
+    $clearEnv = @(
+        Get-ManagedQsfEnvironmentVariableNames |
+        Where-Object { -not $envSets.Contains($_) } |
+        Sort-Object -Unique
+    )
+
+    return [pscustomobject]@{
+        Sets   = $envSets
+        Clears = $clearEnv
+    }
+}
+
 function Show-EnvironmentDelta {
     param(
         [Parameter(Mandatory = $true)]
@@ -520,6 +540,7 @@ Usage:
   .\scripts\qsf.ps1 workbench [<store>] [-Store <path>] [-BindHost <ip>] [-Port <port>]
   .\scripts\qsf.ps1 realtime [-RandomSessionId]
   .\scripts\qsf.ps1 sleep [-StateDir <path>] [-Provider <openai|mock>]
+  .\scripts\qsf.ps1 world-ingest [-WorldCorpusPath <path>] [-WorldCorpusLedger <path>]
   .\scripts\qsf.ps1 restore [<backup-name>|latest] [-StateDir <path>]
   .\scripts\qsf.ps1 doctor [-LaunchProfile <name>] [-Workbench]
   .\scripts\qsf.ps1 list experiments
@@ -557,6 +578,8 @@ Examples:
   .\scripts\qsf.ps1 realtime -RandomSessionId
   .\scripts\qsf.ps1 sleep
   .\scripts\qsf.ps1 sleep -Provider mock
+  .\scripts\qsf.ps1 world-ingest
+  .\scripts\qsf.ps1 world-ingest -WorldCorpusPath C:\data\web_page_filet_mignon\output
   .\scripts\qsf.ps1 restore
   .\scripts\qsf.ps1 restore latest
   .\scripts\qsf.ps1 workbench $sampleStore
@@ -1486,6 +1509,20 @@ function Invoke-Sleep {
     }
 }
 
+function Invoke-WorldIngest {
+    Invoke-WithEnvironmentDelta -Delta (Get-WorldCorpusIngestEnvironmentDelta) -ScriptBlock {
+        Invoke-LoggedCommand -Executable "cargo" -Arguments @(
+            "run",
+            "-p",
+            "qsf_app",
+            "--",
+            "ingest-world",
+            "--ledger-path",
+            $WorldCorpusLedger
+        )
+    }
+}
+
 function Test-QsfAutoRunEnabled {
     $skipAutoRun = Get-Variable -Name "QsfSkipAutoRun" -Scope Script -ValueOnly -ErrorAction SilentlyContinue
     return -not ($skipAutoRun -is [bool] -and $skipAutoRun)
@@ -1513,6 +1550,9 @@ if (Test-QsfAutoRunEnabled) {
         }
         "sleep" {
             Invoke-Sleep
+        }
+        "world-ingest" {
+            Invoke-WorldIngest
         }
         "restore" {
             Invoke-Restore

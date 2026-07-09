@@ -1862,3 +1862,16 @@ annotated there. The epistemic-integrity tension still governs: the stance is a 
 self-understanding, not a fact claim, so honest hedging under philosophical probing is
 expected behavior, not a defect. Old continuity state that predates the identity may
 contain ChatGPT self-references; identity verification runs use a fresh state dir.
+
+## 2026-07-09 - External corpus ingestion is a lean shared boundary
+Decision: The producer-marker parser, defensive article ingestion, content-hash ledger, and
+deterministic lexical corpus index live in the lean `qsf_corpus` crate. Both the realtime server
+and sleep application may depend on this crate; it must not depend on either of them, on memory,
+or on volition.
+Context: The world-perception path needs one trusted implementation of the WPFM corpus contract
+on both the latency-sensitive live read path and the offline sleep path. Putting it in an
+application crate would reverse the established lean-crate dependency boundary.
+Consequences: `qsf_app ingest-world` is the first operator surface over the shared corpus
+boundary. The crate retains only source parsing, provenance, hashing, indexing, and persisted
+refresh state; live consultation, model-context injection, and durable-memory promotion remain
+separate adapters with their own safety decisions.

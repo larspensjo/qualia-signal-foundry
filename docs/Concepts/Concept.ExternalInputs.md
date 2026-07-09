@@ -317,6 +317,12 @@ Goal:
 
 Exploratory.
 
+The first offline substrate for a read-only external corpus is implemented in
+`qsf_corpus`: `qsf_app ingest-world` (or `qsf.ps1 world-ingest`) reads a producer-owned corpus
+directory, validates its marker and article provenance, and persists a content-hash ledger with a
+deterministic lexical index. This is preparation for perception, not yet a live input channel:
+no corpus article reaches the realtime model or durable memory in the current implementation.
+
 External inputs are clearly important to the project, especially for realtime presence and simulated perception. However, the exact set of input channels should not be locked down too early.
 
 The likely early direction is:

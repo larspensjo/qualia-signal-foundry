@@ -3,6 +3,7 @@ use std::path::PathBuf;
 use clap::{CommandFactory, Parser, Subcommand};
 
 use crate::experiments::{self, ExperimentName};
+use crate::world_corpus::{DEFAULT_WORLD_CORPUS_LEDGER_PATH, WorldCorpusIngestOptions};
 
 #[derive(Debug, Parser)]
 #[command(name = "qsf_app")]
@@ -42,6 +43,22 @@ enum Command {
         /// Repository/workspace root used by sleep maintenance that needs repo-relative resources.
         #[arg(long, value_name = "PATH")]
         workspace_root: Option<PathBuf>,
+    },
+
+    /// Build or incrementally refresh the read-only external world corpus index.
+    IngestWorld {
+        /// Producer-owned corpus output directory. When omitted, QSF_WORLD_CORPUS_PATH is used
+        /// and QSF falls back to its bundled fixture if that path is unset or unavailable.
+        #[arg(long, value_name = "PATH")]
+        corpus_path: Option<PathBuf>,
+
+        /// Persistent content-hash ledger and index artifact location.
+        #[arg(
+            long,
+            default_value = DEFAULT_WORLD_CORPUS_LEDGER_PATH,
+            value_name = "PATH"
+        )]
+        ledger_path: PathBuf,
     },
 
     /// List experiments available in this build.
@@ -88,6 +105,17 @@ pub fn run() -> anyhow::Result<()> {
             );
             Ok(())
         }
+        Some(Command::IngestWorld {
+            corpus_path,
+            ledger_path,
+        }) => {
+            let summary = crate::world_corpus::ingest_world_corpus(WorldCorpusIngestOptions {
+                corpus_path,
+                ledger_path,
+            })?;
+            println!("{}", summary.render());
+            Ok(())
+        }
         Some(Command::ListExperiments) => {
             for experiment in experiments::available_experiments() {
                 println!("{}\t{}", experiment.id, experiment.description);
@@ -131,5 +159,18 @@ mod tests {
             panic!("expected sleep command");
         };
         assert_eq!(state_dir, std::path::PathBuf::from("state/realtime"));
+    }
+
+    #[test]
+    fn world_ingest_command_uses_the_default_ledger_path() {
+        let cli = Cli::try_parse_from(["qsf_app", "ingest-world"]).unwrap();
+
+        let Some(super::Command::IngestWorld { ledger_path, .. }) = cli.command else {
+            panic!("expected ingest-world command");
+        };
+        assert_eq!(
+            ledger_path,
+            std::path::PathBuf::from(crate::world_corpus::DEFAULT_WORLD_CORPUS_LEDGER_PATH)
+        );
     }
 }

@@ -1542,6 +1542,7 @@ dependencies = [
  "hound",
  "log",
  "qsf_context",
+ "qsf_corpus",
  "qsf_memory",
  "qsf_models",
  "qsf_realtime_protocol",
@@ -1591,6 +1592,22 @@ dependencies = [
  "qsf_memory",
  "serde",
  "serde_json",
+]
+
+[[package]]
+name = "qsf_corpus"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "globset",
+ "serde",
+ "serde_json",
+ "sha2 0.11.0",
+ "tempfile",
+ "thiserror 2.0.18",
+ "time",
+ "url",
+ "walkdir",
 ]
 
 [[package]]

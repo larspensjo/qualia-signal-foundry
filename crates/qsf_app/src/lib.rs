@@ -14,5 +14,6 @@ pub mod session;
 pub mod sleep;
 pub mod tools;
 pub mod volition;
+pub mod world_corpus;
 
 pub use cli::run as run_cli;
