@@ -1,6 +1,6 @@
 # Plan: World Perception — consulting an external AI-news corpus
 
-Status: Active — corpus ingestion and lexical index implemented; live consultation remains planned
+Status: Active — corpus ingestion and the audited realtime consultation adapter are implemented; consultation relevance and trigger coverage are the next slice
 Maturity: Candidate
 Area: Perception / Volition / Memory
 
@@ -177,6 +177,57 @@ to confirm the ~6,250-file corpus indexes and to capture a real query-latency nu
 
 ## Phase: Live world consultation via the `ConsultWorld` effect
 
+**Implementation status (2026-07-10):** Implemented, automated-test verified, and exercised
+against the real WPFM corpus. `qsf_volition` emits the pure
+`WorldConsultationRequested` output; `qsf_realtime_server` owns the read-only `qsf_corpus`
+adapter and the only `external_effect_executed: true` boundary. The server loads a retained
+read-only index at startup from `QSF_WORLD_CORPUS_PATH` (or the bundled fixture), visibly
+reports corpus degradation, frames all surfaced articles as untrusted external text, records
+the complete `WorldConsultationPerformed` JSONL causal chain, applies session-local
+content-hash suppression, and uses a 5 ms inline budget with a deferred fallback.
+
+The manual realtime evidence supports that narrow adapter claim. In the 2026-07-10 session,
+two consecutive `How will AI transition?` turns selected `track-the-ai-transition` for its
+`ai-trajectory-concern` tension. Each consultation recorded source-tagged terms, a bounded
+eight-candidate set, a 2 ms lookup, inline same-turn injection, exact untrusted framed text,
+and `external_effect_executed: true` against a 6,343-article corpus. The second turn surfaced
+different content hashes, confirming session-local anti-repeat suppression. Ordinary bounded
+initiatives continue to record `external_effect_executed: false`.
+
+The same evidence does **not** establish useful user-facing world perception yet. Generic
+current-topic terms (`how`, `will`) dominated lexical ranking, producing only loosely relevant
+articles, and the spoken answers did not visibly rely on the injected claims. The later
+`What do you think about the Grok 4.5 release?` turn produced no consultation record and
+returned an up-to-date-knowledge disclaimer. This is a relevance and trigger-coverage gap,
+not a failure of the external-effect, framing, 5 ms lookup-budget, or anti-repeat boundaries.
+
+### Next slice: consultation relevance and explicit-topic triggers
+
+Harden consultation selection before building the diagnostic panel. Preserve the existing
+volition-to-adapter boundary and trace contract, but make a consultation worthwhile when it is
+requested.
+
+- Add an explicit-topic/current-information path that can request `ConsultWorld` for a named
+  entity or release prompt such as `Grok 4.5 release`, without treating every user turn as a
+  search request.
+- Build an anchor-aware query: retain named entities, versions, and meaningful goal/topic terms;
+  discard or heavily down-weight generic interrogatives; require every surfaced candidate to
+  match a required anchor (for example `ai` + `transition`, or `grok`).
+- When no candidate satisfies the anchors, record the performed read with its candidate
+  omission reasons but inject no external article. The external-effect flag remains true: the
+  corpus was consulted, even though no fact was surfaced.
+- Extend the trace with the chosen anchors and any `missing_required_anchor` omission reason so
+  relevance decisions remain falsifiable.
+- Add fixture-backed tests for an entity/release consultation, anchor filtering, no-match/no-
+  injection behavior, and repeated-query suppression. Keep the existing sandbox, latency,
+  hash-resolution, and external-boundary regressions.
+
+**Acceptance evidence for this slice:** a fixture prompt naming a release produces a
+`WorldConsultationPerformed` record whose surfaced facts match that release anchor and whose
+model-visible injection is framed untrusted; a generic-match article is explicitly omitted;
+and a no-match turn injects nothing. Repeat the live realtime probe with a specific AI release
+and confirm that the response can honestly attribute a relevant external source claim.
+
 The first end-to-end slice that reaches the live model. Wires the curiosity goals to a new
 external effect, executes a read-only corpus lookup, and injects the result as untrusted
 transient perception. **No durable memory yet.**
@@ -197,9 +248,10 @@ transient perception. **No durable memory yet.**
   chosen effect is `ConsultWorld`, executes the `qsf_corpus` query, applies eligibility +
   anti-repeat suppression, wraps surfaced facts in the untrusted-external sandbox, and injects
   them. This adapter is where the boundary reverses: it records
-  `external_effect_executed: true`. `render_initiative_line` gains a bounded, honest
-  first-person line for `WorldConsultationRequested` ("I just looked at recent AI news and
-  saw…"), distinct from `RetrieveContext` (which renders no line).
+  `external_effect_executed: true`. `render_initiative_line` deliberately remains silent for
+  `WorldConsultationRequested`; the model-visible injection carries the bounded, honest
+  first-person source framing only after an article has actually been surfaced. This remains
+  distinct from `RetrieveContext` (which renders no line).
 - **Query-source → injection-point matrix** (v1):
   - User-input-derived query: attempt **inline same-turn** injection, guarded by a hard
     latency budget (`WORLD_CONSULT_INLINE_BUDGET_MS`); if the lookup would exceed budget, fall
@@ -279,6 +331,10 @@ realtime`.
 ---
 
 ## Phase: World-perception diagnostic panel (realtime UI)
+
+**Implementation status (2026-07-10):** Not started. It follows the consultation relevance and
+explicit-topic-trigger slice above, so the panel visualizes a useful retrieval chain rather than
+prematurely polishing the current generic-term misfires.
 
 Makes the consultation chain visible in the realtime diagnostic page, following the established
 `volition_state` message → parser → reducer → pure selector → panel pattern
@@ -430,25 +486,24 @@ low-value news.
 ## Documents to update (per ProjectWorkflow)
 
 - **This plan** (`docs/Plans/Plan.WorldPerception.md`).
-- **Per-phase experiment scaffolds** created when each mechanism phase starts:
-  `Experiment.WorldConsultation.md` (live consultation) and
-  `Experiment.WorldMemoryConsolidation.md` (sleep ingestion). Ingestion, UI, and the trust-tier
-  substrate are engineering and get no experiment.
-- **`docs/DecisionLog.md`** — two entries: (a) the effect-boundary **reversal** —
+- **`Experiment.WorldConsultation.md`** — created and used for the adapter slice; update its
+  results with the relevance/trigger follow-up when that mechanism is exercised. Create
+  `Experiment.WorldMemoryConsolidation.md` only when sleep ingestion begins. Ingestion, UI, and
+  the trust-tier substrate are engineering and get no experiment.
+- **`docs/DecisionLog.md`** — completed for the effect-boundary **reversal**:
   `ConsultWorld` is an external volition effect permitted to record
   `external_effect_executed: true` for this effect only, referencing the 2026-06-27
-  "retrieval initiatives are memory-injection hints" entry it reverses in scope; (b) the reason
-  this plan was created / the crate-placement choice (`qsf_corpus` as a lean crate consumable by
-  both the server and the app).
-- **`docs/Architecture/Architecture.ToolSystem.md`** — record that world consultation is
+  "retrieval initiatives are memory-injection hints" entry it reverses in scope. Revisit only
+  if the relevance follow-up changes the boundary or query authority.
+- **`docs/Architecture/Architecture.ToolSystem.md`** — completed: world consultation is
   delivered via the volition effect path, not the model-callable tool allow-list, and note the
   perception-vs-agency boundary crossing.
 - **`docs/Architecture/Architecture.MemorySystem.md`** — Implementation Status update for the
   provenance/trust-tier fields, faster time-sensitive decay, supersession-lite, and sleep
   world-memory promotion.
-- **`docs/Architecture/Architecture.VolitionSystem.md`** — the new `ConsultWorld` effect and the
+- **`docs/Architecture/Architecture.VolitionSystem.md`** — completed: the new `ConsultWorld` effect and the
   external-effect trace change; keep the `RetrieveContext` internal-hint description intact.
-- **`docs/Architecture/Architecture.RealtimeSessionServer.md`** — the world-consultation adapter,
+- **`docs/Architecture/Architecture.RealtimeSessionServer.md`** — completed: the world-consultation adapter,
   the `world_perception` events message, and the inline-vs-deferred injection matrix.
 - **`docs/Concepts/Concept.ExternalInputs.md`** (and lightly `Concept.ToolsAsPerception.md`) —
   fold in world perception as the first realized read-only external perception channel with
@@ -462,25 +517,25 @@ number.
 
 ## Open Questions (surfaced, not resolved)
 
-- **Query-source → injection-point matrix and the inline latency verdict.** v1 attempts inline
-  for user-input queries within a latency budget and defers answer-derived queries; the measured
-  inline verdict (does it stay within the ~0 ms volition-injection / ~600–850 ms turn envelope?)
-  is decided by the live consultation experiment, not assumed here.
+- **Query-source → injection-point matrix and the inline latency verdict.** The guarded
+  user-input lookup was measured at 2 ms against the 5 ms budget and injected inline. The
+  assistant-answer-derived deferred path remains implemented but unexercised in a live session;
+  the effect on end-to-end first-audio latency still needs a controlled comparison.
 - **Durable-eligibility rule and time-sensitive decay rate.** Exactly which consulted/ingested
   facts become durable world-memory vs stay transient, and the news half-life, are resolved with
   first ingestion evidence in the sleep phase.
-- **Repetition/dedup suppression policy.** The window and policy that stop the same article from
-  being re-surfaced (relative to the existing volition anti-nag) need a first-live-evidence
-  decision.
-- **Query construction from goal-activation vs current-topic terms.** With no open-delta
-  substrate (the `world-curiosity` open-question limitation), how the two term sources are
-  weighted and combined is an Open Question; the trace keeps them distinct so the choice can be
-  evaluated rather than hidden.
+- **Repetition/dedup suppression policy.** Immediate same-session content-hash suppression was
+  observed: a repeated prompt surfaced different hashes. The persistence window and the policy
+  after all anchored candidates have been exhausted remain open.
+- **Query construction from goal-activation vs current-topic terms.** First live evidence shows
+  generic current-topic terms can dominate lexical ranking and misfire. The next relevance slice
+  resolves the initial anchor policy while keeping the two sources distinct in the trace; the
+  longer-term open-delta question remains open.
 - **`world-curiosity` open-delta substrate (named limitation / investigation).** v1's query is
   NOT a true open question. Whether volition should grow an explicit open-delta/open-question
   representation (the deferred `curiosity` functional signal, 2026-07-06) — which would let the
   persona consult the world about what it actually does not know — is an investigation this plan
   surfaces but does not undertake.
-- **Untrusted-text sandbox home.** Whether the shared wrapper lives in `qsf_context`, a
-  `qsf_corpus` helper, or its own tiny surface is resolved in the ingestion phase; the constraint
-  is that both the server and the app can reach it without a bad dependency direction.
+- **Untrusted-text sandbox home.** Resolved: `qsf_corpus::frame_untrusted_external` is the shared
+  wrapper. It is reachable by the server and future app/sleep consumers without reversing the
+  lean-crate dependency direction.
