@@ -35,6 +35,16 @@ mode, not a one-off experiment server.
   stashes `ContextRetrievalRequested` hints for the next turn, and records a
   `RealtimeBoundedInitiative` diagnostic trace alongside the context-injection
   trace.
+- At startup the server resolves `QSF_WORLD_CORPUS_PATH` (falling back to the bundled fixture)
+  and retains a read-only `qsf_corpus::CorpusIndex`; ingestion/schema errors are logged and an
+  unavailable corpus is noted in per-session diagnostics. A `ConsultWorld` winner combines its
+  goal-activation terms with current-topic transcript tokens, queries the index with per-session
+  content-hash anti-repeat suppression, resolves selected hashes before framing them as untrusted
+  external system content, and injects that content before `response.create`. User-input reads
+  inject inline only within the provisional 5 ms budget; over-budget reads and the explicitly
+  modeled assistant-answer origin defer to the next trusted turn. `WorldConsultationPerformed`
+  is the external-effect JSONL boundary and preserves source terms, candidates/omissions, exact
+  model-visible text, latency, injection decision, and corpus marker metadata.
 - The realtime sideband declares a read-only realtime tool allow-list
   (`search_memory`, `get_associations`, `inspect_session_state`,
   `inspect_volition_state`, `select_volition_goals`), records `ToolRequested`

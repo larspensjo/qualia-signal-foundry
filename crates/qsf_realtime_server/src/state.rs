@@ -56,6 +56,7 @@ struct Inner {
     state_dir: PathBuf,
     continuity_root: PathBuf,
     diagnostics_dir: PathBuf,
+    world_corpus: crate::realtime::world_consultation::WorldCorpus,
     sessions: Mutex<HashMap<String, Arc<Mutex<SessionRuntime>>>>,
 }
 
@@ -131,6 +132,8 @@ impl AppState {
                 state_dir,
                 continuity_root,
                 diagnostics_dir,
+                world_corpus:
+                    crate::realtime::world_consultation::WorldCorpus::load_from_environment(),
                 sessions: Mutex::new(HashMap::new()),
             }),
         })
@@ -162,6 +165,10 @@ impl AppState {
 
     pub fn continuity_root(&self) -> &Path {
         &self.inner.continuity_root
+    }
+
+    pub(crate) fn world_corpus(&self) -> &crate::realtime::world_consultation::WorldCorpus {
+        &self.inner.world_corpus
     }
 
     pub fn continuity_session_dir(&self, qsf_session_id: &str) -> PathBuf {
@@ -225,6 +232,18 @@ impl AppState {
             note: "OPENAI_API_KEY stays server-side; no credential is returned to the browser"
                 .to_string(),
         })?;
+        if let crate::realtime::world_consultation::WorldCorpus::Unavailable { reason } =
+            self.world_corpus()
+        {
+            diagnostics.write(&DiagnosticRecord::VolitionContinuityNote {
+                qsf_session_id: qsf_session_id.clone(),
+                recorded_at: OffsetDateTime::now_utc(),
+                note: format!(
+                    "world corpus is unavailable; ConsultWorld remains disabled: {reason}"
+                ),
+                artifact_reference: "world-corpus-startup".to_string(),
+            })?;
+        }
 
         let mut runtime = SessionRuntime::new(qsf_session_id.clone(), config.clone(), diagnostics);
 

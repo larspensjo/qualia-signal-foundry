@@ -63,6 +63,10 @@ and—going forward—`qsf_realtime_server`), not in the crate.
   tiers immune to bias, and per-goal `BiasOutcome` records carry the applied delta.
 - Bounded internal initiative: `InitiativeProposal`, `InitiativeOutput`, and
   `execute_initiative()` — structural records only; no external write-capable effect.
+- `AllowedEffect::ConsultWorld` is a pure request carrying source-tagged goal-activation terms;
+  `qsf_volition` still performs no I/O. Its realtime adapter may execute the separately audited,
+  read-only corpus perception effect. `ContextRetrievalRequested` remains an internal next-turn
+  memory hint and its bounded-initiative trace keeps `external_effect_executed: false`.
 - Continuity and consolidation helpers: `VolitionContinuitySnapshot`,
   `ReviewedVolitionSeed`, `VolitionSuppressionReason`, `VolitionTurnOutcome`,
   `persist_volition_continuity_snapshot()`, `load_reviewed_volition_seed()`,
@@ -227,6 +231,9 @@ and—going forward—`qsf_realtime_server`), not in the crate.
   trace live in `qsf_realtime_server` adapter code
   ([crates/qsf_realtime_server/src/realtime/volition_initiative.rs](../../crates/qsf_realtime_server/src/realtime/volition_initiative.rs),
   [crates/qsf_realtime_server/src/realtime/sideband.rs](../../crates/qsf_realtime_server/src/realtime/sideband.rs)).
+- The read-only `ConsultWorld` execution, untrusted framing, inline/deferred policy, and
+  `WorldConsultationPerformed` trace likewise live in the realtime adapter, not the pure
+  volition crate ([world_consultation.rs](../../crates/qsf_realtime_server/src/realtime/world_consultation.rs)).
 
 ## Crate Boundary And Dependency Direction
 

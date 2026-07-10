@@ -80,7 +80,14 @@ live-audio result.
 
 ## Results
 
-Pending end-to-end adapter and human live-session run.
+The realtime adapter is now wired. It loads `QSF_WORLD_CORPUS_PATH` once at startup (or the
+bundled fixture), retains a read-only index, logs ingestion/schema degradation visibly, combines
+goal-activation and current-topic terms, frames only hash-resolved articles as untrusted external
+material, and records `WorldConsultationPerformed` JSONL. Fixture and synthetic tests cover a
+framed fact, delimiter neutralization, session anti-repeat suppression, deferred slow lookup,
+JSONL parsing/hash resolution, and the `ConsultWorld: true` / `RetrieveContext: false` effect
+boundary. The 2 ms real-corpus query probe remains the baseline; a human live-session latency
+measurement is still pending.
 
 ## Follow-Up Questions
 

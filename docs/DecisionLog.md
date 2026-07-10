@@ -1875,3 +1875,16 @@ Consequences: `qsf_app ingest-world` is the first operator surface over the shar
 boundary. The crate retains only source parsing, provenance, hashing, indexing, and persisted
 refresh state; live consultation, model-context injection, and durable-memory promotion remain
 separate adapters with their own safety decisions.
+
+## 2026-07-09 - ConsultWorld is the narrow read-only external-effect boundary
+Decision: `ConsultWorld` may execute a read-only `qsf_corpus` lookup in the realtime sideband and
+records `WorldConsultationPerformed.bounded_or_external_output.external_effect_executed: true`.
+This narrowly reverses the 2026-06-27 internal-only retrieval rule for this new effect only;
+`RetrieveContext` remains a next-turn memory-injection hint with its external flag false.
+Context: A pure volition request is not evidence that an external read happened. The adapter now
+resolves a source article by content hash, frames it as untrusted external material, and injects
+it before the provider response, giving an auditable effect boundary without making it a
+model-callable tool.
+Consequences: The index is loaded once at server startup; source-tagged query terms, candidate
+eligibility/anti-repeat decisions, exact injected text, corpus marker metadata, and inline or
+deferred latency decisions are retained in JSONL. No live consultation writes durable memory.

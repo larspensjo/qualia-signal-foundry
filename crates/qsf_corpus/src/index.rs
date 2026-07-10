@@ -1,7 +1,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::time::Instant;
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use time::OffsetDateTime;
 
 use crate::Article;
@@ -21,7 +21,7 @@ pub struct CorpusIndex {
 }
 
 /// A ranked article candidate with source provenance.
-#[derive(Clone, Debug, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 pub struct QueryCandidate {
     /// Lexical score, weighted toward title matches.
     pub score: f64,

@@ -14,6 +14,7 @@ engine_logging = { path = "../engine_logging" }
 futures-util.workspace = true
 log.workspace = true
 qsf_context = { path = "../qsf_context" }
+qsf_corpus = { path = "../qsf_corpus" }
 qsf_memory = { path = "../qsf_memory" }
 qsf_models = { path = "../qsf_models" }
 qsf_session = { path = "../qsf_session" }

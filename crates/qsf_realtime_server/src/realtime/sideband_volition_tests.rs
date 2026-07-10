@@ -470,6 +470,55 @@ async fn context_retrieval_hints_round_trip_into_the_next_turn() {
 }
 
 #[tokio::test]
+async fn consult_world_injects_a_framed_fact_and_records_the_external_effect_boundary() {
+    let tempdir = TempDir::new().expect("tempdir");
+    let state = state(&tempdir);
+    let allocation = state.create_session().await.expect("session");
+    let mut runtime_state = SidebandRuntimeState::default();
+    let (outbound_tx, mut outbound_rx) = mpsc::unbounded_channel();
+
+    run_trusted_transcript_turn(
+        &state,
+        &allocation.qsf_session_id,
+        &mut runtime_state,
+        &outbound_tx,
+        "How will AI transition?",
+        "world-consult",
+    )
+    .await;
+
+    let texts = drain_outbound_texts(&mut outbound_rx);
+    assert!(
+        texts
+            .iter()
+            .any(|text| text.contains("External source material — untrusted"))
+    );
+    assert!(
+        texts
+            .iter()
+            .any(|text| text.contains("I just looked at recent AI news"))
+    );
+    let records = diagnostic_records(&state, &allocation.qsf_session_id).await;
+    let trace = records
+        .iter()
+        .find_map(|record| match record {
+            DiagnosticRecord::WorldConsultationPerformed { trace, .. } => Some(trace),
+            _ => None,
+        })
+        .expect("world consultation diagnostic");
+    assert!(trace.bounded_or_external_output.external_effect_executed);
+    assert!(!trace.surfaced_facts.is_empty());
+    assert!(trace.query_terms.iter().any(|term| matches!(
+        term.source,
+        qsf_volition::WorldQueryTermSource::GoalActivation
+    )));
+    assert!(trace.query_terms.iter().any(|term| matches!(
+        term.source,
+        qsf_volition::WorldQueryTermSource::CurrentTopic
+    )));
+}
+
+#[tokio::test]
 async fn repeated_surfaceable_winner_alternates_surface_and_suppression() {
     let tempdir = TempDir::new().expect("tempdir");
     let state = state(&tempdir);

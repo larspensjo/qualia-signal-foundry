@@ -56,6 +56,11 @@ categories described below is still mostly aspirational.
   ([realtime/tools.rs](../../crates/qsf_realtime_server/src/realtime/tools.rs),
   [realtime/volition_tools.rs](../../crates/qsf_realtime_server/src/realtime/volition_tools.rs),
   [realtime/sideband.rs](../../crates/qsf_realtime_server/src/realtime/sideband.rs))
+- World consultation is deliberately **not** a model-callable tool or part of that allow-list.
+  A volition `ConsultWorld` request crosses a narrow server-owned, read-only perception boundary:
+  the sideband queries `qsf_corpus`, frames resolved source text as untrusted external material,
+  and records the external effect separately. The model cannot choose arbitrary corpus paths or
+  invoke this read directly.
 - `inspect_volition_state` and `select_volition_goals` are read-only volition
   tools that use a `VolitionStateSnapshot` cloned from the per-session
   `VolitionRuntimeState` at dispatch time. They never mutate volition state.

@@ -19,5 +19,6 @@ pub(crate) mod volition_initiative;
 pub(crate) mod volition_injection;
 pub(crate) mod volition_inspection_capture;
 pub(crate) mod volition_tools;
+pub(crate) mod world_consultation;
 
 pub use routes::router;

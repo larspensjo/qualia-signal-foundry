@@ -11,6 +11,7 @@ use crate::realtime::live_goal_formation::LiveGoalFormationTrace;
 use crate::realtime::turn_integrity::TurnPhase;
 use crate::realtime::volition_initiative::RealtimeBoundedInitiativeTrace;
 use crate::realtime::volition_injection::VolitionContextInjectionTrace;
+use crate::realtime::world_consultation::WorldConsultationTrace;
 use qsf_session::Exchange;
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -77,6 +78,14 @@ pub enum DiagnosticRecord {
         #[serde(with = "time::serde::rfc3339")]
         recorded_at: OffsetDateTime,
         trace: RealtimeBoundedInitiativeTrace,
+    },
+    /// Authoritative external-effect boundary for a successful or deferred world-corpus read.
+    WorldConsultationPerformed {
+        qsf_session_id: String,
+        exchange_index: usize,
+        #[serde(with = "time::serde::rfc3339")]
+        recorded_at: OffsetDateTime,
+        trace: WorldConsultationTrace,
     },
     LiveGoalFormationPerformed {
         qsf_session_id: String,

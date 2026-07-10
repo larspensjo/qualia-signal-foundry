@@ -16,17 +16,16 @@ Rules (see ProjectWorkflow.md, "Handoff Discipline"):
 
 ## Now — immediate action
 
-**Profile the real-corpus lexical query in [Plan.WorldPerception](Plans/Plan.WorldPerception.md)**
-before the live adapter is built.
-Why: ingestion correctness is confirmed, but the 17 ms query probe is above the intended
-single-digit-ms live-path target.
+**Build the world-perception diagnostic UI in [Plan.WorldPerception](Plans/Plan.WorldPerception.md).**
+Why: the live adapter now injects correctly framed fixture facts and records the complete JSONL
+causal chain; the next useful slice is making that evidence visible during a session.
 
 ## Next — active plan
 
-**Build the live world-consultation experiment in
-[Plan.WorldPerception](Plans/Plan.WorldPerception.md)** after query latency is characterized.
-Why: the corpus boundary is deterministic and inspectable; the remaining question is whether
-curiosity-driven consultation can inject a correctly attributed fact within the live latency budget.
+**Run the live world-consultation experiment in
+[Experiment.WorldConsultation](Experiments/Experiment.WorldConsultation.md).**
+Why: the adapter’s 5 ms inline/defer policy is automated-tested, but live relevance and
+transcript-to-audio impact still need human evidence.
 
 ## Horizon — direction
 

@@ -1659,6 +1659,7 @@ dependencies = [
  "futures-util",
  "log",
  "qsf_context",
+ "qsf_corpus",
  "qsf_memory",
  "qsf_models",
  "qsf_realtime_protocol",

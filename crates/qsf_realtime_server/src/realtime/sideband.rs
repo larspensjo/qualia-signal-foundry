@@ -85,6 +85,9 @@ pub(super) struct SidebandRuntimeState {
     pub(super) accumulated_output_tokens: u32,
     pub(super) tool_calls_in_turn: usize,
     pub(super) pending_context_retrieval_hints: Vec<String>,
+    pub(super) pending_world_consultation:
+        Option<super::world_consultation::WorldConsultationResult>,
+    pub(super) surfaced_world_content_hashes: HashSet<String>,
     pub(super) previous_turn_surfaced_goal_id: Option<String>,
     pub(super) stale_response_ids: HashSet<String>,
     pub(super) latency_record_labels_emitted: HashSet<String>,

@@ -2,13 +2,15 @@ use std::mem;
 use std::sync::Arc;
 
 use qsf_context::ContextBudget;
+use qsf_corpus::tokenize;
 use qsf_memory::RetrievalStrategy;
 use qsf_realtime_protocol::build_openai_realtime_response_create;
 use qsf_session::{ContentHash, LiveSessionEvent, apply_live_session_event};
 use qsf_volition::{
     GroundingRef, OpportunitySignal, OpportunitySignalKind, ReceptivenessHint, VolitionEvent,
-    arbitrate_with_mode, build_state_inspection, choose_shaping_intensity, detect_opportunities,
-    execute_initiative, grounded_terms_from_text, select_goals_ranked,
+    WorldQueryTerm, WorldQueryTermSource, arbitrate_with_mode, build_state_inspection,
+    choose_shaping_intensity, detect_opportunities, execute_initiative, grounded_terms_from_text,
+    select_goals_ranked,
 };
 use time::OffsetDateTime;
 use tokio::sync::{mpsc, watch};
@@ -36,6 +38,10 @@ use crate::realtime::volition_injection::{
 use crate::realtime::volition_inspection_capture::{
     VolitionInspectionCapture, build_volition_inspection_capture,
     build_volition_turn_decision_summary,
+};
+use crate::realtime::world_consultation::{
+    WorldConsultationRequest, WorldCorpus, WorldInjectionPoint, WorldQueryOrigin, complete_trace,
+    consult_world,
 };
 use crate::state::{AppState, SessionRuntime};
 
@@ -144,6 +150,7 @@ pub(crate) async fn inject_trusted_turn_context_and_response(
     drop(guard);
 
     let mut turn_request_values = Vec::new();
+    let mut world_consultations_to_record = Vec::new();
     if let Some(conversation_item_create) = leading_conversation_item_create {
         turn_request_values.push(conversation_item_create.clone());
         send_json(outbound_tx, conversation_item_create)?;
@@ -155,6 +162,15 @@ pub(crate) async fn inject_trusted_turn_context_and_response(
     if let Some(conversation_item_create) = memory_conversation_item_create {
         turn_request_values.push(conversation_item_create.clone());
         send_json(outbound_tx, conversation_item_create)?;
+    }
+    if let Some(pending_world_consultation) = runtime_state.pending_world_consultation.take() {
+        if let Some(conversation_item_create) =
+            pending_world_consultation.conversation_item_create.clone()
+        {
+            turn_request_values.push(conversation_item_create.clone());
+            send_json(outbound_tx, conversation_item_create)?;
+        }
+        world_consultations_to_record.push(pending_world_consultation);
     }
 
     let grounded_terms = grounded_terms_from_text(transcript);
@@ -190,6 +206,7 @@ pub(crate) async fn inject_trusted_turn_context_and_response(
     let mut initiative_state_snapshot_after = None;
     let mut initiative_output = None;
     let mut initiative_context_retrieval_hint_terms = None;
+    let mut inline_world_consultation = None;
     let mut surfaced = false;
     let mut suppression_reason = None;
     let mut rendered_line_present = false;
@@ -206,6 +223,46 @@ pub(crate) async fn inject_trusted_turn_context_and_response(
             runtime_state
                 .pending_context_retrieval_hints
                 .extend(query_terms.iter().cloned());
+        }
+
+        if let qsf_volition::InitiativeOutput::WorldConsultationRequested { query_terms } = &output
+        {
+            let mut combined_query_terms = query_terms.clone();
+            combined_query_terms.extend(tokenize(transcript).into_iter().map(|term| {
+                WorldQueryTerm {
+                    term,
+                    source: WorldQueryTermSource::CurrentTopic,
+                }
+            }));
+            match state.world_corpus() {
+                WorldCorpus::Ready(corpus) => {
+                    let result = consult_world(
+                        corpus,
+                        WorldConsultationRequest {
+                            serving_goal_id: arbitration.winner.goal.id.clone(),
+                            serving_goal_title: arbitration.winner.goal.title.clone(),
+                            serving_tension_ids: arbitration.winner.goal.tension_ids.clone(),
+                            initiative_output: output.clone(),
+                            query_terms: combined_query_terms,
+                            // This path is entered only from a trusted final input transcript.
+                            // Keep the answer-derived alternative explicit for future producers.
+                            query_origin: WorldQueryOrigin::UserInput,
+                        },
+                        &mut runtime_state.surfaced_world_content_hashes,
+                    );
+                    match result.trace.injection_point {
+                        WorldInjectionPoint::InlineSameTurn => {
+                            inline_world_consultation = Some(result)
+                        }
+                        WorldInjectionPoint::DeferredNextTurn => {
+                            runtime_state.pending_world_consultation = Some(result);
+                        }
+                    }
+                }
+                WorldCorpus::Unavailable { reason } => log::error!(
+                    "world consultation requested for session `{qsf_session_id}` but corpus is unavailable: {reason}"
+                ),
+            }
         }
 
         let protected_winner =
@@ -303,6 +360,15 @@ pub(crate) async fn inject_trusted_turn_context_and_response(
             runtime_state.final_transcript_received_at,
             volition_context_injected_at,
         )?;
+        if let Some(world_consultation) = inline_world_consultation.take() {
+            if let Some(conversation_item_create) =
+                world_consultation.conversation_item_create.clone()
+            {
+                turn_request_values.push(conversation_item_create.clone());
+                send_json(outbound_tx, conversation_item_create)?;
+            }
+            world_consultations_to_record.push(world_consultation);
+        }
         let response_create = build_openai_realtime_response_create(
             &config.voice,
             &config.instructions,
@@ -310,30 +376,38 @@ pub(crate) async fn inject_trusted_turn_context_and_response(
         );
         turn_request_values.push(response_create.clone());
         let request_hash = hash_request_sequence(&turn_request_values);
-        let initiative_trace = initiative_output.as_ref().map(|output| {
-            let winner = &arbitration
-                .as_ref()
-                .expect("initiative trace requires arbitration winner")
-                .winner;
-            build_realtime_bounded_initiative_trace(
-                qsf_session_id,
-                exchange_index,
-                winner,
-                output.clone(),
-                surfaced,
-                suppression_reason,
-                rendered_line_present,
-                initiative_state_snapshot_before
-                    .clone()
-                    .expect("initiative trace requires state snapshot before"),
-                initiative_state_snapshot_after
-                    .clone()
-                    .expect("initiative trace requires state snapshot after"),
-                initiative_context_retrieval_hint_terms.clone(),
-                hint_consumed_by_next_memory_injection,
-                &request_hash.to_string(),
-            )
-        });
+        let initiative_trace = initiative_output
+            .as_ref()
+            .filter(|output| {
+                !matches!(
+                    output,
+                    qsf_volition::InitiativeOutput::WorldConsultationRequested { .. }
+                )
+            })
+            .map(|output| {
+                let winner = &arbitration
+                    .as_ref()
+                    .expect("initiative trace requires arbitration winner")
+                    .winner;
+                build_realtime_bounded_initiative_trace(
+                    qsf_session_id,
+                    exchange_index,
+                    winner,
+                    output.clone(),
+                    surfaced,
+                    suppression_reason,
+                    rendered_line_present,
+                    initiative_state_snapshot_before
+                        .clone()
+                        .expect("initiative trace requires state snapshot before"),
+                    initiative_state_snapshot_after
+                        .clone()
+                        .expect("initiative trace requires state snapshot after"),
+                    initiative_context_retrieval_hint_terms.clone(),
+                    hint_consumed_by_next_memory_injection,
+                    &request_hash.to_string(),
+                )
+            });
         let mut trace = build_volition_context_injection_trace(
             qsf_session_id,
             exchange_index,
@@ -365,6 +439,19 @@ pub(crate) async fn inject_trusted_turn_context_and_response(
                 exchange_index,
                 recorded_at: OffsetDateTime::now_utc(),
                 trace: initiative_trace,
+            })?;
+        }
+        for world_consultation in world_consultations_to_record {
+            let world_consultation = complete_trace(
+                world_consultation,
+                &request_hash.to_string(),
+                exchange_index,
+            );
+            diagnostics.write(&DiagnosticRecord::WorldConsultationPerformed {
+                qsf_session_id: qsf_session_id.to_string(),
+                exchange_index,
+                recorded_at: OffsetDateTime::now_utc(),
+                trace: world_consultation.trace,
             })?;
         }
         let volition_inspection_capture = {
@@ -431,6 +518,19 @@ pub(crate) async fn inject_trusted_turn_context_and_response(
     );
     turn_request_values.push(response_create.clone());
     let request_hash = hash_request_sequence(&turn_request_values);
+    for world_consultation in world_consultations_to_record {
+        let world_consultation = complete_trace(
+            world_consultation,
+            &request_hash.to_string(),
+            exchange_index,
+        );
+        diagnostics.write(&DiagnosticRecord::WorldConsultationPerformed {
+            qsf_session_id: qsf_session_id.to_string(),
+            exchange_index,
+            recorded_at: OffsetDateTime::now_utc(),
+            trace: world_consultation.trace,
+        })?;
+    }
     let volition_inspection_capture = {
         let guard = session.lock().await;
         let inspection = build_state_inspection(&guard.volition.state, &guard.volition.fixture);

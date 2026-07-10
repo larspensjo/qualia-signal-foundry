@@ -276,4 +276,33 @@ mod tests {
         assert!(!first.bounded_or_external_output.external_effect_executed);
         assert_eq!(first, second);
     }
+
+    #[test]
+    fn retrieve_context_remains_an_internal_hint_not_an_external_effect() {
+        let selection = goal_selection(AllowedEffect::RetrieveContext);
+        let fixture = VolitionFixture {
+            tensions: vec![],
+            goals: vec![selection.goal.clone()],
+            arbitration_qualification_threshold: DEFAULT_ARBITRATION_QUALIFICATION_THRESHOLD,
+        };
+        let state = VolitionState::from_fixture(&fixture);
+        let snapshot = build_state_inspection(&state, &fixture);
+        let trace = build_realtime_bounded_initiative_trace(
+            "session-1",
+            1,
+            &selection,
+            InitiativeOutput::ContextRetrievalRequested {
+                query_terms: vec!["thread".to_string()],
+            },
+            false,
+            Some(VolitionSuppressionReason::NonRenderableOutput),
+            false,
+            snapshot.clone(),
+            snapshot,
+            Some(vec!["thread".to_string()]),
+            false,
+            "request-hash",
+        );
+        assert!(!trace.bounded_or_external_output.external_effect_executed);
+    }
 }
