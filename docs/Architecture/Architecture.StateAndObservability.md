@@ -46,7 +46,8 @@ candidate categories listed below still have no shared module.
 - Memory retrieval traces include selected and omitted candidates, with
   `RetrievedMemory.skip_reason` explaining relevance-gated omissions and retrieval
   limit omissions.
-- `engine.log` initialization redirected to `runs/<run-id>/engine.log` per run
+- `engine.log` initialization redirected to `runs/<run-id>/engine.log` per run; human-facing
+  logger timestamps use the host's local offset (with UTC only as a safe fallback)
 - `qsf_realtime_server` diagnostic artifacts for session allocation, server-side
   SDP rendezvous, browser relay events, call binding, and untrusted diagnostic
   exchanges with explicit source/trust markers

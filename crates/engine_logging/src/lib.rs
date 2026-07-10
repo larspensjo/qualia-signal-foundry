@@ -6,6 +6,9 @@
 
 use std::cell::Cell;
 
+use simplelog::{Config, ConfigBuilder};
+use time::UtcOffset;
+
 thread_local! {
     /// Thread-local storage for the current simulation tick count.
     static SIM_TICK: Cell<u64> = const { Cell::new(0) };
@@ -21,6 +24,19 @@ pub fn set_sim_tick(tick: u64) {
 /// Returns 0 if the tick has not been set.
 pub fn get_sim_tick() -> u64 {
     SIM_TICK.with(|v| v.get())
+}
+
+/// Returns the host's current UTC offset, falling back to UTC when it cannot be determined
+/// safely during process initialization.
+fn log_timestamp_offset() -> UtcOffset {
+    UtcOffset::current_local_offset().unwrap_or(UtcOffset::UTC)
+}
+
+/// Builds the shared logger configuration with the host-local timestamp offset.
+fn log_config() -> Config {
+    let mut builder = ConfigBuilder::new();
+    builder.set_time_offset(log_timestamp_offset());
+    builder.build()
 }
 
 // TODO: Replace all log:: with the macros below.
@@ -69,7 +85,7 @@ macro_rules! engine_error {
 ///
 /// This safely no-ops if another logger has already been initialized.
 pub fn initialize_for_tests() {
-    use simplelog::{ColorChoice, CombinedLogger, Config, TermLogger, TerminalMode};
+    use simplelog::{ColorChoice, CombinedLogger, TermLogger, TerminalMode};
 
     // Use debug level in debug builds, info in release builds.
     let level = if cfg!(debug_assertions) {
@@ -81,7 +97,7 @@ pub fn initialize_for_tests() {
     // Ignore the error if a logger was already set by another test.
     let _ = CombinedLogger::init(vec![TermLogger::new(
         level,
-        Config::default(),
+        log_config(),
         TerminalMode::Mixed,
         ColorChoice::Auto,
     )]);
@@ -89,10 +105,10 @@ pub fn initialize_for_tests() {
 
 /// Initializes logging for production use: both terminal and file output.
 ///
-/// Logs to both stderr and `./engine.log` in the current working directory.
+/// Logs to both stderr and `./engine.log` in the current working directory using local time.
 /// This safely no-ops if another logger has already been initialized.
 pub fn initialize() {
-    use simplelog::{ColorChoice, CombinedLogger, Config, TermLogger, TerminalMode, WriteLogger};
+    use simplelog::{ColorChoice, CombinedLogger, TermLogger, TerminalMode, WriteLogger};
     use std::fs::OpenOptions;
 
     let level = log::LevelFilter::Info;
@@ -104,14 +120,15 @@ pub fn initialize() {
         .expect("Failed to open engine.log");
 
     // Ignore the error if a logger was already set.
+    let config = log_config();
     let _ = CombinedLogger::init(vec![
         TermLogger::new(
             level,
-            Config::default(),
+            config.clone(),
             TerminalMode::Stderr,
             ColorChoice::Auto,
         ),
-        WriteLogger::new(level, Config::default(), log_file),
+        WriteLogger::new(level, config, log_file),
     ]);
 }
 
@@ -120,7 +137,7 @@ pub fn initialize() {
 /// Logs only to `./engine.log` in the current working directory.
 /// This safely no-ops if another logger has already been initialized.
 pub fn initialize_file_only() {
-    use simplelog::{CombinedLogger, Config, WriteLogger};
+    use simplelog::{CombinedLogger, WriteLogger};
     use std::fs::OpenOptions;
 
     let level = log::LevelFilter::Info;
@@ -132,7 +149,7 @@ pub fn initialize_file_only() {
         .expect("Failed to open engine.log");
 
     // Ignore the error if a logger was already set.
-    let _ = CombinedLogger::init(vec![WriteLogger::new(level, Config::default(), log_file)]);
+    let _ = CombinedLogger::init(vec![WriteLogger::new(level, log_config(), log_file)]);
 }
 
 /// Initializes file-only logging to a specified path (no console output).
@@ -142,7 +159,7 @@ pub fn initialize_file_only() {
 /// Creates parent directories if they do not exist.
 /// This safely no-ops if another logger has already been initialized.
 pub fn initialize_to_path(log_path: &std::path::Path) {
-    use simplelog::{CombinedLogger, Config, WriteLogger};
+    use simplelog::{CombinedLogger, WriteLogger};
     use std::fs::OpenOptions;
 
     if let Some(parent) = log_path.parent() {
@@ -159,5 +176,18 @@ pub fn initialize_to_path(log_path: &std::path::Path) {
         .unwrap_or_else(|e| panic!("Failed to open log file {:?}: {}", log_path, e));
 
     // Ignore the error if a logger was already set.
-    let _ = CombinedLogger::init(vec![WriteLogger::new(level, Config::default(), log_file)]);
+    let _ = CombinedLogger::init(vec![WriteLogger::new(level, log_config(), log_file)]);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{UtcOffset, log_timestamp_offset};
+
+    #[test]
+    fn logger_uses_the_current_local_offset_or_utc_when_unavailable() {
+        assert_eq!(
+            log_timestamp_offset(),
+            UtcOffset::current_local_offset().unwrap_or(UtcOffset::UTC)
+        );
+    }
 }
