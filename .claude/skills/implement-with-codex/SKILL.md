@@ -1,7 +1,7 @@
 ---
 name: implement-with-codex
 argument-hint: <task or plan phase to implement> [mention Fable to review with Fable instead of Opus]
-description: Implementation workflow where Codex writes the code and Claude reviews it - Codex GPT-5.4-Mini (high effort) implements with a pause-on-question contract that hands control back for user decisions, a Claude implementation-reviewer agent (Opus high by default, Fable high on request) reviews the diff, and Codex GPT-5.5 (high effort) applies the accepted findings. Use whenever the user invokes /implement-with-codex, asks Codex to implement something with a Claude review, or wants to implement a plan phase through the Codex implementation pipeline - even if they just say "have codex build this".
+description: Implementation workflow where Codex writes the code and Claude reviews it - Codex GPT-5.6-Terra (high effort) implements with a pause-on-question contract that hands control back for user decisions, a Claude implementation-reviewer agent (Opus high by default, Fable high on request) reviews the diff, and Codex GPT-5.6-Sol (high effort) applies the accepted findings. Use whenever the user invokes /implement-with-codex, asks Codex to implement something with a Claude review, or wants to implement a plan phase through the Codex implementation pipeline - even if they just say "have codex build this".
 ---
 
 # Implement with Codex
@@ -12,11 +12,11 @@ substitute:
 
 ```text
 1. Scope        (main thread, with the user)
-2. Implement    (Codex GPT-5.4-Mini, effort high, write — direct dispatch)
+2. Implement    (Codex GPT-5.6-Terra, effort high, write — direct dispatch)
      ⟲ pause on open question → relay to user → resume with answers
 3. Review       (implementation-reviewer agent: Opus high, or Fable on request)
 4. Relay        (findings and questions to the user)
-5. Apply review (Codex GPT-5.5, effort high, write — direct dispatch)
+5. Apply review (Codex GPT-5.6-Sol, effort high, write — direct dispatch)
 6. Verify       (main thread: repo completion checks)
 ```
 
@@ -44,7 +44,7 @@ $env:CLAUDE_PLUGIN_DATA = "$HOME\.claude\plugins\data\codex-openai-codex"
 $companion = (Get-ChildItem "$HOME\.claude\plugins\cache\openai-codex\codex\*\scripts\codex-companion.mjs" |
   Sort-Object LastWriteTime -Descending | Select-Object -First 1).FullName
 $prompt = @'
---model gpt-5.4-mini --effort high --write <task text from the step template>
+--model gpt-5.6-terra --effort high --write <task text from the step template>
 '@
 node $companion task $prompt
 ```
@@ -89,8 +89,8 @@ host pid, log path), the job's log file, and `git status`.
 The `implementation-reviewer` agent pins `model: opus`, `effort: high`; that is
 the default. Only when the user has asked for Fable in this conversation pass
 `model: "fable"` in the Agent call. Never choose Fable unprompted and never
-ask — silence means Opus. The Codex models are not configurable: GPT-5.4-Mini
-implements, GPT-5.5 applies the review.
+ask — silence means Opus. The Codex models are not configurable: GPT-5.6-Terra
+implements, GPT-5.6-Sol applies the review.
 
 ## Step 1: Scope
 
@@ -105,9 +105,9 @@ Establish exactly what is being implemented before any Codex call:
   pre-existing changes mixed with Codex's work — tell the user and let them
   decide (commit/stash first, or accept the mixed review) before proceeding.
 
-## Step 2: Implement (GPT-5.4-Mini, pause-on-question)
+## Step 2: Implement (GPT-5.6-Terra, pause-on-question)
 
-Dispatch with the recipe above, flags `--model gpt-5.4-mini --effort high
+Dispatch with the recipe above, flags `--model gpt-5.6-terra --effort high
 --write`, followed by this task text:
 
 ```text
@@ -144,7 +144,7 @@ supplies these; add your own analysis where its explanation is thin, and if
 you disagree with its recommendation, say so and why rather than passing it
 through silently. Use AskUserQuestion with the recommended option first when
 the options are enumerable. Then resume the same Codex session — dispatch
-recipe as above with flags `--resume --model gpt-5.4-mini --effort high
+recipe as above with flags `--resume --model gpt-5.6-terra --effort high
 --write` and this task text:
 
 ```text
@@ -177,13 +177,13 @@ options, recommendation, collect answers. Record vetoed findings so step 5
 doesn't apply them.
 
 If the verdict is Approved with no findings, skip step 5 entirely and go to
-verification — do not spend a GPT-5.5 call applying nothing.
+verification — do not spend a GPT-5.6-Sol call applying nothing.
 
-## Step 5: Apply the review (GPT-5.5)
+## Step 5: Apply the review (GPT-5.6-Sol)
 
 Dispatch with the recipe above as a **fresh** task (not --resume — this is a
 different model doing a different job; the review text is its context), flags
-`--model gpt-5.5 --effort high --write` and this task text:
+`--model gpt-5.6-sol --effort high --write` and this task text:
 
 ```text
 Apply code-review findings to the uncommitted changes in the working tree.
@@ -202,7 +202,7 @@ When done, end with "## Fixes applied" listing what changed per finding.
 ```
 
 A pause here is handled the same way as in step 2, resuming with flags
-`--resume --model gpt-5.5 --effort high --write`.
+`--resume --model gpt-5.6-sol --effort high --write`.
 
 ## Step 6: Verify and wrap up
 

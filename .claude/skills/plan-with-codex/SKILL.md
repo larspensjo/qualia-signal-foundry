@@ -1,7 +1,7 @@
 ---
 name: plan-with-codex
 argument-hint: <topic to plan> [mention Fable to plan with Fable instead of Opus]
-description: Full planning workflow with a blindspot pass and an external second-model review - brainstorm with the user, have a cold-reading blindspot-scout agent surface unknown unknowns in the brief, write a detailed phased plan via the plan-writer agent (Opus high by default, Fable high on request), get a single-shot Codex review (GPT-5.5, high effort), relay Codex's questions to the user, and update the plan. Use whenever the user invokes /plan-with-codex, asks to develop a plan with a Codex review, wants Codex to review a plan, or asks for the planning workflow with a second opinion - even if they just say "plan this and have codex look at it".
+description: Full planning workflow with a blindspot pass and an external second-model review - brainstorm with the user, have a cold-reading blindspot-scout agent surface unknown unknowns in the brief, write a detailed phased plan via the plan-writer agent (Opus high by default, Fable high on request), get a single-shot Codex review (GPT-5.6-Sol, high effort), relay Codex's questions to the user, and update the plan. Use whenever the user invokes /plan-with-codex, asks to develop a plan with a Codex review, wants Codex to review a plan, or asks for the planning workflow with a second opinion - even if they just say "plan this and have codex look at it".
 ---
 
 # Plan with Codex review
@@ -14,7 +14,7 @@ whole workflow, no re-review after the update).
 1. Brainstorm      (main thread, with the user)
 2. Blindspot pass  (blindspot-scout agent: cold read of the brief)
 3. Write plan      (plan-writer agent: Opus high, or Fable high on request)
-4. Review plan     (codex:codex-rescue: GPT-5.5, effort high, read-only)
+4. Review plan     (codex:codex-rescue: GPT-5.6-Sol, effort high, read-only)
 5. Relay Codex's questions to the user
 6. Update plan     (same plan-writer agent, via SendMessage)
 ```
@@ -88,12 +88,12 @@ exists.
 
 Dispatch the `codex:codex-rescue` agent (synchronously) with a prompt built
 from this template. The leading flags are routing controls the rescue agent
-strips before forwarding; keep them exactly as written — `gpt-5.5` at high
+strips before forwarding; keep them exactly as written — `gpt-5.6-sol` at high
 effort is this workflow's contract, and "read-only" prevents the rescue
 agent's default write-capable run:
 
 ```text
---model gpt-5.5 --effort high --wait
+--model gpt-5.6-sol --effort high --wait
 
 Read-only review task — do not modify any files.
 
