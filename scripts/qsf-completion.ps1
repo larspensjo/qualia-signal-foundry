@@ -333,6 +333,7 @@ $qsfCompleter = {
                 return
             }
             "-WorldCorpusPath" {
+                # Both `world-ingest` and `realtime` consume the same producer-owned corpus root.
                 Select-QsfCompletionMatches -Values (Get-QsfCompletionWorldCorpusPaths) -WordToComplete $wordToComplete
                 return
             }

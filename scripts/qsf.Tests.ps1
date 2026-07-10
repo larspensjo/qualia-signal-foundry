@@ -9,7 +9,8 @@ BeforeAll {
         "QSF_MODEL_PROVIDER",
         "QSF_STATE_DIR",
         "QSF_SESSION_MAX_TURNS",
-        "QSF_SESSION_MEMORY_SOURCE"
+        "QSF_SESSION_MEMORY_SOURCE",
+        "QSF_WORLD_CORPUS_PATH"
     )
 
     foreach ($name in $script:TestEnvironmentNames) {
@@ -138,6 +139,21 @@ Describe "qsf.ps1 realtime launcher" {
 
         $delta.Sets["QSF_MODEL_PROVIDER"] | Should -Be "openai"
         $delta.Clears | Should -Not -Contain "QSF_MODEL_PROVIDER"
+    }
+
+    It "passes an explicit world corpus path to the realtime server" {
+        $configuredPath = Join-Path $TestDrive "world-corpus-output"
+        try {
+            . $script:LauncherScript -Command "help" -WorldCorpusPath $configuredPath
+
+            $delta = Get-RealtimeEnvironmentDelta
+
+            $delta.Sets["QSF_WORLD_CORPUS_PATH"] | Should -Be $configuredPath
+            $delta.Clears | Should -Not -Contain "QSF_WORLD_CORPUS_PATH"
+        }
+        finally {
+            . $script:LauncherScript -Command "help"
+        }
     }
 
     It "clears ambient non-secret QSF variables for the realtime server" {

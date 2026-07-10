@@ -373,6 +373,9 @@ function Get-RealtimeEnvironmentDelta {
     $envSets = [ordered]@{
         "QSF_MODEL_PROVIDER" = "openai"
     }
+    if (-not [string]::IsNullOrWhiteSpace($WorldCorpusPath)) {
+        $envSets["QSF_WORLD_CORPUS_PATH"] = $WorldCorpusPath
+    }
     $clearEnv = @(
         Get-ManagedQsfEnvironmentVariableNames |
         Where-Object { -not $envSets.Contains($_) } |
@@ -538,7 +541,7 @@ Usage:
   .\scripts\qsf.ps1 browser [<store>] [-Store <path>] [-BindHost <ip>] [-Port <port>]
   .\scripts\qsf.ps1 ui [browser|realtime]
   .\scripts\qsf.ps1 workbench [<store>] [-Store <path>] [-BindHost <ip>] [-Port <port>]
-  .\scripts\qsf.ps1 realtime [-RandomSessionId]
+  .\scripts\qsf.ps1 realtime [-RandomSessionId] [-WorldCorpusPath <path>]
   .\scripts\qsf.ps1 sleep [-StateDir <path>] [-Provider <openai|mock>]
   .\scripts\qsf.ps1 world-ingest [-WorldCorpusPath <path>] [-WorldCorpusLedger <path>]
   .\scripts\qsf.ps1 restore [<backup-name>|latest] [-StateDir <path>]
@@ -557,7 +560,8 @@ Defaults:
   Text-loop session limit through launcher: allow over limit
   UI directory:  crates/qsf_browser_server/ui
   Realtime server: 127.0.0.1:$realtimeServerPort (state/realtime); requires OPENAI_API_KEY
-    Realtime environment: sets QSF_MODEL_PROVIDER=openai and clears other non-secret QSF_* values
+    Realtime environment: sets QSF_MODEL_PROVIDER=openai, optionally sets QSF_WORLD_CORPUS_PATH,
+                          and clears other non-secret QSF_* values
   Browser UI:      crates/qsf_browser_server/ui (Vite on first free port >= $browserUiPort)
   Realtime UI:     crates/qsf_realtime_server/ui (Vite on $realtimeUiUrl)
   Sleep update:    state/realtime through the $Provider provider; openai requires OPENAI_API_KEY
@@ -576,6 +580,7 @@ Examples:
   .\scripts\qsf.ps1 ui realtime
   .\scripts\qsf.ps1 realtime
   .\scripts\qsf.ps1 realtime -RandomSessionId
+  .\scripts\qsf.ps1 realtime -WorldCorpusPath C:\data\web_page_filet_mignon\output
   .\scripts\qsf.ps1 sleep
   .\scripts\qsf.ps1 sleep -Provider mock
   .\scripts\qsf.ps1 world-ingest

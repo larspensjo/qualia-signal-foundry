@@ -151,6 +151,21 @@ Describe "qsf.ps1 argument completion" {
         }
     }
 
+    It "completes a configured world corpus path for realtime" {
+        $previous = [System.Environment]::GetEnvironmentVariable("QSF_WORLD_CORPUS_PATH", "Process")
+        $configuredPath = Join-Path $TestDrive "world-corpus-output"
+        try {
+            [System.Environment]::SetEnvironmentVariable("QSF_WORLD_CORPUS_PATH", $configuredPath, "Process")
+
+            $completions = Complete-QsfInput -InputText ".\scripts\qsf.ps1 realtime -WorldCorpusPath "
+
+            $completions | Should -Contain $configuredPath
+        }
+        finally {
+            [System.Environment]::SetEnvironmentVariable("QSF_WORLD_CORPUS_PATH", $previous, "Process")
+        }
+    }
+
     It "completes the restore command" {
         $completions = Complete-QsfInput -InputText ".\scripts\qsf.ps1 re"
 
