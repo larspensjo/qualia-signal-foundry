@@ -2,15 +2,14 @@ use std::mem;
 use std::sync::Arc;
 
 use qsf_context::ContextBudget;
-use qsf_corpus::tokenize;
 use qsf_memory::RetrievalStrategy;
 use qsf_realtime_protocol::build_openai_realtime_response_create;
 use qsf_session::{ContentHash, LiveSessionEvent, apply_live_session_event};
 use qsf_volition::{
     GroundingRef, OpportunitySignal, OpportunitySignalKind, ReceptivenessHint, VolitionEvent,
     WorldQueryTerm, WorldQueryTermSource, arbitrate_with_mode, build_state_inspection,
-    choose_shaping_intensity, detect_opportunities, execute_initiative, grounded_terms_from_text,
-    select_goals_ranked,
+    choose_shaping_intensity, detect_opportunities, execute_initiative,
+    explicit_topic_world_consultation_request, grounded_terms_from_text, select_goals_ranked,
 };
 use time::OffsetDateTime;
 use tokio::sync::{mpsc, watch};
@@ -40,8 +39,8 @@ use crate::realtime::volition_inspection_capture::{
     build_volition_turn_decision_summary,
 };
 use crate::realtime::world_consultation::{
-    WorldConsultationRequest, WorldCorpus, WorldInjectionPoint, WorldQueryOrigin, complete_trace,
-    consult_world,
+    WorldConsultationRequest, WorldConsultationTrigger, WorldCorpus, WorldInjectionPoint,
+    WorldQueryOrigin, complete_trace, consult_world,
 };
 use crate::state::{AppState, SessionRuntime};
 
@@ -207,6 +206,7 @@ pub(crate) async fn inject_trusted_turn_context_and_response(
     let mut initiative_output = None;
     let mut initiative_context_retrieval_hint_terms = None;
     let mut inline_world_consultation = None;
+    let mut world_consultation_requested = false;
     let mut surfaced = false;
     let mut suppression_reason = None;
     let mut rendered_line_present = false;
@@ -227,13 +227,14 @@ pub(crate) async fn inject_trusted_turn_context_and_response(
 
         if let qsf_volition::InitiativeOutput::WorldConsultationRequested { query_terms } = &output
         {
+            world_consultation_requested = true;
             let mut combined_query_terms = query_terms.clone();
-            combined_query_terms.extend(tokenize(transcript).into_iter().map(|term| {
-                WorldQueryTerm {
+            combined_query_terms.extend(qsf_volition::normalize_terms(transcript).into_iter().map(
+                |term| WorldQueryTerm {
                     term,
                     source: WorldQueryTermSource::CurrentTopic,
-                }
-            }));
+                },
+            ));
             match state.world_corpus() {
                 WorldCorpus::Ready(corpus) => {
                     let result = consult_world(
@@ -244,6 +245,7 @@ pub(crate) async fn inject_trusted_turn_context_and_response(
                             serving_tension_ids: arbitration.winner.goal.tension_ids.clone(),
                             initiative_output: output.clone(),
                             query_terms: combined_query_terms,
+                            trigger: WorldConsultationTrigger::GoalActivation,
                             // This path is entered only from a trusted final input transcript.
                             // Keep the answer-derived alternative explicit for future producers.
                             query_origin: WorldQueryOrigin::UserInput,
@@ -327,6 +329,52 @@ pub(crate) async fn inject_trusted_turn_context_and_response(
         initiative_context_retrieval_hint_terms = context_retrieval_hint_terms;
     } else {
         runtime_state.previous_turn_surfaced_goal_id = None;
+    }
+
+    // A concrete current topic can request the same pure ConsultWorld output even when it did
+    // not happen to activate a fixture goal. The detector is deliberately narrow (named entity
+    // or version plus a current-information cue), so ordinary turns do not become searches.
+    if !world_consultation_requested {
+        if let Some(request) = explicit_topic_world_consultation_request(transcript) {
+            let query_terms = match &request.initiative_output {
+                qsf_volition::InitiativeOutput::WorldConsultationRequested { query_terms } => {
+                    query_terms.clone()
+                }
+                _ => {
+                    unreachable!("explicit topic helper only returns a world consultation request")
+                }
+            };
+            match state.world_corpus() {
+                WorldCorpus::Ready(corpus) => {
+                    let result = consult_world(
+                        corpus,
+                        WorldConsultationRequest {
+                            serving_goal_id: "explicit-current-information".to_string(),
+                            serving_goal_title: "Explicit current-information topic".to_string(),
+                            serving_tension_ids: Vec::new(),
+                            initiative_output: request.initiative_output,
+                            query_terms,
+                            trigger: WorldConsultationTrigger::ExplicitCurrentTopic {
+                                required_anchors: request.required_anchors,
+                            },
+                            query_origin: WorldQueryOrigin::UserInput,
+                        },
+                        &mut runtime_state.surfaced_world_content_hashes,
+                    );
+                    match result.trace.injection_point {
+                        WorldInjectionPoint::InlineSameTurn => {
+                            inline_world_consultation = Some(result)
+                        }
+                        WorldInjectionPoint::DeferredNextTurn => {
+                            runtime_state.pending_world_consultation = Some(result);
+                        }
+                    }
+                }
+                WorldCorpus::Unavailable { reason } => log::error!(
+                    "explicit world consultation requested for session `{qsf_session_id}` but corpus is unavailable: {reason}"
+                ),
+            }
+        }
     }
 
     // Reuse the caller's snapshot rather than taking a third `session.lock()` on this path —

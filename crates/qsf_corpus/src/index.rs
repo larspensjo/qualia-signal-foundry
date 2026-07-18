@@ -181,15 +181,39 @@ impl CorpusIndex {
 }
 
 /// Tokenizes text with the same simple lowercase-alphanumeric convention used by memory keyword
-/// retrieval: terms shorter than three characters are omitted.
+/// retrieval: terms shorter than three characters are omitted, except the domain-significant
+/// `ai`, `ar`, and `vr` anchors.
 pub fn tokenize(input: &str) -> BTreeSet<String> {
-    input
+    let mut terms = input
         .split(|character: char| !character.is_alphanumeric())
         .filter_map(|term| {
             let normalized = term.trim().to_ascii_lowercase();
-            (normalized.len() >= 3).then_some(normalized)
+            (normalized.len() >= 3 || matches!(normalized.as_str(), "ai" | "ar" | "vr"))
+                .then_some(normalized)
         })
-        .collect()
+        .collect::<BTreeSet<_>>();
+    // Keep dotted releases searchable as one lexical unit while preserving the established
+    // word-token convention above. `4.5` otherwise becomes two discarded one-character terms.
+    for token in input.split_whitespace() {
+        let version =
+            token.trim_matches(|character: char| !character.is_ascii_digit() && character != '.');
+        let mut parts = version.split('.');
+        let Some(major) = parts.next() else {
+            continue;
+        };
+        let Some(minor) = parts.next() else {
+            continue;
+        };
+        if parts.next().is_none()
+            && !major.is_empty()
+            && !minor.is_empty()
+            && major.chars().all(|character| character.is_ascii_digit())
+            && minor.chars().all(|character| character.is_ascii_digit())
+        {
+            terms.insert(version.to_string());
+        }
+    }
+    terms
 }
 
 fn add_tokens(
@@ -213,7 +237,7 @@ mod tests {
     use time::OffsetDateTime;
     use time::format_description::well_known::Rfc3339;
 
-    use super::CorpusIndex;
+    use super::{CorpusIndex, tokenize};
     use crate::Article;
 
     fn article(id: usize, title: &str, body: &str) -> Article {
@@ -289,5 +313,19 @@ mod tests {
             "common-term lookup took {} ms",
             result.latency_ms
         );
+    }
+
+    #[test]
+    fn tokenize_retains_dotted_release_versions() {
+        assert!(tokenize("Grok 4.5 release").contains("4.5"));
+    }
+
+    #[test]
+    fn tokenize_retains_two_character_ai_domain_anchors() {
+        let terms = tokenize("AI AR VR release");
+
+        assert!(terms.contains("ai"));
+        assert!(terms.contains("ar"));
+        assert!(terms.contains("vr"));
     }
 }

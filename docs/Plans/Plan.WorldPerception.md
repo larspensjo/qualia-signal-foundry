@@ -1,6 +1,6 @@
 # Plan: World Perception — consulting an external AI-news corpus
 
-Status: Active — corpus ingestion and the audited realtime consultation adapter are implemented; consultation relevance and trigger coverage are the next slice
+Status: Active — corpus ingestion, the audited realtime consultation adapter, and consultation relevance/explicit-topic trigger coverage are implemented; the diagnostic panel remains next
 Maturity: Candidate
 Area: Perception / Volition / Memory
 
@@ -202,6 +202,15 @@ returned an up-to-date-knowledge disclaimer. This is a relevance and trigger-cov
 not a failure of the external-effect, framing, 5 ms lookup-budget, or anti-repeat boundaries.
 
 ### Next slice: consultation relevance and explicit-topic triggers
+
+**Implementation status (2026-07-10):** Implemented and fixture-backed. A pure volition helper
+recognizes a named entity or dotted version only when paired with a current-information cue; the
+server adapter remains the sole external-effect boundary. It strips generic interrogatives,
+retains meaningful terms for lexical ranking, requires only the detected entity/version signals,
+and omits lexical candidates that lack an anchor as `missing_required_anchor`. A no-match
+consultation records `external_effect_executed: true` with no model injection. Fixture tests cover
+a framed Grok 4.5 release fact, generic-release omission, no-match/no-injection, and session hash repeat
+suppression.
 
 Harden consultation selection before building the diagnostic panel. Preserve the existing
 volition-to-adapter boundary and trace contract, but make a consultation worthwhile when it is

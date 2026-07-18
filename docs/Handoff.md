@@ -1,8 +1,9 @@
 # Handoff — Resume Here
 
-**Updated:** 2026-07-09 — the world corpus ingested the real WPFM output (6,304 articles;
-schema v1; no skipped files) and the content-hash ledger fully reused it on the next run. The
-17 ms real-corpus query probe needs profiling against the live budget before consultation.
+**Updated:** 2026-07-10 — consultation relevance and explicit-topic triggers landed: a named
+entity/version with a current-information cue can request `ConsultWorld`, only detected
+entity/version signals are required anchors, and no-match reads record the external effect
+without injecting anything.
 
 <!--
 Rules (see ProjectWorkflow.md, "Handoff Discipline"):
@@ -16,16 +17,16 @@ Rules (see ProjectWorkflow.md, "Handoff Discipline"):
 
 ## Now — immediate action
 
-**Build the world-perception diagnostic UI in [Plan.WorldPerception](Plans/Plan.WorldPerception.md).**
-Why: the live adapter now injects correctly framed fixture facts and records the complete JSONL
-causal chain; the next useful slice is making that evidence visible during a session.
+**Repeat the live world-consultation probe with a specific AI release
+([Experiment.WorldConsultation](Experiments/Experiment.WorldConsultation.md)).**
+Why: anchor-aware relevance and the explicit-topic trigger are fixture-verified; a live session
+naming a release must confirm the response honestly attributes a relevant external source claim.
 
 ## Next — active plan
 
-**Run the live world-consultation experiment in
-[Experiment.WorldConsultation](Experiments/Experiment.WorldConsultation.md).**
-Why: the adapter’s 5 ms inline/defer policy is automated-tested, but live relevance and
-transcript-to-audio impact still need human evidence.
+**Build the world-perception diagnostic UI in [Plan.WorldPerception](Plans/Plan.WorldPerception.md).**
+Why: with relevance hardened, the panel can visualize a useful retrieval chain — verdict line,
+untrusted-external block, and the anchor/omission falsifiability detail.
 
 ## Horizon — direction
 

@@ -7,7 +7,10 @@ use qsf_corpus::{
     refresh_corpus, resolve_corpus_path,
 };
 use qsf_realtime_protocol::build_openai_realtime_conversation_item_create;
-use qsf_volition::{InitiativeOutput, WorldQueryTerm};
+use qsf_volition::{
+    InitiativeOutput, WorldQueryTerm, is_current_information_cue, is_dotted_version,
+    is_generic_world_query_term,
+};
 use serde::{Deserialize, Serialize};
 
 /// The maximum synchronous corpus-read cost allowed on a user-input turn.
@@ -80,6 +83,15 @@ pub(crate) enum WorldQueryOrigin {
     AssistantAnswer,
 }
 
+/// Why this bounded consultation was requested. Explicit current topics are admitted only by
+/// the pure volition-domain detector; the adapter remains the external-effect boundary.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum WorldConsultationTrigger {
+    GoalActivation,
+    ExplicitCurrentTopic { required_anchors: Vec<String> },
+}
+
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub(crate) enum WorldInjectionPoint {
@@ -135,6 +147,8 @@ pub struct WorldConsultationTrace {
     pub(crate) serving_goal_title: String,
     pub(crate) serving_tension_ids: Vec<String>,
     pub(crate) query_terms: Vec<WorldQueryTerm>,
+    /// Every surfaced candidate matched every item in this relevance gate.
+    pub(crate) required_anchors: Vec<String>,
     pub(crate) candidates: Vec<WorldConsultationCandidate>,
     pub(crate) surfaced_facts: Vec<SurfacedWorldFact>,
     pub(crate) injected_text: String,
@@ -155,6 +169,7 @@ pub(crate) struct WorldConsultationRequest {
     pub(crate) serving_tension_ids: Vec<String>,
     pub(crate) initiative_output: InitiativeOutput,
     pub(crate) query_terms: Vec<WorldQueryTerm>,
+    pub(crate) trigger: WorldConsultationTrigger,
     pub(crate) query_origin: WorldQueryOrigin,
 }
 
@@ -170,17 +185,21 @@ pub(crate) fn consult_world(
     request: WorldConsultationRequest,
     previously_surfaced_content_hashes: &mut HashSet<String>,
 ) -> WorldConsultationResult {
-    let query = request
-        .query_terms
+    let (query_terms, required_anchors) =
+        anchor_aware_query_terms(&request.query_terms, &request.trigger);
+    let query = query_terms
         .iter()
         .map(|term| term.term.as_str())
         .collect::<Vec<_>>()
         .join(" ");
     let query_result = corpus.index.query(&query, WORLD_CONSULT_CANDIDATE_LIMIT);
+    let mut request = request;
+    request.query_terms = query_terms;
     build_result(
         corpus,
         request,
         query_result.candidates,
+        required_anchors,
         query_result.latency_ms,
         query_result.latency_ns,
         previously_surfaced_content_hashes,
@@ -191,6 +210,7 @@ fn build_result(
     corpus: &ReadyWorldCorpus,
     request: WorldConsultationRequest,
     candidates: Vec<QueryCandidate>,
+    required_anchors: Vec<String>,
     lookup_latency_ms: u64,
     lookup_latency_ns: u64,
     previously_surfaced_content_hashes: &mut HashSet<String>,
@@ -198,7 +218,11 @@ fn build_result(
     let mut traced_candidates = Vec::with_capacity(candidates.len());
     let mut surfaced_facts = Vec::new();
     for candidate in candidates {
-        let eligibility = if previously_surfaced_content_hashes.contains(&candidate.content_hash) {
+        let eligibility = if !candidate_matches_required_anchors(&candidate, &required_anchors) {
+            CandidateEligibility::Omitted {
+                reason: "missing_required_anchor".to_string(),
+            }
+        } else if previously_surfaced_content_hashes.contains(&candidate.content_hash) {
             CandidateEligibility::Omitted {
                 reason: "anti_repeat_session_content_hash".to_string(),
             }
@@ -268,6 +292,7 @@ fn build_result(
         serving_goal_title: request.serving_goal_title,
         serving_tension_ids: request.serving_tension_ids,
         query_terms: request.query_terms,
+        required_anchors,
         candidates: traced_candidates,
         surfaced_facts,
         injected_text,
@@ -295,6 +320,64 @@ fn build_result(
     }
 }
 
+fn anchor_aware_query_terms(
+    query_terms: &[WorldQueryTerm],
+    trigger: &WorldConsultationTrigger,
+) -> (Vec<WorldQueryTerm>, Vec<String>) {
+    let retained_terms = query_terms
+        .iter()
+        .filter(|term| is_meaningful_world_term(&term.term))
+        .cloned()
+        .collect::<Vec<_>>();
+    let required_anchors = match trigger {
+        // Goal activation plus current topic is the deliberately limited v1 query substrate.
+        // Requiring all meaningful terms prevents a generic current-topic match from winning.
+        WorldConsultationTrigger::GoalActivation => unique_terms(
+            &retained_terms
+                .iter()
+                .map(|term| term.term.clone())
+                .collect::<Vec<_>>(),
+        ),
+        // Entity/version signals detected from the original text are the relevance gate. Other
+        // retained words still contribute lexical score, but cannot cause a spurious no-match.
+        WorldConsultationTrigger::ExplicitCurrentTopic { required_anchors } => unique_terms(
+            &required_anchors
+                .iter()
+                .filter(|anchor| {
+                    !is_current_information_cue(anchor)
+                        && is_meaningful_world_term(anchor)
+                        && retained_terms.iter().any(|term| term.term == **anchor)
+                })
+                .cloned()
+                .collect::<Vec<_>>(),
+        ),
+    };
+    (retained_terms, required_anchors)
+}
+
+fn unique_terms(terms: &[String]) -> Vec<String> {
+    let mut unique = Vec::new();
+    for term in terms {
+        if !unique.contains(term) {
+            unique.push(term.clone());
+        }
+    }
+    unique
+}
+
+fn candidate_matches_required_anchors(
+    candidate: &QueryCandidate,
+    required_anchors: &[String],
+) -> bool {
+    required_anchors
+        .iter()
+        .all(|anchor| candidate.matched_terms.iter().any(|term| term == anchor))
+}
+
+fn is_meaningful_world_term(term: &str) -> bool {
+    (term.len() >= 2 || is_dotted_version(term)) && !is_generic_world_query_term(term)
+}
+
 pub(crate) fn complete_trace(
     mut result: WorldConsultationResult,
     response_create_event_ref: &str,
@@ -309,7 +392,10 @@ pub(crate) fn complete_trace(
 #[cfg(test)]
 mod tests {
     use qsf_corpus::{Article, CorpusIndex, CorpusMarker, CorpusSchemaDrift, refresh_corpus};
-    use qsf_volition::{InitiativeOutput, WorldQueryTerm, WorldQueryTermSource};
+    use qsf_volition::{
+        InitiativeOutput, WorldQueryTerm, WorldQueryTermSource,
+        explicit_topic_world_consultation_request,
+    };
     use time::OffsetDateTime;
 
     use super::*;
@@ -337,10 +423,17 @@ mod tests {
                     source: WorldQueryTermSource::GoalActivation,
                 }],
             },
-            query_terms: vec![WorldQueryTerm {
-                term: "transition".to_string(),
-                source: WorldQueryTermSource::CurrentTopic,
-            }],
+            query_terms: vec![
+                WorldQueryTerm {
+                    term: "ai".to_string(),
+                    source: WorldQueryTermSource::GoalActivation,
+                },
+                WorldQueryTerm {
+                    term: "transition".to_string(),
+                    source: WorldQueryTermSource::CurrentTopic,
+                },
+            ],
+            trigger: WorldConsultationTrigger::GoalActivation,
             query_origin: origin,
         }
     }
@@ -374,9 +467,151 @@ mod tests {
 
         let second = consult_world(&corpus, request(WorldQueryOrigin::UserInput), &mut seen);
         assert!(second.trace.surfaced_facts.is_empty());
-        assert!(second.trace.candidates.iter().all(|candidate| matches!(
+        assert!(second.trace.candidates.iter().any(|candidate| matches!(
             candidate.eligibility,
             CandidateEligibility::Omitted { ref reason } if reason == "anti_repeat_session_content_hash"
+        )));
+        assert!(second.trace.candidates.iter().any(|candidate| matches!(
+            candidate.eligibility,
+            CandidateEligibility::Omitted { ref reason } if reason == "missing_required_anchor"
+        )));
+    }
+
+    fn explicit_request(prompt: &str) -> WorldConsultationRequest {
+        let explicit_request = explicit_topic_world_consultation_request(prompt)
+            .expect("fixture prompt is explicitly current and named");
+        let query_terms = match &explicit_request.initiative_output {
+            InitiativeOutput::WorldConsultationRequested { query_terms } => query_terms.clone(),
+            _ => panic!("explicit topic helper only returns a consultation request"),
+        };
+        WorldConsultationRequest {
+            serving_goal_id: "explicit-current-information".to_string(),
+            serving_goal_title: "Explicit current-information topic".to_string(),
+            serving_tension_ids: Vec::new(),
+            initiative_output: explicit_request.initiative_output,
+            query_terms,
+            trigger: WorldConsultationTrigger::ExplicitCurrentTopic {
+                required_anchors: explicit_request.required_anchors,
+            },
+            query_origin: WorldQueryOrigin::UserInput,
+        }
+    }
+
+    #[test]
+    fn explicit_release_consultation_uses_detected_anchors_with_untrusted_framing() {
+        let corpus = corpus();
+        let result = consult_world(
+            &corpus,
+            explicit_request("What do you think about the Grok 4.5 release?"),
+            &mut HashSet::new(),
+        );
+
+        assert_eq!(result.trace.required_anchors, ["grok", "4.5"]);
+        assert!(
+            result
+                .trace
+                .query_terms
+                .iter()
+                .all(|term| term.term != "what")
+        );
+        assert!(result.trace.surfaced_facts.iter().all(|fact| {
+            fact.title.to_ascii_lowercase().contains("grok")
+                && fact
+                    .framed_text
+                    .contains("External source material — untrusted")
+        }));
+        assert!(result.trace.candidates.iter().any(|candidate| {
+            candidate.candidate.title.contains("AI release roundup")
+                && matches!(
+                    candidate.eligibility,
+                    CandidateEligibility::Omitted { ref reason }
+                        if reason == "missing_required_anchor"
+                )
+        }));
+    }
+
+    #[test]
+    fn explicit_release_with_sentence_framing_surfaces_the_named_fixture_article() {
+        let corpus = corpus();
+        let result = consult_world(
+            &corpus,
+            explicit_request("Tell me about the latest Grok release"),
+            &mut HashSet::new(),
+        );
+
+        assert_eq!(result.trace.required_anchors, ["grok"]);
+        assert!(
+            result
+                .trace
+                .query_terms
+                .iter()
+                .any(|term| term.term == "tell")
+        );
+        assert!(
+            result
+                .trace
+                .surfaced_facts
+                .iter()
+                .any(|fact| fact.title.contains("Grok 4.5"))
+        );
+    }
+
+    #[test]
+    fn two_character_named_entity_can_anchor_an_explicit_topic_match() {
+        let article = Article {
+            relative_path: "vr-release.md".to_string(),
+            content_hash: "vr-release-hash".to_string(),
+            url: "https://news.example.com/vr-release".to_string(),
+            title: "VR release improves headset rendering".to_string(),
+            source_domain: "news.example.com".to_string(),
+            fetched_utc: OffsetDateTime::now_utc(),
+            body: "The latest VR release improves rendering performance.".to_string(),
+        };
+        let corpus = ReadyWorldCorpus {
+            index: Arc::new(CorpusIndex::new(vec![article])),
+            marker: CorpusMarker {
+                schema_version: 1,
+                producer: "test".to_string(),
+                article_patterns: vec!["*.md".to_string()],
+                generated_artifacts: vec![],
+                internal_state: vec![],
+            },
+            schema_drift: CorpusSchemaDrift::None,
+            articles_indexed: 1,
+            corpus_path: PathBuf::from("fixture"),
+        };
+        let result = consult_world(
+            &corpus,
+            explicit_request("Tell me about the latest VR release"),
+            &mut HashSet::new(),
+        );
+
+        assert_eq!(result.trace.required_anchors, ["vr"]);
+        assert_eq!(result.trace.surfaced_facts.len(), 1);
+    }
+
+    #[test]
+    fn no_matching_anchor_injects_nothing_but_records_the_external_read() {
+        let corpus = corpus();
+        let result = consult_world(
+            &corpus,
+            explicit_request("What do you think about the Nebula 9.9 release?"),
+            &mut HashSet::new(),
+        );
+
+        assert_eq!(result.trace.required_anchors, ["nebula", "9.9"]);
+        assert!(result.trace.surfaced_facts.is_empty());
+        assert!(result.trace.injected_text.is_empty());
+        assert!(result.conversation_item_create.is_none());
+        assert!(
+            result
+                .trace
+                .bounded_or_external_output
+                .external_effect_executed
+        );
+        assert!(result.trace.candidates.iter().any(|candidate| matches!(
+            candidate.eligibility,
+            CandidateEligibility::Omitted { ref reason } if reason == "missing_required_anchor"
         )));
     }
 
@@ -406,6 +641,7 @@ mod tests {
             &corpus,
             request(WorldQueryOrigin::UserInput),
             candidates,
+            vec!["ai".to_string(), "transition".to_string()],
             WORLD_CONSULT_INLINE_BUDGET_MS,
             WORLD_CONSULT_INLINE_BUDGET_NS + 1,
             &mut HashSet::new(),

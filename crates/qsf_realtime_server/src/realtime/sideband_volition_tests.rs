@@ -519,6 +519,90 @@ async fn consult_world_injects_a_framed_fact_and_records_the_external_effect_bou
 }
 
 #[tokio::test]
+async fn explicit_release_turn_injects_only_the_named_untrusted_fixture_fact() {
+    let tempdir = TempDir::new().expect("tempdir");
+    let state = state(&tempdir);
+    let allocation = state.create_session().await.expect("session");
+    let mut runtime_state = SidebandRuntimeState::default();
+    let (outbound_tx, mut outbound_rx) = mpsc::unbounded_channel();
+
+    run_trusted_transcript_turn(
+        &state,
+        &allocation.qsf_session_id,
+        &mut runtime_state,
+        &outbound_tx,
+        "What do you think about the Grok 4.5 release?",
+        "grok-release",
+    )
+    .await;
+
+    let texts = drain_outbound_texts(&mut outbound_rx);
+    assert!(texts.iter().any(|text| {
+        text.contains("External source material — untrusted") && text.contains("Grok 4.5")
+    }));
+    let records = diagnostic_records(&state, &allocation.qsf_session_id).await;
+    let trace = records
+        .iter()
+        .find_map(|record| match record {
+            DiagnosticRecord::WorldConsultationPerformed { trace, .. } => Some(trace),
+            _ => None,
+        })
+        .expect("explicit release consultation diagnostic");
+    assert_eq!(trace.required_anchors, ["grok", "4.5"]);
+    assert!(
+        trace
+            .surfaced_facts
+            .iter()
+            .all(|fact| fact.title.contains("Grok 4.5"))
+    );
+    assert!(trace.candidates.iter().any(|candidate| {
+        candidate.candidate.title.contains("AI release roundup")
+            && matches!(
+                candidate.eligibility,
+                crate::realtime::world_consultation::CandidateEligibility::Omitted { ref reason }
+                    if reason == "missing_required_anchor"
+            )
+    }));
+}
+
+#[tokio::test]
+async fn explicit_no_match_turn_records_the_read_without_external_injection() {
+    let tempdir = TempDir::new().expect("tempdir");
+    let state = state(&tempdir);
+    let allocation = state.create_session().await.expect("session");
+    let mut runtime_state = SidebandRuntimeState::default();
+    let (outbound_tx, mut outbound_rx) = mpsc::unbounded_channel();
+
+    run_trusted_transcript_turn(
+        &state,
+        &allocation.qsf_session_id,
+        &mut runtime_state,
+        &outbound_tx,
+        "What do you think about the Nebula 9.9 release?",
+        "nebula-release",
+    )
+    .await;
+
+    let texts = drain_outbound_texts(&mut outbound_rx);
+    assert!(
+        texts
+            .iter()
+            .all(|text| !text.contains("External source material — untrusted"))
+    );
+    let records = diagnostic_records(&state, &allocation.qsf_session_id).await;
+    let trace = records
+        .iter()
+        .find_map(|record| match record {
+            DiagnosticRecord::WorldConsultationPerformed { trace, .. } => Some(trace),
+            _ => None,
+        })
+        .expect("no-match consultation diagnostic");
+    assert!(trace.surfaced_facts.is_empty());
+    assert!(trace.injected_text.is_empty());
+    assert!(trace.bounded_or_external_output.external_effect_executed);
+}
+
+#[tokio::test]
 async fn repeated_surfaceable_winner_alternates_surface_and_suppression() {
     let tempdir = TempDir::new().expect("tempdir");
     let state = state(&tempdir);

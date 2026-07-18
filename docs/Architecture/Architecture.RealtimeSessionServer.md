@@ -38,13 +38,20 @@ mode, not a one-off experiment server.
 - At startup the server resolves `QSF_WORLD_CORPUS_PATH` (falling back to the bundled fixture)
   and retains a read-only `qsf_corpus::CorpusIndex`; ingestion/schema errors are logged and an
   unavailable corpus is noted in per-session diagnostics. A `ConsultWorld` winner combines its
-  goal-activation terms with current-topic transcript tokens, queries the index with per-session
-  content-hash anti-repeat suppression, resolves selected hashes before framing them as untrusted
-  external system content, and injects that content before `response.create`. User-input reads
-  inject inline only within the provisional 5 ms budget; over-budget reads and the explicitly
-  modeled assistant-answer origin defer to the next trusted turn. `WorldConsultationPerformed`
-  is the external-effect JSONL boundary and preserves source terms, candidates/omissions, exact
-  model-visible text, latency, injection decision, and corpus marker metadata.
+  goal-activation terms with current-topic transcript tokens; a narrow pure volition trigger also
+  requests the same consultation for a named entity or dotted-version prompt with a
+  current-information cue (for example, a named release), rather than for every turn. The adapter
+  discards generic interrogatives, retains meaningful topic terms and versions for lexical ranking,
+  and requires every surfaced candidate to match only the entity/version signals detected by the
+  pure trigger before it resolves hashes and frames the article as untrusted external system
+  content. Candidates that miss an anchor remain trace-visible with
+  `missing_required_anchor`; a no-match read injects nothing but still records the external effect.
+  Per-session content-hash anti-repeat suppression applies after anchor eligibility. User-input
+  reads inject inline only within the provisional 5 ms budget; over-budget reads and the explicitly
+  modeled assistant-answer origin defer to the next trusted turn. `WorldConsultationPerformed` is
+  the external-effect JSONL boundary and preserves source terms, chosen anchors,
+  candidates/omissions, exact model-visible text, latency, injection decision, and corpus marker
+  metadata.
 - The realtime sideband declares a read-only realtime tool allow-list
   (`search_memory`, `get_associations`, `inspect_session_state`,
   `inspect_volition_state`, `select_volition_goals`), records `ToolRequested`

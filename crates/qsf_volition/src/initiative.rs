@@ -44,6 +44,160 @@ pub struct WorldQueryTerm {
     pub source: WorldQueryTermSource,
 }
 
+/// Pure domain result for an explicitly current topic. The adapter uses `required_anchors`
+/// only as a relevance gate; all query terms remain available to lexical ranking.
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+pub struct ExplicitTopicWorldConsultation {
+    pub initiative_output: InitiativeOutput,
+    pub required_anchors: Vec<String>,
+}
+
+/// Returns a pure consultation request for an explicitly current named topic.
+///
+/// This deliberately requires both a current-information cue (such as `release` or `latest`)
+/// and a concrete topic signal (a named entity or dotted version). It is therefore an escape
+/// hatch for turns like "What do you think about the Grok 4.5 release?", rather than a search
+/// request for every ordinary user turn. The realtime adapter remains responsible for deciding
+/// whether and how to execute the external read.
+pub fn explicit_topic_world_consultation_request(
+    input: &str,
+) -> Option<ExplicitTopicWorldConsultation> {
+    let normalized_terms = crate::normalize_terms(input);
+    let has_current_information_cue = normalized_terms
+        .iter()
+        .any(|term| is_current_information_cue(term));
+    let versions = dotted_versions(input);
+    let named_entity_candidates = input
+        .split(|character: char| !character.is_alphanumeric())
+        .filter(|word| !word.is_empty())
+        .enumerate()
+        .filter_map(|(index, word)| {
+            let normalized = word.to_ascii_lowercase();
+            (word.chars().next().is_some_and(char::is_uppercase)
+                && !is_generic_world_query_term(&normalized))
+            .then_some((index, normalized))
+        })
+        .collect::<Vec<_>>();
+
+    // Sentence-initial capitalization alone is ambiguous. Prefer later capitalized signals when
+    // present ("Tell me about ... Grok"), but retain the initial candidate as a fallback so the
+    // deliberately narrow detector's existing admission behavior does not broaden or contract.
+    let mut required_anchors = named_entity_candidates
+        .iter()
+        .filter(|(index, _)| *index > 0)
+        .map(|(_, term)| term.clone())
+        .collect::<Vec<_>>();
+    if required_anchors.is_empty() {
+        required_anchors.extend(named_entity_candidates.into_iter().map(|(_, term)| term));
+    }
+    required_anchors.extend(versions.iter().cloned());
+    required_anchors.dedup();
+
+    if !has_current_information_cue || required_anchors.is_empty() {
+        return None;
+    }
+
+    let mut terms = normalized_terms
+        .into_iter()
+        .filter(|term| term.len() >= 2 && !is_generic_world_query_term(term))
+        .map(|term| WorldQueryTerm {
+            term,
+            source: WorldQueryTermSource::CurrentTopic,
+        })
+        .collect::<Vec<_>>();
+    for version in versions {
+        if !terms.iter().any(|term| term.term == version) {
+            terms.push(WorldQueryTerm {
+                term: version,
+                source: WorldQueryTermSource::CurrentTopic,
+            });
+        }
+    }
+
+    (!terms.is_empty()).then_some(ExplicitTopicWorldConsultation {
+        initiative_output: InitiativeOutput::WorldConsultationRequested { query_terms: terms },
+        required_anchors,
+    })
+}
+
+/// Whether a normalized term is generic query framing rather than topic substance.
+pub fn is_generic_world_query_term(term: &str) -> bool {
+    matches!(
+        term,
+        "a" | "an"
+            | "and"
+            | "are"
+            | "about"
+            | "can"
+            | "did"
+            | "do"
+            | "does"
+            | "for"
+            | "how"
+            | "i"
+            | "is"
+            | "it"
+            | "me"
+            | "of"
+            | "on"
+            | "or"
+            | "the"
+            | "think"
+            | "to"
+            | "what"
+            | "when"
+            | "will"
+            | "with"
+            | "you"
+            | "your"
+    )
+}
+
+/// Whether a normalized term explicitly asks for current external information.
+pub fn is_current_information_cue(term: &str) -> bool {
+    matches!(
+        term,
+        "release"
+            | "launch"
+            | "update"
+            | "announcement"
+            | "announced"
+            | "latest"
+            | "recent"
+            | "news"
+            | "current"
+            | "today"
+            | "happened"
+    )
+}
+
+/// Whether a term is exactly a two-component dotted numeric version such as `4.5`.
+pub fn is_dotted_version(term: &str) -> bool {
+    let mut parts = term.split('.');
+    let Some(major) = parts.next() else {
+        return false;
+    };
+    let Some(minor) = parts.next() else {
+        return false;
+    };
+    parts.next().is_none()
+        && !major.is_empty()
+        && !minor.is_empty()
+        && major.chars().all(|character| character.is_ascii_digit())
+        && minor.chars().all(|character| character.is_ascii_digit())
+}
+
+fn dotted_versions(input: &str) -> Vec<String> {
+    input
+        .split(|character: char| character.is_whitespace() || character == '?')
+        .filter_map(|word| {
+            let version = word
+                .trim_matches(|character: char| !character.is_ascii_digit() && character != '.');
+            is_dotted_version(version).then_some(version.to_string())
+        })
+        .collect()
+}
+
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 pub struct InitiativeProposal {
     pub goal_id: String,
@@ -350,5 +504,70 @@ mod tests {
             execute_initiative(&initiative, goal),
             execute_initiative(&initiative, goal)
         );
+    }
+
+    #[test]
+    fn explicit_release_prompt_requests_a_current_topic_consultation() {
+        let request = explicit_topic_world_consultation_request(
+            "What do you think about the Grok 4.5 release?",
+        )
+        .expect("explicit release request");
+
+        assert_eq!(
+            request.initiative_output,
+            InitiativeOutput::WorldConsultationRequested {
+                query_terms: vec![
+                    WorldQueryTerm {
+                        term: "grok".to_string(),
+                        source: WorldQueryTermSource::CurrentTopic,
+                    },
+                    WorldQueryTerm {
+                        term: "release".to_string(),
+                        source: WorldQueryTermSource::CurrentTopic,
+                    },
+                    WorldQueryTerm {
+                        term: "4.5".to_string(),
+                        source: WorldQueryTermSource::CurrentTopic,
+                    },
+                ],
+            }
+        );
+        assert_eq!(request.required_anchors, ["grok", "4.5"]);
+    }
+
+    #[test]
+    fn sentence_framing_is_not_promoted_to_an_explicit_topic_anchor() {
+        let request =
+            explicit_topic_world_consultation_request("Tell me about the latest Grok release")
+                .expect("explicit release request");
+
+        assert_eq!(request.required_anchors, ["grok"]);
+        let InitiativeOutput::WorldConsultationRequested { query_terms } =
+            request.initiative_output
+        else {
+            panic!("explicit topic helper only returns a consultation request");
+        };
+        assert!(query_terms.iter().any(|term| term.term == "tell"));
+    }
+
+    #[test]
+    fn two_character_named_entity_is_retained_as_an_anchor() {
+        let request =
+            explicit_topic_world_consultation_request("Tell me about the latest VR release")
+                .expect("explicit release request");
+
+        assert_eq!(request.required_anchors, ["vr"]);
+        let InitiativeOutput::WorldConsultationRequested { query_terms } =
+            request.initiative_output
+        else {
+            panic!("explicit topic helper only returns a consultation request");
+        };
+        assert!(query_terms.iter().any(|term| term.term == "vr"));
+    }
+
+    #[test]
+    fn ordinary_turn_does_not_become_a_world_consultation_request() {
+        assert!(explicit_topic_world_consultation_request("How can you help me today?").is_none());
+        assert!(explicit_topic_world_consultation_request("What do you think?").is_none());
     }
 }

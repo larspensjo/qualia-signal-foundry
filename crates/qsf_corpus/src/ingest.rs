@@ -299,8 +299,8 @@ mod tests {
 
         let refreshed = refresh_corpus(directory.path(), None).unwrap();
 
-        assert_eq!(refreshed.report.article_files_enumerated, 2);
-        assert_eq!(refreshed.report.articles_indexed, 2);
+        assert_eq!(refreshed.report.article_files_enumerated, 4);
+        assert_eq!(refreshed.report.articles_indexed, 4);
         assert!(
             refreshed
                 .ledger
@@ -377,7 +377,7 @@ mod tests {
             second.ledger.content_hash_by_path["ai-news.md"],
             original_hash
         );
-        assert_eq!(second.report.articles_reused, 0);
+        assert_eq!(second.report.articles_reused, 2);
     }
 
     #[test]
@@ -407,7 +407,7 @@ mod tests {
         let loaded: CorpusLedger = load_ledger(&ledger_path).unwrap().unwrap();
         let second = refresh_corpus(directory.path(), Some(&loaded)).unwrap();
 
-        assert_eq!(second.report.articles_reused, 2);
+        assert_eq!(second.report.articles_reused, 4);
         assert_eq!(second.report.articles_added, 0);
         assert_eq!(second.report.articles_changed, 0);
     }

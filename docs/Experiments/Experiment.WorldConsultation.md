@@ -59,7 +59,8 @@ bounded top-candidate selection replaced full candidate materialization and sort
 
 - session/exchange/request references; serving goal and tension ids;
 - weighted query terms tagged `goal_activation` or `current_topic`;
-- every candidate's score, matched terms, provenance, and eligibility or omission reason;
+- chosen required anchors, plus every candidate's score, matched terms, provenance, and
+  eligibility or omission reason (including `missing_required_anchor`);
 - exact injected untrusted blocks and their source provenance;
 - lookup latency, injection point and reason, corpus marker metadata, and
   `bounded_or_external_output.external_effect_executed: true`.
@@ -88,6 +89,16 @@ framed fact, delimiter neutralization, session anti-repeat suppression, deferred
 JSONL parsing/hash resolution, and the `ConsultWorld: true` / `RetrieveContext: false` effect
 boundary. The 2 ms real-corpus query probe remains the baseline; a human live-session latency
 measurement is still pending.
+
+The relevance follow-up adds a narrow explicit-topic trigger: a named entity or dotted version
+must occur with a current-information cue, so ordinary turns remain outside the external-read
+path. Query construction drops generic interrogatives, retains other meaningful terms for lexical
+ranking, and requires only the entity/version signals detected from the original prompt. Fixture
+tests verify that both `Grok 4.5 release` and `Tell me about the latest Grok release` inject only a
+framed untrusted Grok fact, an otherwise lexical generic release article is omitted as
+`missing_required_anchor`, and an unknown named release records the performed external read with
+no injection. Two-character AI-domain entity anchors (`AI`, `AR`, and `VR`) remain searchable. The
+existing content-hash repeat, latency-budget, sandbox, and effect-boundary tests remain in place.
 
 ## Follow-Up Questions
 
