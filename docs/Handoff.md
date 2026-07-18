@@ -1,9 +1,10 @@
 # Handoff — Resume Here
 
-**Updated:** 2026-07-10 — consultation relevance and explicit-topic triggers landed: a named
-entity/version with a current-information cue can request `ConsultWorld`, only detected
-entity/version signals are required anchors, and no-match reads record the external effect
-without injecting anything.
+**Updated:** 2026-07-18 — the live explicit-topic probe (Grok 4.5) verified the trigger,
+anchor relevance, inline injection, and honest external attribution end-to-end against the
+bundled fixture corpus. A real-corpus probe on a covered topic remains open; separately, the
+synchronous corpus ingest was found to block server readiness (~17 s debug) before the port
+binds, motivating a background-load slice.
 
 <!--
 Rules (see ProjectWorkflow.md, "Handoff Discipline"):
@@ -15,18 +16,22 @@ Rules (see ProjectWorkflow.md, "Handoff Discipline"):
 - Keep the whole file readable in a couple of minutes (about one screen).
 -->
 
-## Now — immediate action
+## Now — immediate few actions
+### Move corpus loading
+**Move corpus loading off the server-readiness path, with a corpus status indicator in the
+realtime debug UI ([Plan.WorldPerception](Plans/Plan.WorldPerception.md)).**
+Why: the synchronous ingest delays port bind (~17 s debug, growing with the corpus), which
+breaks the UI with proxy 502s during startup; background load plus a ledger-backed faster
+refresh removes the recurring papercut before diagnostic-panel human testing begins.
+Alternate: repeat the live probe against the real WPFM corpus on a covered topic
+([Experiment.WorldConsultation](Experiments/Experiment.WorldConsultation.md)) — real-corpus
+relevance is still unobserved.
 
-**Repeat the live world-consultation probe with a specific AI release
-([Experiment.WorldConsultation](Experiments/Experiment.WorldConsultation.md)).**
-Why: anchor-aware relevance and the explicit-topic trigger are fixture-verified; a live session
-naming a release must confirm the response honestly attributes a relevant external source claim.
-
-## Next — active plan
-
+## Next — active plan or plans
+### World perception
 **Build the world-perception diagnostic UI in [Plan.WorldPerception](Plans/Plan.WorldPerception.md).**
-Why: with relevance hardened, the panel can visualize a useful retrieval chain — verdict line,
-untrusted-external block, and the anchor/omission falsifiability detail.
+Why: with relevance verified live, the panel can visualize a useful retrieval chain — verdict
+line, untrusted-external block, and the anchor/omission falsifiability detail.
 
 ## Horizon — direction
 

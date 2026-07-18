@@ -100,6 +100,18 @@ framed untrusted Grok fact, an otherwise lexical generic release article is omit
 no injection. Two-character AI-domain entity anchors (`AI`, `AR`, and `VR`) remain searchable. The
 existing content-hash repeat, latency-budget, sandbox, and effect-boundary tests remain in place.
 
+A 2026-07-18 live voice probe verified the explicit-topic trigger end-to-end against the bundled
+fixture corpus (session launched without `QSF_WORLD_CORPUS_PATH`; corpus marker
+`fixture-producer`, 4 articles). The prompt naming the Grok 4.5 release produced a
+`WorldConsultationPerformed` record with anchors `grok` and `4.5`, a 0 ms lookup, inline
+same-turn injection of exactly one hash-resolved framed fact (a lexical generic candidate was
+omitted `missing_required_anchor`), `external_effect_executed: true`, and a spoken answer that
+attributed the claim to "what that external source claims" rather than presenting it as own
+knowledge. This closes the trigger/relevance/framing question live. Still open: the same probe
+against the real WPFM corpus with a topic the corpus actually covers — the most recent
+real-corpus session (2026-07-18, 6,925 articles) surfaced nothing, with every candidate omitted
+`missing_required_anchor`, so real-corpus relevance remains unobserved.
+
 ## Follow-Up Questions
 
 - Is the provisional 5 ms inline lookup budget appropriate under load?
