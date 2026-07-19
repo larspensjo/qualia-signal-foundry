@@ -176,6 +176,10 @@ mod tests {
             last_reinforced_at: Some(datetime!(2026-05-20 0:00 UTC)),
             source_reference: "src".into(),
             estimated_tokens: 10,
+            provenance: Default::default(),
+            trust_tier: Default::default(),
+            time_sensitive_decay_half_life_days: None,
+            superseded_by: None,
         };
         let a = |from: &str, to: &str, weight: f64| Association {
             schema_version: ASSOCIATION_SCHEMA_VERSION,

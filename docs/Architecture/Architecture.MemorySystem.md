@@ -9,7 +9,7 @@ Area: Core Architecture
 The memory system has a working schema, file-backed retrieval, cross-session
 storage, sleep-side promotion, live-loop reinforcement, and live cross-turn
 association coverage for turns leaving hot context. The remaining gaps are mostly
-richer semantics around memory types, contradiction/supersession handling, and
+richer semantics around memory types, full contradiction handling, and
 future retrieval backends.
 
 **Implemented today:**
@@ -30,6 +30,17 @@ future retrieval backends.
   to `created_at` for legacy records
   ([memory/retrieval.rs](../../crates/qsf_app/src/memory/retrieval.rs),
   [memory/memory_record.rs](../../crates/qsf_app/src/memory/memory_record.rs))
+- Additive, schema-v1-compatible `MemoryRecord.provenance` and `trust_tier`
+  fields. Legacy records default to `first_party_internal` / `trusted`; external
+  world observations use `world_observation_external` / `untrusted_external`.
+- Time-sensitive decay support: world observations use the provisional
+  `WORLD_OBSERVATION_DECAY_HALFLIFE_DAYS` default (7 days) rather than the
+  ordinary 30-day half-life, while an optional record-level override supports
+  later evidence-driven tuning. The correct value remains an open question for
+  the sleep world-memory consolidation experiment.
+- World-got-newer supersession-lite: a world observation with `superseded_by`
+  is omitted from retrieval with an explicit reason, while its successor remains
+  eligible. This deliberately does not infer or resolve general contradictions.
 - Cross-session memory store via `MemoryStore`, backed by
   `state/text-loop/memory-store.json`, `state/session/memory-store.json` for the
   text-owned voice shared-continuity path, or `QSF_STATE_DIR/memory-store.json`
@@ -97,17 +108,21 @@ future retrieval backends.
 - Sleep promotion deduplicates by normalized text, not by semantic equivalence.
 - Associative memory exists in the live retrieval and reinforcement path, while
   richer graph inspection and editing remain future work.
+- Supersession only represents a newer replacement for an external world
+  observation; general contradiction detection and resolution remain unbuilt.
 
 **Not yet implemented:**
 
-- Supersession / contradiction representation
+- General contradiction representation
+- Sleep promotion of external world observations into durable memory
 - Vector index, embedding store, or graph store
 - Promotion of session summaries or recall records into durable memory beyond
   sleep-generated candidates
 - Sleep-side consolidation over voice exchanges is now shared with text turns,
   but richer semantic typing of the resulting memories is still shallow
 
-Last reviewed: 2026-06-13 against the live-memory extraction pass,
+Last reviewed: 2026-07-19 against the provenance/trust-tier memory substrate,
+the live-memory extraction pass,
 the shared live-memory runtime, and the implemented trusted sideband path.
 Live-loop co-retrieval handles mechanical edges, sleep
 contributes safety-net and LLM-candidate associations through the proposer

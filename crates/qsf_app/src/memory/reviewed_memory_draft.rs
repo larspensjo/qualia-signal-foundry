@@ -187,6 +187,10 @@ pub fn write_decision_candidates_draft(
                     candidate_index_label(index)
                 ),
                 estimated_tokens: estimated_tokens(&summary),
+                provenance: Default::default(),
+                trust_tier: Default::default(),
+                time_sensitive_decay_half_life_days: None,
+                superseded_by: None,
             })
         })
         .collect::<Vec<_>>();
@@ -433,6 +437,10 @@ fn convert_memory_candidate(
         last_reinforced_at: None,
         source_reference,
         estimated_tokens: estimated_tokens(&summary),
+        provenance: Default::default(),
+        trust_tier: Default::default(),
+        time_sensitive_decay_half_life_days: None,
+        superseded_by: None,
     }
 }
 

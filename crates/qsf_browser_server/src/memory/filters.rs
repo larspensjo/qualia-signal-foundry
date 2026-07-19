@@ -216,6 +216,10 @@ mod tests {
                 last_reinforced_at,
                 source_reference: format!("src-{id}"),
                 estimated_tokens: tokens,
+                provenance: Default::default(),
+                trust_tier: Default::default(),
+                time_sensitive_decay_half_life_days: None,
+                superseded_by: None,
             }
         };
         MemoryStoreContents {

@@ -17,6 +17,28 @@ pub enum MemoryRecordKind {
     Observation,
 }
 
+/// Where a durable memory claim originated.
+///
+/// World observations are external claims. They remain distinct from internal
+/// first-party memories so retrieval can apply the appropriate freshness and
+/// supersession policies.
+#[derive(Clone, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum MemoryProvenance {
+    #[default]
+    FirstPartyInternal,
+    WorldObservationExternal,
+}
+
+/// The confidence boundary applied to a memory claim.
+#[derive(Clone, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum MemoryTrustTier {
+    #[default]
+    Trusted,
+    UntrustedExternal,
+}
+
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 pub struct MemoryRecord {
     pub schema_version: u16,
@@ -33,6 +55,16 @@ pub struct MemoryRecord {
     pub last_reinforced_at: Option<OffsetDateTime>,
     pub source_reference: String,
     pub estimated_tokens: usize,
+    #[serde(default)]
+    pub provenance: MemoryProvenance,
+    #[serde(default)]
+    pub trust_tier: MemoryTrustTier,
+    /// An optional record-specific half-life for facts likely to become stale.
+    #[serde(default)]
+    pub time_sensitive_decay_half_life_days: Option<f64>,
+    /// The successor that replaced this world observation with newer information.
+    #[serde(default)]
+    pub superseded_by: Option<String>,
 }
 
 impl MemoryRecord {
@@ -62,11 +94,31 @@ impl MemoryRecord {
             last_reinforced_at: None,
             source_reference: source_reference.into(),
             estimated_tokens,
+            provenance: MemoryProvenance::default(),
+            trust_tier: MemoryTrustTier::default(),
+            time_sensitive_decay_half_life_days: None,
+            superseded_by: None,
         }
     }
 
     pub fn with_last_reinforced_at(mut self, at: OffsetDateTime) -> Self {
         self.last_reinforced_at = Some(at);
+        self
+    }
+
+    pub fn with_world_observation(mut self) -> Self {
+        self.provenance = MemoryProvenance::WorldObservationExternal;
+        self.trust_tier = MemoryTrustTier::UntrustedExternal;
+        self
+    }
+
+    pub fn with_time_sensitive_decay_half_life_days(mut self, half_life_days: f64) -> Self {
+        self.time_sensitive_decay_half_life_days = Some(half_life_days);
+        self
+    }
+
+    pub fn with_superseded_by(mut self, successor_memory_id: impl Into<String>) -> Self {
+        self.superseded_by = Some(successor_memory_id.into());
         self
     }
 
@@ -97,10 +149,15 @@ mod tests {
     use time::OffsetDateTime;
     use time::format_description::well_known::Rfc3339;
 
-    use super::{MEMORY_RECORD_SCHEMA_VERSION, MemoryRecord, MemoryRecordKind};
+    use super::{
+        MEMORY_RECORD_SCHEMA_VERSION, MemoryProvenance, MemoryRecord, MemoryRecordKind,
+        MemoryTrustTier,
+    };
 
     #[test]
     fn new_memory_record_uses_current_schema_version() {
+        assert_eq!(MEMORY_RECORD_SCHEMA_VERSION, 1);
+
         let record = MemoryRecord::new(
             "memory.test",
             MemoryRecordKind::Concept,
@@ -155,6 +212,10 @@ mod tests {
 
         let record: MemoryRecord = serde_json::from_str(v1_json).unwrap();
         assert_eq!(record.last_reinforced_at, None);
+        assert_eq!(record.provenance, MemoryProvenance::FirstPartyInternal);
+        assert_eq!(record.trust_tier, MemoryTrustTier::Trusted);
+        assert_eq!(record.time_sensitive_decay_half_life_days, None);
+        assert_eq!(record.superseded_by, None);
         assert!(record.ensure_current_schema().is_ok());
     }
 

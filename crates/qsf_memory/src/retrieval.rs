@@ -6,12 +6,16 @@ use serde::Serialize;
 use time::OffsetDateTime;
 
 use super::association::{Association, ensure_current_association_schema};
-use super::record::{MemoryRecord, ensure_current_memory_schema};
+use super::record::{MemoryProvenance, MemoryRecord, ensure_current_memory_schema};
 
 pub const DECAY_HALFLIFE_DAYS: f64 = 30.0;
+/// Provisional half-life for external world observations, pending evidence from
+/// the sleep world-memory consolidation experiment.
+pub const WORLD_OBSERVATION_DECAY_HALFLIFE_DAYS: f64 = 7.0;
 pub const RELEVANCE_GATE_SKIP_REASON: &str =
     "relevance gate: no keyword, tag, association, or profile signal";
 pub const RETRIEVAL_LIMIT_SKIP_REASON: &str = "retrieval limit exceeded";
+pub const SUPERSEDED_WORLD_OBSERVATION_SKIP_REASON: &str = "superseded by newer world observation";
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -119,6 +123,12 @@ pub fn retrieve_memories(
     let mut selected = Vec::new();
     let mut omitted = Vec::new();
     for mut candidate in candidates {
+        if is_superseded_world_observation(&candidate.memory) {
+            candidate.skip_reason = Some(SUPERSEDED_WORLD_OBSERVATION_SKIP_REASON.to_string());
+            omitted.push(candidate);
+            continue;
+        }
+
         if !is_relevant_for_strategy(
             &candidate.memory,
             strategy,
@@ -383,7 +393,24 @@ pub(crate) fn compute_recency_decay(record: &MemoryRecord, now: OffsetDateTime) 
     let reference = record.last_reinforced_at.unwrap_or(record.created_at);
     let age_seconds = (now - reference).whole_seconds().max(0) as f64;
     let age_days = age_seconds / 86_400.0;
-    (-std::f64::consts::LN_2 * age_days / DECAY_HALFLIFE_DAYS).exp()
+    (-std::f64::consts::LN_2 * age_days / effective_decay_halflife_days(record)).exp()
+}
+
+fn effective_decay_halflife_days(record: &MemoryRecord) -> f64 {
+    record
+        .time_sensitive_decay_half_life_days
+        .unwrap_or_else(|| {
+            if record.provenance == MemoryProvenance::WorldObservationExternal {
+                WORLD_OBSERVATION_DECAY_HALFLIFE_DAYS
+            } else {
+                DECAY_HALFLIFE_DAYS
+            }
+        })
+}
+
+fn is_superseded_world_observation(record: &MemoryRecord) -> bool {
+    record.provenance == MemoryProvenance::WorldObservationExternal
+        && record.superseded_by.is_some()
 }
 
 fn tokenize(input: &str) -> HashSet<String> {
@@ -483,9 +510,9 @@ fn duration_ns(elapsed: std::time::Duration) -> u64 {
 
 #[cfg(test)]
 mod tests {
-    use super::{RetrievalStrategy, retrieve_memories};
+    use super::{RetrievalStrategy, SUPERSEDED_WORLD_OBSERVATION_SKIP_REASON, retrieve_memories};
     use crate::Association;
-    use crate::record::{MemoryRecord, MemoryRecordKind};
+    use crate::record::{MemoryProvenance, MemoryRecord, MemoryRecordKind, MemoryTrustTier};
     use time::OffsetDateTime;
     use time::format_description::well_known::Rfc3339;
 
@@ -648,6 +675,136 @@ mod tests {
 
         let score = super::compute_recency_decay(&record, now);
         assert!((score - 0.5).abs() < 0.001, "half-life score was {score}");
+    }
+
+    #[test]
+    fn world_observation_decays_faster_than_same_age_first_party_record() {
+        let now = OffsetDateTime::parse("2026-06-01T00:00:00Z", &Rfc3339).unwrap();
+        let created_at = now - time::Duration::days(14);
+        let first_party = test_record(
+            "memory.first-party",
+            "AI news",
+            "A first-party fact.",
+            vec![],
+            created_at,
+        );
+        let world_observation = test_record(
+            "memory.world-observation",
+            "AI news",
+            "An external fact.",
+            vec![],
+            created_at,
+        )
+        .with_world_observation();
+
+        assert!(
+            super::compute_recency_decay(&world_observation, now)
+                < super::compute_recency_decay(&first_party, now)
+        );
+    }
+
+    #[test]
+    fn superseded_world_observation_is_omitted_while_successor_is_retrieved() {
+        let now = OffsetDateTime::parse("2026-06-01T00:00:00Z", &Rfc3339).unwrap();
+        let superseded = test_record(
+            "memory.world.old",
+            "AI release",
+            "The prior external observation.",
+            vec![],
+            now - time::Duration::days(1),
+        )
+        .with_world_observation()
+        .with_superseded_by("memory.world.new");
+        let successor = test_record(
+            "memory.world.new",
+            "AI release",
+            "The newer external observation.",
+            vec![],
+            now,
+        )
+        .with_world_observation();
+
+        let result = retrieve_memories(
+            &[superseded, successor],
+            &[],
+            "AI release",
+            RetrievalStrategy::KeywordTag,
+            2,
+        )
+        .unwrap();
+
+        assert_eq!(result.selected.len(), 1);
+        assert_eq!(result.selected[0].memory.id, "memory.world.new");
+        assert_eq!(result.omitted.len(), 1);
+        assert_eq!(result.omitted[0].memory.id, "memory.world.old");
+        assert_eq!(
+            result.omitted[0].skip_reason.as_deref(),
+            Some(SUPERSEDED_WORLD_OBSERVATION_SKIP_REASON)
+        );
+    }
+
+    #[test]
+    fn legacy_record_defaults_and_retrieves_unchanged() {
+        let legacy_json = r#"{
+            "schema_version": 1,
+            "id": "memory.legacy",
+            "kind": "observation",
+            "title": "Legacy retrieval",
+            "summary": "A durable first-party memory.",
+            "tags": ["legacy"],
+            "created_at": "2026-05-09T12:00:00Z",
+            "importance": 0.5,
+            "reinforcement_count": 0,
+            "source_reference": "tests",
+            "estimated_tokens": 10
+        }"#;
+        let record: MemoryRecord = serde_json::from_str(legacy_json).unwrap();
+        assert!(record.ensure_current_schema().is_ok());
+
+        let result =
+            retrieve_memories(&[record], &[], "legacy", RetrievalStrategy::KeywordTag, 1).unwrap();
+
+        assert_eq!(result.selected.len(), 1);
+        assert_eq!(result.selected[0].memory.id, "memory.legacy");
+        assert_eq!(
+            result.selected[0].memory.provenance,
+            MemoryProvenance::FirstPartyInternal
+        );
+        assert_eq!(
+            result.selected[0].memory.trust_tier,
+            MemoryTrustTier::Trusted
+        );
+        assert_eq!(
+            result.selected[0]
+                .memory
+                .time_sensitive_decay_half_life_days,
+            None
+        );
+        assert_eq!(result.selected[0].memory.superseded_by, None);
+    }
+
+    #[test]
+    fn supersession_marker_does_not_apply_to_first_party_records() {
+        let record = test_record(
+            "memory.first-party",
+            "Project direction",
+            "An internal decision remains retrievable.",
+            vec![],
+            OffsetDateTime::parse("2026-06-01T00:00:00Z", &Rfc3339).unwrap(),
+        )
+        .with_superseded_by("memory.unrelated");
+
+        let result = retrieve_memories(
+            &[record],
+            &[],
+            "project direction",
+            RetrievalStrategy::KeywordTag,
+            1,
+        )
+        .unwrap();
+
+        assert_eq!(result.selected.len(), 1);
+        assert!(result.omitted.is_empty());
     }
 
     fn test_record(

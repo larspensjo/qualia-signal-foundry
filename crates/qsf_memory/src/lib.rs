@@ -20,10 +20,12 @@ pub use co_retrieval::{
 pub use errors::{SchemaVersions, ShapeError, StoreLoadError};
 pub use processed_range::{ProcessedRange, ProcessedRangeKind};
 pub use record::{
-    MEMORY_RECORD_SCHEMA_VERSION, MemoryRecord, MemoryRecordKind, ensure_current_memory_schema,
+    MEMORY_RECORD_SCHEMA_VERSION, MemoryProvenance, MemoryRecord, MemoryRecordKind,
+    MemoryTrustTier, ensure_current_memory_schema,
 };
 pub use retrieval::{
     AssociationPath, RetrievalResult, RetrievalScore, RetrievalStrategy, RetrievedMemory,
+    SUPERSEDED_WORLD_OBSERVATION_SKIP_REASON, WORLD_OBSERVATION_DECAY_HALFLIFE_DAYS,
     retrieve_memories, retrieved_memory_ids,
 };
 pub use store::{

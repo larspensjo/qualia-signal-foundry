@@ -1,6 +1,6 @@
 # Plan: World Perception — consulting an external AI-news corpus
 
-Status: Active — corpus ingestion, the audited realtime consultation adapter, consultation relevance/explicit-topic trigger coverage, and realtime world-perception diagnostics are implemented; goal-activation anchor relaxation and search-request cues are next, then the trust-tier memory substrate
+Status: Active — corpus ingestion, the audited realtime consultation adapter, consultation relevance/explicit-topic trigger coverage, realtime world-perception diagnostics, and the provenance/trust-tier memory substrate are implemented; sleep-phase world-memory consolidation is next
 Maturity: Candidate
 Area: Perception / Volition / Memory
 
@@ -454,6 +454,15 @@ belongs to the durable-memory phase below.
 ---
 
 ## Phase: Provenance and trust-tier memory substrate (gating prerequisite)
+
+**Implementation status (2026-07-19):** Implemented and automated-test verified.
+`MemoryRecord` remains at persisted schema v1: additive serde-defaulted provenance,
+trust-tier, time-sensitive-decay, and `superseded_by` fields preserve legacy records'
+first-party/trusted behavior. World observations default to untrusted-external,
+use the provisional 7-day world-observation half-life, and omit explicit
+world-got-newer predecessors during retrieval. The half-life value is deliberately
+provisional pending the sleep consolidation experiment; no live path or sleep
+promotion behavior changed in this slice.
 
 Builds the substrate durable world-memory needs, **before** any news is written durably. No
 news ingestion in this phase — it hardens `MemoryRecord` and retrieval so the next phase is
