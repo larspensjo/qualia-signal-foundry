@@ -47,9 +47,10 @@ not yet settled project rules; this section states the intended commitments, not
 2. **English only for the first frozen sets** (proposed). Swedish and code-switched slices are
    deferred to a later dataset version. The corpus schema still carries a language metadata field
    so later versions add languages without a schema change.
-3. **Labels are LLM-generated, human-reviewed** (proposed). An OpenAI teacher model generates
-   utterances, paraphrases, and hard negatives (tech brief Section 10.4); the single operator
-   accepts or corrects everything that enters the frozen validation/test sets. Real session
+3. **LLM-generated labels require human review before validation/test use** (proposed). An OpenAI
+   teacher model generates utterances, paraphrases, and hard negatives (tech brief Section 10.4);
+   the single operator accepts or corrects everything that enters the frozen validation/test
+   sets. Walking-skeleton sample records remain `draft` until that review occurs. Real session
    transcripts (tens of turns) become a small true held-out slice.
 4. **Label unit is the persona-independent pair** (proposed). Gold labels attach to
    `(utterance, goal-description/tension-summary)` pairs, not to fixture goal IDs. This survives
@@ -441,8 +442,10 @@ the code path exercised without spending real API budget by default.)
     remote-usage telemetry baseline.
   - The first frozen goal-relevance dataset is **English only**, with the corpus schema carrying
     language metadata so later versions add languages without a schema change.
-  - Frozen goal-relevance labels are **LLM-teacher-generated and human-reviewed**, with a blind
-    self-re-annotation consistency pass on the hard slices recorded in the dataset methodology.
+  - Goal-relevance labels are **LLM-teacher-generated and require human review before use as a
+    validation/test set**, with a blind self-re-annotation consistency pass on the hard slices
+    recorded in the dataset methodology. Walking-skeleton sample records remain `draft` until
+    that review occurs.
   - The evaluation crate depends on `qsf_volition` and must grade the production tokenizer/scorer
     through their public API (no reimplementation); gold labels attach to content-addressed
     `(utterance, goal-description)` pairs, not fixture goal IDs.

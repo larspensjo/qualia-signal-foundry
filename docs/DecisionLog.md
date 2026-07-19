@@ -1921,3 +1921,43 @@ recommendation rather than a commitment.
 Consequences: Inventories are evidence-backed point-in-time snapshots that remain subordinate to
 current code. Technical briefs are candidate planning input and never evidence of implementation
 or accepted direction. `ResearchQuestions.*.md` retains the unresolved-research meaning.
+
+## 2026-07-19 - Semantic evaluation uses versioned task contracts
+Decision: Semantic evaluation adopts a versioned task-contract format, populated per task family
+starting with `goal_relevance`. Its current committed scope is that behavior and the later
+remote-usage telemetry baseline; it does not yet commit contracts for other task families.
+
+Context: Future scorer changes need one durable statement of the input unit, labels, prediction
+states, trace obligations, metrics, promotion gates, and rollback path. Leaving those rules only
+in implementation or point-in-time planning would make later comparisons ambiguous.
+
+Consequences: `evaluation/contracts/GoalRelevance.TaskContract.md` is the first active instance.
+Later task families add sibling contracts under the same versioning rule, and a changed contract
+version is explicit rather than silently changing how reports are interpreted.
+
+## 2026-07-19 - Goal relevance evaluates the production Volition scorer on content-addressed pairs
+Decision: The lean `qsf_semantic_eval` crate depends on `qsf_volition` and grades its public
+tokenizer and weighted scorer API directly. Gold labels attach to content-addressed
+`(utterance, goal-description)` pairs resolved through a frozen roster snapshot, never fixture
+goal IDs.
+
+Context: A separate tokenizer or scorer would measure a different behavior from the production
+path. Fixture IDs are persona-data implementation details and do not preserve a label when goal
+descriptions are revised or swapped.
+
+Consequences: Dependency direction is `qsf_semantic_eval -> qsf_volition`, never the reverse.
+Frozen snapshots serialize complete scorer inputs, and the evaluator's fidelity and drift tests
+fail loudly rather than reconstructing a partial goal model.
+
+## 2026-07-19 - Durable evaluation artifacts live in the top-level evaluation tree
+Decision: Durable evaluation contracts, schemas, frozen data, and reports live under the
+top-level `evaluation/` tree. The deterministic runner, schema types, validation, metrics, and
+report generation live in the lean `qsf_semantic_eval` crate.
+
+Context: Evaluation artifacts are governed by behavior rather than by one application adapter,
+and future task families need sibling contracts and frozen data without coupling to the app or
+realtime server.
+
+Consequences: The evaluator remains usable offline over frozen inputs and has no `qsf_app` or
+`qsf_realtime_server` dependency. Generated run artifacts use the normal `runs/` boundary; only
+deliberately frozen reports are copied into `evaluation/reports/`.

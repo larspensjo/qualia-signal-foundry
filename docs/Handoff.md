@@ -1,15 +1,18 @@
 # Handoff — Resume Here
 
-**Updated:** 2026-07-19 (evening) — every phase of
-[Plan.WorldPerception](Plans/Plan.WorldPerception.md) is implemented, but a second real-corpus
-live session requested no consultation at all: the observed blockers moved from the candidate
-gate to the trigger layer. Voice transcripts lowercase topic terms, defeating the explicit
-path's capitalization-based entity check, and winner-takes-the-turn arbitration let
-`serve-the-present-person` crowd out a weak world-goal match — details in
+**Updated:** 2026-07-19 (late evening) — a second parallel track opened: the goal_relevance
+evaluation foundation landed (lean `qsf_semantic_eval` crate, task contract, production-scorer
+baseline runner over a default sample dataset, `evaluation/` tree; see
+[Plan.SemanticEvaluationFoundation](Plans/Plan.SemanticEvaluationFoundation.md)). World
+perception is unchanged since the morning: all of
+[Plan.WorldPerception](Plans/Plan.WorldPerception.md) is implemented, but the second
+real-corpus live session requested no consultation — blockers moved to the trigger layer
+(lowercased voice transcripts defeat the capitalization-based entity check; arbitration lets
+`serve-the-present-person` crowd out weak world-goal matches), so the relaxed relevance gate
+remains unexercised live — details in
 [Experiment.WorldConsultation](Experiments/Experiment.WorldConsultation.md) Results. The
-relaxed relevance gate therefore remains unexercised live. The synchronous corpus ingest still
-blocks server readiness (~17 s debug) before the port binds, motivating a background-load
-slice.
+synchronous corpus ingest still blocks server readiness (~17 s debug), motivating a
+background-load slice.
 
 <!--
 Rules (see ProjectWorkflow.md, "Handoff Discipline"):
@@ -44,6 +47,16 @@ Alternate: if the rephrased probe surfaces facts but natural phrasing still cann
 trigger, scope a trigger-robustness slice from the experiment's new follow-ups (STT-aware
 entity detection; arbitration standing for ConsultWorld-capable goals under
 current-information cues).
+
+### Semantic evaluation (goal relevance)
+**Generate, human-review, and freeze the goal-relevance validation/test sets
+([Plan.SemanticEvaluationFoundation](Plans/Plan.SemanticEvaluationFoundation.md)).**
+Why: the evaluation foundation landed 2026-07-19 (crate, task contract, baseline runner,
+sample dataset); frozen labeled data is what makes the baseline report, failure-floor
+measurement, and regression gate real.
+Alternate: the remote-usage telemetry baseline (token-ledger extraction) is independent and
+can proceed in parallel; small pending item — the operator label review that flips the
+12 sample records from `draft`.
 
 ## Horizon — direction
 
