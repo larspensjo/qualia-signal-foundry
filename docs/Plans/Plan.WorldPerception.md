@@ -1,6 +1,6 @@
 # Plan: World Perception — consulting an external AI-news corpus
 
-Status: Active — corpus ingestion, the audited realtime consultation adapter, consultation relevance/explicit-topic trigger coverage, realtime world-perception diagnostics, and the provenance/trust-tier memory substrate are implemented; sleep-phase world-memory consolidation is next
+Status: Complete — corpus ingestion, the audited realtime consultation adapter, consultation relevance/explicit-topic trigger coverage, realtime world-perception diagnostics, the provenance/trust-tier memory substrate, and sleep-phase world-memory consolidation are implemented
 Maturity: Candidate
 Area: Perception / Volition / Memory
 
@@ -508,6 +508,18 @@ Question owned by the next phase's experiment.
 ---
 
 ## Phase: Sleep-phase world-memory consolidation
+
+**Implementation status (2026-07-19):** Implemented and fixture-backed. `qsf_app sleep`
+refreshes the shared corpus ledger, evaluates its content-hash delta through the named
+provisional eligibility rule, invokes the existing offline `MemoryExtractor` provider role only
+with `qsf_corpus::frame_untrusted_external` input, and commits eligible articles as untrusted
+world observations. The rule is deliberately conservative: an article needs at least 60
+non-whitespace body characters and sleep promotes at most the two newest delta articles per run;
+every non-promotion is retained with its reason in `WorldMemoryConsolidated`. The same URL with
+a later fetch timestamp supersedes the older durable observation after successor/self/mutual-link
+validation. The run artifact joins every promotion back to the corpus by content hash and is
+verified automatically. Recalled durable world observations are explicitly labelled as an
+untrusted external-source recall, never as a live "I just looked" result.
 
 With the trust-tier substrate in place, the sleep phase absorbs new articles into durable
 world-memory. Depends on the substrate phase.

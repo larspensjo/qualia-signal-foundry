@@ -1888,3 +1888,21 @@ model-callable tool.
 Consequences: The index is loaded once at server startup; source-tagged query terms, candidate
 eligibility/anti-repeat decisions, exact injected text, corpus marker metadata, and inline or
 deferred latency decisions are retained in JSONL. No live consultation writes durable memory.
+
+## 2026-07-19 - Sleep-only world-memory promotion with conservative default policies
+Decision: Only the sleep phase promotes corpus articles into durable world-memory. Promotion
+applies a named provisional eligibility rule with a per-run cap; articles rejected only by the
+cap are deferred to the next run, not permanently dropped. When an explicitly configured corpus
+path fails to resolve, the degraded run records its reason and promotes nothing; only the
+default fixture flow (no configured path) may promote fixture articles. Promoted memories carry
+world-observation provenance, untrusted-external trust tier, a faster provisional decay
+half-life, and validated same-URL supersession links (no self-supersession, successor must
+exist). The live consultation path stays transient.
+Context: The trust-tier substrate and sleep consolidation completed the world-perception plan;
+the review of the consolidation slice surfaced cap semantics and degraded-fallback promotion as
+policy choices, decided here. The eligibility rule and half-life values are provisional pending
+Experiment.WorldMemoryConsolidation evidence.
+Consequences: The durable store cannot be flooded by a single run, silently poisoned by fixture
+data on a misconfigured path, or accrete same-subject duplicates. Recalled world facts remain
+attributable to their external source; tuning the provisional values is experiment-owned and
+does not reopen the promotion boundary.

@@ -41,6 +41,23 @@ future retrieval backends.
 - World-got-newer supersession-lite: a world observation with `superseded_by`
   is omitted from retrieval with an explicit reason, while its successor remains
   eligible. This deliberately does not infer or resolve general contradictions.
+- Sleep world-memory consolidation now refreshes the shared `qsf_corpus` ledger and promotes
+  only a conservative, traceable content-hash delta. Durable world observations retain full
+  structured external attribution (`content_hash`, title, URL, source domain, and fetch time),
+  use `untrusted_external` trust and the 7-day time-sensitive decay profile, and are the only
+  route by which world facts enter the store. The provisional rule admits substantive articles
+  (at least 60 non-whitespace body characters), capped at the two newest per run. Cap-only
+  rejections remain pending for a later sleep run, while rule-based rejections are marked seen;
+  every decision has a recorded reason in the authoritative `WorldMemoryConsolidated` run
+  artifact. Identical content hashes are deduplicated within a run, and only the newest article
+  for a URL in one delta is eligible for promotion.
+  The unconfigured bundled-fixture default remains promotion-capable. If an explicitly configured
+  corpus path degrades to the fixture, sleep records the degradation and eligibility results but
+  suppresses all fallback promotions so fixture content cannot silently replace operator-selected
+  external input.
+  A later fetched article at the same URL supersedes its predecessor only after promotion-time
+  successor/self/mutual-link validation. Realtime recall labels such material as recalled,
+  untrusted external source claims with source attribution.
 - Cross-session memory store via `MemoryStore`, backed by
   `state/text-loop/memory-store.json`, `state/session/memory-store.json` for the
   text-owned voice shared-continuity path, or `QSF_STATE_DIR/memory-store.json`
@@ -114,7 +131,6 @@ future retrieval backends.
 **Not yet implemented:**
 
 - General contradiction representation
-- Sleep promotion of external world observations into durable memory
 - Vector index, embedding store, or graph store
 - Promotion of session summaries or recall records into durable memory beyond
   sleep-generated candidates

@@ -24,6 +24,8 @@ pub struct SleepUpdateOptions {
     pub state_dir: PathBuf,
     pub requested_provider: String,
     pub workspace_root: Option<PathBuf>,
+    pub world_corpus_path: Option<PathBuf>,
+    pub world_corpus_ledger_path: PathBuf,
 }
 
 impl SleepUpdateOptions {
@@ -35,6 +37,10 @@ impl SleepUpdateOptions {
             state_dir: PathBuf::from("state/realtime"),
             requested_provider: requested_provider.into(),
             workspace_root,
+            world_corpus_path: None,
+            world_corpus_ledger_path: PathBuf::from(
+                crate::world_corpus::DEFAULT_WORLD_CORPUS_LEDGER_PATH,
+            ),
         }
     }
 }
@@ -105,6 +111,8 @@ pub fn run_sleep_update(options: SleepUpdateOptions) -> anyhow::Result<SleepUpda
         &mut context,
         &options.requested_provider,
         &state_resolution,
+        options.world_corpus_path.as_deref(),
+        &options.world_corpus_ledger_path,
     ) {
         Ok((outcome, change_record)) => (outcome, change_record),
         Err(error) => {
@@ -178,6 +186,8 @@ pub(crate) fn run_sleep_update_with_context(
     context: &mut RunContext,
     requested_provider: &str,
     state_resolution: &StateDirectoryResolution,
+    world_corpus_path: Option<&std::path::Path>,
+    world_corpus_ledger_path: &std::path::Path,
 ) -> anyhow::Result<(SleepUpdateOutcome, SleepChangeRecord)> {
     let resume_inputs =
         crate::session::resume::load_resume_inputs(&state_resolution.resume_state_dir)?;
@@ -252,6 +262,16 @@ pub(crate) fn run_sleep_update_with_context(
 
     write_sleep_artifacts(context, requested_provider, &input, &summary.report)?;
 
+    let world_result = crate::sleep::world_memory_consolidation::consolidate_world_memories(
+        context,
+        client.as_ref(),
+        &crate::sleep::world_memory_consolidation::WorldMemoryConsolidationOptions::for_sleep_state(
+            state_resolution.persist_state_dir.clone(),
+            world_corpus_path.map(std::path::Path::to_path_buf),
+            Some(world_corpus_ledger_path.to_path_buf()),
+        ),
+    )?;
+
     context.record_event(
         EventType::OutputProduced,
         json!({
@@ -262,7 +282,7 @@ pub(crate) fn run_sleep_update_with_context(
         Some(sleep_trace_id),
     )?;
 
-    let outcome = SleepUpdateOutcome {
+    let mut outcome = SleepUpdateOutcome {
         summary: format!(
             "The sleep update summarized `{}` through the `{}` provider, wrote a reviewable sleep report artifact, and recorded explicit sleep-phase events and traces.",
             input.source_label, summary.response.provider_name
@@ -287,6 +307,18 @@ pub(crate) fn run_sleep_update_with_context(
         ],
         extra_artifacts: vec!["sleep-report.json".to_string(), "sleep-report.md".to_string()],
     };
+    outcome.observations.push(format!(
+        "Sleep world-memory consolidation promoted {} external observation(s); {} delta article(s) remained unpromoted under the provisional eligibility rule.",
+        world_result.promoted_count, world_result.ineligible_count
+    ));
+    outcome.extra_artifacts.push(
+        world_result
+            .artifact_path
+            .file_name()
+            .expect("world-memory artifact path has a file name")
+            .to_string_lossy()
+            .into_owned(),
+    );
 
     commit_cross_session_sleep(
         context,
@@ -1017,6 +1049,10 @@ mod tests {
             state_dir: std::path::PathBuf::from("state/realtime"),
             requested_provider: "mock".to_string(),
             workspace_root: None,
+            world_corpus_path: None,
+            world_corpus_ledger_path: std::path::PathBuf::from(
+                crate::world_corpus::DEFAULT_WORLD_CORPUS_LEDGER_PATH,
+            ),
         })
         .unwrap();
 
@@ -1085,6 +1121,10 @@ mod tests {
             state_dir: std::path::PathBuf::from("state/realtime"),
             requested_provider: "mock".to_string(),
             workspace_root: None,
+            world_corpus_path: None,
+            world_corpus_ledger_path: std::path::PathBuf::from(
+                crate::world_corpus::DEFAULT_WORLD_CORPUS_LEDGER_PATH,
+            ),
         })
         .unwrap();
         assert_eq!(
@@ -1134,6 +1174,10 @@ mod tests {
             state_dir: std::path::PathBuf::from("state/realtime"),
             requested_provider: "mock".to_string(),
             workspace_root: None,
+            world_corpus_path: None,
+            world_corpus_ledger_path: std::path::PathBuf::from(
+                crate::world_corpus::DEFAULT_WORLD_CORPUS_LEDGER_PATH,
+            ),
         })
         .unwrap();
         drop(cwd_guard);

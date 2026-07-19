@@ -1,5 +1,5 @@
 use qsf_context::{ContextAssembly, ContextBudget, ContextFragment, assemble_context};
-use qsf_memory::RetrievedMemory;
+use qsf_memory::{MemoryProvenance, RetrievedMemory};
 use qsf_realtime_protocol::{
     build_openai_realtime_conversation_item_create,
     build_openai_realtime_conversation_session_update,
@@ -84,10 +84,36 @@ fn build_memory_block(request: &MemoryInjectionRequest<'_>, assembly: &ContextAs
     }
     lines.push("Relevant memory:".to_string());
     for selection in &assembly.selected {
-        lines.push(format!(
-            "- {} [{}]",
-            selection.fragment.summary, selection.fragment.source_reference
-        ));
+        let memory = request
+            .retrieved_memories
+            .iter()
+            .find(|memory| memory.memory.id == selection.fragment.fragment_id)
+            .expect("context selections are derived from retrieved memories");
+        if memory.memory.provenance == MemoryProvenance::WorldObservationExternal {
+            let source = memory.memory.world_observation_source.as_ref();
+            let attribution = source
+                .map(|source| {
+                    format!(
+                        "external source claim; untrusted; {} at {} ({}, fetched {})",
+                        source.title, source.url, source.source_domain, source.fetched_utc
+                    )
+                })
+                .unwrap_or_else(|| {
+                    format!(
+                        "external source claim; untrusted; {}",
+                        selection.fragment.source_reference
+                    )
+                });
+            lines.push(format!(
+                "- Recalled external world observation ({attribution}): {}",
+                selection.fragment.summary
+            ));
+        } else {
+            lines.push(format!(
+                "- {} [{}]",
+                selection.fragment.summary, selection.fragment.source_reference
+            ));
+        }
     }
     lines.join("\n")
 }
@@ -242,5 +268,48 @@ mod tests {
                 .expect("text")
                 .contains("Only memory")
         );
+    }
+
+    #[test]
+    fn recalled_world_observation_keeps_untrusted_external_attribution() {
+        let mut memory = retrieved_memory(
+            "memory.world.hash",
+            "A source claims the release changed.",
+            18,
+        );
+        memory.memory = memory
+            .memory
+            .with_world_observation()
+            .with_world_observation_source(qsf_memory::WorldObservationSource {
+                content_hash: "hash".to_string(),
+                title: "Release update".to_string(),
+                url: "https://news.example/release".to_string(),
+                source_domain: "news.example".to_string(),
+                fetched_utc: OffsetDateTime::UNIX_EPOCH,
+            });
+        let output_modalities = vec!["audio".to_string()];
+        let packet = build_memory_injection_packet(&MemoryInjectionRequest {
+            model: OPENAI_REALTIME_VOICE_MODEL,
+            voice: "marin",
+            base_instructions: "Speak briefly.",
+            output_modalities: &output_modalities,
+            session_identity: "session-1",
+            tone: "careful",
+            user_transcript: "what do you recall?",
+            retrieved_memories: &[memory],
+            budget: ContextBudget::new(2, 40),
+            pcm_rate_hz: DEFAULT_PCM_RATE_HZ,
+            input_transcription_model: None,
+        })
+        .unwrap();
+
+        assert!(
+            packet
+                .memory_block
+                .contains("Recalled external world observation")
+        );
+        assert!(packet.memory_block.contains("untrusted"));
+        assert!(packet.memory_block.contains("https://news.example/release"));
+        assert!(!packet.memory_block.contains("I just looked"));
     }
 }

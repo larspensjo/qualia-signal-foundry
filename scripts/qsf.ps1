@@ -392,6 +392,9 @@ function Get-SleepEnvironmentDelta {
     $envSets = [ordered]@{
         "QSF_MODEL_PROVIDER" = $Provider
     }
+    if (-not [string]::IsNullOrWhiteSpace($WorldCorpusPath)) {
+        $envSets["QSF_WORLD_CORPUS_PATH"] = $WorldCorpusPath
+    }
     $clearEnv = @(
         Get-ManagedQsfEnvironmentVariableNames |
         Where-Object { -not $envSets.Contains($_) } |
@@ -542,7 +545,7 @@ Usage:
   .\scripts\qsf.ps1 ui [browser|realtime]
   .\scripts\qsf.ps1 workbench [<store>] [-Store <path>] [-BindHost <ip>] [-Port <port>]
   .\scripts\qsf.ps1 realtime [-RandomSessionId] [-WorldCorpusPath <path>]
-  .\scripts\qsf.ps1 sleep [-StateDir <path>] [-Provider <openai|mock>]
+  .\scripts\qsf.ps1 sleep [-StateDir <path>] [-Provider <openai|mock>] [-WorldCorpusPath <path>] [-WorldCorpusLedger <path>]
   .\scripts\qsf.ps1 world-ingest [-WorldCorpusPath <path>] [-WorldCorpusLedger <path>]
   .\scripts\qsf.ps1 restore [<backup-name>|latest] [-StateDir <path>]
   .\scripts\qsf.ps1 doctor [-LaunchProfile <name>] [-Workbench]
@@ -1509,7 +1512,9 @@ function Invoke-Sleep {
             "--provider",
             $Provider,
             "--workspace-root",
-            $projectRoot
+            $projectRoot,
+            "--ledger-path",
+            $WorldCorpusLedger
         )
     }
 }

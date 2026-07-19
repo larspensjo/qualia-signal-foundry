@@ -21,7 +21,7 @@ pub use errors::{SchemaVersions, ShapeError, StoreLoadError};
 pub use processed_range::{ProcessedRange, ProcessedRangeKind};
 pub use record::{
     MEMORY_RECORD_SCHEMA_VERSION, MemoryProvenance, MemoryRecord, MemoryRecordKind,
-    MemoryTrustTier, ensure_current_memory_schema,
+    MemoryTrustTier, WorldObservationSource, ensure_current_memory_schema,
 };
 pub use retrieval::{
     AssociationPath, RetrievalResult, RetrievalScore, RetrievalStrategy, RetrievedMemory,

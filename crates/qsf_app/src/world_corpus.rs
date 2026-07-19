@@ -36,6 +36,30 @@ pub struct WorldCorpusIngestSummary {
     pub query_probe_latency_ns: u64,
 }
 
+/// Refreshes the shared corpus ledger for a caller that needs the in-memory index as well as the
+/// persisted artifact. Sleep world-memory consolidation uses this instead of duplicating corpus
+/// path resolution or content-hash refresh behavior.
+pub fn refresh_world_corpus(
+    corpus_path: Option<PathBuf>,
+    ledger_path: PathBuf,
+) -> Result<(CorpusPathResolution, qsf_corpus::CorpusRefresh)> {
+    let previous_ledger = load_ledger(&ledger_path)?;
+    let (path_resolution, refresh) = match corpus_path {
+        Some(corpus_path) => {
+            let resolution = CorpusPathResolution {
+                corpus_path,
+                source: CorpusPathSource::Configured,
+                degraded_reason: None,
+            };
+            let refresh = refresh_corpus(&resolution.corpus_path, previous_ledger.as_ref())?;
+            (resolution, refresh)
+        }
+        None => refresh_configured_or_fixture(previous_ledger.as_ref())?,
+    };
+    write_ledger(&ledger_path, &refresh.ledger)?;
+    Ok((path_resolution, refresh))
+}
+
 impl WorldCorpusIngestSummary {
     /// Produces a compact, operator-readable report without hiding degraded operation.
     pub fn render(&self) -> String {
@@ -86,19 +110,8 @@ impl WorldCorpusIngestSummary {
 /// configuration instead uses `QSF_WORLD_CORPUS_PATH`, falling back to the bundled fixture for a
 /// missing or unreadable configured path while retaining a visible degradation reason.
 pub fn ingest_world_corpus(options: WorldCorpusIngestOptions) -> Result<WorldCorpusIngestSummary> {
-    let previous_ledger = load_ledger(&options.ledger_path)?;
-    let (path_resolution, refresh) = match options.corpus_path {
-        Some(corpus_path) => {
-            let resolution = CorpusPathResolution {
-                corpus_path,
-                source: CorpusPathSource::Configured,
-                degraded_reason: None,
-            };
-            let refresh = refresh_corpus(&resolution.corpus_path, previous_ledger.as_ref())?;
-            (resolution, refresh)
-        }
-        None => refresh_configured_or_fixture(previous_ledger.as_ref())?,
-    };
+    let (path_resolution, refresh) =
+        refresh_world_corpus(options.corpus_path, options.ledger_path.clone())?;
 
     for issue in &refresh.report.issues {
         engine_logging::engine_warn!(
@@ -111,7 +124,6 @@ pub fn ingest_world_corpus(options: WorldCorpusIngestOptions) -> Result<WorldCor
             issue.path, issue.reason
         );
     }
-    write_ledger(&options.ledger_path, &refresh.ledger)?;
     let query_probe = refresh.index.query("artificial intelligence transition", 1);
 
     Ok(WorldCorpusIngestSummary {

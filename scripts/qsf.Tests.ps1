@@ -238,6 +238,41 @@ Describe "qsf.ps1 sleep launcher" {
         }
     }
 
+    It "keeps the world corpus ledger off app arguments and passes it to sleep" {
+        try {
+            $ledgerPath = Join-Path $TestDrive "world-corpus/index.json"
+            . $script:LauncherScript `
+                -Command "help" `
+                -Experiment "multi-turn-text-loop" `
+                -Provider "mock" `
+                -StateDir "state/realtime" `
+                -WorldCorpusLedger $ledgerPath
+            $projectRoot = "$TestDrive"
+
+            $script:CapturedCargoArguments = @()
+            Mock -CommandName Invoke-WithEnvironmentDelta -MockWith { & $ScriptBlock }
+            Mock -CommandName Invoke-LoggedCommand -MockWith {
+                $script:CapturedCargoArguments += , @($Arguments)
+            }
+
+            Invoke-App
+            Invoke-Sleep
+
+            $script:CapturedCargoArguments.Count | Should -Be 2
+            $appArguments = $script:CapturedCargoArguments[0]
+            $sleepArguments = $script:CapturedCargoArguments[1]
+            $appArguments | Should -Contain "experiment"
+            $appArguments | Should -Not -Contain "--ledger-path"
+            $sleepArguments | Should -Contain "sleep"
+            $ledgerArgumentIndex = [Array]::IndexOf($sleepArguments, "--ledger-path")
+            $ledgerArgumentIndex | Should -BeGreaterOrEqual 0
+            $sleepArguments[$ledgerArgumentIndex + 1] | Should -Be $ledgerPath
+        }
+        finally {
+            Remove-Item -LiteralPath (Join-Path $TestDrive "state") -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
+
     It "requires OPENAI_API_KEY for the default provider and creates no backup" {
         try {
             New-Item -ItemType Directory -Force (Join-Path $TestDrive "state/realtime") | Out-Null

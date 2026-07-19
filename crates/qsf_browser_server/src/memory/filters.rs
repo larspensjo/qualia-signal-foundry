@@ -220,6 +220,7 @@ mod tests {
                 trust_tier: Default::default(),
                 time_sensitive_decay_half_life_days: None,
                 superseded_by: None,
+                world_observation_source: None,
             }
         };
         MemoryStoreContents {

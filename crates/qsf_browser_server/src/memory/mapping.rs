@@ -180,6 +180,7 @@ mod tests {
             trust_tier: Default::default(),
             time_sensitive_decay_half_life_days: None,
             superseded_by: None,
+            world_observation_source: None,
         };
         let a = |from: &str, to: &str, weight: f64| Association {
             schema_version: ASSOCIATION_SCHEMA_VERSION,

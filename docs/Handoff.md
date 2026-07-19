@@ -1,12 +1,13 @@
 # Handoff — Resume Here
 
-**Updated:** 2026-07-19 — a real-corpus voice session confirmed the goal-activation gate
-surfaces nothing on natural speech (all candidates `missing_required_anchor`, including an
-on-topic article), and a plain "find information about…" turn triggered no consultation
-(see [Experiment.WorldConsultation](Experiments/Experiment.WorldConsultation.md)). The
-world-perception diagnostic panel landed and its capture carried the full trace. The
-synchronous corpus ingest still blocks server readiness (~17 s debug) before the port binds,
-motivating a background-load slice.
+**Updated:** 2026-07-19 — every phase of
+[Plan.WorldPerception](Plans/Plan.WorldPerception.md) is now implemented: the anchor
+relaxation and search-request cues (motivated by the morning's real-corpus session), the
+provenance/trust-tier memory substrate, and sleep-phase world-memory consolidation with a
+provisional eligibility rule, cap-deferral, and degraded-corpus no-promotion policy. What
+remains is evidence, not code: the live real-corpus consultation probe and a first real sleep
+consolidation run. The synchronous corpus ingest still blocks server readiness (~17 s debug)
+before the port binds, motivating a background-load slice.
 
 <!--
 Rules (see ProjectWorkflow.md, "Handoff Discipline"):
@@ -19,25 +20,27 @@ Rules (see ProjectWorkflow.md, "Handoff Discipline"):
 -->
 
 ## Now — immediate few actions
-### Relax the goal-activation relevance gate
-**Implement the goal-activation anchor relaxation and search-request cue slice in
-[Plan.WorldPerception](Plans/Plan.WorldPerception.md).**
-Why: two real-corpus sessions show the require-all anchor policy omits even exactly on-topic
-articles and the cue lexicon misses plain search requests, so consultations execute but never
-surface anything useful.
-Alternate: move corpus loading off the server-readiness path (~17 s debug port-bind delay,
-proxy 502s during startup) — the recurring papercut for every live probe.
+### Run the live real-corpus consultation probe
+**Repeat the live real-corpus probe on a covered topic with the relaxed relevance gate
+([Experiment.WorldConsultation](Experiments/Experiment.WorldConsultation.md)).**
+Why: real-corpus surfacing is the plan's still-unobserved central result; the majority-based
+anchor gate and search-request cues now exist precisely to make it observable, and the
+panel's retrieval detail is the verification surface.
+Alternate: run a first real-corpus sleep consolidation and a recall probe
+([Experiment.WorldMemoryConsolidation](Experiments/Experiment.WorldMemoryConsolidation.md)) —
+tunes the provisional eligibility rule and 7-day half-life with real evidence.
 
 ## Next — active plan or plans
 ### World perception
-**After the relevance relaxation, repeat the live real-corpus probe on a covered topic
-([Experiment.WorldConsultation](Experiments/Experiment.WorldConsultation.md)).**
-Why: real-corpus surfacing is the plan's still-unobserved central result; the diagnostic
-panel's retrieval detail is the verification surface for it.
+**Close [Plan.WorldPerception](Plans/Plan.WorldPerception.md) once both probes have evidence,
+then delete the plan per workflow.**
+Why: all phases are implemented; the experiments own the remaining open questions
+(eligibility rule, news half-life, anti-repeat window, deferred-path latency).
 
 ## Horizon — direction
 
-**World-memory consolidation** — add provenance/trust-tier memory fields only after live
-consultation has been observed.
-Why: durable external facts need evidence-based eligibility, decay, and supersession rules rather
-than carrying unreviewed corpus text directly into memory.
+**Corpus background loading** — move corpus ingest off the server-readiness path with a
+status chip in the debug UI.
+Why: the ~17 s synchronous load delays port bind and 502s the UI on every live probe.
+Alternate: the `world-curiosity` open-delta substrate investigation — letting volition
+represent what it actually does not know (deferred `curiosity` signal, 2026-07-06).

@@ -43,6 +43,14 @@ enum Command {
         /// Repository/workspace root used by sleep maintenance that needs repo-relative resources.
         #[arg(long, value_name = "PATH")]
         workspace_root: Option<PathBuf>,
+
+        /// Producer-owned corpus output directory for offline world-memory consolidation.
+        #[arg(long, value_name = "PATH")]
+        corpus_path: Option<PathBuf>,
+
+        /// Shared content-hash corpus ledger used to derive the sleep delta.
+        #[arg(long, default_value = DEFAULT_WORLD_CORPUS_LEDGER_PATH, value_name = "PATH")]
+        ledger_path: PathBuf,
     },
 
     /// Build or incrementally refresh the read-only external world corpus index.
@@ -86,6 +94,8 @@ pub fn run() -> anyhow::Result<()> {
             state_dir,
             provider,
             workspace_root,
+            corpus_path,
+            ledger_path,
         }) => {
             let requested_provider =
                 provider.unwrap_or_else(|| qsf_models::requested_provider_from_env().to_string());
@@ -93,6 +103,8 @@ pub fn run() -> anyhow::Result<()> {
                 state_dir,
                 requested_provider,
                 workspace_root,
+                world_corpus_path: corpus_path,
+                world_corpus_ledger_path: ledger_path,
             })?;
             println!(
                 "{}",

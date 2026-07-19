@@ -6,6 +6,7 @@ pub mod proposers;
 mod session_summary;
 mod sleep_report;
 pub mod update;
+pub mod world_memory_consolidation;
 
 pub use change_view::{
     NewAssociationChange, NewMemoryChange, SleepChangeRecord, SleepStateOutcome,

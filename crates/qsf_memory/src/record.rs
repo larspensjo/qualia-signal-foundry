@@ -39,6 +39,25 @@ pub enum MemoryTrustTier {
     UntrustedExternal,
 }
 
+/// Durable attribution for an external world observation.
+///
+/// This stays separate from the human-readable `source_reference` so recall surfaces can
+/// preserve the exact source claim without having to parse an application-owned string format.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct WorldObservationSource {
+    /// SHA-256 hash from the corpus ledger.
+    pub content_hash: String,
+    /// Source article title at the time of observation.
+    pub title: String,
+    /// Canonical source URL.
+    pub url: String,
+    /// Source host derived by corpus ingestion.
+    pub source_domain: String,
+    /// Producer fetch time for the observed article.
+    #[serde(with = "time::serde::rfc3339")]
+    pub fetched_utc: OffsetDateTime,
+}
+
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 pub struct MemoryRecord {
     pub schema_version: u16,
@@ -65,6 +84,9 @@ pub struct MemoryRecord {
     /// The successor that replaced this world observation with newer information.
     #[serde(default)]
     pub superseded_by: Option<String>,
+    /// Full attribution retained for durable external world observations.
+    #[serde(default)]
+    pub world_observation_source: Option<WorldObservationSource>,
 }
 
 impl MemoryRecord {
@@ -98,6 +120,7 @@ impl MemoryRecord {
             trust_tier: MemoryTrustTier::default(),
             time_sensitive_decay_half_life_days: None,
             superseded_by: None,
+            world_observation_source: None,
         }
     }
 
@@ -119,6 +142,11 @@ impl MemoryRecord {
 
     pub fn with_superseded_by(mut self, successor_memory_id: impl Into<String>) -> Self {
         self.superseded_by = Some(successor_memory_id.into());
+        self
+    }
+
+    pub fn with_world_observation_source(mut self, source: WorldObservationSource) -> Self {
+        self.world_observation_source = Some(source);
         self
     }
 
@@ -151,7 +179,7 @@ mod tests {
 
     use super::{
         MEMORY_RECORD_SCHEMA_VERSION, MemoryProvenance, MemoryRecord, MemoryRecordKind,
-        MemoryTrustTier,
+        MemoryTrustTier, WorldObservationSource,
     };
 
     #[test]
@@ -216,7 +244,38 @@ mod tests {
         assert_eq!(record.trust_tier, MemoryTrustTier::Trusted);
         assert_eq!(record.time_sensitive_decay_half_life_days, None);
         assert_eq!(record.superseded_by, None);
+        assert_eq!(record.world_observation_source, None);
         assert!(record.ensure_current_schema().is_ok());
+    }
+
+    #[test]
+    fn world_observation_source_roundtrips_with_external_metadata() {
+        let source = WorldObservationSource {
+            content_hash: "hash".to_string(),
+            title: "Source title".to_string(),
+            url: "https://example.com/article".to_string(),
+            source_domain: "example.com".to_string(),
+            fetched_utc: timestamp(),
+        };
+        let record = MemoryRecord::new(
+            "memory.world.hash",
+            MemoryRecordKind::Observation,
+            "Source title",
+            "An external claim.",
+            vec![],
+            timestamp(),
+            0.5,
+            0,
+            "world-corpus:hash",
+            4,
+        )
+        .with_world_observation()
+        .with_world_observation_source(source.clone());
+
+        let restored: MemoryRecord =
+            serde_json::from_value(serde_json::to_value(record).unwrap()).unwrap();
+
+        assert_eq!(restored.world_observation_source, Some(source));
     }
 
     fn timestamp() -> OffsetDateTime {

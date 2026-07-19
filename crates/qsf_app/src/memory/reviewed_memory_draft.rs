@@ -191,6 +191,7 @@ pub fn write_decision_candidates_draft(
                 trust_tier: Default::default(),
                 time_sensitive_decay_half_life_days: None,
                 superseded_by: None,
+                world_observation_source: None,
             })
         })
         .collect::<Vec<_>>();
@@ -441,6 +442,7 @@ fn convert_memory_candidate(
         trust_tier: Default::default(),
         time_sensitive_decay_half_life_days: None,
         superseded_by: None,
+        world_observation_source: None,
     }
 }
 
