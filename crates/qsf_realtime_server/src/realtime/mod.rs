@@ -17,6 +17,10 @@ pub(crate) mod volition;
 pub(crate) mod volition_continuity;
 pub(crate) mod volition_initiative;
 pub(crate) mod volition_injection;
+mod volition_injection_summary;
+#[cfg(test)]
+mod volition_injection_tests;
+mod volition_injection_text;
 pub(crate) mod volition_inspection_capture;
 pub(crate) mod volition_tools;
 
