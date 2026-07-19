@@ -1906,3 +1906,18 @@ Consequences: The durable store cannot be flooded by a single run, silently pois
 data on a misconfigured path, or accrete same-subject duplicates. Recalled world facts remain
 attributable to their external source; tuning the provisional values is experiment-owned and
 does not reopen the promotion boundary.
+
+## 2026-07-19 - Code inventories and technical briefs have explicit documentation kinds
+Decision: Project-document introspection classifies `docs/Research/Research.*.md` as a code
+inventory and `docs/Research/TechBrief.*.md` as a technical brief before applying the generic
+research-question classification. Both kinds use `NotApplicable` maturity: their `## Status`
+sections state snapshot date or planning purpose, while the kind defines how readers weight them.
+
+Context: The research directory previously collapsed behavior-claiming code investigations and
+planning syntheses into the same kind as open research questions. That told introspection readers
+to treat a verified inventory as unresolved uncertainty and obscured that a technical brief is a
+recommendation rather than a commitment.
+
+Consequences: Inventories are evidence-backed point-in-time snapshots that remain subordinate to
+current code. Technical briefs are candidate planning input and never evidence of implementation
+or accepted direction. `ResearchQuestions.*.md` retains the unresolved-research meaning.

@@ -6,6 +6,8 @@ pub enum DocKind {
     Frame,
     Concept,
     Research,
+    CodeInventory,
+    TechnicalBrief,
     Plan,
     Idea,
     Design,

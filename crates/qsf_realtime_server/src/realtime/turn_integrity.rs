@@ -72,6 +72,10 @@ mod tests {
             TranscriptDisposition::IgnoreAsNoise
         );
         assert_eq!(
+            classify_final_transcript(TurnPhase::AwaitingResponse, "Thank you."),
+            TranscriptDisposition::IgnoreAsNoise
+        );
+        assert_eq!(
             classify_final_transcript(TurnPhase::ToolLoop, "stop"),
             TranscriptDisposition::Interrupt
         );

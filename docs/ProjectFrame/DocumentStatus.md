@@ -22,7 +22,9 @@ to the live system.
 |---|---|---|---|
 | `docs/ProjectFrame/` | Frame | Stable purpose, non-goals, workflow | Authoritative for project direction; rarely outdated |
 | `docs/Concepts/` | Concept | Exploratory ideas | Treat as candidate framing; do not assume implemented |
-| `docs/Research/` | Research question | Open uncertainty | Treat as unresolved; not a claim about behavior |
+| `docs/Research/ResearchQuestions.*.md` | Research question | Open uncertainty | Treat as unresolved; not a claim about behavior |
+| `docs/Research/Research.*.md` | Code inventory | Point-in-time investigation of implemented behavior | Evidence-backed snapshot; verify against code after its review date |
+| `docs/Research/TechBrief.*.md` | Technical brief | Planning input that synthesizes evidence and options | Treat as recommendation, not implementation or commitment |
 | `docs/Plans/Plan.*.md` | Plan | Active or recent implementation plan | May describe in-flight work; verify against code |
 | `docs/Plans/Idea.*.md` | Idea | Brainstorm-stage proposal | Treat as speculative; not project commitment |
 | `docs/Plans/Design.*.md` | Design note | Focused design decision in support of a plan | Authoritative for that decision; verify against the decision log |
@@ -66,9 +68,12 @@ When two documents disagree, prefer them in this order:
 5. **Architecture documents without an Implementation Status section** — treat as
    candidate mental model; verify each named subsystem against code before claiming
    it exists.
-6. **Plan, Concept, Idea, and Research documents** — useful for direction and
-   reasoning; never sufficient as evidence that a feature exists.
-7. **Experiment specs and reports** — evidence about specific runs only; do not
+6. **Code inventories** — useful evidence about behavior at their stated review date; code
+   remains authoritative and later changes can make an inventory stale.
+7. **Plan, Technical Brief, Concept, Idea, and Research-question documents** — useful for
+   direction and reasoning; never sufficient as evidence that a feature exists or a direction
+   is committed.
+8. **Experiment specs and reports** — evidence about specific runs only; do not
    generalize.
 
 A common failure mode is treating a *Plan* or *Idea* document as evidence that a
@@ -106,7 +111,7 @@ A reader new to the project should usually:
    section for the current shape.
 4. Drop into focused architecture documents as needed, again starting with their
    *Implementation Status* section.
-5. Consult Plans, Ideas, Concepts, and Research questions for direction
+5. Consult Plans, Technical Briefs, Ideas, Concepts, and Research questions for direction
    and uncertainty.
 
 This ordering avoids the most common failure mode: forming a picture of "what the

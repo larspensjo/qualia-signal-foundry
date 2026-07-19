@@ -7,7 +7,13 @@ pub fn kind_for_path(path: &str) -> DocKind {
     if path.starts_with("docs/Concepts/") {
         return DocKind::Concept;
     }
-    if path.starts_with("docs/Research/") {
+    if let Some(rest) = path.strip_prefix("docs/Research/") {
+        if rest.starts_with("Research.") {
+            return DocKind::CodeInventory;
+        }
+        if rest.starts_with("TechBrief.") {
+            return DocKind::TechnicalBrief;
+        }
         return DocKind::Research;
     }
     if let Some(rest) = path.strip_prefix("docs/Plans/") {
@@ -156,6 +162,22 @@ mod tests {
     }
 
     #[test]
+    fn research_directory_distinguishes_registered_document_kinds() {
+        assert_eq!(
+            kind_for_path("docs/Research/ResearchQuestions.Audio.md"),
+            DocKind::Research
+        );
+        assert_eq!(
+            kind_for_path("docs/Research/Research.TextClassificationInventory.md"),
+            DocKind::CodeInventory
+        );
+        assert_eq!(
+            kind_for_path("docs/Research/TechBrief.SemanticClassification.md"),
+            DocKind::TechnicalBrief
+        );
+    }
+
+    #[test]
     fn kind_falls_back_to_unknown() {
         assert_eq!(kind_for_path("docs/Random/Other.md"), DocKind::Unknown);
     }
@@ -200,6 +222,21 @@ mod tests {
     fn maturity_not_applicable_for_frame() {
         assert_eq!(
             maturity_for(DocKind::Frame, "anything"),
+            MaturityTag::NotApplicable
+        );
+    }
+
+    #[test]
+    fn maturity_not_applicable_for_inventory_and_technical_brief() {
+        assert_eq!(
+            maturity_for(
+                DocKind::CodeInventory,
+                "## Status\n\nPoint-in-time investigation."
+            ),
+            MaturityTag::NotApplicable
+        );
+        assert_eq!(
+            maturity_for(DocKind::TechnicalBrief, "## Status\n\nPlanning input."),
             MaturityTag::NotApplicable
         );
     }

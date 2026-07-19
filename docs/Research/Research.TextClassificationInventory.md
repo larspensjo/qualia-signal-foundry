@@ -67,8 +67,9 @@ The most important findings are:
   identifier validation. JSON validity is not semantic validation, however.
 - Classification consequences range from display-only metadata to response cancellation,
   external information injection, automatic memory promotion, and durable goal changes.
-- The low-level model-client selector falls back to `mock` when `QSF_MODEL_PROVIDER` is absent or
-  unrecognized. That is not the practical default for the main application: `qsf.ps1 realtime`
+- The low-level selector in `qsf_models/src/openai_provider.rs` falls back to `mock` when
+  `QSF_MODEL_PROVIDER` is absent or unrecognized. That is not the practical default for the
+  main application: `qsf.ps1 realtime`
   always pins `QSF_MODEL_PROVIDER=openai` for the server process. Its live LLM classifications
   therefore use OpenAI in normal operation; the fixed mock responses primarily serve tests and
   direct invocations outside the launcher.
@@ -118,7 +119,7 @@ The most important findings are:
 
 **Current method**
 
-- In `Idle`, every non-empty final transcript starts a turn.
+- In `Idle`, every final transcript starts a turn, including empty or whitespace-only text.
 - During a response or tool loop, normalized empty text and exactly `cheers`, `thanks`, or
   `thank you` are ignored.
 - Every other non-empty transcript is classified as an interruption.
@@ -137,6 +138,8 @@ old response and starts another exchange.
   text containing an allow-listed phrase plus more words also interrupts.
 - Pragmatics depend on prosody and timing, but only the final text and coarse phase are used.
 - ASR hallucinations become interruptions unless they are empty or one of three phrases.
+- In `Idle`, even an empty or whitespace-only ASR finalization starts a turn, so phase alone
+  bypasses the in-flight empty-text safeguard.
 - There is no confidence score or abstention state.
 - False positives are costly: the old response is cancelled and the exchange is marked
   interrupted. False negatives discard user speech.
@@ -229,8 +232,9 @@ paths. They do not form a labeled intent-routing benchmark across tools and no-t
   then requires a single uppercase, name-like token and rejects a 16-word stoplist.
 - Remembered-topic capture detects a small set of positive request phrases and explicit negative
   phrases, copies a bounded excerpt from the previous assistant answer, and assigns topic tags
-  from a fixed list (`volition`, `system`, `goal`, `memory`, `retrieval`, `context`, `identity`,
-  `name`, `arbitration`, `preference`, and related aliases).
+  from a fixed list (`volition`, `system`, `goal`, `goals`, `simulation`, `memory`, `retrieval`,
+  `context`, `identity`, `name`, `arbitration`, `preference`, and related aliases). When the
+  excerpt describes the volition subsystem it also synthesizes the `volition_system` tag.
 - Accepted candidates are deduplicated by normalized title plus summary and written immediately
   to the durable memory store with fixed importance values (`0.9` for names, `0.8` for a
   remembered topic).
@@ -290,10 +294,14 @@ Three strategies exist:
 - `AssociationWeighted`: `0.65*keyword + 1.1*tag + 1.35*association + 0.35*importance +
   0.2*recency + 0.25*reinforcement`.
 
-The keyword strategies then apply a relevance gate: direct keyword/tag evidence, an association
-path, or a special identity/profile allowance is required. Identity targeting uses hardcoded
-English phrases such as `who are you`, `what is your name`, and `who am I` to distinguish
-assistant-name from user-name memories.
+The keyword strategies then apply distinct relevance gates. `KeywordTag` requires direct
+keyword/tag evidence or a special identity/profile allowance. `AssociationWeighted` additionally
+admits a record through an association path. Identity targeting uses hardcoded English phrases
+such as `who are you`, `what is your name`, and `who am I` to distinguish assistant-name from
+user-name memories.
+
+World-observation memories default to a 7-day decay half-life rather than the general 30-day
+default. Superseded world observations are skipped unconditionally before the relevance gate.
 
 The context assembler is not a semantic classifier. It consumes the retrieval score, sorts by
 source-kind priority and score, and applies fragment/token limits.
@@ -337,6 +345,9 @@ overfit.
   [`selection.rs`](../../crates/qsf_volition/src/selection.rs)
 - Arbitration:
   [`arbitration.rs`](../../crates/qsf_volition/src/arbitration.rs)
+- Realtime activation-event emission and salience reduction:
+  [`volition.rs`](../../crates/qsf_realtime_server/src/realtime/volition.rs),
+  [`reducer.rs`](../../crates/qsf_volition/src/reducer.rs)
 
 **Input and output**
 
@@ -350,8 +361,9 @@ overfit.
 - Every goal has curated activation keywords weighted `Weak=1`, `Normal=4`, or `Strong=8`.
 - `match_strength` is the sum of distinct matched keyword weights.
 - Relevance is `25*match_strength + base_priority + maximum tension priority bonus + salience`.
-- A goal needs strength at least `4` to enter arbitration. Weaker matches still activate and
-  affect salience but cannot win.
+- A goal needs strength at least `4` to enter arbitration. Weaker matches cannot win, but the
+  realtime adapter emits `GoalActivated` for every keyword-matched goal before qualification and
+  the reducer raises its salience.
 - Qualified goals are ordered primarily by effective tension tier, then priority/id rules;
   relevance is not the final arbitration sort key.
 - A `ProposeExperiment` effect requires strength at least `8` and two distinct non-weak terms;
@@ -373,12 +385,15 @@ turn?” before it assembles the volition packet and bounded initiative.
   about.
 - Deduplication removes frequency and emphasis.
 - Curated keyword weights and thresholds have no empirical calibration.
-- Broad words can still cause salience activation even when they cannot win.
+- Broad words can still raise salience and emit below-threshold activation evidence even when
+  they cannot win.
 - Among qualified goals, tier precedence can beat a much stronger semantic match. That may be
   intended policy for protected goals, but it conflates relevance classification with normative
   priority.
 - Live-formed goals receive model-supplied keywords, all defaulting to `Normal`; one keyword is
-  therefore enough to qualify, unlike carefully curated fixture goals.
+  therefore enough to qualify, unlike carefully curated fixture goals. This is an accepted
+  interim consequence of the 2026-07-04 weighted-goal-activation decision, bounded until the
+  formation schema is extended ([DecisionLog.md](../DecisionLog.md)).
 - Keyword lists, goal summaries, priority, salience, and arbitration policy are coupled in one
   outcome, making error attribution difficult without decomposed evaluation.
 
@@ -476,8 +491,9 @@ versions.
 
 For goal-triggered lookup, every goal-derived anchor and at least a ceiling-rounded 50% of
 meaningful current-topic terms must match. Explicit entity/version lookup requires its anchors.
-The adapter then applies per-session anti-repeat and a two-source surface cap. Lookup above 5 ms
-is deferred rather than injected inline.
+The adapter then applies per-session anti-repeat and a two-source surface cap. User-transcript
+queries above 5 ms are deferred rather than injected inline; assistant-answer-origin queries
+always defer regardless of lookup duration.
 
 **Why it is needed**
 
@@ -503,8 +519,12 @@ every conversation into a corpus search or trusting lexical rank alone.
 **Validation today**
 
 Tests cover named/version triggers, no-trigger ordinary turns, lexical ranking, anchor omission,
-topic-majority omission, anti-repeat, and latency placement. The corpus fixtures are small and
-hand-authored; there is no retrieval relevance judgment set.
+topic-majority omission, anti-repeat, and latency placement. A 2026-07-19 real-corpus voice run
+observed the predicted trigger failures directly: ASR lowercased a multiword topic past the
+capitalization-based entity check, while `serve-the-present-person` won arbitration over a weak
+world-goal match, so no consultation occurred
+([Experiment.WorldConsultation.md](../Experiments/Experiment.WorldConsultation.md)). The corpus
+fixtures are small and hand-authored; there is no retrieval relevance judgment set.
 
 ### T8. LLM-backed live goal formation and coherence judgment
 
@@ -608,18 +628,20 @@ turns annotated for durable-goal formation or goal-pair contradiction.
 - Input: persisted session transcript, prior turn summaries, retrieved-memory context, review
   notes, and diagnostics.
 - Output: `session_summary`, up to four `memory_candidates`, up to three `open_questions`, up to
-  two `decision_candidates`, up to three `future_context_hints`, review notes, and optional
-  association candidates.
+  two `decision_candidates`, up to three `future_context_hints`, up to three review notes, and
+  optional association candidates.
 
 **Current method**
 
 One structured `SleepSummarizer` call uses temperature `0`, a 1536-token output cap, and role
 default `gpt-5.4`. The prompt defines field names and count caps, requires numeric importance,
-and says decisions/associations are provisional.
+and says decisions/associations are provisional. All item-count caps are prompt instructions;
+the parser does not enforce them.
 
 The parser requires the expected fields, accepts string or object memory candidates, clamps
 probabilities to `[0,1]`, and validates association indexes. Routine memory candidates are then
-automatically converted to durable observation records unless empty or textually duplicate.
+automatically converted to durable observation records unless empty or textually duplicate;
+missing importance defaults to `0.3` before clamping.
 Decision candidates remain review drafts. Open questions and future hints enter the consolidated
 brief. LLM-proposed associations can become durable links between promoted candidates.
 
@@ -913,13 +935,13 @@ semantically correct and grounded.
 
 ### 6. Low-level fallback can be mistaken for practical runtime behavior
 
-The model-client boundary selects the mock provider when its environment setting is absent or
-unrecognized, but the supported `qsf.ps1 realtime` path always selects OpenAI and `qsf.ps1 sleep`
-defaults to it. The mock provider makes experiments reproducible, but most responses are constant
-and input-independent. It should be treated as a plumbing fixture, not as the practical default
-for the main application. In particular, mock world-memory summaries are semantically false for
-arbitrary real articles. Any future semantic fallback design needs an explicit contract distinct
-from the mock test client.
+The selector in `qsf_models/src/openai_provider.rs` chooses the mock provider when its environment
+setting is absent or unrecognized, but the supported `qsf.ps1 realtime` path always selects
+OpenAI and `qsf.ps1 sleep` defaults to it. The mock provider makes experiments reproducible, but
+most responses are constant and input-independent. It should be treated as a plumbing fixture,
+not as the practical default for the main application. In particular, mock world-memory
+summaries are semantically false for arbitrary real articles. Any future semantic fallback
+design needs an explicit contract distinct from the mock test client.
 
 ### 7. Tests prove branches more than quality
 
