@@ -153,8 +153,34 @@ set and `{ required_matches, total_terms }` threshold, allowing the retrieval de
 both omission classes. Existing sandbox, latency-budget, hash-resolution, anti-repeat,
 no-match/no-injection, and external-effect-boundary coverage remains in the affected suites.
 
+A second 2026-07-19 real-corpus voice session (two turns) requested no consultation at all —
+the relaxed candidate gate was never reached, moving the observed blockers from the candidate
+gate to the trigger layer. "I would like to ask you if you can help me find information about
+high bandwidth memory…" carried the new search cues (`find`, `information`) but failed the
+explicit trigger's entity half: the voice transcript renders the topic as lowercase
+"high bandwidth memory", and the only capitalized words were stoplisted sentence-initial ones —
+capitalization-based entity detection is structurally weak against speech transcription. On the
+goal path, `track-the-ai-transition` never activated (the turn never said "AI"), and
+`assemble-world-picture` matched only the weak term "happen" and lost winner-takes-the-turn
+arbitration to `serve-the-present-person` (matched what/can/help/do at salience 130): the
+polite request framing itself crowded out the consult effect. The follow-up "What do you think
+about the company Micron? Are they in a good position for this?" held exactly the opposite
+half — `Micron` was detected as a named entity, but an opinion question carries no
+current-information cue, and no world goal activated. Both spoken answers stayed honestly
+parametric (825 ms and 453 ms transcript-to-first-audio). A session bonus observation: the live
+judge formed an apt goal (`forecast-hbm-near-term`, priority 173, keywords including `hbm` and
+`memory`) from the first turn, and the next tick's retirement sweep retired it immediately —
+a goal admitted with no activation yet counted as inactive since tick 0. Conclusion: real-corpus
+surfacing remains unobserved; the remaining blockers are STT-lowercased entities defeating the
+capitalization-based detector, and ConsultWorld losing arbitration whenever a generic service
+goal matches strongly.
+
 ## Follow-Up Questions
 
 - Is the provisional 5 ms inline lookup budget appropriate under load?
 - What anti-repeat window avoids nagging without suppressing genuinely useful updates?
 - Does goal activation or current topic deserve greater lexical weight?
+- Should explicit-topic entity detection recognize STT-lowercased multiword topics (voice
+  transcripts rarely capitalize terms like "high bandwidth memory")?
+- Should a ConsultWorld-capable goal get arbitration standing when the turn carries
+  current-information cues, so generic service goals do not always crowd out the consult?
