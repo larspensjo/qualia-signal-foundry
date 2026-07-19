@@ -234,6 +234,8 @@ pub(crate) async fn inject_trusted_turn_context_and_response(
         {
             world_consultation_requested = true;
             let mut combined_query_terms = query_terms.clone();
+            // Goal-activation and current-topic terms may deliberately overlap here.
+            // Live-probe evidence owns any future deduplication decision.
             combined_query_terms.extend(qsf_volition::normalize_terms(transcript).into_iter().map(
                 |term| WorldQueryTerm {
                     term,

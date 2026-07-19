@@ -18,6 +18,10 @@ pub(crate) const WORLD_CONSULT_INLINE_BUDGET_MS: u64 = 5;
 const WORLD_CONSULT_INLINE_BUDGET_NS: u64 = WORLD_CONSULT_INLINE_BUDGET_MS * 1_000_000;
 const WORLD_CONSULT_CANDIDATE_LIMIT: usize = 8;
 const WORLD_CONSULT_SURFACE_LIMIT: usize = 2;
+/// Goal-activation candidates must match this percentage of meaningful current-topic terms.
+/// The calculated count rounds up, so this is a minimum half-match policy rather than a
+/// require-all gate and does not assign lexical query-term weights.
+pub(crate) const WORLD_CONSULT_TOPIC_TERM_MINIMUM_MATCH_PERCENT: usize = 50;
 
 #[derive(Clone, Debug)]
 pub(crate) enum WorldCorpus {
@@ -141,6 +145,14 @@ pub(crate) struct WorldEffectBoundary {
     pub(crate) external_effect_executed: bool,
 }
 
+/// The topic-term requirement applied to a goal-activation lookup. `required_matches` is
+/// calculated from `total_terms` using `WORLD_CONSULT_TOPIC_TERM_MINIMUM_MATCH_PERCENT`.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub(crate) struct TopicTermMajorityThreshold {
+    pub(crate) required_matches: usize,
+    pub(crate) total_terms: usize,
+}
+
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct WorldConsultationTrace {
     pub(crate) serving_goal_id: String,
@@ -149,6 +161,11 @@ pub struct WorldConsultationTrace {
     pub(crate) query_terms: Vec<WorldQueryTerm>,
     /// Every surfaced candidate matched every item in this relevance gate.
     pub(crate) required_anchors: Vec<String>,
+    /// The subset of `required_anchors` derived from serving-goal activation terms.
+    pub(crate) goal_derived_required_anchors: Vec<String>,
+    /// Present only for the goal-activation policy; explicit entity/version requests retain
+    /// their existing anchor-only relevance gate.
+    pub(crate) topic_term_majority_threshold: Option<TopicTermMajorityThreshold>,
     pub(crate) candidates: Vec<WorldConsultationCandidate>,
     pub(crate) surfaced_facts: Vec<SurfacedWorldFact>,
     pub(crate) injected_text: String,
@@ -179,13 +196,21 @@ pub(crate) struct WorldConsultationResult {
     pub(crate) conversation_item_create: Option<serde_json::Value>,
 }
 
+#[derive(Clone, Debug)]
+struct CandidateRelevancePolicy {
+    required_anchors: Vec<String>,
+    goal_derived_required_anchors: Vec<String>,
+    topic_terms: Vec<String>,
+    topic_term_majority_threshold: Option<TopicTermMajorityThreshold>,
+}
+
 /// Runs one bounded, read-only corpus consultation. The caller owns session-local dedup state.
 pub(crate) fn consult_world(
     corpus: &ReadyWorldCorpus,
     request: WorldConsultationRequest,
     previously_surfaced_content_hashes: &mut HashSet<String>,
 ) -> WorldConsultationResult {
-    let (query_terms, required_anchors) =
+    let (query_terms, relevance_policy) =
         anchor_aware_query_terms(&request.query_terms, &request.trigger);
     let query = query_terms
         .iter()
@@ -199,7 +224,7 @@ pub(crate) fn consult_world(
         corpus,
         request,
         query_result.candidates,
-        required_anchors,
+        relevance_policy,
         query_result.latency_ms,
         query_result.latency_ns,
         previously_surfaced_content_hashes,
@@ -210,7 +235,7 @@ fn build_result(
     corpus: &ReadyWorldCorpus,
     request: WorldConsultationRequest,
     candidates: Vec<QueryCandidate>,
-    required_anchors: Vec<String>,
+    relevance_policy: CandidateRelevancePolicy,
     lookup_latency_ms: u64,
     lookup_latency_ns: u64,
     previously_surfaced_content_hashes: &mut HashSet<String>,
@@ -218,9 +243,20 @@ fn build_result(
     let mut traced_candidates = Vec::with_capacity(candidates.len());
     let mut surfaced_facts = Vec::new();
     for candidate in candidates {
-        let eligibility = if !candidate_matches_required_anchors(&candidate, &required_anchors) {
+        let eligibility = if !candidate_matches_required_anchors(
+            &candidate,
+            &relevance_policy.required_anchors,
+        ) {
             CandidateEligibility::Omitted {
                 reason: "missing_required_anchor".to_string(),
+            }
+        } else if !candidate_matches_topic_term_majority(
+            &candidate,
+            &relevance_policy.topic_terms,
+            relevance_policy.topic_term_majority_threshold.as_ref(),
+        ) {
+            CandidateEligibility::Omitted {
+                reason: "below_topic_term_majority".to_string(),
             }
         } else if previously_surfaced_content_hashes.contains(&candidate.content_hash) {
             CandidateEligibility::Omitted {
@@ -292,7 +328,9 @@ fn build_result(
         serving_goal_title: request.serving_goal_title,
         serving_tension_ids: request.serving_tension_ids,
         query_terms: request.query_terms,
-        required_anchors,
+        required_anchors: relevance_policy.required_anchors,
+        goal_derived_required_anchors: relevance_policy.goal_derived_required_anchors,
+        topic_term_majority_threshold: relevance_policy.topic_term_majority_threshold,
         candidates: traced_candidates,
         surfaced_facts,
         injected_text,
@@ -323,36 +361,80 @@ fn build_result(
 fn anchor_aware_query_terms(
     query_terms: &[WorldQueryTerm],
     trigger: &WorldConsultationTrigger,
-) -> (Vec<WorldQueryTerm>, Vec<String>) {
+) -> (Vec<WorldQueryTerm>, CandidateRelevancePolicy) {
     let retained_terms = query_terms
         .iter()
         .filter(|term| is_meaningful_world_term(&term.term))
         .cloned()
         .collect::<Vec<_>>();
-    let required_anchors = match trigger {
-        // Goal activation plus current topic is the deliberately limited v1 query substrate.
-        // Requiring all meaningful terms prevents a generic current-topic match from winning.
-        WorldConsultationTrigger::GoalActivation => unique_terms(
-            &retained_terms
-                .iter()
-                .map(|term| term.term.clone())
-                .collect::<Vec<_>>(),
-        ),
+    let relevance_policy = match trigger {
+        // Goal activation is a deliberately limited v1 query substrate. The serving goal's
+        // activation terms remain mandatory anchors, while current-topic terms use a named
+        // ceiling-rounded 50% minimum-match policy to admit relevant conversational phrasing.
+        WorldConsultationTrigger::GoalActivation => {
+            let goal_derived_required_anchors = unique_terms(
+                &retained_terms
+                    .iter()
+                    .filter(|term| {
+                        matches!(
+                            term.source,
+                            qsf_volition::WorldQueryTermSource::GoalActivation
+                        )
+                    })
+                    .map(|term| term.term.clone())
+                    .collect::<Vec<_>>(),
+            );
+            let topic_terms = unique_terms(
+                &retained_terms
+                    .iter()
+                    .filter(|term| {
+                        matches!(
+                            term.source,
+                            qsf_volition::WorldQueryTermSource::CurrentTopic
+                        )
+                    })
+                    .map(|term| term.term.clone())
+                    .collect::<Vec<_>>(),
+            );
+            let topic_term_majority_threshold = TopicTermMajorityThreshold {
+                required_matches: required_topic_term_matches(topic_terms.len()),
+                total_terms: topic_terms.len(),
+            };
+            CandidateRelevancePolicy {
+                required_anchors: goal_derived_required_anchors.clone(),
+                goal_derived_required_anchors,
+                topic_terms,
+                topic_term_majority_threshold: Some(topic_term_majority_threshold),
+            }
+        }
         // Entity/version signals detected from the original text are the relevance gate. Other
         // retained words still contribute lexical score, but cannot cause a spurious no-match.
-        WorldConsultationTrigger::ExplicitCurrentTopic { required_anchors } => unique_terms(
-            &required_anchors
-                .iter()
-                .filter(|anchor| {
-                    !is_current_information_cue(anchor)
-                        && is_meaningful_world_term(anchor)
-                        && retained_terms.iter().any(|term| term.term == **anchor)
-                })
-                .cloned()
-                .collect::<Vec<_>>(),
-        ),
+        WorldConsultationTrigger::ExplicitCurrentTopic { required_anchors } => {
+            CandidateRelevancePolicy {
+                required_anchors: unique_terms(
+                    &required_anchors
+                        .iter()
+                        .filter(|anchor| {
+                            !is_current_information_cue(anchor)
+                                && is_meaningful_world_term(anchor)
+                                && retained_terms.iter().any(|term| term.term == **anchor)
+                        })
+                        .cloned()
+                        .collect::<Vec<_>>(),
+                ),
+                goal_derived_required_anchors: Vec::new(),
+                topic_terms: Vec::new(),
+                topic_term_majority_threshold: None,
+            }
+        }
     };
-    (retained_terms, required_anchors)
+    (retained_terms, relevance_policy)
+}
+
+fn required_topic_term_matches(total_terms: usize) -> usize {
+    total_terms
+        .saturating_mul(WORLD_CONSULT_TOPIC_TERM_MINIMUM_MATCH_PERCENT)
+        .div_ceil(100)
 }
 
 fn unique_terms(terms: &[String]) -> Vec<String> {
@@ -372,6 +454,26 @@ fn candidate_matches_required_anchors(
     required_anchors
         .iter()
         .all(|anchor| candidate.matched_terms.iter().any(|term| term == anchor))
+}
+
+fn candidate_matches_topic_term_majority(
+    candidate: &QueryCandidate,
+    topic_terms: &[String],
+    threshold: Option<&TopicTermMajorityThreshold>,
+) -> bool {
+    threshold.is_none_or(|threshold| {
+        debug_assert_eq!(threshold.total_terms, topic_terms.len());
+        topic_terms
+            .iter()
+            .filter(|term| {
+                candidate
+                    .matched_terms
+                    .iter()
+                    .any(|matched| matched == *term)
+            })
+            .count()
+            >= threshold.required_matches
+    })
 }
 
 fn is_meaningful_world_term(term: &str) -> bool {
@@ -473,7 +575,7 @@ mod tests {
         )));
         assert!(second.trace.candidates.iter().any(|candidate| matches!(
             candidate.eligibility,
-            CandidateEligibility::Omitted { ref reason } if reason == "missing_required_anchor"
+            CandidateEligibility::Omitted { ref reason } if reason == "below_topic_term_majority"
         )));
     }
 
@@ -641,7 +743,15 @@ mod tests {
             &corpus,
             request(WorldQueryOrigin::UserInput),
             candidates,
-            vec!["ai".to_string(), "transition".to_string()],
+            CandidateRelevancePolicy {
+                required_anchors: vec!["ai".to_string()],
+                goal_derived_required_anchors: vec!["ai".to_string()],
+                topic_terms: vec!["transition".to_string()],
+                topic_term_majority_threshold: Some(TopicTermMajorityThreshold {
+                    required_matches: 1,
+                    total_terms: 1,
+                }),
+            },
             WORLD_CONSULT_INLINE_BUDGET_MS,
             WORLD_CONSULT_INLINE_BUDGET_NS + 1,
             &mut HashSet::new(),
@@ -654,6 +764,184 @@ mod tests {
             result.trace.injection_reason,
             "lookup_exceeded_inline_budget"
         );
+    }
+
+    #[test]
+    fn goal_activation_requires_goal_anchors_and_a_ceiling_rounded_topic_majority() {
+        let articles = vec![
+            Article {
+                relative_path: "hbm-on-topic.md".to_string(),
+                content_hash: "hbm-on-topic".to_string(),
+                url: "https://news.example.com/hbm".to_string(),
+                title: "AI HBM memory makers supply data centers".to_string(),
+                source_domain: "news.example.com".to_string(),
+                fetched_utc: OffsetDateTime::now_utc(),
+                body: "HBM memory makers expand AI data center supply.".to_string(),
+            },
+            Article {
+                relative_path: "ai-loose.md".to_string(),
+                content_hash: "ai-loose".to_string(),
+                url: "https://news.example.com/ai".to_string(),
+                title: "AI policy outlook".to_string(),
+                source_domain: "news.example.com".to_string(),
+                fetched_utc: OffsetDateTime::now_utc(),
+                body: "AI policy developments continue.".to_string(),
+            },
+        ];
+        let corpus = ReadyWorldCorpus {
+            index: Arc::new(CorpusIndex::new(articles)),
+            marker: CorpusMarker {
+                schema_version: 1,
+                producer: "test".to_string(),
+                article_patterns: vec!["*.md".to_string()],
+                generated_artifacts: vec![],
+                internal_state: vec![],
+            },
+            schema_drift: CorpusSchemaDrift::None,
+            articles_indexed: 2,
+            corpus_path: PathBuf::from("fixture"),
+        };
+        let mut hbm_request = request(WorldQueryOrigin::UserInput);
+        hbm_request.query_terms = vec![
+            WorldQueryTerm {
+                term: "ai".to_string(),
+                source: WorldQueryTermSource::GoalActivation,
+            },
+            WorldQueryTerm {
+                term: "hbm".to_string(),
+                source: WorldQueryTermSource::CurrentTopic,
+            },
+            WorldQueryTerm {
+                term: "memory".to_string(),
+                source: WorldQueryTermSource::CurrentTopic,
+            },
+            WorldQueryTerm {
+                term: "makers".to_string(),
+                source: WorldQueryTermSource::CurrentTopic,
+            },
+            WorldQueryTerm {
+                term: "data".to_string(),
+                source: WorldQueryTermSource::CurrentTopic,
+            },
+            WorldQueryTerm {
+                term: "centers".to_string(),
+                source: WorldQueryTermSource::CurrentTopic,
+            },
+        ];
+        hbm_request.query_terms.extend(
+            [
+                "was",
+                "were",
+                "be",
+                "been",
+                "by",
+                "used",
+                "use",
+                "using",
+                "little",
+                "example",
+                "thinking",
+                "wondering",
+                "just",
+                "some",
+                "these",
+                "this",
+                "that",
+                "who",
+                "which",
+            ]
+            .into_iter()
+            .map(|term| WorldQueryTerm {
+                term: term.to_string(),
+                source: WorldQueryTermSource::CurrentTopic,
+            }),
+        );
+
+        let result = consult_world(&corpus, hbm_request, &mut HashSet::new());
+
+        assert_eq!(result.trace.required_anchors, ["ai"]);
+        assert_eq!(result.trace.goal_derived_required_anchors, ["ai"]);
+        assert!(result.trace.query_terms.iter().all(|term| !matches!(
+            term.term.as_str(),
+            "was"
+                | "were"
+                | "be"
+                | "been"
+                | "by"
+                | "used"
+                | "use"
+                | "using"
+                | "little"
+                | "example"
+                | "thinking"
+                | "wondering"
+                | "just"
+                | "some"
+                | "these"
+                | "this"
+                | "that"
+                | "who"
+                | "which"
+        )));
+        assert_eq!(
+            result.trace.topic_term_majority_threshold,
+            Some(TopicTermMajorityThreshold {
+                required_matches: 3,
+                total_terms: 5,
+            })
+        );
+        assert!(
+            result
+                .trace
+                .surfaced_facts
+                .iter()
+                .any(|fact| fact.content_hash == "hbm-on-topic")
+        );
+        assert!(result.trace.candidates.iter().any(|candidate| {
+            candidate.candidate.content_hash == "ai-loose"
+                && matches!(
+                    candidate.eligibility,
+                    CandidateEligibility::Omitted { ref reason }
+                        if reason == "below_topic_term_majority"
+                )
+        }));
+    }
+
+    #[test]
+    fn find_information_about_named_entity_uses_the_unchanged_explicit_anchor_gate() {
+        let article = Article {
+            relative_path: "nvidia.md".to_string(),
+            content_hash: "nvidia-hash".to_string(),
+            url: "https://news.example.com/nvidia".to_string(),
+            title: "Nvidia expands HBM supply partnerships".to_string(),
+            source_domain: "news.example.com".to_string(),
+            fetched_utc: OffsetDateTime::now_utc(),
+            body: "Nvidia reported new memory supplier agreements.".to_string(),
+        };
+        let corpus = ReadyWorldCorpus {
+            index: Arc::new(CorpusIndex::new(vec![article])),
+            marker: CorpusMarker {
+                schema_version: 1,
+                producer: "test".to_string(),
+                article_patterns: vec!["*.md".to_string()],
+                generated_artifacts: vec![],
+                internal_state: vec![],
+            },
+            schema_drift: CorpusSchemaDrift::None,
+            articles_indexed: 1,
+            corpus_path: PathBuf::from("fixture"),
+        };
+
+        let result = consult_world(
+            &corpus,
+            explicit_request("Can you find information about Nvidia?"),
+            &mut HashSet::new(),
+        );
+
+        assert_eq!(result.trace.required_anchors, ["nvidia"]);
+        assert!(result.trace.goal_derived_required_anchors.is_empty());
+        assert_eq!(result.trace.topic_term_majority_threshold, None);
+        assert_eq!(result.trace.surfaced_facts.len(), 1);
     }
 
     #[test]
@@ -730,6 +1018,14 @@ mod tests {
         assert!(!trace.response_create_event_ref.is_empty());
         assert!(!trace.artifact_or_record_reference.is_empty());
         assert!(trace.bounded_or_external_output.external_effect_executed);
+        assert_eq!(trace.goal_derived_required_anchors, ["ai"]);
+        assert_eq!(
+            trace.topic_term_majority_threshold,
+            Some(TopicTermMajorityThreshold {
+                required_matches: 1,
+                total_terms: 1,
+            })
+        );
         assert!(
             trace
                 .query_terms

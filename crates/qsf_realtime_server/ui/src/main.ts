@@ -856,6 +856,16 @@ function renderWorldPerceptionPanel(container: HTMLElement, model: WorldPercepti
       ? "Required anchors: none"
       : `Required anchors: ${model.requiredAnchors.join(", ")}`;
   detailBody.appendChild(anchors);
+  if (model.goalDerivedRequiredAnchors.length > 0) {
+    const goalAnchors = document.createElement("p");
+    goalAnchors.textContent = `Goal-derived required anchors: ${model.goalDerivedRequiredAnchors.join(", ")}`;
+    detailBody.appendChild(goalAnchors);
+  }
+  if (model.topicTermMajorityThreshold !== null) {
+    const topicThreshold = document.createElement("p");
+    topicThreshold.textContent = `Topic-term threshold: ${model.topicTermMajorityThreshold}`;
+    detailBody.appendChild(topicThreshold);
+  }
   if (model.corpus !== null) {
     const corpus = document.createElement("p");
     corpus.textContent = `Corpus: ${model.corpus}`;

@@ -66,6 +66,11 @@ function consultationWithFact() {
       { term: "grok", source: "current_topic" },
     ],
     required_anchors: ["grok"],
+    goal_derived_required_anchors: ["ai"],
+    topic_term_majority_threshold: {
+      required_matches: 1,
+      total_terms: 2,
+    },
     candidates: [
       {
         content_hash: "hash-1",
@@ -2738,6 +2743,11 @@ describe("world perception message parsing", () => {
       kind: "omitted",
       reason: "missing_required_anchor",
     });
+    expect(capture?.consultation?.goalDerivedRequiredAnchors).toEqual(["ai"]);
+    expect(capture?.consultation?.topicTermMajorityThreshold).toEqual({
+      requiredMatches: 1,
+      totalTerms: 2,
+    });
     expect(capture?.consultation?.externalEffectExecuted).toBe(true);
   });
 
@@ -2816,6 +2826,10 @@ describe("world perception panel selector", () => {
     expect(model.modelVisibleInjection).toContain("External source material — untrusted");
     expect(model.latency).toBe("lookup 2 ms · inline");
     expect(model.queryTerms).toContainEqual({ term: "grok", source: "current topic" });
+    expect(model.goalDerivedRequiredAnchors).toEqual(["ai"]);
+    expect(model.topicTermMajorityThreshold).toBe(
+      "1 of 2 meaningful current-topic terms (rounded up)",
+    );
     expect(model.candidates[1]?.eligibility).toBe("Omitted · Missing Required Anchor");
     expect(model.facts[0]).toMatchObject({
       title: "Grok 4.5 release",
@@ -2823,6 +2837,20 @@ describe("world perception panel selector", () => {
       age: "1d old",
       trustTier: "Untrusted External",
     });
+  });
+
+  it("describes a goal-anchors-only query without a zero-of-zero threshold", () => {
+    const consultation = consultationWithFact();
+    consultation.topic_term_majority_threshold = {
+      required_matches: 0,
+      total_terms: 0,
+    };
+
+    const model = selectWorldPerceptionPanelModel(stateFor(consultation));
+
+    expect(model.topicTermMajorityThreshold).toBe(
+      "no meaningful current-topic terms; goal anchors only",
+    );
   });
 
   it("distinguishes a performed consultation that surfaced nothing relevant", () => {

@@ -60,8 +60,10 @@ bounded top-candidate selection replaced full candidate materialization and sort
 - session/exchange/request references; serving goal and tension ids;
 - query terms tagged `goal_activation` or `current_topic` (no numeric weights: required-anchor
   decisions and candidate omission reasons are the relevance surface);
-- chosen required anchors, plus every candidate's score, matched terms, provenance, and
-  eligibility or omission reason (including `missing_required_anchor`);
+- chosen required anchors, explicitly identified goal-derived anchors, and the applied
+  current-topic minimum-match threshold, plus every candidate's score, matched terms,
+  provenance, and eligibility or omission reason (including `missing_required_anchor` and
+  `below_topic_term_majority`);
 - exact injected untrusted blocks and their source provenance;
 - lookup latency, injection point and reason, corpus marker metadata, and
   `bounded_or_external_output.external_effect_executed: true`.
@@ -133,6 +135,23 @@ contributed ~4 ms). Conclusion: the external-effect, budget, framing, and trace 
 the goal-activation require-all anchor policy and the cue lexicon are the remaining blockers to
 useful real-corpus surfacing. The anchor-relaxation and search-request-cue slice in
 `Plan.WorldPerception.md` owns the fix.
+
+The 2026-07-19 anchor-relaxation and search-request-cue implementation replaces that
+goal-activation require-all gate with two unweighted eligibility checks: every meaningful
+goal-activation term present in the retained query remains a required anchor, and a candidate
+must match a ceiling-rounded minimum 50% of the distinct meaningful current-topic terms
+(`WORLD_CONSULT_TOPIC_TERM_MINIMUM_MATCH_PERCENT`). This is a relevance gate, not numeric
+lexical query-term weighting. The shared pure volition stoplist now excludes auxiliaries,
+prepositions, and conversational filler from both ranking terms and anchors; the current-info
+cue lexicon recognizes `find`, `search`, `look`, and `information` but still requires a named
+entity or dotted version. Fixture coverage surfaces an HBM-style article meeting the goal anchor
+and 3-of-5 topic threshold while omitting an AI-only article as
+`below_topic_term_majority`; it also proves `find information about Nvidia` follows the explicit
+entity-anchor path, while cue-less and entity-less prompts do not request consultation. The
+authoritative trace and its world-perception socket projection now carry the goal-derived anchor
+set and `{ required_matches, total_terms }` threshold, allowing the retrieval detail to explain
+both omission classes. Existing sandbox, latency-budget, hash-resolution, anti-repeat,
+no-match/no-injection, and external-effect-boundary coverage remains in the affected suites.
 
 ## Follow-Up Questions
 

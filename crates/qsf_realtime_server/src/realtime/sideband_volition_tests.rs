@@ -521,6 +521,8 @@ async fn consult_world_injects_a_framed_fact_and_records_the_external_effect_bou
         term.source,
         qsf_volition::WorldQueryTermSource::CurrentTopic
     )));
+    assert!(!trace.goal_derived_required_anchors.is_empty());
+    assert!(trace.topic_term_majority_threshold.is_some());
     let capture = world_perception_rx
         .borrow()
         .clone()
@@ -535,6 +537,8 @@ async fn consult_world_injects_a_framed_fact_and_records_the_external_effect_bou
         trace.serving_goal_id
     );
     assert!(message["consultation"]["query_terms"].is_array());
+    assert!(message["consultation"]["goal_derived_required_anchors"].is_array());
+    assert!(message["consultation"]["topic_term_majority_threshold"].is_object());
     assert!(message["consultation"]["candidates"].is_array());
     assert!(
         message["consultation"]["surfaced_facts"][0]["framed_text"]

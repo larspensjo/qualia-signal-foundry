@@ -237,9 +237,18 @@ model-visible injection is framed untrusted; a generic-match article is explicit
 and a no-match turn injects nothing. Repeat the live realtime probe with a specific AI release
 and confirm that the response can honestly attribute a relevant external source claim.
 
-### Next slice: goal-activation anchor relaxation and search-request cues
+### Goal-activation anchor relaxation and search-request cues
 
-**Implementation status (2026-07-19):** Not started. Motivated by two live real-corpus sessions
+**Implementation status (2026-07-19):** Implemented and fixture-backed. Goal-activation
+consultations now require every meaningful serving-goal activation anchor plus a ceiling-rounded
+50% minimum of meaningful current-topic terms; `WORLD_CONSULT_TOPIC_TERM_MINIMUM_MATCH_PERCENT`
+names that policy without assigning numeric lexical query-term weights. The shared volition
+stoplist removes conversational filler from both query construction and anchor derivation, and
+the pure explicit-topic detector recognizes `find`, `search`, `look`, and `information` while
+still requiring a named entity or dotted version. The trace records goal-derived anchors, the
+applied topic-term threshold, and distinct `below_topic_term_majority` omissions; the existing
+entity/version gate remains unchanged. The world-perception retrieval detail renders the same
+trace fields. Motivated by two live real-corpus sessions
 (2026-07-18 and 2026-07-19, both recorded in `Experiment.WorldConsultation.md`): goal-activation
 consultations surfaced nothing on natural speech, and an explicit "can you find information
 about…" turn triggered no consultation at all.

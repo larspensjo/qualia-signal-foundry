@@ -40,12 +40,15 @@ mode, not a one-off experiment server.
   unavailable corpus is noted in per-session diagnostics. A `ConsultWorld` winner combines its
   goal-activation terms with current-topic transcript tokens; a narrow pure volition trigger also
   requests the same consultation for a named entity or dotted-version prompt with a
-  current-information cue (for example, a named release), rather than for every turn. The adapter
-  discards generic interrogatives, retains meaningful topic terms and versions for lexical ranking,
-  and requires every surfaced candidate to match only the entity/version signals detected by the
-  pure trigger before it resolves hashes and frames the article as untrusted external system
-  content. Candidates that miss an anchor remain trace-visible with
-  `missing_required_anchor`; a no-match read injects nothing but still records the external effect.
+  current-information cue (for example, a named release or `find information`), rather than for
+  every turn. The adapter discards shared generic query framing, retains meaningful topic terms
+  and versions for lexical ranking, and requires goal-activation candidates to match every
+  goal-derived anchor plus a ceiling-rounded 50% minimum of meaningful current-topic terms.
+  Explicit entity/version requests retain their existing entity/version-only anchor gate before
+  the adapter resolves hashes and frames the article as untrusted external system content.
+  Candidates that miss an anchor remain trace-visible with `missing_required_anchor`; those that
+  have all goal anchors but too little topic overlap are `below_topic_term_majority`; a no-match
+  read injects nothing but still records the external effect.
   Per-session content-hash anti-repeat suppression applies after anchor eligibility. User-input
   reads inject inline only within the provisional 5 ms budget; over-budget reads and the explicitly
   modeled assistant-answer origin defer to the next trusted turn. `WorldConsultationPerformed` is
@@ -116,7 +119,8 @@ mode, not a one-off experiment server.
   watch::Sender<Option<WorldPerceptionCapture>>`. Every trusted turn publishes a latest-only
   `kind: "world_perception"` events-socket message: it carries the completed authoritative
   `WorldConsultationPerformed` trace when the corpus was consulted, including source-tagged query
-  terms, required anchors, candidates and omission reasons, exact untrusted model-visible text,
+  terms, required anchors with their goal-derived subset, the applied current-topic threshold,
+  candidates and omission reasons, exact untrusted model-visible text,
   provenance, injection decision, latency, external-effect flag, and corpus marker; a turn with
   no consultation carries `consultation: null`. This makes no consultation distinct from a
   consultation that found nothing relevant without changing the consultation boundary.

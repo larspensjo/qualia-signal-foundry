@@ -356,12 +356,19 @@ export interface WorldCorpusMarker {
   corpusPath: string;
 }
 
+export interface TopicTermMajorityThreshold {
+  requiredMatches: number;
+  totalTerms: number;
+}
+
 export interface WorldConsultationTrace {
   servingGoalId: string;
   servingGoalTitle: string;
   servingTensionIds: string[];
   queryTerms: WorldQueryTerm[];
   requiredAnchors: string[];
+  goalDerivedRequiredAnchors: string[];
+  topicTermMajorityThreshold: TopicTermMajorityThreshold | null;
   candidates: WorldPerceptionCandidate[];
   surfacedFacts: SurfacedWorldFact[];
   injectedText: string;
@@ -412,6 +419,8 @@ export interface WorldPerceptionPanelModel {
   latency: string | null;
   queryTerms: Array<{ term: string; source: string }>;
   requiredAnchors: string[];
+  goalDerivedRequiredAnchors: string[];
+  topicTermMajorityThreshold: string | null;
   candidates: WorldPerceptionCandidateModel[];
   facts: WorldPerceptionFactModel[];
   corpus: string | null;
@@ -831,6 +840,8 @@ function parseWorldConsultationTrace(
     serving_tension_ids,
     query_terms,
     required_anchors,
+    goal_derived_required_anchors,
+    topic_term_majority_threshold,
     candidates,
     surfaced_facts,
     injected_text,
@@ -845,6 +856,8 @@ function parseWorldConsultationTrace(
   const parsedCandidates = parseWorldCandidates(candidates);
   const facts = parseSurfacedWorldFacts(surfaced_facts);
   const anchors = stringArray(required_anchors);
+  const goalDerivedAnchors = stringArray(goal_derived_required_anchors);
+  const topicTermThreshold = parseTopicTermMajorityThreshold(topic_term_majority_threshold);
   const tensions = stringArray(serving_tension_ids);
   const corpus = parseWorldCorpusMarker(corpus_marker);
   if (
@@ -853,6 +866,8 @@ function parseWorldConsultationTrace(
     tensions === null ||
     terms === null ||
     anchors === null ||
+    goalDerivedAnchors === null ||
+    topicTermThreshold === undefined ||
     parsedCandidates === null ||
     facts === null ||
     typeof injected_text !== "string" ||
@@ -872,6 +887,8 @@ function parseWorldConsultationTrace(
     servingTensionIds: tensions,
     queryTerms: terms,
     requiredAnchors: anchors,
+    goalDerivedRequiredAnchors: goalDerivedAnchors,
+    topicTermMajorityThreshold: topicTermThreshold,
     candidates: parsedCandidates,
     surfacedFacts: facts,
     injectedText: injected_text,
@@ -881,6 +898,30 @@ function parseWorldConsultationTrace(
     injectionReason: injection_reason,
     corpusMarker: corpus,
     externalEffectExecuted: bounded_or_external_output.external_effect_executed,
+  };
+}
+
+function parseTopicTermMajorityThreshold(
+  value: unknown,
+): TopicTermMajorityThreshold | null | undefined {
+  if (value === null) {
+    return null;
+  }
+  if (
+    !isRecord(value) ||
+    typeof value.required_matches !== "number" ||
+    typeof value.total_terms !== "number" ||
+    !Number.isInteger(value.required_matches) ||
+    !Number.isInteger(value.total_terms) ||
+    value.required_matches < 0 ||
+    value.total_terms < 0 ||
+    value.required_matches > value.total_terms
+  ) {
+    return undefined;
+  }
+  return {
+    requiredMatches: value.required_matches,
+    totalTerms: value.total_terms,
   };
 }
 
@@ -2392,6 +2433,8 @@ export function selectWorldPerceptionPanelModel(
       latency: null,
       queryTerms: [],
       requiredAnchors: [],
+      goalDerivedRequiredAnchors: [],
+      topicTermMajorityThreshold: null,
       candidates: [],
       facts: [],
       corpus: null,
@@ -2409,6 +2452,8 @@ export function selectWorldPerceptionPanelModel(
       latency: null,
       queryTerms: [],
       requiredAnchors: [],
+      goalDerivedRequiredAnchors: [],
+      topicTermMajorityThreshold: null,
       candidates: [],
       facts: [],
       corpus: null,
@@ -2452,6 +2497,13 @@ export function selectWorldPerceptionPanelModel(
       source: term.source === "goal_activation" ? "goal activation" : "current topic",
     })),
     requiredAnchors: consultation.requiredAnchors,
+    goalDerivedRequiredAnchors: consultation.goalDerivedRequiredAnchors,
+    topicTermMajorityThreshold:
+      consultation.topicTermMajorityThreshold === null
+        ? null
+        : consultation.topicTermMajorityThreshold.totalTerms === 0
+          ? "no meaningful current-topic terms; goal anchors only"
+          : `${consultation.topicTermMajorityThreshold.requiredMatches} of ${consultation.topicTermMajorityThreshold.totalTerms} meaningful current-topic terms (rounded up)`,
     candidates,
     facts,
     corpus: `${consultation.corpusMarker.producer} · schema ${consultation.corpusMarker.schemaVersion} · ${consultation.corpusMarker.articlesIndexed.toLocaleString("en-US")} articles`,

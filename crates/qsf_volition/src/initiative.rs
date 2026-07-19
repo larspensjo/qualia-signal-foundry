@@ -54,7 +54,8 @@ pub struct ExplicitTopicWorldConsultation {
 
 /// Returns a pure consultation request for an explicitly current named topic.
 ///
-/// This deliberately requires both a current-information cue (such as `release` or `latest`)
+/// This deliberately requires both a current-information cue (such as `release`, `latest`, or
+/// `find information`)
 /// and a concrete topic signal (a named entity or dotted version). It is therefore an escape
 /// hatch for turns like "What do you think about the Grok 4.5 release?", rather than a search
 /// request for every ordinary user turn. The realtime adapter remains responsible for deciding
@@ -126,28 +127,80 @@ pub fn is_generic_world_query_term(term: &str) -> bool {
         term,
         "a" | "an"
             | "and"
+            | "am"
             | "are"
             | "about"
+            | "after"
+            | "among"
+            | "around"
+            | "as"
+            | "at"
+            | "be"
+            | "been"
+            | "before"
+            | "being"
+            | "between"
+            | "by"
             | "can"
             | "did"
             | "do"
             | "does"
+            | "during"
+            | "example"
+            | "examples"
+            | "few"
+            | "find"
             | "for"
+            | "from"
             | "how"
             | "i"
+            | "information"
+            | "instance"
+            | "into"
             | "is"
             | "it"
+            | "just"
+            | "little"
+            | "look"
+            | "many"
             | "me"
+            | "maybe"
+            | "more"
+            | "most"
+            | "much"
             | "of"
             | "on"
+            | "onto"
             | "or"
+            | "over"
+            | "perhaps"
+            | "please"
+            | "search"
+            | "some"
+            | "than"
+            | "that"
             | "the"
+            | "these"
+            | "this"
             | "think"
+            | "thinking"
             | "to"
+            | "under"
+            | "use"
+            | "used"
+            | "uses"
+            | "using"
+            | "was"
             | "what"
             | "when"
+            | "were"
             | "will"
             | "with"
+            | "who"
+            | "which"
+            | "why"
+            | "wonder"
+            | "wondering"
             | "you"
             | "your"
     )
@@ -157,7 +210,11 @@ pub fn is_generic_world_query_term(term: &str) -> bool {
 pub fn is_current_information_cue(term: &str) -> bool {
     matches!(
         term,
-        "release"
+        "find"
+            | "search"
+            | "look"
+            | "information"
+            | "release"
             | "launch"
             | "update"
             | "announcement"
@@ -569,5 +626,59 @@ mod tests {
     fn ordinary_turn_does_not_become_a_world_consultation_request() {
         assert!(explicit_topic_world_consultation_request("How can you help me today?").is_none());
         assert!(explicit_topic_world_consultation_request("What do you think?").is_none());
+    }
+
+    #[test]
+    fn search_request_cue_with_named_entity_requests_a_consultation() {
+        let request =
+            explicit_topic_world_consultation_request("Can you find information about Nvidia?")
+                .expect("named search request");
+
+        assert_eq!(request.required_anchors, ["nvidia"]);
+        let InitiativeOutput::WorldConsultationRequested { query_terms } =
+            request.initiative_output
+        else {
+            panic!("explicit topic helper only returns a consultation request");
+        };
+        assert_eq!(
+            query_terms,
+            vec![WorldQueryTerm {
+                term: "nvidia".to_string(),
+                source: WorldQueryTermSource::CurrentTopic,
+            }]
+        );
+    }
+
+    #[test]
+    fn search_request_cue_without_a_named_entity_does_not_consult() {
+        assert!(
+            explicit_topic_world_consultation_request(
+                "Can you find information about the biggest memory makers?"
+            )
+            .is_none()
+        );
+    }
+
+    #[test]
+    fn named_entity_without_a_current_information_cue_does_not_consult() {
+        assert!(explicit_topic_world_consultation_request("Tell me about Nvidia").is_none());
+    }
+
+    #[test]
+    fn conversational_filler_is_not_a_world_query_term_or_anchor() {
+        let request = explicit_topic_world_consultation_request(
+            "Can you find information about Nvidia? I was just wondering which examples were used by these makers.",
+        )
+        .expect("named search request");
+        let InitiativeOutput::WorldConsultationRequested { query_terms } =
+            request.initiative_output
+        else {
+            panic!("explicit topic helper only returns a consultation request");
+        };
+
+        assert!(query_terms.iter().all(|term| !matches!(
+            term.term.as_str(),
+            "was" | "just" | "wondering" | "which" | "examples" | "were" | "used" | "by" | "these"
+        )));
     }
 }
