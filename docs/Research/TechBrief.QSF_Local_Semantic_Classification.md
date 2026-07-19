@@ -10,6 +10,7 @@
   [DecisionLog.md](../DecisionLog.md)
 - **Target system:** Qualia Signal Foundry
 - **Target runtime:** Windows, Rust, CPU-first with optional NVIDIA GPU acceleration
+- **Target language:** English only, including degraded English ASR transcripts
 - **Primary constraints:** High quality, low latency, limited training cost, inspectability, and safe failure behavior
 
 ---
@@ -21,7 +22,7 @@ Qualia Signal Foundry currently uses a mixture of exact keyword rules, hand-weig
 The recommended direction is not to replace everything with one local generative model. Instead, build a reusable semantic inference layer around:
 
 1. A shared text normalization pipeline.
-2. One shared multilingual text encoder.
+2. One shared English text encoder.
 3. Small task-specific classifiers or pair scorers.
 4. Optional cross-encoder reranking for difficult pairwise decisions.
 5. Calibrated confidence and abstention.
@@ -55,8 +56,8 @@ The recommended implementation order is:
 - Keep deterministic policies explicit and replayable.
 - Add confidence, abstention, versioning, and traceability.
 - Build a shared evaluation framework before broad replacement work.
-- Target English, Swedish, code-switching, and degraded ASR transcripts, with mandatory
-  first-release language coverage still to be decided in Section 14.
+- Support English, including paraphrases, conversational phrasing, and degraded English ASR
+  transcripts.
 
 ### 2.2 Non-goals
 
@@ -67,6 +68,7 @@ The recommended implementation order is:
 - Treating one global accuracy score as sufficient.
 - Automatically promoting low-confidence model outputs into durable state.
 - Replacing current production behavior without shadow-mode evaluation.
+- Supporting Swedish, code-switching, or general multilingual coverage.
 
 ---
 
@@ -184,7 +186,7 @@ Raw text + metadata ───► │ Shared normalization     │
                        ┌───────────────┴────────────────┐
                        │                                │
               Lexical representation           Semantic representation
-              BM25 / char n-grams              Shared multilingual encoder
+              BM25 / char n-grams              Shared English encoder
                        │                                │
                        └───────────────┬────────────────┘
                                        │
@@ -252,15 +254,14 @@ Use a model ladder rather than committing to one implementation.
 |---|---|
 | Character n-grams + logistic regression | Very fast baseline, ASR errors, spelling variation |
 | Static distilled embeddings | Ultra-fast semantic prefilter |
-| Small multilingual sentence encoder | Default shared semantic representation |
+| Small English sentence encoder | Default shared semantic representation |
 | Mini cross-encoder | Pair reranking and subtle relevance |
 | Small NLI-style pair model | Contradiction, entailment, compatibility |
 | Remote OpenAI model | Open-ended formulation, summarization, ambiguous fallback |
 
 Candidate technologies to benchmark include:
 
-- multilingual E5-small-class encoders;
-- MiniLM-class encoders and cross-encoders;
+- English MiniLM-class encoders and cross-encoders;
 - Model2Vec-style static embeddings;
 - ONNX Runtime;
 - `fastembed`;
@@ -362,8 +363,7 @@ Include:
 - hypothetical statements;
 - subject confusion;
 - English;
-- Swedish;
-- code-switched text;
+- varied English conversational styles and dialects;
 - punctuation and casing loss;
 - real ASR errors;
 - synthetic ASR corruption;
@@ -462,7 +462,7 @@ The shared normalizer should explicitly define:
 - short domain terms;
 - sentence boundaries;
 - original-to-normalized span mapping;
-- language metadata;
+- English ASR locale metadata;
 - ASR confidence metadata.
 
 Task-specific configuration may still differ, but differences must be declared rather than reimplemented.
@@ -1189,7 +1189,7 @@ Prioritize annotation for:
 - predictions near thresholds;
 - durable-action candidates;
 - user corrections;
-- underrepresented language slices;
+- underrepresented English dialect, accent, and ASR-error slices;
 - new ASR error patterns;
 - newly formed goals;
 - model upgrade regressions.
@@ -1444,7 +1444,7 @@ Fine-tune only when frozen embeddings fail on well-defined recurring error class
 Possible triggers:
 
 - similar goals cannot be separated;
-- Swedish performance is inadequate;
+- English paraphrase, dialect, or ASR robustness is inadequate;
 - negation remains poor;
 - domain-specific terminology is not represented;
 - cross-encoder quality is necessary but too slow.
@@ -1591,7 +1591,7 @@ Each plan should avoid selecting a model before the benchmark design is agreed.
 
 ## 14. Key Decisions to Resolve Early
 
-1. Which language coverage is mandatory at first release?
+1. Which English dialect, accent, and ASR-error slices are mandatory at first release?
 2. Which live latency budgets apply to each task?
 3. Which durable actions require human or remote-model confirmation?
 4. How should sanitized realtime data be collected?
@@ -1617,7 +1617,7 @@ The first end-to-end milestone should include:
 - minimal shared embedding runtime;
 - T5 goal descriptions and examples;
 - current keyword scorer as baseline;
-- one multilingual encoder;
+- one English sentence encoder;
 - one static or character-based baseline;
 - shadow-mode trace collection;
 - a held-out goal relevance report;
@@ -1635,7 +1635,7 @@ Use:
 
 - deterministic rules for exact high-confidence policy;
 - character and lexical models for narrow robust classification;
-- one shared multilingual encoder for semantic representation;
+- one shared English encoder for semantic representation;
 - task-specific lightweight heads for stable labels;
 - cross-encoders only for difficult candidate pairs;
 - OpenAI only for open-ended formulation, summarization, or ambiguous fallback;
