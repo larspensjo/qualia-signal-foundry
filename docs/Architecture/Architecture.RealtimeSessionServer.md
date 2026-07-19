@@ -112,6 +112,19 @@ mode, not a one-off experiment server.
   captures correlated by their shared per-attempt request hash: a plain-English verdict, the verbatim
   injected volition packet located by its prose prefix, and the previous detailed
   rows collapsed into a "Scoring detail" section.
+- `SessionRuntime` also owns a per-session `world_perception_tx:
+  watch::Sender<Option<WorldPerceptionCapture>>`. Every trusted turn publishes a latest-only
+  `kind: "world_perception"` events-socket message: it carries the completed authoritative
+  `WorldConsultationPerformed` trace when the corpus was consulted, including source-tagged query
+  terms, required anchors, candidates and omission reasons, exact untrusted model-visible text,
+  provenance, injection decision, latency, external-effect flag, and corpus marker; a turn with
+  no consultation carries `consultation: null`. This makes no consultation distinct from a
+  consultation that found nothing relevant without changing the consultation boundary.
+- The browser's World perception panel consumes that message through a parser, session-guarded
+  reducer, and pure selector. It preserves its latest capture after Stop and clears it only for a
+  new session allocation. The view renders the verdict, quoted untrusted external block, source
+  cards, inline/deferred latency, and collapsed anchor/candidate retrieval detail; it does not
+  perform a lookup or influence response generation.
 
 **Partial:**
 
@@ -124,7 +137,7 @@ mode, not a one-off experiment server.
 
 - Full `qsf_app` tool exposure to the live realtime model.
 
-Last reviewed: 2026-07-07 against the Ari identity reframe, the
+Last reviewed: 2026-07-18 against the Ari identity reframe, the
 compatible-snapshot restore / incompatible-snapshot discard resume path, the
 live volition inspection capture surface, the persisted turn-context capture,
 and the browser "What volition did this turn" panel reframe.

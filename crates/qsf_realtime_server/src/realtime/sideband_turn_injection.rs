@@ -39,8 +39,12 @@ use crate::realtime::volition_inspection_capture::{
     build_volition_turn_decision_summary,
 };
 use crate::realtime::world_consultation::{
-    WorldConsultationRequest, WorldConsultationTrigger, WorldCorpus, WorldInjectionPoint,
-    WorldQueryOrigin, complete_trace, consult_world,
+    WorldConsultationRequest, WorldConsultationResult, WorldConsultationTrace,
+    WorldConsultationTrigger, WorldCorpus, WorldInjectionPoint, WorldQueryOrigin, complete_trace,
+    consult_world,
+};
+use crate::realtime::world_perception_capture::{
+    WorldPerceptionCapture, build_world_perception_capture,
 };
 use crate::state::{AppState, SessionRuntime};
 
@@ -125,6 +129,7 @@ pub(crate) async fn inject_trusted_turn_context_and_response(
     let diagnostics = guard.diagnostics.clone();
     let turn_context_tx = guard.turn_context_sender();
     let volition_inspection_tx = guard.volition_inspection_sender();
+    let world_perception_tx = guard.world_perception_sender();
     apply_live_session_event(
         &mut guard.session_state,
         LiveSessionEvent::MemoryContextRecorded {
@@ -489,19 +494,18 @@ pub(crate) async fn inject_trusted_turn_context_and_response(
                 trace: initiative_trace,
             })?;
         }
-        for world_consultation in world_consultations_to_record {
-            let world_consultation = complete_trace(
-                world_consultation,
+        let world_perception_capture = build_world_perception_capture(
+            qsf_session_id.to_string(),
+            exchange_index,
+            OffsetDateTime::now_utc(),
+            record_world_consultations(
+                &diagnostics,
+                qsf_session_id,
+                exchange_index,
                 &request_hash.to_string(),
-                exchange_index,
-            );
-            diagnostics.write(&DiagnosticRecord::WorldConsultationPerformed {
-                qsf_session_id: qsf_session_id.to_string(),
-                exchange_index,
-                recorded_at: OffsetDateTime::now_utc(),
-                trace: world_consultation.trace,
-            })?;
-        }
+                world_consultations_to_record,
+            )?,
+        );
         let volition_inspection_capture = {
             let guard = session.lock().await;
             let inspection = build_state_inspection(&guard.volition.state, &guard.volition.fixture);
@@ -555,7 +559,9 @@ pub(crate) async fn inject_trusted_turn_context_and_response(
             memory_injected_at,
             &turn_context_tx,
             &volition_inspection_tx,
+            &world_perception_tx,
             volition_inspection_capture,
+            world_perception_capture,
         );
     }
 
@@ -566,19 +572,18 @@ pub(crate) async fn inject_trusted_turn_context_and_response(
     );
     turn_request_values.push(response_create.clone());
     let request_hash = hash_request_sequence(&turn_request_values);
-    for world_consultation in world_consultations_to_record {
-        let world_consultation = complete_trace(
-            world_consultation,
+    let world_perception_capture = build_world_perception_capture(
+        qsf_session_id.to_string(),
+        exchange_index,
+        OffsetDateTime::now_utc(),
+        record_world_consultations(
+            &diagnostics,
+            qsf_session_id,
+            exchange_index,
             &request_hash.to_string(),
-            exchange_index,
-        );
-        diagnostics.write(&DiagnosticRecord::WorldConsultationPerformed {
-            qsf_session_id: qsf_session_id.to_string(),
-            exchange_index,
-            recorded_at: OffsetDateTime::now_utc(),
-            trace: world_consultation.trace,
-        })?;
-    }
+            world_consultations_to_record,
+        )?,
+    );
     let volition_inspection_capture = {
         let guard = session.lock().await;
         let inspection = build_state_inspection(&guard.volition.state, &guard.volition.fixture);
@@ -605,8 +610,35 @@ pub(crate) async fn inject_trusted_turn_context_and_response(
         memory_injected_at,
         &turn_context_tx,
         &volition_inspection_tx,
+        &world_perception_tx,
         volition_inspection_capture,
+        world_perception_capture,
     )
+}
+
+/// Persist every authoritative consultation trace and return the last one for the latest-only
+/// browser observation. The socket capture is therefore derived from exactly the same completed
+/// trace as `WorldConsultationPerformed`, never from a parallel reconstruction.
+fn record_world_consultations(
+    diagnostics: &crate::diagnostics::DiagnosticWriter,
+    qsf_session_id: &str,
+    exchange_index: usize,
+    response_create_event_ref: &str,
+    consultations: Vec<WorldConsultationResult>,
+) -> anyhow::Result<Option<WorldConsultationTrace>> {
+    let mut latest_trace = None;
+    for consultation in consultations {
+        let consultation = complete_trace(consultation, response_create_event_ref, exchange_index);
+        let trace = consultation.trace;
+        diagnostics.write(&DiagnosticRecord::WorldConsultationPerformed {
+            qsf_session_id: qsf_session_id.to_string(),
+            exchange_index,
+            recorded_at: OffsetDateTime::now_utc(),
+            trace: trace.clone(),
+        })?;
+        latest_trace = Some(trace);
+    }
+    Ok(latest_trace)
 }
 
 /// Send `response.create` and, on success, publish a [`TurnContextCapture`] to the
@@ -634,7 +666,9 @@ fn send_response_create_and_capture(
     memory_injected_at: Option<OffsetDateTime>,
     turn_context_tx: &watch::Sender<Option<TurnContextCapture>>,
     volition_inspection_tx: &watch::Sender<Option<VolitionInspectionCapture>>,
+    world_perception_tx: &watch::Sender<Option<WorldPerceptionCapture>>,
     volition_inspection_capture: VolitionInspectionCapture,
+    world_perception_capture: WorldPerceptionCapture,
 ) -> anyhow::Result<()> {
     send_json(outbound_tx, response_create)?;
     runtime_state.response_create_sent_at = Some(OffsetDateTime::now_utc());
@@ -663,6 +697,7 @@ fn send_response_create_and_capture(
     })?;
     turn_context_tx.send_replace(Some(capture));
     volition_inspection_tx.send_replace(Some(volition_inspection_capture));
+    world_perception_tx.send_replace(Some(world_perception_capture));
     runtime_state.current_request_hash = Some(request_hash);
     runtime_state.current_message_count = message_count;
     runtime_state.pending_response_exchange = Some(exchange_index);
@@ -709,6 +744,15 @@ mod tests {
         )
     }
 
+    fn dummy_world_perception_capture() -> WorldPerceptionCapture {
+        build_world_perception_capture(
+            "test-session".to_string(),
+            0,
+            OffsetDateTime::from_unix_timestamp(1_700_000_000).expect("timestamp"),
+            None,
+        )
+    }
+
     /// Verifies the fidelity contract: the `request_hash` stored in the published
     /// `TurnContextCapture` equals `hash_request_sequence(&turn_request_values)` for
     /// the same turn values, and the `messages` field is the verbatim
@@ -730,6 +774,7 @@ mod tests {
         let (outbound_tx, _outbound_rx) = mpsc::unbounded_channel::<Message>();
         let (turn_context_tx, turn_context_rx) = watch::channel::<Option<TurnContextCapture>>(None);
         let (volition_inspection_tx, volition_inspection_rx) = watch::channel(None);
+        let (world_perception_tx, world_perception_rx) = watch::channel(None);
 
         let memory_injected_at = None;
         let mut runtime_state = SidebandRuntimeState::default();
@@ -751,7 +796,9 @@ mod tests {
             memory_injected_at,
             &turn_context_tx,
             &volition_inspection_tx,
+            &world_perception_tx,
             dummy_volition_inspection_capture(),
+            dummy_world_perception_capture(),
         );
 
         assert!(
@@ -771,6 +818,7 @@ mod tests {
             "captured messages must be the verbatim turn_request_values in send order"
         );
         assert!(volition_inspection_rx.borrow().is_some());
+        assert!(world_perception_rx.borrow().is_some());
 
         let diagnostics_lines = fs::read_to_string(diagnostics.path()).expect("diagnostics log");
         let parsed: Vec<serde_json::Value> = diagnostics_lines
@@ -805,6 +853,7 @@ mod tests {
 
         let (turn_context_tx, turn_context_rx) = watch::channel::<Option<TurnContextCapture>>(None);
         let (volition_inspection_tx, volition_inspection_rx) = watch::channel(None);
+        let (world_perception_tx, world_perception_rx) = watch::channel(None);
 
         let memory_injected_at = Some(OffsetDateTime::now_utc());
         let mut runtime_state = SidebandRuntimeState {
@@ -833,7 +882,9 @@ mod tests {
             memory_injected_at,
             &turn_context_tx,
             &volition_inspection_tx,
+            &world_perception_tx,
             dummy_volition_inspection_capture(),
+            dummy_world_perception_capture(),
         );
 
         assert!(
@@ -847,6 +898,10 @@ mod tests {
         assert!(
             volition_inspection_rx.borrow().is_none(),
             "volition inspection must not be published when send_json fails"
+        );
+        assert!(
+            world_perception_rx.borrow().is_none(),
+            "world perception must not be published when send_json fails"
         );
 
         let diagnostics_lines = fs::read_to_string(diagnostics.path()).expect("diagnostics log");

@@ -474,6 +474,11 @@ async fn consult_world_injects_a_framed_fact_and_records_the_external_effect_bou
     let tempdir = TempDir::new().expect("tempdir");
     let state = state(&tempdir);
     let allocation = state.create_session().await.expect("session");
+    let runtime = state
+        .session_runtime(&allocation.qsf_session_id)
+        .await
+        .expect("runtime");
+    let world_perception_rx = runtime.lock().await.subscribe_world_perception();
     let mut runtime_state = SidebandRuntimeState::default();
     let (outbound_tx, mut outbound_rx) = mpsc::unbounded_channel();
 
@@ -516,6 +521,42 @@ async fn consult_world_injects_a_framed_fact_and_records_the_external_effect_bou
         term.source,
         qsf_volition::WorldQueryTermSource::CurrentTopic
     )));
+    let capture = world_perception_rx
+        .borrow()
+        .clone()
+        .expect("world perception capture");
+    let message =
+        crate::realtime::world_perception_capture::serialize_world_perception_message(&capture)
+            .expect("serialize world perception message");
+    let message: serde_json::Value = serde_json::from_str(&message).expect("message json");
+    assert_eq!(message["kind"], "world_perception");
+    assert_eq!(
+        message["consultation"]["serving_goal_id"],
+        trace.serving_goal_id
+    );
+    assert!(message["consultation"]["query_terms"].is_array());
+    assert!(message["consultation"]["candidates"].is_array());
+    assert!(
+        message["consultation"]["surfaced_facts"][0]["framed_text"]
+            .as_str()
+            .is_some_and(|text| text.contains("External source material — untrusted"))
+    );
+    assert_eq!(
+        message["consultation"]["bounded_or_external_output"]["external_effect_executed"],
+        true
+    );
+    let consultation = capture.consultation.expect("consultation capture");
+    assert_eq!(capture.qsf_session_id, allocation.qsf_session_id);
+    assert_eq!(consultation.serving_goal_id, trace.serving_goal_id);
+    assert!(
+        consultation
+            .bounded_or_external_output
+            .external_effect_executed
+    );
+    assert!(consultation.surfaced_facts.iter().all(|fact| {
+        fact.framed_text
+            .contains("External source material — untrusted")
+    }));
 }
 
 #[tokio::test]
@@ -570,6 +611,11 @@ async fn explicit_no_match_turn_records_the_read_without_external_injection() {
     let tempdir = TempDir::new().expect("tempdir");
     let state = state(&tempdir);
     let allocation = state.create_session().await.expect("session");
+    let runtime = state
+        .session_runtime(&allocation.qsf_session_id)
+        .await
+        .expect("runtime");
+    let world_perception_rx = runtime.lock().await.subscribe_world_perception();
     let mut runtime_state = SidebandRuntimeState::default();
     let (outbound_tx, mut outbound_rx) = mpsc::unbounded_channel();
 
@@ -600,6 +646,18 @@ async fn explicit_no_match_turn_records_the_read_without_external_injection() {
     assert!(trace.surfaced_facts.is_empty());
     assert!(trace.injected_text.is_empty());
     assert!(trace.bounded_or_external_output.external_effect_executed);
+    let capture = world_perception_rx
+        .borrow()
+        .clone()
+        .expect("world perception capture");
+    let consultation = capture.consultation.expect("consultation capture");
+    assert!(consultation.surfaced_facts.is_empty());
+    assert!(consultation.injected_text.is_empty());
+    assert!(
+        consultation
+            .bounded_or_external_output
+            .external_effect_executed
+    );
 }
 
 #[tokio::test]

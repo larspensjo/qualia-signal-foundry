@@ -14,6 +14,7 @@ import {
   parseTokenUsageMessage,
   parseTurnContextMessage,
   parseVolitionStateMessage,
+  parseWorldPerceptionMessage,
   providerTypeToRelayKind,
   type RelayEnvelope,
   type RelayEventKind,
@@ -26,6 +27,7 @@ import {
   selectTokenUsagePanelModel,
   selectVolitionPanelModel,
   selectVolitionVerdict,
+  selectWorldPerceptionPanelModel,
   type TokenUsageSnapshot,
 } from "./realtime";
 
@@ -42,6 +44,84 @@ function withEnvelope(
     envelope: envelopeOfKind(kind),
     atMs,
   });
+}
+
+function worldPerceptionMessage(consultation: object | null = consultationWithFact()) {
+  return {
+    kind: "world_perception",
+    qsf_session_id: "session_1",
+    exchange_index: 4,
+    captured_at: "2026-07-18T12:00:00Z",
+    consultation,
+  };
+}
+
+function consultationWithFact() {
+  return {
+    serving_goal_id: "track-the-ai-transition",
+    serving_goal_title: "Track the AI transition",
+    serving_tension_ids: ["world-curiosity"],
+    query_terms: [
+      { term: "ai", source: "goal_activation" },
+      { term: "grok", source: "current_topic" },
+    ],
+    required_anchors: ["grok"],
+    candidates: [
+      {
+        content_hash: "hash-1",
+        title: "Grok 4.5 release",
+        url: "https://news.example/grok-4-5",
+        source_domain: "news.example",
+        fetched_utc: "2026-07-17T12:00:00Z",
+        age_seconds: 86_400,
+        score: 7.5,
+        matched_terms: ["grok"],
+        eligibility: "eligible",
+      },
+      {
+        content_hash: "hash-2",
+        title: "AI release roundup",
+        url: "https://news.example/roundup",
+        source_domain: "news.example",
+        fetched_utc: "2026-07-16T12:00:00Z",
+        age_seconds: 172_800,
+        score: 3.2,
+        matched_terms: ["ai"],
+        eligibility: { omitted: { reason: "missing_required_anchor" } },
+      },
+    ],
+    surfaced_facts: [
+      {
+        content_hash: "hash-1",
+        title: "Grok 4.5 release",
+        url: "https://news.example/grok-4-5",
+        source_domain: "news.example",
+        fetched_utc: "2026-07-17T12:00:00Z",
+        trust_tier: "untrusted_external",
+        framed_text:
+          "External source material — untrusted\n<<<EXTERNAL>>>\nGrok 4.5 released.\n<<<END EXTERNAL>>>",
+      },
+    ],
+    injected_text:
+      "I just looked at recent AI news.\n\nExternal source material — untrusted\n<<<EXTERNAL>>>\nGrok 4.5 released.\n<<<END EXTERNAL>>>",
+    lookup_latency_ms: 2,
+    lookup_latency_ns: 2_000_000,
+    injection_point: "inline_same_turn",
+    injection_reason: "lookup_within_inline_budget",
+    corpus_marker: {
+      schema_version: 1,
+      producer: "fixture-producer",
+      articles_indexed: 3,
+      drift_warning: null,
+      corpus_path: "fixture",
+    },
+    bounded_or_external_output: {
+      initiative_output: { world_consultation_requested: { query_terms: [] } },
+      external_effect_executed: true,
+    },
+    response_create_event_ref: "request-hash",
+    artifact_or_record_reference: "exchange:4/diagnostic:world_consultation_performed",
+  };
 }
 
 describe("provider relay mapping", () => {
@@ -2643,5 +2723,129 @@ describe("selectPhaseLaneModel idle-gap compression", () => {
     expect(model.breaks).toEqual([
       { startFraction: 1 - 6_500 / 60_000, endFraction: 1 - 5_000 / 60_000, label: "⫽ 1m 20s" },
     ]);
+  });
+});
+
+describe("world perception message parsing", () => {
+  it("parses a complete consultation trace with source-tagged terms and omission reasons", () => {
+    const capture = parseWorldPerceptionMessage(JSON.stringify(worldPerceptionMessage()));
+    expect(capture).not.toBeNull();
+    expect(capture?.consultation?.queryTerms).toEqual([
+      { term: "ai", source: "goal_activation" },
+      { term: "grok", source: "current_topic" },
+    ]);
+    expect(capture?.consultation?.candidates[1]?.eligibility).toEqual({
+      kind: "omitted",
+      reason: "missing_required_anchor",
+    });
+    expect(capture?.consultation?.externalEffectExecuted).toBe(true);
+  });
+
+  it("rejects malformed traces rather than rendering a partial explanation", () => {
+    expect(parseWorldPerceptionMessage("not json")).toBeNull();
+    expect(parseWorldPerceptionMessage(JSON.stringify({ kind: "volition_state" }))).toBeNull();
+    expect(
+      parseWorldPerceptionMessage(
+        JSON.stringify({
+          ...worldPerceptionMessage(),
+          consultation: { ...consultationWithFact(), candidates: [{ title: "missing fields" }] },
+        }),
+      ),
+    ).toBeNull();
+  });
+});
+
+describe("world perception reducer", () => {
+  const activeState = reduceConversationState(INITIAL_STATE, {
+    type: "session_allocated",
+    sessionId: "session_1",
+  });
+  const capture = parseWorldPerceptionMessage(JSON.stringify(worldPerceptionMessage()));
+  if (capture === null) {
+    throw new Error("world perception fixture must parse");
+  }
+
+  it("ignores a stale-session capture", () => {
+    const next = reduceConversationState(activeState, {
+      type: "world_perception_captured",
+      capture: { ...capture, qsfSessionId: "session_other" },
+    });
+    expect(next).toBe(activeState);
+    expect(next.latestWorldPerception).toBeNull();
+  });
+
+  it("preserves the latest observation after Stop", () => {
+    const populated = reduceConversationState(activeState, {
+      type: "world_perception_captured",
+      capture,
+    });
+    const stopped = reduceConversationState(populated, { type: "stopped", atMs: 1_000 });
+    expect(stopped.latestWorldPerception).toEqual(capture);
+  });
+
+  it("clears the latest observation on new session allocation", () => {
+    const populated = reduceConversationState(activeState, {
+      type: "world_perception_captured",
+      capture,
+    });
+    const reallocated = reduceConversationState(populated, {
+      type: "session_allocated",
+      sessionId: "session_2",
+    });
+    expect(reallocated.latestWorldPerception).toBeNull();
+  });
+});
+
+describe("world perception panel selector", () => {
+  function stateFor(consultation: object | null): ConversationState {
+    const capture = parseWorldPerceptionMessage(
+      JSON.stringify(worldPerceptionMessage(consultation)),
+    );
+    if (capture === null) {
+      throw new Error("world perception fixture must parse");
+    }
+    return { ...INITIAL_STATE, sessionId: "session_1", latestWorldPerception: capture };
+  }
+
+  it("derives surfaced-fact provenance, untrusted injection, retrieval details, and inline latency", () => {
+    const model = selectWorldPerceptionPanelModel(stateFor(consultationWithFact()));
+    expect(model.kind).toBe("surfaced");
+    expect(model.verdict).toBe(
+      "Consulted the world for Track the AI transition → surfaced 1 fact.",
+    );
+    expect(model.modelVisibleInjection).toContain("External source material — untrusted");
+    expect(model.latency).toBe("lookup 2 ms · inline");
+    expect(model.queryTerms).toContainEqual({ term: "grok", source: "current topic" });
+    expect(model.candidates[1]?.eligibility).toBe("Omitted · Missing Required Anchor");
+    expect(model.facts[0]).toMatchObject({
+      title: "Grok 4.5 release",
+      sourceDomain: "news.example",
+      age: "1d old",
+      trustTier: "Untrusted External",
+    });
+  });
+
+  it("distinguishes a performed consultation that surfaced nothing relevant", () => {
+    const consultation = consultationWithFact();
+    consultation.surfaced_facts = [];
+    consultation.injected_text = "";
+    consultation.candidates = consultation.candidates.map((candidate) => ({
+      ...candidate,
+      eligibility: { omitted: { reason: "missing_required_anchor" } },
+    }));
+    const model = selectWorldPerceptionPanelModel(stateFor(consultation));
+    expect(model.kind).toBe("nothing_relevant");
+    expect(model.verdict).toBe(
+      "Consulted the world for Track the AI transition → nothing relevant.",
+    );
+    expect(model.modelVisibleInjection).toBeNull();
+    expect(model.injectionPlaceholder).toContain("no external material reached the model");
+  });
+
+  it("distinguishes no consultation this turn", () => {
+    const model = selectWorldPerceptionPanelModel(stateFor(null));
+    expect(model.kind).toBe("no_consultation");
+    expect(model.verdict).toBe("No consultation this turn.");
+    expect(model.latency).toBeNull();
   });
 });

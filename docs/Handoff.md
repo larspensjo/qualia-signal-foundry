@@ -29,9 +29,10 @@ relevance is still unobserved.
 
 ## Next — active plan or plans
 ### World perception
-**Build the world-perception diagnostic UI in [Plan.WorldPerception](Plans/Plan.WorldPerception.md).**
-Why: with relevance verified live, the panel can visualize a useful retrieval chain — verdict
-line, untrusted-external block, and the anchor/omission falsifiability detail.
+**Human-verify the realtime world-perception diagnostic panel in [Plan.WorldPerception](Plans/Plan.WorldPerception.md).**
+Why: the implemented observation surface now distinguishes no consultation from nothing relevant
+and exposes the exact untrusted injection plus anchor/omission evidence; a live browser pass is
+the remaining confidence check.
 
 ## Horizon — direction
 

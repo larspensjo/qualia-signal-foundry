@@ -20,5 +20,6 @@ pub(crate) mod volition_injection;
 pub(crate) mod volition_inspection_capture;
 pub(crate) mod volition_tools;
 pub(crate) mod world_consultation;
+pub(crate) mod world_perception_capture;
 
 pub use routes::router;

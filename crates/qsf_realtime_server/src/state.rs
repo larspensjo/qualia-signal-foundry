@@ -21,6 +21,7 @@ use crate::realtime::token_usage::{TokenClassCounts, TokenUsageSnapshot};
 use crate::realtime::turn_context::TurnContextCapture;
 use crate::realtime::volition_injection::build_stable_baseline_instructions;
 use crate::realtime::volition_inspection_capture::VolitionInspectionCapture;
+use crate::realtime::world_perception_capture::WorldPerceptionCapture;
 
 /// The stable session id for non-random mode. Sourced from `qsf_session` so the realtime
 /// writer and the sleep reader agree on the same value (see [`qsf_session::continuity`]).
@@ -549,6 +550,7 @@ pub struct SessionRuntime {
     status_tx: watch::Sender<SidebandStatus>,
     turn_context_tx: watch::Sender<Option<TurnContextCapture>>,
     volition_inspection_tx: watch::Sender<Option<VolitionInspectionCapture>>,
+    world_perception_tx: watch::Sender<Option<WorldPerceptionCapture>>,
     token_usage_tx: watch::Sender<Option<TokenUsageSnapshot>>,
 }
 
@@ -588,6 +590,7 @@ impl SessionRuntime {
             status_tx: watch::channel(SidebandStatus::default()).0,
             turn_context_tx: watch::channel(None).0,
             volition_inspection_tx: watch::channel(None).0,
+            world_perception_tx: watch::channel(None).0,
             token_usage_tx: watch::channel(None).0,
         }
     }
@@ -625,6 +628,18 @@ impl SessionRuntime {
     /// `SessionRuntime` can publish captures without holding a `MutexGuard`.
     pub fn volition_inspection_sender(&self) -> watch::Sender<Option<VolitionInspectionCapture>> {
         self.volition_inspection_tx.clone()
+    }
+
+    /// Subscribe to the latest world-perception observation. A capture is published for every
+    /// trusted turn, with `consultation: None` when no world lookup was performed.
+    pub fn subscribe_world_perception(&self) -> watch::Receiver<Option<WorldPerceptionCapture>> {
+        self.world_perception_tx.subscribe()
+    }
+
+    /// Return a clone of the world-perception sender so the authoritative turn path can publish
+    /// its completed consultation trace after the response request is accepted.
+    pub fn world_perception_sender(&self) -> watch::Sender<Option<WorldPerceptionCapture>> {
+        self.world_perception_tx.clone()
     }
 
     /// Subscribe to token-usage snapshots. A late-joining subscriber immediately

@@ -317,6 +317,106 @@ export interface VolitionPanelModel {
   sections: VolitionPanelSection[];
 }
 
+export type WorldQueryTermSource = "goal_activation" | "current_topic";
+
+export interface WorldQueryTerm {
+  term: string;
+  source: WorldQueryTermSource;
+}
+
+export type WorldCandidateEligibility = { kind: "eligible" } | { kind: "omitted"; reason: string };
+
+export interface WorldPerceptionCandidate {
+  contentHash: string;
+  title: string;
+  url: string;
+  sourceDomain: string;
+  fetchedUtc: string;
+  ageSeconds: number;
+  lexicalScore: number;
+  matchedTerms: string[];
+  eligibility: WorldCandidateEligibility;
+}
+
+export interface SurfacedWorldFact {
+  contentHash: string;
+  title: string;
+  url: string;
+  sourceDomain: string;
+  fetchedUtc: string;
+  trustTier: string;
+  framedText: string;
+}
+
+export interface WorldCorpusMarker {
+  schemaVersion: number;
+  producer: string;
+  articlesIndexed: number;
+  driftWarning: string | null;
+  corpusPath: string;
+}
+
+export interface WorldConsultationTrace {
+  servingGoalId: string;
+  servingGoalTitle: string;
+  servingTensionIds: string[];
+  queryTerms: WorldQueryTerm[];
+  requiredAnchors: string[];
+  candidates: WorldPerceptionCandidate[];
+  surfacedFacts: SurfacedWorldFact[];
+  injectedText: string;
+  lookupLatencyMs: number;
+  lookupLatencyNs: number;
+  injectionPoint: "inline_same_turn" | "deferred_next_turn";
+  injectionReason: string;
+  corpusMarker: WorldCorpusMarker;
+  externalEffectExecuted: boolean;
+}
+
+export interface WorldPerceptionCapture {
+  qsfSessionId: string;
+  exchangeIndex: number;
+  capturedAt: string;
+  consultation: WorldConsultationTrace | null;
+}
+
+export type WorldPerceptionPanelKind =
+  | "empty"
+  | "no_consultation"
+  | "nothing_relevant"
+  | "surfaced";
+
+export interface WorldPerceptionCandidateModel {
+  title: string;
+  source: string;
+  age: string;
+  score: string;
+  matchedTerms: string;
+  eligibility: "Eligible" | string;
+}
+
+export interface WorldPerceptionFactModel {
+  title: string;
+  url: string;
+  sourceDomain: string;
+  age: string;
+  trustTier: string;
+}
+
+export interface WorldPerceptionPanelModel {
+  kind: WorldPerceptionPanelKind;
+  verdict: string;
+  caption: string | null;
+  modelVisibleInjection: string | null;
+  injectionPlaceholder: string | null;
+  latency: string | null;
+  queryTerms: Array<{ term: string; source: string }>;
+  requiredAnchors: string[];
+  candidates: WorldPerceptionCandidateModel[];
+  facts: WorldPerceptionFactModel[];
+  corpus: string | null;
+}
+
 export interface ConversationState {
   connection: ConnectionPhase;
   phase: RuntimePhase;
@@ -339,6 +439,7 @@ export interface ConversationState {
   warning: string | null;
   latestTurnContext: TurnContextCapture | null;
   latestVolitionState: VolitionInspectionCapture | null;
+  latestWorldPerception: WorldPerceptionCapture | null;
   latestTokenUsage: TokenUsageSnapshot | null;
 }
 
@@ -354,6 +455,7 @@ export type ConversationAction =
   | { type: "stopped"; atMs: number }
   | { type: "turn_context_captured"; capture: TurnContextCapture }
   | { type: "volition_state_captured"; capture: VolitionInspectionCapture }
+  | { type: "world_perception_captured"; capture: WorldPerceptionCapture }
   | { type: "token_usage_captured"; snapshot: TokenUsageSnapshot };
 
 /// Server-originated status message pushed over the events socket, distinct
@@ -444,6 +546,7 @@ export const INITIAL_STATE: ConversationState = {
   warning: null,
   latestTurnContext: null,
   latestVolitionState: null,
+  latestWorldPerception: null,
   latestTokenUsage: null,
 };
 
@@ -474,6 +577,7 @@ export function reduceConversationState(
         phaseTimeline: [],
         latestTurnContext: null,
         latestVolitionState: null,
+        latestWorldPerception: null,
         latestTokenUsage: null,
       };
     case "connection_ready":
@@ -541,6 +645,16 @@ export function reduceConversationState(
       return {
         ...state,
         latestVolitionState: action.capture,
+      };
+    case "world_perception_captured":
+      // Keep this latest-only diagnostic capture after Stop, but reject a queued socket message
+      // from a closed or replaced session just as the volition capture does.
+      if (action.capture.qsfSessionId !== state.sessionId) {
+        return state;
+      }
+      return {
+        ...state,
+        latestWorldPerception: action.capture,
       };
     case "token_usage_captured":
       // Ignore captures for a session other than the active one: a queued
@@ -669,6 +783,226 @@ export function parseVolitionStateMessage(raw: string): VolitionInspectionCaptur
     decision: parsedDecision,
     signals: parseFunctionalSignals(parsed.signals),
     forcedSurfaced: parseForcedSurfaced(parsed.forced_surfaced),
+  };
+}
+
+/// Parse the authoritative sideband's latest world-perception observation. Consultation fields
+/// are deliberately validated as a whole: this panel is a falsifiability surface, so a partial
+/// or malformed trace must not be rendered as if it explained a real lookup.
+export function parseWorldPerceptionMessage(raw: string): WorldPerceptionCapture | null {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    return null;
+  }
+  if (!isRecord(parsed) || parsed.kind !== "world_perception") {
+    return null;
+  }
+  if (
+    typeof parsed.qsf_session_id !== "string" ||
+    typeof parsed.exchange_index !== "number" ||
+    typeof parsed.captured_at !== "string"
+  ) {
+    return null;
+  }
+  if (parsed.consultation !== null && !isRecord(parsed.consultation)) {
+    return null;
+  }
+  const consultation =
+    parsed.consultation === null ? null : parseWorldConsultationTrace(parsed.consultation);
+  if (parsed.consultation !== null && consultation === null) {
+    return null;
+  }
+  return {
+    qsfSessionId: parsed.qsf_session_id,
+    exchangeIndex: parsed.exchange_index,
+    capturedAt: parsed.captured_at,
+    consultation,
+  };
+}
+
+function parseWorldConsultationTrace(
+  value: Record<string, unknown>,
+): WorldConsultationTrace | null {
+  const {
+    serving_goal_id,
+    serving_goal_title,
+    serving_tension_ids,
+    query_terms,
+    required_anchors,
+    candidates,
+    surfaced_facts,
+    injected_text,
+    lookup_latency_ms,
+    lookup_latency_ns,
+    injection_point,
+    injection_reason,
+    corpus_marker,
+    bounded_or_external_output,
+  } = value;
+  const terms = parseWorldQueryTerms(query_terms);
+  const parsedCandidates = parseWorldCandidates(candidates);
+  const facts = parseSurfacedWorldFacts(surfaced_facts);
+  const anchors = stringArray(required_anchors);
+  const tensions = stringArray(serving_tension_ids);
+  const corpus = parseWorldCorpusMarker(corpus_marker);
+  if (
+    typeof serving_goal_id !== "string" ||
+    typeof serving_goal_title !== "string" ||
+    tensions === null ||
+    terms === null ||
+    anchors === null ||
+    parsedCandidates === null ||
+    facts === null ||
+    typeof injected_text !== "string" ||
+    typeof lookup_latency_ms !== "number" ||
+    typeof lookup_latency_ns !== "number" ||
+    (injection_point !== "inline_same_turn" && injection_point !== "deferred_next_turn") ||
+    typeof injection_reason !== "string" ||
+    corpus === null ||
+    !isRecord(bounded_or_external_output) ||
+    typeof bounded_or_external_output.external_effect_executed !== "boolean"
+  ) {
+    return null;
+  }
+  return {
+    servingGoalId: serving_goal_id,
+    servingGoalTitle: serving_goal_title,
+    servingTensionIds: tensions,
+    queryTerms: terms,
+    requiredAnchors: anchors,
+    candidates: parsedCandidates,
+    surfacedFacts: facts,
+    injectedText: injected_text,
+    lookupLatencyMs: lookup_latency_ms,
+    lookupLatencyNs: lookup_latency_ns,
+    injectionPoint: injection_point,
+    injectionReason: injection_reason,
+    corpusMarker: corpus,
+    externalEffectExecuted: bounded_or_external_output.external_effect_executed,
+  };
+}
+
+function stringArray(value: unknown): string[] | null {
+  return Array.isArray(value) && value.every((entry) => typeof entry === "string") ? value : null;
+}
+
+function parseWorldQueryTerms(value: unknown): WorldQueryTerm[] | null {
+  if (!Array.isArray(value)) {
+    return null;
+  }
+  const terms: WorldQueryTerm[] = [];
+  for (const entry of value) {
+    if (
+      !isRecord(entry) ||
+      typeof entry.term !== "string" ||
+      (entry.source !== "goal_activation" && entry.source !== "current_topic")
+    ) {
+      return null;
+    }
+    terms.push({ term: entry.term, source: entry.source });
+  }
+  return terms;
+}
+
+function parseWorldCandidates(value: unknown): WorldPerceptionCandidate[] | null {
+  if (!Array.isArray(value)) {
+    return null;
+  }
+  const candidates: WorldPerceptionCandidate[] = [];
+  for (const entry of value) {
+    if (!isRecord(entry)) {
+      return null;
+    }
+    const matchedTerms = stringArray(entry.matched_terms);
+    const eligibility = parseWorldCandidateEligibility(entry.eligibility);
+    if (
+      typeof entry.content_hash !== "string" ||
+      typeof entry.title !== "string" ||
+      typeof entry.url !== "string" ||
+      typeof entry.source_domain !== "string" ||
+      typeof entry.fetched_utc !== "string" ||
+      typeof entry.age_seconds !== "number" ||
+      typeof entry.score !== "number" ||
+      matchedTerms === null ||
+      eligibility === null
+    ) {
+      return null;
+    }
+    candidates.push({
+      contentHash: entry.content_hash,
+      title: entry.title,
+      url: entry.url,
+      sourceDomain: entry.source_domain,
+      fetchedUtc: entry.fetched_utc,
+      ageSeconds: entry.age_seconds,
+      lexicalScore: entry.score,
+      matchedTerms,
+      eligibility,
+    });
+  }
+  return candidates;
+}
+
+function parseWorldCandidateEligibility(value: unknown): WorldCandidateEligibility | null {
+  if (value === "eligible") {
+    return { kind: "eligible" };
+  }
+  if (!isRecord(value) || !isRecord(value.omitted) || typeof value.omitted.reason !== "string") {
+    return null;
+  }
+  return { kind: "omitted", reason: value.omitted.reason };
+}
+
+function parseSurfacedWorldFacts(value: unknown): SurfacedWorldFact[] | null {
+  if (!Array.isArray(value)) {
+    return null;
+  }
+  const facts: SurfacedWorldFact[] = [];
+  for (const entry of value) {
+    if (
+      !isRecord(entry) ||
+      typeof entry.content_hash !== "string" ||
+      typeof entry.title !== "string" ||
+      typeof entry.url !== "string" ||
+      typeof entry.source_domain !== "string" ||
+      typeof entry.fetched_utc !== "string" ||
+      typeof entry.trust_tier !== "string" ||
+      typeof entry.framed_text !== "string"
+    ) {
+      return null;
+    }
+    facts.push({
+      contentHash: entry.content_hash,
+      title: entry.title,
+      url: entry.url,
+      sourceDomain: entry.source_domain,
+      fetchedUtc: entry.fetched_utc,
+      trustTier: entry.trust_tier,
+      framedText: entry.framed_text,
+    });
+  }
+  return facts;
+}
+
+function parseWorldCorpusMarker(value: unknown): WorldCorpusMarker | null {
+  if (
+    !isRecord(value) ||
+    typeof value.schema_version !== "number" ||
+    typeof value.producer !== "string" ||
+    typeof value.articles_indexed !== "number" ||
+    (value.drift_warning !== null && typeof value.drift_warning !== "string") ||
+    typeof value.corpus_path !== "string"
+  ) {
+    return null;
+  }
+  return {
+    schemaVersion: value.schema_version,
+    producer: value.producer,
+    articlesIndexed: value.articles_indexed,
+    driftWarning: value.drift_warning,
+    corpusPath: value.corpus_path,
   };
 }
 
@@ -2040,6 +2374,118 @@ export function selectVolitionPanelModel(state: ConversationState): VolitionPane
       signalsSection,
     ),
   };
+}
+
+/// Build every display decision for the world-perception panel from its latest capture. Rendering
+/// receives only this model, keeping the observation plane's state → render path pure.
+export function selectWorldPerceptionPanelModel(
+  state: ConversationState,
+): WorldPerceptionPanelModel {
+  const capture = state.latestWorldPerception;
+  if (capture === null) {
+    return {
+      kind: "empty",
+      verdict: "No world-perception capture yet.",
+      caption: null,
+      modelVisibleInjection: null,
+      injectionPlaceholder: "Awaiting the first trusted turn.",
+      latency: null,
+      queryTerms: [],
+      requiredAnchors: [],
+      candidates: [],
+      facts: [],
+      corpus: null,
+    };
+  }
+  const caption = `Latest trusted turn · exchange ${capture.exchangeIndex}`;
+  const consultation = capture.consultation;
+  if (consultation === null) {
+    return {
+      kind: "no_consultation",
+      verdict: "No consultation this turn.",
+      caption,
+      modelVisibleInjection: null,
+      injectionPlaceholder: "The world corpus was not consulted for this trusted turn.",
+      latency: null,
+      queryTerms: [],
+      requiredAnchors: [],
+      candidates: [],
+      facts: [],
+      corpus: null,
+    };
+  }
+
+  const facts = consultation.surfacedFacts.map((fact) => ({
+    title: fact.title,
+    url: fact.url,
+    sourceDomain: fact.sourceDomain,
+    age: formatWorldAgeFromFetchedUtc(fact.fetchedUtc, capture.capturedAt),
+    trustTier: formatLabelValue(fact.trustTier),
+  }));
+  const candidates = consultation.candidates.map((candidate) => ({
+    title: candidate.title,
+    source: candidate.sourceDomain,
+    age: formatWorldAge(candidate.ageSeconds),
+    score: candidate.lexicalScore.toFixed(2),
+    matchedTerms: candidate.matchedTerms.length === 0 ? "none" : candidate.matchedTerms.join(", "),
+    eligibility:
+      candidate.eligibility.kind === "eligible"
+        ? "Eligible"
+        : `Omitted · ${formatLabelValue(candidate.eligibility.reason)}`,
+  }));
+  const factCount = facts.length;
+  return {
+    kind: factCount === 0 ? "nothing_relevant" : "surfaced",
+    verdict:
+      factCount === 0
+        ? `Consulted the world for ${consultation.servingGoalTitle} → nothing relevant.`
+        : `Consulted the world for ${consultation.servingGoalTitle} → surfaced ${factCount} fact${factCount === 1 ? "" : "s"}.`,
+    caption,
+    modelVisibleInjection: consultation.injectedText || null,
+    injectionPlaceholder:
+      factCount === 0
+        ? "Nothing relevant met the anchor and eligibility checks, so no external material reached the model."
+        : null,
+    latency: `lookup ${formatLookupLatency(consultation.lookupLatencyMs)} · ${formatInjectionPoint(consultation.injectionPoint)}`,
+    queryTerms: consultation.queryTerms.map((term) => ({
+      term: term.term,
+      source: term.source === "goal_activation" ? "goal activation" : "current topic",
+    })),
+    requiredAnchors: consultation.requiredAnchors,
+    candidates,
+    facts,
+    corpus: `${consultation.corpusMarker.producer} · schema ${consultation.corpusMarker.schemaVersion} · ${consultation.corpusMarker.articlesIndexed.toLocaleString("en-US")} articles`,
+  };
+}
+
+function formatLookupLatency(latencyMs: number): string {
+  return Number.isInteger(latencyMs) ? `${latencyMs} ms` : `${latencyMs.toFixed(1)} ms`;
+}
+
+function formatInjectionPoint(point: WorldConsultationTrace["injectionPoint"]): string {
+  return point === "inline_same_turn" ? "inline" : "deferred→next turn";
+}
+
+function formatWorldAge(ageSeconds: number): string {
+  const absoluteSeconds = Math.max(0, Math.floor(ageSeconds));
+  if (absoluteSeconds < 60) {
+    return `${absoluteSeconds}s old`;
+  }
+  if (absoluteSeconds < 3_600) {
+    return `${Math.floor(absoluteSeconds / 60)}m old`;
+  }
+  if (absoluteSeconds < 86_400) {
+    return `${Math.floor(absoluteSeconds / 3_600)}h old`;
+  }
+  return `${Math.floor(absoluteSeconds / 86_400)}d old`;
+}
+
+function formatWorldAgeFromFetchedUtc(fetchedUtc: string, capturedAt: string): string {
+  const fetchedTimestamp = Date.parse(fetchedUtc);
+  const capturedTimestamp = Date.parse(capturedAt);
+  return Number.isNaN(fetchedTimestamp) || Number.isNaN(capturedTimestamp)
+    ? "age unavailable"
+    : formatWorldAge((capturedTimestamp - fetchedTimestamp) / 1_000);
 }
 
 /// Fixed display order of token classes: inputs before outputs, audio before

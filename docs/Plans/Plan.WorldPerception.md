@@ -1,6 +1,6 @@
 # Plan: World Perception — consulting an external AI-news corpus
 
-Status: Active — corpus ingestion, the audited realtime consultation adapter, and consultation relevance/explicit-topic trigger coverage are implemented; the diagnostic panel remains next
+Status: Active — corpus ingestion, the audited realtime consultation adapter, consultation relevance/explicit-topic trigger coverage, and realtime world-perception diagnostics are implemented; background corpus loading remains next
 Maturity: Candidate
 Area: Perception / Volition / Memory
 
@@ -220,7 +220,7 @@ requested.
   entity or release prompt such as `Grok 4.5 release`, without treating every user turn as a
   search request.
 - Build an anchor-aware query: retain named entities, versions, and meaningful goal/topic terms;
-  discard or heavily down-weight generic interrogatives; require every surfaced candidate to
+  discard generic interrogatives; require every surfaced candidate to
   match a required anchor (for example `ai` + `transition`, or `grok`).
 - When no candidate satisfies the anchors, record the performed read with its candidate
   omission reasons but inject no external article. The external-effect flag remains true: the
@@ -251,8 +251,8 @@ transient perception. **No durable memory yet.**
   include `ConsultWorld` by default (so the default fixture exercises the new path).
 - Query construction (`world-curiosity` open-delta limitation applies): terms are the winning
   goal's matched activation keywords **plus** current-topic terms from the turn. The trace
-  keeps the two sources distinct. Precise weighting of goal-activation vs current-topic terms
-  is an Open Question resolved by first live evidence.
+  keeps the two sources distinct. Numeric weighting of goal-activation vs current-topic terms is
+  an Open Question; no numeric weighting is represented in the trace until a real policy exists.
 - `qsf_realtime_server`: a `world_consultation` adapter that, when the arbitration winner's
   chosen effect is `ConsultWorld`, executes the `qsf_corpus` query, applies eligibility +
   anti-repeat suppression, wraps surfaced facts in the untrusted-external sandbox, and injects
@@ -285,7 +285,9 @@ carry:
 
 - `qsf_session_id`, `exchange_index`, `response_create_event_ref`
 - `serving_goal_id`, `serving_goal_title`, `serving_tension_ids` (which goal/tension it served)
-- `query_terms` with weights, each tagged `source: {goal_activation | current_topic}`
+- `query_terms`, each tagged `source: {goal_activation | current_topic}`; numeric weighting is
+  deliberately absent until a real policy exists. Required-anchor decisions and candidate omission
+  reasons are the v1 relevance surface.
 - `candidates[]`: for each, `content_hash`, `title`, `url`, `source_domain`, `fetched_utc`,
   `age`, `lexical_score`, `matched_terms`, and `eligibility: {eligible | omitted_reason}`
   (omission reasons include low score, staleness, and anti-repeat suppression)
@@ -341,9 +343,11 @@ realtime`.
 
 ## Phase: World-perception diagnostic panel (realtime UI)
 
-**Implementation status (2026-07-10):** Not started. It follows the consultation relevance and
-explicit-topic-trigger slice above, so the panel visualizes a useful retrieval chain rather than
-prematurely polishing the current generic-term misfires.
+**Implementation status (2026-07-18):** Implemented and automated-test verified. The server
+publishes a latest-only `world_perception` events-socket capture for every trusted turn: the
+completed authoritative `WorldConsultationPerformed` trace when a consultation occurred, or an
+explicit no-consultation capture otherwise. The UI preserves it after Stop, clears it on a new
+session, and renders the consultation chain as a non-blocking diagnostic view.
 
 Makes the consultation chain visible in the realtime diagnostic page, following the established
 `volition_state` message → parser → reducer → pure selector → panel pattern
@@ -357,9 +361,10 @@ Makes the consultation chain visible in the realtime diagnostic page, following 
      "no consultation this turn".
    - "What reached the model" rendered as a **quoted untrusted-external block** (reusing the
      sandbox framing visually).
-   - Collapsible retrieval detail: query terms + weights (tagged goal-activation vs
-     current-topic), candidate articles with title/source/age/score, eligible vs
-     omitted/suppressed reasons — the falsifiability surface.
+   - Collapsible retrieval detail: source-tagged query terms (goal-activation vs current-topic),
+     required anchors, candidate articles with title/source/age/score, eligible vs
+     omitted/suppressed reasons — the falsifiability surface. Numeric query weights are omitted:
+     no weighting policy exists yet.
 2. **Provenance source-cards** per surfaced fact: headline, source domain (from url), age (from
    fetched_utc), an "untrusted external" pill (reuse the muted `status-pill` style), trust-tier
    badge.

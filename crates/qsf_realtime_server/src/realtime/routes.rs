@@ -20,6 +20,9 @@ use crate::diagnostics::DiagnosticRecord;
 use crate::realtime::token_usage::TokenUsageSnapshot;
 use crate::realtime::turn_context::TurnContextCapture;
 use crate::realtime::volition_inspection_capture::VolitionInspectionCapture;
+use crate::realtime::world_perception_capture::{
+    WorldPerceptionCapture, serialize_world_perception_message,
+};
 use crate::state::{AppState, CallBinding, SessionRuntime, SidebandStatus};
 use qsf_session::{
     Exchange, ExchangeOutput, LiveSessionEvent, LiveSessionState, PartialTranscript,
@@ -387,10 +390,11 @@ async fn handle_events_socket(
     let mut turn_context_rx: Option<watch::Receiver<Option<TurnContextCapture>>> = None;
     let mut volition_inspection_rx: Option<watch::Receiver<Option<VolitionInspectionCapture>>> =
         None;
+    let mut world_perception_rx: Option<watch::Receiver<Option<WorldPerceptionCapture>>> = None;
     let mut token_usage_rx: Option<watch::Receiver<Option<TokenUsageSnapshot>>> = None;
     let mut bound_session: Option<String> = session_hint;
     if let Some(id) = bound_session.clone() {
-        if let Some((srx, tcrx, virx, trx)) = subscribe_session(&state, &id).await {
+        if let Some((srx, tcrx, virx, wprx, trx)) = subscribe_session(&state, &id).await {
             let status = srx.borrow().clone();
             push_status(&mut socket, &id, &status).await;
             status_rx = Some(srx);
@@ -404,6 +408,11 @@ async fn handle_events_socket(
                 push_volition_inspection(&mut socket, &capture).await;
             }
             volition_inspection_rx = Some(virx);
+            let initial_world_perception = wprx.borrow().clone();
+            if let Some(capture) = initial_world_perception {
+                push_world_perception(&mut socket, &capture).await;
+            }
+            world_perception_rx = Some(wprx);
             let initial_token_usage = trx.borrow().clone();
             if let Some(capture) = initial_token_usage {
                 push_token_usage(&mut socket, &capture).await;
@@ -433,6 +442,12 @@ async fn handle_events_socket(
         };
         let token_usage_changed = async {
             match token_usage_rx.as_mut() {
+                Some(rx) => rx.changed().await,
+                None => std::future::pending::<Result<(), watch::error::RecvError>>().await,
+            }
+        };
+        let world_perception_changed = async {
+            match world_perception_rx.as_mut() {
                 Some(rx) => rx.changed().await,
                 None => std::future::pending::<Result<(), watch::error::RecvError>>().await,
             }
@@ -484,6 +499,22 @@ async fn handle_events_socket(
                     }
                     // Sender dropped (session removed): stop watching, keep relaying.
                     Err(_) => volition_inspection_rx = None,
+                }
+            }
+            wp_result = world_perception_changed => {
+                match wp_result {
+                    Ok(()) => {
+                        let capture = world_perception_rx
+                            .as_ref()
+                            .expect("world perception receiver present when change observed")
+                            .borrow()
+                            .clone();
+                        if let Some(capture) = capture {
+                            push_world_perception(&mut socket, &capture).await;
+                        }
+                    }
+                    // Sender dropped (session removed): stop watching, keep relaying.
+                    Err(_) => world_perception_rx = None,
                 }
             }
             tu_result = token_usage_changed => {
@@ -563,7 +594,7 @@ async fn handle_events_socket(
                             .ok();
 
                         if status_rx.is_none() {
-                            if let Some((srx, tcrx, virx, trx)) =
+                            if let Some((srx, tcrx, virx, wprx, trx)) =
                                 subscribe_session(&state, &qsf_session_id).await
                             {
                                 let status = srx.borrow().clone();
@@ -579,6 +610,11 @@ async fn handle_events_socket(
                                     push_volition_inspection(&mut socket, &capture).await;
                                 }
                                 volition_inspection_rx = Some(virx);
+                                let initial_world_perception = wprx.borrow().clone();
+                                if let Some(capture) = initial_world_perception {
+                                    push_world_perception(&mut socket, &capture).await;
+                                }
+                                world_perception_rx = Some(wprx);
                                 let initial_token_usage = trx.borrow().clone();
                                 if let Some(capture) = initial_token_usage {
                                     push_token_usage(&mut socket, &capture).await;
@@ -606,6 +642,7 @@ async fn subscribe_session(
     watch::Receiver<SidebandStatus>,
     watch::Receiver<Option<TurnContextCapture>>,
     watch::Receiver<Option<VolitionInspectionCapture>>,
+    watch::Receiver<Option<WorldPerceptionCapture>>,
     watch::Receiver<Option<TokenUsageSnapshot>>,
 )> {
     let session = state.session_runtime(qsf_session_id).await?;
@@ -614,6 +651,7 @@ async fn subscribe_session(
         guard.subscribe_status(),
         guard.subscribe_turn_context(),
         guard.subscribe_volition_inspection(),
+        guard.subscribe_world_perception(),
         guard.subscribe_token_usage(),
     ))
 }
@@ -671,6 +709,12 @@ async fn push_volition_inspection(socket: &mut WebSocket, capture: &VolitionInsp
         capture: capture.clone(),
     };
     if let Ok(text) = serde_json::to_string(&message) {
+        socket.send(Message::Text(text.into())).await.ok();
+    }
+}
+
+async fn push_world_perception(socket: &mut WebSocket, capture: &WorldPerceptionCapture) {
+    if let Ok(text) = serialize_world_perception_message(capture) {
         socket.send(Message::Text(text.into())).await.ok();
     }
 }

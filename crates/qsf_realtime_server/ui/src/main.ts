@@ -13,6 +13,7 @@ import {
   parseTokenUsageMessage,
   parseTurnContextMessage,
   parseVolitionStateMessage,
+  parseWorldPerceptionMessage,
   reduceConversationState,
   type SdpExchangeResponse,
   type SessionAllocationResponse,
@@ -23,10 +24,12 @@ import {
   selectTokenUsagePanelModel,
   selectVolitionPanelModel,
   selectVolitionVerdict,
+  selectWorldPerceptionPanelModel,
   type TokenUsagePanelModel,
   type VolitionPanelModel,
   type VolitionPanelRow,
   type VolitionPanelSection,
+  type WorldPerceptionPanelModel,
 } from "./realtime";
 
 interface UiRefs {
@@ -46,6 +49,7 @@ interface UiRefs {
   warningBanner: HTMLElement;
   remoteAudio: HTMLAudioElement;
   volitionStateBody: HTMLElement;
+  worldPerceptionBody: HTMLElement;
   tokenUsageBody: HTMLElement;
   phaseLaneCanvas: HTMLCanvasElement;
   phaseLaneTip: HTMLElement;
@@ -141,6 +145,13 @@ root.innerHTML = `
             <div data-role="volition-state-body" class="volition-state-body"></div>
           </details>
         </div>
+      </aside>
+
+      <aside class="panel world-perception-panel">
+        <div class="panel-header">
+          <h2>World perception</h2>
+        </div>
+        <div data-role="world-perception-body" class="world-perception-body"></div>
       </aside>
     </section>
 
@@ -243,6 +254,10 @@ async function startConversation(options: ConversationStartOptions): Promise<boo
       const volitionState = parseVolitionStateMessage(raw);
       if (volitionState !== null) {
         dispatch({ type: "volition_state_captured", capture: volitionState });
+      }
+      const worldPerception = parseWorldPerceptionMessage(raw);
+      if (worldPerception !== null) {
+        dispatch({ type: "world_perception_captured", capture: worldPerception });
       }
       const tokenUsage = parseTokenUsageMessage(raw);
       if (tokenUsage !== null) {
@@ -564,6 +579,7 @@ function render() {
     injectedVolition,
     selectVolitionPanelModel(state),
   );
+  renderWorldPerceptionPanel(refs.worldPerceptionBody, selectWorldPerceptionPanelModel(state));
   renderTokenUsagePanel(refs.tokenUsageBody, selectTokenUsagePanelModel(state));
 }
 
@@ -674,6 +690,7 @@ function collectRefs(container: HTMLElement): UiRefs {
     warningBanner: query<HTMLElement>('[data-role="warning"]'),
     remoteAudio: query<HTMLAudioElement>('[data-role="remote-audio"]'),
     volitionStateBody: query<HTMLElement>('[data-role="volition-state-body"]'),
+    worldPerceptionBody: query<HTMLElement>('[data-role="world-perception-body"]'),
     tokenUsageBody: query<HTMLElement>('[data-role="token-usage-body"]'),
     phaseLaneCanvas: query<HTMLCanvasElement>('[data-role="phase-lane"]'),
     phaseLaneTip: query<HTMLElement>('[data-role="phase-lane-tip"]'),
@@ -745,6 +762,117 @@ function renderWhyThisAnswerPanel(
   renderCompactScoringPanel(scoringBody, model);
   scoring.appendChild(scoringBody);
   container.appendChild(scoring);
+}
+
+function renderWorldPerceptionPanel(container: HTMLElement, model: WorldPerceptionPanelModel) {
+  const retrievalDetailsOpen =
+    container.querySelector<HTMLDetailsElement>(".world-retrieval-details")?.open ?? false;
+  container.replaceChildren();
+
+  const verdict = document.createElement("section");
+  verdict.className = `world-perception-verdict world-perception-verdict-${model.kind}`;
+  const verdictLine = document.createElement("p");
+  verdictLine.textContent = model.verdict;
+  verdict.appendChild(verdictLine);
+  if (model.caption !== null) {
+    const caption = document.createElement("span");
+    caption.className = "world-perception-caption";
+    caption.textContent = model.caption;
+    verdict.appendChild(caption);
+  }
+  if (model.latency !== null) {
+    const latency = document.createElement("span");
+    latency.className = "world-perception-latency";
+    latency.textContent = model.latency;
+    verdict.appendChild(latency);
+  }
+  container.appendChild(verdict);
+
+  const modelSection = document.createElement("section");
+  modelSection.className = "world-model-visible";
+  const modelHeading = document.createElement("h3");
+  modelHeading.textContent = "What reached the model";
+  modelSection.appendChild(modelHeading);
+  if (model.modelVisibleInjection !== null) {
+    const block = document.createElement("blockquote");
+    block.className = "world-untrusted-block";
+    block.textContent = model.modelVisibleInjection;
+    modelSection.appendChild(block);
+  } else {
+    const placeholder = document.createElement("p");
+    placeholder.className = "world-perception-empty";
+    placeholder.textContent = model.injectionPlaceholder ?? "No model-visible external material.";
+    modelSection.appendChild(placeholder);
+  }
+  container.appendChild(modelSection);
+
+  if (model.facts.length > 0) {
+    const sources = document.createElement("section");
+    sources.className = "world-source-cards";
+    const sourceHeading = document.createElement("h3");
+    sourceHeading.textContent = "Surfaced sources";
+    sources.appendChild(sourceHeading);
+    for (const fact of model.facts) {
+      const card = document.createElement("article");
+      card.className = "world-source-card";
+      const title = document.createElement("a");
+      title.href = fact.url;
+      title.target = "_blank";
+      title.rel = "noreferrer";
+      title.textContent = fact.title;
+      const detail = document.createElement("p");
+      detail.textContent = `${fact.sourceDomain} · ${fact.age}`;
+      const pills = document.createElement("p");
+      const untrusted = document.createElement("span");
+      untrusted.className = "status-pill muted";
+      untrusted.textContent = "Untrusted external";
+      const trust = document.createElement("span");
+      trust.className = "world-trust-tier";
+      trust.textContent = fact.trustTier;
+      pills.append(untrusted, trust);
+      card.append(title, detail, pills);
+      sources.appendChild(card);
+    }
+    container.appendChild(sources);
+  }
+
+  const details = document.createElement("details");
+  details.className = "world-retrieval-details";
+  details.open = retrievalDetailsOpen;
+  const summary = document.createElement("summary");
+  summary.textContent = "Retrieval detail";
+  details.appendChild(summary);
+  const detailBody = document.createElement("div");
+  detailBody.className = "world-retrieval-body";
+  const terms = document.createElement("p");
+  terms.textContent =
+    model.queryTerms.length === 0
+      ? "No consultation terms this turn."
+      : `Query terms: ${model.queryTerms.map((term) => `${term.term} (${term.source})`).join(", ")}`;
+  detailBody.appendChild(terms);
+  const anchors = document.createElement("p");
+  anchors.textContent =
+    model.requiredAnchors.length === 0
+      ? "Required anchors: none"
+      : `Required anchors: ${model.requiredAnchors.join(", ")}`;
+  detailBody.appendChild(anchors);
+  if (model.corpus !== null) {
+    const corpus = document.createElement("p");
+    corpus.textContent = `Corpus: ${model.corpus}`;
+    detailBody.appendChild(corpus);
+  }
+  if (model.candidates.length > 0) {
+    const candidates = document.createElement("ul");
+    candidates.className = "world-candidate-list";
+    for (const candidate of model.candidates) {
+      const item = document.createElement("li");
+      item.textContent = `${candidate.title} · ${candidate.source} · ${candidate.age} · score ${candidate.score} · ${candidate.eligibility} · matched ${candidate.matchedTerms}`;
+      candidates.appendChild(item);
+    }
+    detailBody.appendChild(candidates);
+  }
+  details.appendChild(detailBody);
+  container.appendChild(details);
 }
 
 function renderTokenUsagePanel(container: HTMLElement, model: TokenUsagePanelModel) {
