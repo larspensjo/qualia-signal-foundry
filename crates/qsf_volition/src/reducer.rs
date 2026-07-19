@@ -16,6 +16,11 @@ pub struct GoalDynamicState {
     pub salience: i32,
     pub reinforcement_count: u32,
     pub progress_evidence_refs: Vec<EvidenceRef>,
+    /// Tick at which a live-formed or reviewed goal entered this lifecycle. Fixture goals use
+    /// `None` because they exist from tick zero and are independently exempt from idle
+    /// retirement. Kept separate from `last_activated_tick`, which records actual activation.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub admitted_tick: Option<u64>,
     pub last_activated_tick: Option<u64>,
     pub last_satisfied_tick: Option<u64>,
     /// Tick at which cooldown ends and the goal returns to Accepted.
@@ -64,6 +69,7 @@ impl GoalDynamicState {
             salience: 0,
             reinforcement_count: 0,
             progress_evidence_refs: Vec::new(),
+            admitted_tick: None,
             last_activated_tick: None,
             last_satisfied_tick: None,
             cooldown_until_tick: None,
@@ -74,6 +80,13 @@ impl GoalDynamicState {
             last_initiative_tick: None,
             last_rendered_initiative_tick: None,
             last_rendered_initiative_ref: None,
+        }
+    }
+
+    pub(crate) fn admitted(tick: u64) -> Self {
+        Self {
+            admitted_tick: Some(tick),
+            ..Self::initial()
         }
     }
 }
@@ -338,7 +351,7 @@ pub fn apply(mut state: VolitionState, event: VolitionEvent) -> VolitionState {
         VolitionEvent::GoalCandidateAccepted {
             goal_id,
             acceptance_evidence,
-            ..
+            tick,
         } => {
             if let Some(pos) = state
                 .pending_candidates
@@ -352,7 +365,7 @@ pub fn apply(mut state: VolitionState, event: VolitionEvent) -> VolitionState {
                 // fixture goals.
                 state
                     .goals
-                    .insert(goal_id.clone(), GoalDynamicState::initial());
+                    .insert(goal_id.clone(), GoalDynamicState::admitted(tick));
                 state.accepted_candidates.insert(goal_id, goal);
             }
         }
@@ -522,10 +535,13 @@ pub fn tick_events(
                 let is_protected =
                     goal_effective_tier(goal_id, state, fixture) <= PROTECTED_TIER_FLOOR;
                 let is_seed_fixture_goal = fixture.goals.iter().any(|g| &g.id == goal_id);
-                let last_active = dynamic.last_activated_tick.unwrap_or(0);
+                let inactivity_baseline = dynamic
+                    .last_activated_tick
+                    .or(dynamic.admitted_tick)
+                    .unwrap_or(0);
                 if !is_protected
                     && !is_seed_fixture_goal
-                    && new_tick.saturating_sub(last_active) >= RETIREMENT_INACTIVITY_TICKS
+                    && new_tick.saturating_sub(inactivity_baseline) >= RETIREMENT_INACTIVITY_TICKS
                     && dynamic.reinforcement_count == 0
                     && dynamic.salience == 0
                 {
@@ -1092,6 +1108,7 @@ mod tests {
         });
 
         let dynamic: GoalDynamicState = serde_json::from_value(json).unwrap();
+        assert_eq!(dynamic.admitted_tick, None);
         assert_eq!(dynamic.blocked_count, 0);
         assert_eq!(dynamic.last_blocked_tick, None);
         assert_eq!(dynamic.last_satisfied_evidence_ref, None);
@@ -1158,6 +1175,53 @@ mod tests {
             event,
             VolitionEvent::GoalRetired { goal_id: id, .. } if id == "live-formed-tangent"
         )));
+    }
+
+    #[test]
+    fn tick_events_gives_late_admitted_goal_full_inactivity_window() {
+        let fixture = static_fixture();
+        let mut state = VolitionState::from_fixture(&fixture);
+        let candidate = make_candidate("late-live-formed-goal");
+        state = apply(
+            state,
+            VolitionEvent::GoalCandidateAdded {
+                candidate,
+                tick: 27,
+            },
+        );
+        state = apply(
+            state,
+            VolitionEvent::GoalCandidateAccepted {
+                goal_id: "late-live-formed-goal".to_string(),
+                acceptance_evidence: EvidenceRef::try_new("test-accept").unwrap(),
+                tick: 28,
+            },
+        );
+
+        assert_eq!(
+            state.goal("late-live-formed-goal").unwrap().admitted_tick,
+            Some(28)
+        );
+        assert!(
+            !tick_events(&state, &fixture, 29)
+                .iter()
+                .any(|event| matches!(
+                    event,
+                    VolitionEvent::GoalRetired { goal_id, .. }
+                        if goal_id == "late-live-formed-goal"
+                )),
+            "a goal must not retire one tick after late-session admission"
+        );
+        assert!(
+            tick_events(&state, &fixture, 28 + RETIREMENT_INACTIVITY_TICKS)
+                .iter()
+                .any(|event| matches!(
+                    event,
+                    VolitionEvent::GoalRetired { goal_id, .. }
+                        if goal_id == "late-live-formed-goal"
+                )),
+            "an unactivated live-formed goal must still retire after its full inactivity window"
+        );
     }
 
     #[test]
@@ -1605,6 +1669,7 @@ mod tests {
         let dynamic = state.goals.get(&candidate_id).unwrap();
         assert_eq!(dynamic.status, GoalStatus::Accepted);
         assert_eq!(dynamic.salience, 0);
+        assert_eq!(dynamic.admitted_tick, Some(2));
     }
 
     #[test]
@@ -1640,6 +1705,7 @@ mod tests {
         let dynamic = state.goal("clarify-weak-evidence-topic").unwrap();
         assert_eq!(dynamic.status, GoalStatus::Accepted);
         assert_eq!(dynamic.salience, 0);
+        assert_eq!(dynamic.admitted_tick, Some(3));
         assert_eq!(dynamic.last_activated_tick, None);
     }
 

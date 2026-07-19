@@ -389,6 +389,11 @@ or `Active` regardless of session length, preserving the guarantee that person r
 epistemic integrity, and the present person's explicit request dominate arbitration even
 in very long sessions.
 
+Non-protected live-formed goals remain eligible for idle retirement, but their inactivity clock
+starts at admission rather than at session tick zero. A goal admitted late in a session therefore
+survives for the complete retirement window even if it has not activated yet; after its first
+activation, retirement measures inactivity from the most recent activation instead.
+
 ### Read-Only Volition Tools
 
 Two read-only tools expose per-session volition state to the live model without mutating

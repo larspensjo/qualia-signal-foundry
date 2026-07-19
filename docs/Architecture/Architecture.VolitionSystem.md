@@ -29,7 +29,10 @@ and—going forward—`qsf_realtime_server`), not in the crate.
   so continuity snapshots predating them still load. These are lifecycle facts, not emotion
   state.
 - Tick-driven lifecycle: salience decay, cooldown elapse, and inactivity retirement via
-  `tick_events()`.
+  `tick_events()`. Retirable goals receive a full inactivity window from their admission tick;
+  once activated, their most recent activation tick becomes the inactivity baseline. Admission
+  remains separate from `last_activated_tick` so activation-dependent signals retain their exact
+  meaning.
 - Context-neutral selection record `GoalSelection` (goal, relevance score, matched keywords
   with weight classes, `match_strength`, proposed initiative) and the deterministic
   arbitration functions `arbitrate()` and `arbitrate_with_mode()`.

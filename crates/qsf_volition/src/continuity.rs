@@ -12,7 +12,7 @@ use crate::{
 };
 
 pub const REALTIME_SEED_FIXTURE_ID: &str = "realtime_seed_fixture";
-pub const VOLITION_CONTINUITY_SNAPSHOT_SCHEMA_VERSION: u16 = 3;
+pub const VOLITION_CONTINUITY_SNAPSHOT_SCHEMA_VERSION: u16 = 4;
 pub const REVIEWED_VOLITION_SEED_SCHEMA_VERSION: u16 = 2;
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
@@ -44,6 +44,12 @@ impl VolitionContinuitySnapshot {
     }
 
     pub fn upgrade_schema_version(&mut self) {
+        let fallback_admitted_tick = self.state.tick;
+        for goal_id in self.state.accepted_candidates.keys() {
+            if let Some(dynamic) = self.state.goals.get_mut(goal_id) {
+                dynamic.admitted_tick.get_or_insert(fallback_admitted_tick);
+            }
+        }
         if self.schema_version < VOLITION_CONTINUITY_SNAPSHOT_SCHEMA_VERSION {
             self.schema_version = VOLITION_CONTINUITY_SNAPSHOT_SCHEMA_VERSION;
         }
@@ -169,6 +175,7 @@ pub fn apply_reviewed_seed_in_place(
     reviewed_seed: &ReviewedVolitionSeed,
 ) -> anyhow::Result<()> {
     let mut seen_ids = BTreeSet::new();
+    let admitted_tick = state.tick;
 
     for (goal_id, goal) in &reviewed_seed.accepted_goals {
         if !seen_ids.insert(goal_id.clone()) {
@@ -204,7 +211,7 @@ pub fn apply_reviewed_seed_in_place(
             .insert(goal_id.clone(), goal.clone());
         state
             .goals
-            .insert(goal_id.clone(), GoalDynamicState::initial());
+            .insert(goal_id.clone(), GoalDynamicState::admitted(admitted_tick));
     }
 
     Ok(())
@@ -341,6 +348,60 @@ mod tests {
                 .all(|k| k.weight_class == KeywordWeightClass::Normal)
         );
         assert_eq!(upgraded[0].term, "legacy");
+    }
+
+    #[test]
+    fn legacy_snapshot_gives_unactivated_accepted_candidate_fresh_inactivity_window() {
+        let dir = TempDir::new().unwrap();
+        let path = dir.path().join("volition-state.json");
+        let mut snapshot = sample_snapshot();
+        let candidate = ProposedGoalCandidate::try_new(
+            "legacy-live-goal".to_string(),
+            "Legacy live goal".to_string(),
+            "A live goal persisted before admission ticks were recorded.".to_string(),
+            vec!["world-curiosity".to_string()],
+            GoalScope::Session,
+            70,
+            vec![AllowedEffect::Reflect],
+            "Satisfied when resolved.".to_string(),
+            vec![EvidenceRef::try_new("test").unwrap()],
+            "test".to_string(),
+            vec![],
+        )
+        .unwrap();
+        snapshot.state = crate::apply(
+            snapshot.state,
+            crate::VolitionEvent::GoalCandidateAdded {
+                candidate,
+                tick: 27,
+            },
+        );
+        snapshot.state = crate::apply(
+            snapshot.state,
+            crate::VolitionEvent::GoalCandidateAccepted {
+                goal_id: "legacy-live-goal".to_string(),
+                acceptance_evidence: EvidenceRef::try_new("accepted").unwrap(),
+                tick: 28,
+            },
+        );
+        let mut value = serde_json::to_value(&snapshot).unwrap();
+        value["schema_version"] = serde_json::json!(3);
+        value["state"]["goals"]["legacy-live-goal"]
+            .as_object_mut()
+            .unwrap()
+            .remove("admitted_tick");
+        std::fs::write(&path, serde_json::to_string_pretty(&value).unwrap()).unwrap();
+
+        let loaded = VolitionContinuitySnapshot::load_or_upgrade(&path).unwrap();
+
+        assert_eq!(
+            loaded.state.goal("legacy-live-goal").unwrap().admitted_tick,
+            Some(28)
+        );
+        assert_eq!(
+            loaded.schema_version,
+            VOLITION_CONTINUITY_SNAPSHOT_SCHEMA_VERSION
+        );
     }
 
     #[test]
