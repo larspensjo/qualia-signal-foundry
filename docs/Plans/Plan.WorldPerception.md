@@ -1,6 +1,6 @@
 # Plan: World Perception — consulting an external AI-news corpus
 
-Status: Active — corpus ingestion, the audited realtime consultation adapter, consultation relevance/explicit-topic trigger coverage, and realtime world-perception diagnostics are implemented; background corpus loading remains next
+Status: Active — corpus ingestion, the audited realtime consultation adapter, consultation relevance/explicit-topic trigger coverage, and realtime world-perception diagnostics are implemented; goal-activation anchor relaxation and search-request cues are next, then the trust-tier memory substrate
 Maturity: Candidate
 Area: Perception / Volition / Memory
 
@@ -236,6 +236,53 @@ requested.
 model-visible injection is framed untrusted; a generic-match article is explicitly omitted;
 and a no-match turn injects nothing. Repeat the live realtime probe with a specific AI release
 and confirm that the response can honestly attribute a relevant external source claim.
+
+### Next slice: goal-activation anchor relaxation and search-request cues
+
+**Implementation status (2026-07-19):** Not started. Motivated by two live real-corpus sessions
+(2026-07-18 and 2026-07-19, both recorded in `Experiment.WorldConsultation.md`): goal-activation
+consultations surfaced nothing on natural speech, and an explicit "can you find information
+about…" turn triggered no consultation at all.
+
+The goal-activation relevance gate currently requires a candidate to match **all** meaningful
+query terms. On a conversational sentence that produced 13 required anchors — several of them
+uninformative ("was", "by", "used", "little", "example", "thinking") — and omitted every
+candidate as `missing_required_anchor`, including an exactly on-topic article that matched 11 of
+13 terms. The explicit-topic path, meanwhile, requires a current-information cue from a narrow
+lexicon (`release`, `latest`, `news`, …) that does not include plain search requests. Preserve
+the volition-to-adapter boundary, the external-effect trace, and the no-match/no-injection
+behavior; change only relevance gating and trigger coverage.
+
+- **Goal-activation anchor policy (decided 2026-07-19): goal anchors plus a majority of topic
+  terms.** A surfaced candidate must match (a) every required anchor derived from the serving
+  goal's activation terms present in the query (for example `ai`), and (b) at least half of the
+  meaningful current-topic terms. The explicit-topic path keeps its existing entity/version
+  anchor gate unchanged.
+- **Extend the generic-term stoplist** so auxiliaries, prepositions, and conversational filler
+  ("was", "by", "used", "little", "example", "thinking", and kin) are neither query terms nor
+  anchors. Keep the stoplist a single shared source of truth for query construction and anchor
+  derivation.
+- **Extend the current-information cue lexicon** with plain search-request forms ("find",
+  "search", "look", "information") so a turn like "Can you find information about the biggest
+  HBM makers?" can take the explicit path. The named-entity/dotted-version requirement stays: a
+  cue alone must still not consult.
+- **Trace falsifiability:** the trace records which anchors were goal-derived, the
+  topic-term-majority threshold applied, and per-candidate omission reasons distinguishing
+  `missing_required_anchor` from `below_topic_term_majority`, so a reviewer can falsify why a
+  candidate was or was not surfaced.
+- **Regression fixtures reproducing the live misses:** a fixture modeled on the
+  high-bandwidth-memory turn where an on-topic article matching the goal anchor and a majority
+  of topic terms is surfaced while a loosely related article matching only the goal anchor is
+  omitted; and a "find information about <entity>" fixture taking the explicit path. Keep the
+  existing sandbox, latency-budget, hash-resolution, anti-repeat, and external-boundary
+  regressions.
+
+**Acceptance evidence for this slice:** the HBM-style fixture surfaces the on-topic article and
+omits the generic one, each with a recorded reason; a search-request cue plus named entity
+consults while a cue-less or entity-less turn does not; and a live real-corpus probe on a
+conversational sentence surfaces at least one honestly attributed, relevantly anchored external
+claim — the first observed useful real-corpus surfacing (the panel's retrieval detail is the
+verification surface).
 
 The first end-to-end slice that reaches the live model. Wires the curiosity goals to a new
 external effect, executes a read-only corpus lookup, and injects the result as untrusted

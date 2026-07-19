@@ -58,7 +58,8 @@ bounded top-candidate selection replaced full candidate materialization and sort
 `WorldConsultationPerformed` is the authoritative JSONL record. It carries:
 
 - session/exchange/request references; serving goal and tension ids;
-- weighted query terms tagged `goal_activation` or `current_topic`;
+- query terms tagged `goal_activation` or `current_topic` (no numeric weights: required-anchor
+  decisions and candidate omission reasons are the relevance surface);
 - chosen required anchors, plus every candidate's score, matched terms, provenance, and
   eligibility or omission reason (including `missing_required_anchor`);
 - exact injected untrusted blocks and their source provenance;
@@ -111,6 +112,27 @@ knowledge. This closes the trigger/relevance/framing question live. Still open: 
 against the real WPFM corpus with a topic the corpus actually covers — the most recent
 real-corpus session (2026-07-18, 6,925 articles) surfaced nothing, with every candidate omitted
 `missing_required_anchor`, so real-corpus relevance remains unobserved.
+
+A 2026-07-19 real-corpus voice session (6,925 articles) confirmed and sharpened that no-surface
+result. A turn about high-bandwidth memory in AI data centers activated
+`track-the-ai-transition` (`ai-trajectory-concern`) and performed a genuine external read: 4 ms
+lookup, inline same-turn, `external_effect_executed: true`, eight candidates. The goal-activation
+gate — which requires a candidate to match **all** meaningful query terms — produced 13 required
+anchors including uninformative terms ("was", "by", "used", "little", "example", "thinking"),
+and omitted every candidate as `missing_required_anchor`, including an exactly on-topic article
+("Memory Chips Skyrocket Amid AI Data Center Buildout") that matched 11 of 13. Nothing was
+injected; the spoken answer honestly used only parametric knowledge. A follow-up turn — "Can you
+find information about what the biggest players are in this market?" — triggered no consultation
+at all: the explicit path's cue lexicon lacks plain search-request forms and the turn named no
+entity, while goal activation had no lexical signal ("this market" is anaphoric). Two additional
+observations: the live goal-formation judge admitted a new goal
+(`understand-hbm-memory-constraints`) from the topic, and the `world_perception` diagnostic
+capture carried the complete trace that made this analysis possible. Consultation-turn
+transcript-to-first-audio latency was 820 ms (top of the 600–850 ms envelope; the lookup itself
+contributed ~4 ms). Conclusion: the external-effect, budget, framing, and trace mechanisms hold;
+the goal-activation require-all anchor policy and the cue lexicon are the remaining blockers to
+useful real-corpus surfacing. The anchor-relaxation and search-request-cue slice in
+`Plan.WorldPerception.md` owns the fix.
 
 ## Follow-Up Questions
 
