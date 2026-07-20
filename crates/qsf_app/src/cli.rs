@@ -53,6 +53,17 @@ enum Command {
         ledger_path: PathBuf,
     },
 
+    /// Print full persisted volition goal definitions and lifecycle state.
+    Goals {
+        /// Realtime state directory containing continuity sessions.
+        #[arg(long, default_value = "state/realtime", value_name = "PATH")]
+        state_dir: PathBuf,
+
+        /// Explicit continuity session id. Bypasses automatic session selection.
+        #[arg(long, value_name = "ID")]
+        session: Option<String>,
+    },
+
     /// Build or incrementally refresh the read-only external world corpus index.
     IngestWorld {
         /// Producer-owned corpus output directory. When omitted, QSF_WORLD_CORPUS_PATH is used
@@ -117,6 +128,25 @@ pub fn run() -> anyhow::Result<()> {
             );
             Ok(())
         }
+        Some(Command::Goals { state_dir, session }) => {
+            let loaded = crate::goal_detail_loading::load_goal_detail_report(
+                &state_dir,
+                session.as_deref(),
+            )?;
+            println!(
+                "{}",
+                crate::console::goal_detail_view::render_goal_detail_report(
+                    &loaded.report,
+                    crate::console::goal_detail_view::GoalDetailHeader {
+                        session_id: &loaded.session_id,
+                        seed_fixture_id: &loaded.seed_fixture_id,
+                        recorded_at: &loaded.recorded_at,
+                    },
+                    crate::console::styling::ColorMode::for_stdout(),
+                )
+            );
+            Ok(())
+        }
         Some(Command::IngestWorld {
             corpus_path,
             ledger_path,
@@ -171,6 +201,32 @@ mod tests {
             panic!("expected sleep command");
         };
         assert_eq!(state_dir, std::path::PathBuf::from("state/realtime"));
+    }
+
+    #[test]
+    fn goals_command_defaults_to_realtime_state_and_parses_session() {
+        let default_cli = Cli::try_parse_from(["qsf_app", "goals"]).unwrap();
+        let Some(super::Command::Goals { state_dir, session }) = default_cli.command else {
+            panic!("expected goals command");
+        };
+        assert_eq!(state_dir, std::path::PathBuf::from("state/realtime"));
+        assert_eq!(session, None);
+
+        let session_cli =
+            Cli::try_parse_from(["qsf_app", "goals", "--session", "run-123"]).unwrap();
+        let Some(super::Command::Goals { session, .. }) = session_cli.command else {
+            panic!("expected goals command");
+        };
+        assert_eq!(session.as_deref(), Some("run-123"));
+    }
+
+    #[test]
+    fn no_color_flag_is_accepted_around_goals_subcommand() {
+        let before = Cli::try_parse_from(["qsf_app", "--no-color", "goals"]).unwrap();
+        let after = Cli::try_parse_from(["qsf_app", "goals", "--no-color"]).unwrap();
+
+        assert!(before.no_color);
+        assert!(after.no_color);
     }
 
     #[test]

@@ -6,7 +6,7 @@ use anyhow::Context;
 use serde::{Deserialize, Serialize};
 use tempfile::NamedTempFile;
 
-use crate::arbitration::PROTECTED_TIER_FLOOR;
+use crate::arbitration::{PROTECTED_TIER_FLOOR, effective_tension_for_goal};
 use crate::{
     Goal, GoalDynamicState, GoalStatus, VolitionFixture, VolitionState, VolitionStateInspection,
 };
@@ -14,6 +14,25 @@ use crate::{
 pub const REALTIME_SEED_FIXTURE_ID: &str = "realtime_seed_fixture";
 pub const VOLITION_CONTINUITY_SNAPSHOT_SCHEMA_VERSION: u16 = 4;
 pub const REVIEWED_VOLITION_SEED_SCHEMA_VERSION: u16 = 2;
+
+type SeedFixtureBuilder = fn() -> VolitionFixture;
+
+const KNOWN_SEED_FIXTURES: &[(&str, SeedFixtureBuilder)] =
+    &[(REALTIME_SEED_FIXTURE_ID, crate::realtime_seed_fixture)];
+
+/// Seed fixture identifiers that this build can reconstruct from current code.
+pub fn known_seed_fixture_ids() -> impl Iterator<Item = &'static str> {
+    KNOWN_SEED_FIXTURES.iter().map(|(id, _)| *id)
+}
+
+/// Rebuilds a seed fixture named by a continuity snapshot. Snapshot readers that need a
+/// definition use this shared resolver so fixture reconstruction cannot diverge.
+pub fn fixture_for_seed_id(seed_fixture_id: &str) -> Option<VolitionFixture> {
+    KNOWN_SEED_FIXTURES
+        .iter()
+        .find(|(id, _)| *id == seed_fixture_id)
+        .map(|(_, build)| build())
+}
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 pub struct VolitionContinuitySnapshot {
@@ -218,12 +237,7 @@ pub fn apply_reviewed_seed_in_place(
 }
 
 fn goal_effective_tier(goal: &Goal, fixture: &VolitionFixture) -> u8 {
-    goal.tension_ids
-        .iter()
-        .filter_map(|tid| fixture.tensions.iter().find(|t| t.id == *tid))
-        .map(|t| t.arbitration_tier)
-        .min()
-        .unwrap_or(u8::MAX)
+    effective_tension_for_goal(goal, fixture).0
 }
 
 fn persist_json<T: Serialize>(path: impl AsRef<Path>, value: &T) -> anyhow::Result<PathBuf> {

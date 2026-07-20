@@ -546,6 +546,7 @@ Usage:
   .\scripts\qsf.ps1 workbench [<store>] [-Store <path>] [-BindHost <ip>] [-Port <port>]
   .\scripts\qsf.ps1 realtime [-RandomSessionId] [-WorldCorpusPath <path>]
   .\scripts\qsf.ps1 sleep [-StateDir <path>] [-Provider <openai|mock>] [-WorldCorpusPath <path>] [-WorldCorpusLedger <path>]
+  .\scripts\qsf.ps1 goals [<session-id>] [-StateDir <path>]
   .\scripts\qsf.ps1 world-ingest [-WorldCorpusPath <path>] [-WorldCorpusLedger <path>]
   .\scripts\qsf.ps1 restore [<backup-name>|latest] [-StateDir <path>]
   .\scripts\qsf.ps1 doctor [-LaunchProfile <name>] [-Workbench]
@@ -569,6 +570,7 @@ Defaults:
   Realtime UI:     crates/qsf_realtime_server/ui (Vite on $realtimeUiUrl)
   Sleep update:    state/realtime through the $Provider provider; openai requires OPENAI_API_KEY
                    backs up the state dir to state/backups/<name>-<timestamp> first (keeps last 5)
+  Goals:           prints full read-only volition goal detail from state/realtime; an optional session id bypasses auto-selection
   Restore:         creates undo backups as state/backups/<name>-restore-<timestamp>; latest ignores those undo backups
 
 Examples:
@@ -586,6 +588,8 @@ Examples:
   .\scripts\qsf.ps1 realtime -WorldCorpusPath C:\data\web_page_filet_mignon\output
   .\scripts\qsf.ps1 sleep
   .\scripts\qsf.ps1 sleep -Provider mock
+  .\scripts\qsf.ps1 goals
+  .\scripts\qsf.ps1 goals 01JSESSION
   .\scripts\qsf.ps1 world-ingest
   .\scripts\qsf.ps1 world-ingest -WorldCorpusPath C:\data\web_page_filet_mignon\output
   .\scripts\qsf.ps1 restore
@@ -1519,6 +1523,22 @@ function Invoke-Sleep {
     }
 }
 
+function Invoke-Goals {
+    $arguments = @(
+        "run",
+        "-p",
+        "qsf_app",
+        "--",
+        "goals",
+        "--state-dir",
+        $StateDir
+    )
+    if (-not [string]::IsNullOrWhiteSpace($Subject)) {
+        $arguments += @("--session", $Subject)
+    }
+    Invoke-LoggedCommand -Executable "cargo" -Arguments $arguments
+}
+
 function Invoke-WorldIngest {
     Invoke-WithEnvironmentDelta -Delta (Get-WorldCorpusIngestEnvironmentDelta) -ScriptBlock {
         Invoke-LoggedCommand -Executable "cargo" -Arguments @(
@@ -1560,6 +1580,9 @@ if (Test-QsfAutoRunEnabled) {
         }
         "sleep" {
             Invoke-Sleep
+        }
+        "goals" {
+            Invoke-Goals
         }
         "world-ingest" {
             Invoke-WorldIngest

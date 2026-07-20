@@ -41,6 +41,9 @@ pub use selection::*;
 mod inspection;
 pub use inspection::*;
 
+mod goal_detail;
+pub use goal_detail::*;
+
 mod opportunity;
 pub use opportunity::*;
 

@@ -21,10 +21,10 @@ use crate::session::{
 use qsf_volition::{
     AdmissionResolution, DeclinedCandidate, REALTIME_SEED_FIXTURE_ID, ReviewedVolitionSeed,
     VolitionConsolidationReport, VolitionConsolidationSnapshotRecord, VolitionContinuitySnapshot,
-    VolitionFixture, VolitionTurnOutcome, apply, build_state_inspection,
-    build_volition_consolidation_report, effective_tier_from_tension_ids,
-    load_reviewed_volition_seed, newly_declined_candidate, persist_volition_continuity_snapshot,
-    realtime_seed_fixture, resolve_formed_candidate, resolve_sweep,
+    VolitionTurnOutcome, apply, build_state_inspection, build_volition_consolidation_report,
+    effective_tier_from_tension_ids, fixture_for_seed_id, load_reviewed_volition_seed,
+    newly_declined_candidate, persist_volition_continuity_snapshot, resolve_formed_candidate,
+    resolve_sweep,
 };
 
 use super::registry::{Experiment, ExperimentName, ExperimentOutcome};
@@ -174,7 +174,7 @@ impl VolitionContinuityExperiment {
 
 /// Resolve the volition snapshot path for a session, defaulting to `volition-state.json`
 /// if the manifest does not record one.
-fn snapshot_path_from_manifest(
+pub(crate) fn snapshot_path_from_manifest(
     manifest_path: &Path,
     continuity_dir: &Path,
 ) -> anyhow::Result<PathBuf> {
@@ -293,12 +293,6 @@ pub(crate) struct SleepVolitionMaintenanceSummary {
     /// sleep change view can list it among the state files written. `Some` on every path that
     /// reaches the snapshot re-persist below; the early `None` returns never build a summary.
     pub persisted_snapshot_path: Option<PathBuf>,
-}
-
-/// Rebuilds the seed fixture named by a snapshot's `seed_fixture_id`. Only the realtime seed
-/// fixture is a known reconstructable fixture today.
-fn fixture_for_seed_id(seed_fixture_id: &str) -> Option<VolitionFixture> {
-    (seed_fixture_id == REALTIME_SEED_FIXTURE_ID).then(realtime_seed_fixture)
 }
 
 /// The real sleep/consolidation goal-maintenance pass (whole-history formation + whole-set
@@ -602,7 +596,7 @@ pub(crate) fn render_markdown_report(report: &VolitionConsolidationReport) -> St
 mod tests {
     use super::*;
     use qsf_models::MockModelClient;
-    use qsf_volition::VolitionState;
+    use qsf_volition::{VolitionState, realtime_seed_fixture};
     use tempfile::TempDir;
 
     fn write_snapshot_fixture(state_root: &Path, session_id: &str) -> anyhow::Result<()> {

@@ -1961,3 +1961,15 @@ realtime server.
 Consequences: The evaluator remains usable offline over frozen inputs and has no `qsf_app` or
 `qsf_realtime_server` dependency. Generated run artifacts use the normal `runs/` boundary; only
 deliberately frozen reports are copied into `evaluation/reports/`.
+
+## 2026-07-20 - Single source of truth for effective-tier and mode-biased-tier math
+Decision: Effective-tier and mode-biased-tier computation has a single public source of truth
+in `qsf_volition::arbitration`, and all goal-reporting and arbitration surfaces consume it.
+
+Context: The goal detail listing work found the effective-tier-from-tensions logic duplicated
+three times (arbitration, continuity, reducer) and consolidated it into shared public helpers
+before adding a new reporting consumer.
+
+Consequences: New reporting or arbitration surfaces must delegate to the shared helpers rather
+than reimplementing tier-minimum or mode-bias logic. Changes to tier or bias semantics happen
+in one place and propagate to every surface that explains arbitration.

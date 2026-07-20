@@ -4,6 +4,7 @@ pub mod console;
 pub mod context;
 pub mod conversation;
 pub mod experiments;
+mod goal_detail_loading;
 pub mod memory;
 pub mod models;
 pub mod observability;

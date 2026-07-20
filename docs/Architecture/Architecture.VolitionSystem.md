@@ -6,7 +6,7 @@ Candidate
 
 ## Implementation Status
 
-Last reviewed: 2026-07-06
+Last reviewed: 2026-07-19
 
 The volition domain is extracted into a standalone `qsf_volition` crate
 ([crates/qsf_volition/src/lib.rs](../../crates/qsf_volition/src/lib.rs)). It holds
@@ -64,6 +64,9 @@ and—going forward—`qsf_realtime_server`), not in the crate.
   `exploratory_bias` fixture data rather than a hardcoded vector — a persona swap is a
   fixture-data change, not a code change. A `PROTECTED_TIER_FLOOR` makes safety/boundary
   tiers immune to bias, and per-goal `BiasOutcome` records carry the applied delta.
+  Effective-tension resolution and mode-biased tiers are exposed once from
+  `qsf_volition::arbitration`; arbitration, lifecycle checks, and reporting consume those shared
+  helpers rather than recomputing tier minima.
 - Bounded internal initiative: `InitiativeProposal`, `InitiativeOutput`, and
   `execute_initiative()` — structural records only; no external write-capable effect.
 - `AllowedEffect::ConsultWorld` is a pure request carrying source-tagged goal-activation terms;
@@ -98,6 +101,12 @@ and—going forward—`qsf_realtime_server`), not in the crate.
   cooldown tick, and last-activated tick, plus `InitiativeSummary` records for
   recent initiative outputs. Consumed by `inspect_volition_state` in the realtime
   server.
+- Continuity-snapshot goal introspection has three deliberately distinct surfaces: the thin
+  `build_state_inspection` status summary, the sleep-time
+  `build_volition_consolidation_report` pattern report, and the on-demand `qsf_app goals`
+  console command. The command loads a persisted snapshot only and renders the pure
+  `build_goal_detail_report` view with reconstructed fixture definitions or snapshot-recorded
+  live-formed definitions, dynamic lifecycle state, tension tiers, provenance, and mode bias.
 - Goal coherence (offline) in `qsf_volition::coherence`: `Contradiction`,
   `CoherenceJudgeRef`, `CoherenceVerdict`, `AdmissionResolution`, `SweepResolution`,
   and the pure resolution functions `resolve_admission`, `resolve_sweep`,

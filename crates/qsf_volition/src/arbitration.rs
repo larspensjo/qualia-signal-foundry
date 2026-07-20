@@ -191,9 +191,18 @@ fn neutral_arbitration_result(mode_result: ModeArbitrationResult) -> Arbitration
 /// When multiple tensions share the minimum tier, the lexicographically smallest
 /// `tension_id` is chosen as the effective tension. Returns `(u8::MAX, "", "")` when the
 /// goal has no parent tensions in the fixture.
-fn effective_tension_for_goal(goal: &Goal, fixture: &VolitionFixture) -> (u8, String, String) {
-    let parent_tensions: Vec<&Tension> = goal
-        .tension_ids
+pub fn effective_tension_for_goal(goal: &Goal, fixture: &VolitionFixture) -> (u8, String, String) {
+    effective_tension_for_tension_ids(&goal.tension_ids, fixture)
+}
+
+/// Returns the `(effective_tier, tension_id, tension_title)` for tension ids. The effective
+/// tier is the minimum matching fixture tension, with a lexicographic id tie-break. Returns
+/// `(u8::MAX, "", "")` when no supplied ids resolve in the fixture.
+pub fn effective_tension_for_tension_ids(
+    tension_ids: &[String],
+    fixture: &VolitionFixture,
+) -> (u8, String, String) {
+    let parent_tensions: Vec<&Tension> = tension_ids
         .iter()
         .filter_map(|tension_id| {
             fixture
@@ -220,6 +229,22 @@ fn effective_tension_for_goal(goal: &Goal, fixture: &VolitionFixture) -> (u8, St
         .unwrap();
 
     (min_tier, effective.id.clone(), effective.title.clone())
+}
+
+/// Computes the mode-adjusted tier that arbitration uses for a goal.
+pub fn mode_biased_tier_for_goal(
+    goal: &Goal,
+    fixture: &VolitionFixture,
+    mode: Mode,
+) -> BiasOutcome {
+    let (effective_tier, tension_id, _) = effective_tension_for_goal(goal, fixture);
+    let bias_delta = fixture
+        .tensions
+        .iter()
+        .find(|tension| tension.id == tension_id)
+        .map(|tension| mode.tension_delta(tension))
+        .unwrap_or(0);
+    compute_bias_outcome(effective_tier, bias_delta)
 }
 
 /// Compute the `BiasOutcome` for one goal given its effective tier and the mode-bias delta
@@ -309,13 +334,8 @@ fn sort_qualified(
         .map(|selection| {
             let (effective_tier, tension_id, tension_title) =
                 effective_tension_for_goal(&selection.goal, fixture);
-            let bias_delta = fixture
-                .tensions
-                .iter()
-                .find(|tension| tension.id == tension_id)
-                .map(|tension| mode.tension_delta(tension))
-                .unwrap_or(0);
-            let bias = compute_bias_outcome(effective_tier, bias_delta);
+            let bias = mode_biased_tier_for_goal(&selection.goal, fixture, mode);
+            debug_assert_eq!(bias.effective_tier, effective_tier);
             (selection, tension_id, tension_title, bias)
         })
         .collect();
@@ -777,6 +797,26 @@ mod tests {
                 "floor goal must be protected under {mode}"
             );
         }
+    }
+
+    #[test]
+    fn public_tier_helpers_match_mode_arbitration_sort() {
+        let fixture = VolitionFixture {
+            tensions: vec![biased_tension(2, -2)],
+            goals: vec![],
+            arbitration_qualification_threshold: DEFAULT_ARBITRATION_QUALIFICATION_THRESHOLD,
+        };
+        let selection = make_goal_for_arbitration("band-goal", vec!["t".to_string()], 80);
+
+        let effective = effective_tension_for_goal(&selection.goal, &fixture);
+        let bias = mode_biased_tier_for_goal(&selection.goal, &fixture, Mode::Exploratory);
+        let result = arbitrate_with_mode(vec![selection], &fixture, Mode::Exploratory)
+            .unwrap()
+            .qualified
+            .unwrap();
+
+        assert_eq!(effective.0, result.winner_bias.effective_tier);
+        assert_eq!(bias, result.winner_bias);
     }
 
     // ── Mode tension deltas ─────────────────────────────────────────────────

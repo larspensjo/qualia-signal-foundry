@@ -2,7 +2,7 @@ use std::collections::BTreeMap;
 
 use serde::{Deserialize, Serialize};
 
-use crate::arbitration::PROTECTED_TIER_FLOOR;
+use crate::arbitration::{PROTECTED_TIER_FLOOR, effective_tension_for_tension_ids};
 use crate::{
     AllowedEffect, EvidenceRef, Goal, GoalStatus, InitiativeOutput, Mode, ProposedGoalCandidate,
     VolitionFixture,
@@ -450,12 +450,7 @@ fn event_tick(event: &VolitionEvent) -> u64 {
 /// parent tensions found at all) is `u8::MAX`. Shared by goals, proposed candidates, and
 /// accepted candidates alike, since all three carry `tension_ids`.
 pub fn effective_tier_from_tension_ids(tension_ids: &[String], fixture: &VolitionFixture) -> u8 {
-    tension_ids
-        .iter()
-        .filter_map(|tid| fixture.tensions.iter().find(|t| t.id == *tid))
-        .map(|t| t.arbitration_tier)
-        .min()
-        .unwrap_or(u8::MAX)
+    effective_tension_for_tension_ids(tension_ids, fixture).0
 }
 
 /// Resolves a goal's narration [`GoalVisibility`] from its definition — the fixture's static
