@@ -14,6 +14,7 @@ $script:QsfCompletionCommands = @(
     "workbench",
     "realtime",
     "sleep",
+    "goals",
     "world-ingest",
     "restore",
     "doctor",
@@ -210,6 +211,58 @@ function Get-QsfCompletionBackupNames {
     return @($names)
 }
 
+function Get-QsfCompletionContinuitySessionIds {
+    param(
+        [string]$StateDir = "state/realtime"
+    )
+
+    $ids = [System.Collections.Generic.List[string]]::new()
+    $continuityRoot = Join-Path $script:QsfCompletionProjectRoot (Join-Path $StateDir "continuity")
+    if (Test-Path -LiteralPath $continuityRoot -PathType Container) {
+        Get-ChildItem -LiteralPath $continuityRoot -Directory -ErrorAction SilentlyContinue |
+            ForEach-Object { $ids.Add($_.Name) }
+    }
+
+    return @($ids | Sort-Object -Unique)
+}
+
+function Get-QsfCompletionGoalsContext {
+    param(
+        [Parameter(Mandatory = $true)]
+        [AllowEmptyCollection()]
+        [string[]]$Arguments
+    )
+
+    # $Arguments[0] is "goals". Classify the remaining tokens so completion only
+    # fires at the session-id position (no positional id supplied yet) and reads
+    # the continuity root from an explicit -StateDir, mirroring the launcher's
+    # default -StateDir state/realtime.
+    $stateDir = "state/realtime"
+    $positionalCount = 0
+    $index = 1
+    while ($index -lt $Arguments.Count) {
+        $token = $Arguments[$index]
+        if ($token -like "-*") {
+            if ($token -eq "-StateDir" -and ($index + 1) -lt $Arguments.Count) {
+                $value = $Arguments[$index + 1]
+                if (-not [string]::IsNullOrWhiteSpace($value)) {
+                    $stateDir = $value
+                }
+            }
+            $index += 2
+        }
+        else {
+            $positionalCount++
+            $index++
+        }
+    }
+
+    [pscustomobject]@{
+        StateDir        = $stateDir
+        PositionalCount = $positionalCount
+    }
+}
+
 function Get-QsfCompletionRestoreContext {
     param(
         [Parameter(Mandatory = $true)]
@@ -360,6 +413,14 @@ $qsfCompleter = {
 
         if ($nativeContext.Arguments.Count -eq 1 -and $nativeContext.Arguments[0] -eq "ui") {
             Select-QsfCompletionMatches -Values $script:QsfCompletionUiTargets -WordToComplete $wordToComplete
+            return
+        }
+
+        if ($nativeContext.Arguments.Count -ge 1 -and $nativeContext.Arguments[0] -eq "goals") {
+            $goalsContext = Get-QsfCompletionGoalsContext -Arguments $nativeContext.Arguments
+            if ($goalsContext.PositionalCount -eq 0) {
+                Select-QsfCompletionMatches -Values (Get-QsfCompletionContinuitySessionIds -StateDir $goalsContext.StateDir) -WordToComplete $wordToComplete
+            }
             return
         }
 
