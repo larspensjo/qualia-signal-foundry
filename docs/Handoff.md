@@ -60,8 +60,12 @@ can proceed in parallel; small pending item — the operator label review that f
 
 ## Horizon — direction
 
-**Corpus background loading** — move corpus ingest off the server-readiness path with a
-status chip in the debug UI.
+### Semantic shared infrastructure
+
+See docs\Plans\Plan.SharedSemanticInfrastructure.md, a continuation from docs\Research\TechBrief.QSF_Local_Semantic_Classification.md.
+
+### Corpus background loading
+Move corpus ingest off the server-readiness path with a status chip in the debug UI.
 Why: the ~17 s synchronous load delays port bind and 502s the UI on every live probe.
 Alternate: the `world-curiosity` open-delta substrate investigation — letting volition
 represent what it actually does not know (deferred `curiosity` signal, 2026-07-06).

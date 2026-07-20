@@ -47,11 +47,16 @@ not yet settled project rules; this section states the intended commitments, not
 2. **English only for the first frozen sets** (proposed). Swedish and code-switched slices are
    deferred to a later dataset version. The corpus schema still carries a language metadata field
    so later versions add languages without a schema change.
-3. **LLM-generated labels require human review before validation/test use** (proposed). An OpenAI
-   teacher model generates utterances, paraphrases, and hard negatives (tech brief Section 10.4);
-   the single operator accepts or corrects everything that enters the frozen validation/test
-   sets. Walking-skeleton sample records remain `draft` until that review occurs. Real session
-   transcripts (tens of turns) become a small true held-out slice.
+3. **LLM-generated labels require human review before validation/test use** (proposed). Data is
+   produced by a two-model OpenAI split — a cheap generator model produces utterances,
+   paraphrases, slice variants, and a tagged adversarial hard-paraphrase batch (conditioned on goal
+   descriptions only, activation keywords withheld); a second, blind labeler model labels every
+   utterance against every roster goal (dense cross-product). Claude Fable independently
+   cross-labels the same pairs, equally blind. The single operator then accepts or corrects
+   **every** pair that enters the frozen validation/test sets, with mini-vs-Fable disagreements
+   forming the priority review queue. Walking-skeleton sample records remain `draft` until that
+   review occurs. The `real_session` slice is deferred (see below); the executable detail lives in
+   `docs/Plans/Plan.GoalRelevanceFrozenSets.md`.
 4. **Label unit is the persona-independent pair** (proposed). Gold labels attach to
    `(utterance, goal-description/tension-summary)` pairs, not to fixture goal IDs. This survives
    persona edits (personas are data, 2026-07-03) and matches the eventual pair-scorer design. The
@@ -260,8 +265,12 @@ built to consume.
   Ari's) so labels reflect the pair task ("does this utterance bear on this tension?"), per the
   precursor idea. Generated output conforms to the frozen-set schema before human review.
 - **Human accept/correct** every pair that enters the frozen validation and test sets.
-- **Real session transcripts** (the existing tens of turns) are sanitized per the rules below and
-  become a small true held-out slice, tagged `real-session`.
+- **The `real_session` / `real_asr` slice is deferred for v1.** Contrary to an earlier claim in this
+  plan, the repository holds only 2 verbatim user turns on disk
+  (`state/realtime/continuity/default/session-state.json`), which cannot populate a held-out slice.
+  v1 freezes without this slice; a later dataset version populates it from an opt-in realtime
+  transcript-capture mechanism governed by `SanitizationRules.md` (see
+  `docs/Plans/Plan.GoalRelevanceFrozenSets.md`).
 - **Split by session and semantic cluster**, never random utterance: no `semantic_cluster_id`
   and no `session_id` spans both the validation and test sets (prevents paraphrase leakage).
 - **Blind self-re-annotation QA**: after a delay, the operator re-annotates a shuffled sample of
@@ -277,9 +286,11 @@ built to consume.
 **Verification (automated)**
 
 - Schema validation over the full frozen sets.
-- Slice-coverage assertions: every required slice is present with at least a minimum count,
-  including subject-confusion, synthetic-asr, and the real-session/real-asr slice; rare high-cost
-  examples are present.
+- Slice-coverage assertions: every required v1 slice is present with at least a minimum count in
+  both splits, including subject-confusion and synthetic-asr, plus rare high-cost examples. The
+  `real_session` / `real_asr` slice is **deferred for v1** and is not asserted present (see the
+  deferral note above and `docs/Plans/Plan.GoalRelevanceFrozenSets.md` for the per-slice-per-split
+  floors and the gatekeeper that enforces them).
 - NoneOfRoster consistency check over the frozen sets: each `NoneOfRoster` utterance has only
   `NotRelevant`/`Ambiguous` pairs.
 - Split-integrity test: no cluster or session id appears in both validation and test.
