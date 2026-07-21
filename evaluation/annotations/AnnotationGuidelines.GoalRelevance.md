@@ -37,6 +37,31 @@ Apply this policy equally to explicit negation, implicit negation, quoted speech
 wording. Do not use a generation category as evidence; it is intentionally unavailable during
 annotation.
 
+## Breadth policy for standing goals
+
+Some roster goals are standing dispositions that any conversational turn could in principle feed —
+for example **Grow the library**, **Assemble a world picture**, **Learn what drives this person**,
+and **Serve the present person**. Do not label an utterance `relevant` to such a goal merely
+because the goal could operate on it. It is `relevant` only when the utterance offers or solicits
+specific content for that goal's tension space: a concrete observation or claim to place or keep, a
+direct engagement with the present person's own work, beliefs, or drives, or an explicit stance on
+the priority the goal names.
+
+Worked examples:
+
+- “Nvidia and OpenAI are changing how teams plan” is `relevant` to **Assemble a world picture**: it
+  offers a specific claim that wants a place in a larger explanation.
+- “What if the evidence changes tomorrow?” is `not_relevant` to **Grow the library**: it names
+  nothing to keep, recall, or revisit, even though the library revisits theses as evidence
+  accumulates. (It is `relevant` to **Keep theses distinct from fact**.)
+- An ordinary question or request is not `relevant` to **Serve the present person** merely because
+  it is an explicit ask. That goal's tension is engaged when the utterance bears on prioritizing
+  the person's ask — for example, “answer my question before you go off on your tangent.”
+
+Apply this policy before reaching for `ambiguous`: uncertainty about whether a standing goal is
+engaged is usually resolved by the specificity test above, and `ambiguous` remains reserved for a
+missing referent or context per the policy below.
+
 ## Ambiguous policy
 
 Choose `ambiguous` when two careful readers could reasonably reach different binary labels because

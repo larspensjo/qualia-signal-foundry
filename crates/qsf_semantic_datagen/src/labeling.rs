@@ -52,9 +52,12 @@ pub fn build_goal_relevance_label_prompt(input: &LabelingInput) -> Result<String
          Label the utterance against every roster goal. Relevant means the utterance bears on a\n\
          goal's tension space, including opposition or countering it; negating a topic does not\n\
          itself make it not relevant. Use not_relevant only when it is genuinely not about that\n\
-         goal. Use ambiguous only when the wording lacks enough context for a reliable binary\n\
-         judgment. Set none_of_roster true only if no roster goal is relevant; then no per-goal\n\
-         label may be relevant.\n\n\
+         goal. A standing goal that any turn could in principle feed (keeping a library,\n\
+         assembling a world picture, learning the person) is relevant only when the utterance\n\
+         offers or solicits specific content for its tension space, not merely because the goal\n\
+         could operate on it. Use ambiguous only when the wording lacks enough context for a\n\
+         reliable binary judgment. Set none_of_roster true only if no roster goal is relevant;\n\
+         then no per-goal label may be relevant.\n\n\
          Utterance ({}):\n{}\n\n\
          Frozen roster:\n{}\n\n\
          Return exactly one JSON object with no markdown:\n\
