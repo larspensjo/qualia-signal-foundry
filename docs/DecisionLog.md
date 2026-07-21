@@ -1973,3 +1973,15 @@ before adding a new reporting consumer.
 Consequences: New reporting or arbitration surfaces must delegate to the shared helpers rather
 than reimplementing tier-minimum or mode-bias logic. Changes to tier or bias semantics happen
 in one place and propagate to every surface that explains arbitration.
+
+## 2026-07-20 - Goal-relevance roster re-versioning preserves labels only for keyword edits
+Decision: A keyword-only goal edit creates a new roster snapshot version and carries labels forward
+through deterministic rebinding: rewrite `roster_snapshot_version` and re-issue every `goal_ref`.
+Changes to a title, summary, or tension summary require relabeling the affected pairs.
+
+Context: Goal references intentionally hash the roster version and goal description, while activation
+keywords are scorer configuration rather than the description the label was made against.
+
+Consequences: Frozen goal-relevance artifacts declare their roster binding explicitly. Rebinding is
+an auditable mechanical transformation, never a manual label edit; semantic description changes do
+not silently reuse prior annotations.

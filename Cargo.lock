@@ -1680,6 +1680,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "qsf_semantic_datagen"
+version = "0.1.0"
+dependencies = [
+ "engine_logging",
+ "log",
+ "openai_provider_kit",
+ "qsf_semantic_eval",
+ "serde",
+ "serde_json",
+ "sha2 0.11.0",
+ "tokio",
+]
+
+[[package]]
 name = "qsf_semantic_eval"
 version = "0.1.0"
 dependencies = [

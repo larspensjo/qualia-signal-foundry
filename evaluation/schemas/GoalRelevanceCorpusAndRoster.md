@@ -5,24 +5,31 @@ JSON shapes so corpus reviewers can inspect versioned artifacts without reverse-
 
 ## Dataset JSONL
 
-Each nonblank line is one `PairRecord` and carries `schema_version: 1`. Unknown fields, malformed
+Each nonblank line is one `PairRecord` and carries `schema_version: 2`. Unknown fields, malformed
 JSON, empty required identifiers, and any other schema version are errors; there is no silent
 migration. A dataset uses one `dataset_version` across all records.
 
-Required pair fields are `utterance`, `goal_ref`, `gold_label`, `slice_tags`, `session_id`,
-`semantic_cluster_id`, `provenance`, and `utterance_roster_annotation`. `language` defaults to
+Required pair fields are `roster_snapshot_version`, `utterance_id`, `utterance`, `goal_ref`,
+`gold_label`, `slice_tags`, `session_id`, `semantic_cluster_id`, `provenance`, and
+`utterance_roster_annotation`. `language` defaults to
 `"en"`. Gold labels serialize as `relevant`, `not_relevant`, or `ambiguous`.
 
 `utterance_roster_annotation` is either `has_roster_relevance` or `none_of_roster`. It is copied
 onto each pair for an utterance so JSONL remains self-contained, but validation requires it to be
-consistent across repeated utterances. A `none_of_roster` utterance cannot have a `relevant` pair.
+consistent across repeated utterances. `utterance_id` is the stable per-utterance identity shared
+by all of that utterance's pairs: one text cannot use multiple IDs, and one ID must keep the same
+utterance text, `session_id`, and `semantic_cluster_id`. A `none_of_roster` utterance cannot have a
+`relevant` pair.
 
-Provenance records `source` (`teacher` or `real_session`), optional `teacher_model_id`, and
-`review_status` (`draft` or `reviewed`). Slice tags are tagged JSON objects: a paraphrase cluster
+Provenance records `source` (`teacher` or `real_session`), an optional `generation` block for
+teacher data (`generator_model_id`, `generation_run_id`, `generation_output_sha256`,
+`prompt_version`, `saw_activation_keywords`), a `labeling` block (`guideline_version` and labelers
+with `labeler_id`, `labeling_run_id`, `output_sha256`), and a `review` block
+(`review_decisions_sha256`, `review_status`, which is `draft` or `reviewed`). Slice tags are tagged JSON objects: a paraphrase cluster
 is `{ "kind": "paraphrase_cluster", "id": "..." }`; the remaining kinds are
 `hard_negative`, `explicit_negation`, `implicit_negation`, `quoted_speech`, `hypothetical`,
 `subject_confusion`, `punctuation_casing_loss`, `synthetic_asr`, `real_asr`, and
-`rare_high_cost`.
+`rare_high_cost`. The `real_asr` slice tag remains part of the schema although it is unused in v1.
 
 ## Frozen roster JSON
 
@@ -40,6 +47,14 @@ all keys and the fixture hash.
 The sample roster is a serialized `qsf_volition::realtime_seed_fixture()` plus the explicit
 default state. Its drift guard compares the entire snapshot to the current fixture and fails with
 a re-versioning instruction when they differ.
+
+## Roster re-versioning and label rebinding
+
+A keyword-only seed-goal edit (activation keywords or weight classes only) receives a new roster
+snapshot version. Existing labels carry forward through a deterministic rebinding: rewrite every
+record's `roster_snapshot_version`, mechanically re-issue every `goal_ref` using the new version,
+and re-point the labels without relabeling. Title, summary, or tension-summary edits change the
+described goal and require relabeling the affected pairs.
 
 ## Generated run artifacts
 

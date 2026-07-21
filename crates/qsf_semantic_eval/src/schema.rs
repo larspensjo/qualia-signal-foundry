@@ -2,7 +2,7 @@ use std::{collections::BTreeMap, fs, path::Path};
 
 use serde::{Deserialize, Serialize};
 
-pub const DATASET_SCHEMA_VERSION: u16 = 1;
+pub const DATASET_SCHEMA_VERSION: u16 = 2;
 
 fn default_language() -> String {
     "en".to_string()
@@ -53,7 +53,40 @@ pub enum ReviewStatus {
 pub struct Provenance {
     pub source: DataSource,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub teacher_model_id: Option<String>,
+    pub generation: Option<GenerationLineage>,
+    pub labeling: LabelingLineage,
+    pub review: ReviewLineage,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct GenerationLineage {
+    pub generator_model_id: String,
+    pub generation_run_id: String,
+    pub generation_output_sha256: String,
+    pub prompt_version: String,
+    pub saw_activation_keywords: bool,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct LabelerLineage {
+    pub labeler_id: String,
+    pub labeling_run_id: String,
+    pub output_sha256: String,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct LabelingLineage {
+    pub guideline_version: String,
+    pub labelers: Vec<LabelerLineage>,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct ReviewLineage {
+    pub review_decisions_sha256: String,
     pub review_status: ReviewStatus,
 }
 
@@ -102,6 +135,8 @@ impl SliceTag {
 pub struct PairRecord {
     pub schema_version: u16,
     pub dataset_version: String,
+    pub roster_snapshot_version: String,
+    pub utterance_id: String,
     pub utterance: String,
     pub goal_ref: String,
     pub gold_label: GoldLabel,
@@ -134,6 +169,20 @@ impl Dataset {
             if line.trim().is_empty() {
                 continue;
             }
+            let envelope: SchemaEnvelope = serde_json::from_str(line).map_err(|error| {
+                format!(
+                    "invalid dataset record in {source} at line {}: {error}",
+                    index + 1
+                )
+            })?;
+            if envelope.schema_version != DATASET_SCHEMA_VERSION {
+                return Err(format!(
+                    "invalid dataset record in {source} at line {}: unsupported schema_version {}; supported version is {}",
+                    index + 1,
+                    envelope.schema_version,
+                    DATASET_SCHEMA_VERSION
+                ));
+            }
             let record: PairRecord = serde_json::from_str(line).map_err(|error| {
                 format!(
                     "invalid dataset record in {source} at line {}: {error}",
@@ -155,6 +204,8 @@ impl Dataset {
         }
         let dataset_version = &self.records[0].dataset_version;
         let mut annotations = BTreeMap::new();
+        let mut utterance_metadata = BTreeMap::new();
+        let mut utterance_ids_by_text = BTreeMap::new();
         for (index, record) in self.records.iter().enumerate() {
             if record.schema_version != DATASET_SCHEMA_VERSION {
                 return Err(format!(
@@ -172,6 +223,8 @@ impl Dataset {
             }
             for (name, value) in [
                 ("dataset_version", &record.dataset_version),
+                ("roster_snapshot_version", &record.roster_snapshot_version),
+                ("utterance_id", &record.utterance_id),
                 ("utterance", &record.utterance),
                 ("goal_ref", &record.goal_ref),
                 ("language", &record.language),
@@ -182,13 +235,53 @@ impl Dataset {
                     return Err(format!("record {} has an empty {name}", index + 1));
                 }
             }
-            let annotation = annotations
+            if record.provenance.source == DataSource::Teacher
+                && record.provenance.generation.is_none()
+            {
+                return Err(format!(
+                    "record {} has teacher provenance without generation lineage",
+                    index + 1
+                ));
+            }
+            let metadata = utterance_metadata.entry(&record.utterance_id).or_insert((
+                &record.utterance,
+                &record.session_id,
+                &record.semantic_cluster_id,
+            ));
+            if metadata.0 != &record.utterance {
+                return Err(format!(
+                    "utterance_id {:?} has inconsistent utterance text",
+                    record.utterance_id
+                ));
+            }
+            if metadata.1 != &record.session_id {
+                return Err(format!(
+                    "utterance_id {:?} has inconsistent session_id",
+                    record.utterance_id
+                ));
+            }
+            if metadata.2 != &record.semantic_cluster_id {
+                return Err(format!(
+                    "utterance_id {:?} has inconsistent semantic_cluster_id",
+                    record.utterance_id
+                ));
+            }
+            let utterance_id = utterance_ids_by_text
                 .entry(&record.utterance)
+                .or_insert(&record.utterance_id);
+            if *utterance_id != &record.utterance_id {
+                return Err(format!(
+                    "utterance {:?} maps to multiple utterance_id values",
+                    record.utterance
+                ));
+            }
+            let annotation = annotations
+                .entry(&record.utterance_id)
                 .or_insert(&record.utterance_roster_annotation);
             if *annotation != &record.utterance_roster_annotation {
                 return Err(format!(
-                    "utterance {:?} has inconsistent utterance-level roster annotations",
-                    record.utterance
+                    "utterance_id {:?} has inconsistent utterance-level roster annotations",
+                    record.utterance_id
                 ));
             }
             if record.utterance_roster_annotation == UtteranceRosterAnnotation::NoneOfRoster
@@ -206,4 +299,9 @@ impl Dataset {
     pub fn dataset_version(&self) -> &str {
         &self.records[0].dataset_version
     }
+}
+
+#[derive(Deserialize)]
+struct SchemaEnvelope {
+    schema_version: u16,
 }

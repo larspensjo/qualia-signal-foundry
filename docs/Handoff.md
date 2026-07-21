@@ -1,9 +1,10 @@
 # Handoff — Resume Here
 
-**Updated:** 2026-07-19 (late evening) — a second parallel track opened: the goal_relevance
-evaluation foundation landed (lean `qsf_semantic_eval` crate, task contract, production-scorer
-baseline runner over a default sample dataset, `evaluation/` tree; see
-[Plan.SemanticEvaluationFoundation](Plans/Plan.SemanticEvaluationFoundation.md)). World
+**Updated:** 2026-07-21 — the goal_relevance frozen-sets pipeline now has its foundation:
+dataset schema v2 (stable per-utterance identity, two-labeler lineage provenance,
+envelope-first version rejection) and the replay-default `qsf_semantic_datagen` crate
+(interchange contracts, mini/Fable reconciliation, review fold, dependency guard) landed;
+see [Plan.GoalRelevanceFrozenSets](Plans/Plan.GoalRelevanceFrozenSets.md). World
 perception is unchanged since the morning: all of
 [Plan.WorldPerception](Plans/Plan.WorldPerception.md) is implemented, but the second
 real-corpus live session requested no consultation — blockers moved to the trigger layer
@@ -49,11 +50,12 @@ entity detection; arbitration standing for ConsultWorld-capable goals under
 current-information cues).
 
 ### Semantic evaluation (goal relevance)
-**Generate, human-review, and freeze the goal-relevance validation/test sets
-([Plan.SemanticEvaluationFoundation](Plans/Plan.SemanticEvaluationFoundation.md)).**
-Why: the evaluation foundation landed 2026-07-19 (crate, task contract, baseline runner,
-sample dataset); frozen labeled data is what makes the baseline report, failure-floor
-measurement, and regression gate real.
+**Continue [Plan.GoalRelevanceFrozenSets](Plans/Plan.GoalRelevanceFrozenSets.md): build the
+description-conditioned generation stage next, toward the frozen validation/test sets
+(parent: [Plan.SemanticEvaluationFoundation](Plans/Plan.SemanticEvaluationFoundation.md)).**
+Why: schema v2 and the replay-default datagen crate landed 2026-07-21; generation is the
+first stage that produces real utterances, and frozen labeled data is what makes the
+baseline report, failure-floor measurement, and regression gate real.
 Alternate: the remote-usage telemetry baseline (token-ledger extraction) is independent and
 can proceed in parallel; small pending item — the operator label review that flips the
 12 sample records from `draft`.

@@ -1,0 +1,17 @@
+[package]
+name = "qsf_semantic_datagen"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+engine_logging = { path = "../engine_logging" }
+log.workspace = true
+openai_provider_kit = { git = "https://github.com/larspensjo/web_page_filet_mignon", package = "openai_provider_kit", rev = "ca28629d42fb350a7935df6907573e2f972b3ba9" }
+qsf_semantic_eval = { path = "../qsf_semantic_eval" }
+serde.workspace = true
+serde_json.workspace = true
+sha2.workspace = true
+tokio.workspace = true
