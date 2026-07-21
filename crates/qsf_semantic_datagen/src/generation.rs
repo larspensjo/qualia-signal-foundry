@@ -6,11 +6,20 @@ use crate::{CompletionRequest, GenerationOutput, INTERCHANGE_VERSION, ModelTrans
 pub const GENERATION_PROMPT_VERSION: &str = "goalrel-gen-v3";
 pub const GENERATOR_MODEL_ID: &str = "gpt-5.4-nano";
 pub const MAX_HARD_NEGATIVE_SHARE_OF_BASE: f64 = 0.25;
+/// Live models are stochastic against the mode validators, so a rejected batch is
+/// re-requested up to this many times before the run fails loudly.
+pub const MAX_GENERATION_BATCH_ATTEMPTS: usize = 3;
 
 const EXPLICIT_NEGATOR_WORDS: &[&str] = &[
     "no",
     "not",
     "never",
+    "cannot",
+    "nothing",
+    "nobody",
+    "none",
+    "neither",
+    "nor",
     "don't",
     "isn't",
     "can't",
@@ -35,11 +44,20 @@ const HYPOTHETICAL_FRAMING_MARKERS: &[&str] =
     &["what if", "suppose", "imagine", "if i ever", "if i were"];
 const HARD_NEGATIVE_FORBIDDEN_WORDS: &[&str] = &[
     "pry",
+    "prying",
+    "pried",
     "private",
+    "privacy",
     "personal",
+    "personally",
     "boundary",
     "boundaries",
     "gossip",
+    "gossiping",
+    "gossiped",
+    "probe",
+    "probed",
+    "probes",
     "probing",
 ];
 
@@ -156,7 +174,7 @@ impl GenerationMode {
                 "Write utterances with an explicit negation that still bears on this description.".to_string()
             }
             Self::ImplicitNegation => format!(
-                "Write utterances that imply a contrary stance without using an explicit negation. Do not use these grammatical negators or contractions: {}.",
+                "Write utterances that imply a contrary or resisting stance using only positive phrasing: prefer an alternative, redirect the topic, or leave something alone (for example \"I'd rather keep the focus on her project\", \"I leave his weekend plans alone\"). Every grammatical negator and negative quantifier is forbidden: {}. Express the contrary stance entirely without them.",
                 EXPLICIT_NEGATOR_WORDS.join(", ")
             ),
             Self::QuotedSpeech => {
@@ -369,44 +387,59 @@ pub fn run_generation<T: ModelTransport>(
                 mode: mode.clone(),
                 count: 8,
             })?;
-            let response = transport.complete(&CompletionRequest {
-                model_id: GENERATOR_MODEL_ID.to_string(),
-                prompt,
-                goal_ref: goal.goal_ref.clone(),
-                run_id: generation_run_id.to_string(),
-                utterance_id: None,
-            })?;
-            if let Some(call_usage) = response.usage {
-                usage.add(call_usage);
-                has_usage = true;
-            }
-            let parsed = parse_generation_response_with_anchor(
-                &response.content,
-                &GenerationResponseContext {
-                    utterance_id_prefix: format!("{generation_run_id}-{partition}-{index}"),
-                    language: "en".to_string(),
-                    conditioning_goal_ref: if mode == GenerationMode::VagueNoneOfRoster {
-                        None
-                    } else {
-                        Some(goal.goal_ref.clone())
-                    },
-                    mode: mode.clone(),
-                    session_id: format!("{generation_run_id}-session-{partition}"),
-                    semantic_cluster_id: format!("{generation_run_id}-semantic-{partition}"),
-                    generation_run_id: generation_run_id.to_string(),
-                    generator_model_id: GENERATOR_MODEL_ID.to_string(),
-                    synthetic_asr_seed: 20260721,
+            let context = GenerationResponseContext {
+                utterance_id_prefix: format!("{generation_run_id}-{partition}-{index}"),
+                language: "en".to_string(),
+                conditioning_goal_ref: if mode == GenerationMode::VagueNoneOfRoster {
+                    None
+                } else {
+                    Some(goal.goal_ref.clone())
                 },
-            )
-            .map_err(|error| {
-                engine_logging::engine_error!(
-                    "goal relevance generation rejected run_id={} mode={} error={}",
-                    generation_run_id,
-                    mode.name(),
-                    error
-                );
-                error
-            })?;
+                mode: mode.clone(),
+                session_id: format!("{generation_run_id}-session-{partition}"),
+                semantic_cluster_id: format!("{generation_run_id}-semantic-{partition}"),
+                generation_run_id: generation_run_id.to_string(),
+                generator_model_id: GENERATOR_MODEL_ID.to_string(),
+                synthetic_asr_seed: 20260721,
+            };
+            let mut attempt = 1usize;
+            let parsed = loop {
+                let response = transport.complete(&CompletionRequest {
+                    model_id: GENERATOR_MODEL_ID.to_string(),
+                    prompt: prompt.clone(),
+                    goal_ref: goal.goal_ref.clone(),
+                    run_id: generation_run_id.to_string(),
+                    utterance_id: None,
+                })?;
+                if let Some(call_usage) = response.usage {
+                    usage.add(call_usage);
+                    has_usage = true;
+                }
+                match parse_generation_response_with_anchor(&response.content, &context) {
+                    Ok(parsed) => break parsed,
+                    Err(error) if attempt < MAX_GENERATION_BATCH_ATTEMPTS => {
+                        engine_logging::engine_warn!(
+                            "goal relevance generation batch rejected, re-requesting run_id={} mode={} attempt={}/{} error={}",
+                            generation_run_id,
+                            mode.name(),
+                            attempt,
+                            MAX_GENERATION_BATCH_ATTEMPTS,
+                            error
+                        );
+                        attempt += 1;
+                    }
+                    Err(error) => {
+                        engine_logging::engine_error!(
+                            "goal relevance generation rejected run_id={} mode={} attempts={} error={}",
+                            generation_run_id,
+                            mode.name(),
+                            attempt,
+                            error
+                        );
+                        return Err(error);
+                    }
+                }
+            };
             if let (Some(cluster_id), Some(anchor)) = (mode.cluster_id(), parsed.cluster_anchor) {
                 cluster_anchors.push(GenerationClusterAnchor {
                     cluster_id: cluster_id.to_string(),
@@ -450,21 +483,19 @@ fn generation_modes(partition: &str) -> Vec<GenerationMode> {
 /// Observed ASR-style corruption: loss of casing/punctuation plus deterministic entity mangling.
 /// It intentionally does not produce random character-level typos.
 pub fn synthetic_asr_corrupt(input: &str, seed: u64) -> Result<String, String> {
-    let words: Vec<_> = input.split_whitespace().collect();
+    let tokens = transcript_tokens(input);
     let mut mangled_entity = false;
-    let output = words
+    let output = tokens
         .iter()
         .enumerate()
-        .map(|(index, word)| {
-            let stripped = strip_non_alphanumeric(word);
-            if is_entity_token(&words, index) && stripped.chars().count() >= 2 {
+        .map(|(index, token)| {
+            if is_entity_token(&tokens, index) && token.text.chars().count() >= 2 {
                 mangled_entity = true;
-                mangle_entity(&stripped, seed.wrapping_add(index as u64))
+                mangle_entity(&token.text, seed.wrapping_add(index as u64))
             } else {
-                stripped.to_lowercase()
+                token.text.to_lowercase()
             }
         })
-        .filter(|word| !word.is_empty())
         .collect::<Vec<_>>()
         .join(" ");
     if mangled_entity {
@@ -479,12 +510,9 @@ pub fn synthetic_asr_corrupt(input: &str, seed: u64) -> Result<String, String> {
 
 /// Observed transcript loss shared by punctuation/casing and synthetic-ASR variants.
 pub fn punctuation_casing_loss(input: &str) -> String {
-    input
-        .chars()
-        .filter(|character| character.is_alphanumeric() || character.is_whitespace())
-        .flat_map(char::to_lowercase)
-        .collect::<String>()
-        .split_whitespace()
+    transcript_tokens(input)
+        .into_iter()
+        .map(|token| token.text.to_lowercase())
         .collect::<Vec<_>>()
         .join(" ")
 }
@@ -560,15 +588,54 @@ pub fn hard_negative_within_distribution(records: &[GenerationOutput]) -> bool {
     hard == 0 || (base > 0 && (hard as f64 / base as f64) <= MAX_HARD_NEGATIVE_SHARE_OF_BASE)
 }
 
-fn strip_non_alphanumeric(word: &str) -> String {
-    word.chars()
-        .filter(|character| character.is_alphanumeric())
-        .collect()
+#[derive(Debug, Eq, PartialEq)]
+struct TranscriptToken {
+    text: String,
+    follows_sentence_boundary: bool,
 }
 
-fn is_entity_token(words: &[&str], index: usize) -> bool {
-    let word = strip_non_alphanumeric(words[index]);
-    let mut alphabetic = word.chars().filter(|character| character.is_alphabetic());
+fn transcript_tokens(input: &str) -> Vec<TranscriptToken> {
+    let mut tokens = Vec::new();
+    let mut text = String::new();
+    let mut token_follows_sentence_boundary = true;
+    let mut next_token_follows_sentence_boundary = true;
+
+    let finish_token =
+        |tokens: &mut Vec<TranscriptToken>, text: &mut String, follows_sentence_boundary| {
+            if !text.is_empty() {
+                tokens.push(TranscriptToken {
+                    text: std::mem::take(text),
+                    follows_sentence_boundary,
+                });
+            }
+        };
+
+    for character in input.chars() {
+        if character.is_alphanumeric() {
+            if text.is_empty() {
+                token_follows_sentence_boundary = next_token_follows_sentence_boundary;
+                next_token_follows_sentence_boundary = false;
+            }
+            text.push(character);
+        } else if matches!(character, '\'' | '\u{2018}' | '\u{2019}') {
+            // Apostrophes disappear without splitting contractions or possessives.
+        } else {
+            finish_token(&mut tokens, &mut text, token_follows_sentence_boundary);
+            if matches!(character, '.' | '!' | '?') {
+                next_token_follows_sentence_boundary = true;
+            }
+        }
+    }
+    finish_token(&mut tokens, &mut text, token_follows_sentence_boundary);
+    tokens
+}
+
+fn is_entity_token(tokens: &[TranscriptToken], index: usize) -> bool {
+    let token = &tokens[index];
+    let mut alphabetic = token
+        .text
+        .chars()
+        .filter(|character| character.is_alphabetic());
     let Some(first) = alphabetic.next() else {
         return false;
     };
@@ -576,58 +643,7 @@ fn is_entity_token(words: &[&str], index: usize) -> bool {
     if has_internal_uppercase {
         return true;
     }
-    let title_cased = first.is_uppercase();
-    if !title_cased {
-        return false;
-    }
-    let neighboring_title_case = |neighbor: &str| {
-        strip_non_alphanumeric(neighbor)
-            .chars()
-            .find(|character| character.is_alphabetic())
-            .is_some_and(char::is_uppercase)
-    };
-    let follows_sentence_boundary = index == 0
-        || words[index - 1]
-            .chars()
-            .last()
-            .is_some_and(|character| matches!(character, '.' | '!' | '?'));
-    (index == 0 && !is_common_sentence_initial_word(&word))
-        || words
-            .get(index + 1)
-            .is_some_and(|neighbor| neighboring_title_case(neighbor))
-        || !follows_sentence_boundary
-}
-
-fn is_common_sentence_initial_word(word: &str) -> bool {
-    matches!(
-        word,
-        "A" | "An"
-            | "After"
-            | "At"
-            | "Before"
-            | "Could"
-            | "During"
-            | "For"
-            | "I"
-            | "If"
-            | "Imagine"
-            | "In"
-            | "It"
-            | "Maybe"
-            | "My"
-            | "Our"
-            | "Please"
-            | "Suppose"
-            | "That"
-            | "The"
-            | "They"
-            | "This"
-            | "We"
-            | "What"
-            | "When"
-            | "Would"
-            | "Your"
-    )
+    first.is_uppercase() && !token.follows_sentence_boundary
 }
 
 fn validate_mode_outputs(
@@ -672,10 +688,13 @@ fn contains_explicit_negator(utterance: &str) -> bool {
 }
 
 fn contains_hypothetical_marker(utterance: &str) -> bool {
-    let normalized = utterance.to_lowercase();
-    HYPOTHETICAL_FRAMING_MARKERS
-        .iter()
-        .any(|marker| normalized.contains(marker))
+    let words = normalized_words(utterance);
+    HYPOTHETICAL_FRAMING_MARKERS.iter().any(|marker| {
+        let marker_words = normalized_words(marker);
+        words
+            .windows(marker_words.len())
+            .any(|window| window == marker_words)
+    })
 }
 
 fn contains_hard_negative_forbidden_word(utterance: &str) -> bool {

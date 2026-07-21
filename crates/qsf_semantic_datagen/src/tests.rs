@@ -507,7 +507,7 @@ fn prompt_uses_only_goal_description_and_vague_mode_has_no_goal() {
 fn synthetic_asr_corruption_is_seeded_and_uses_observed_modes() {
     let corrupted =
         synthetic_asr_corrupt("Nvidia, OpenAI! Plans?", 0).expect("named entities can be mangled");
-    assert_eq!(corrupted, "nvi dia ope nai plans");
+    assert_eq!(corrupted, "nvidia ope nai plans");
     assert_eq!(
         corrupted,
         synthetic_asr_corrupt("Nvidia, OpenAI! Plans?", 0).expect("same named entities mangle")
@@ -522,9 +522,21 @@ fn synthetic_asr_corruption_is_seeded_and_uses_observed_modes() {
 
 #[test]
 fn synthetic_asr_rejects_utterances_without_a_mangleable_entity() {
-    let error = synthetic_asr_corrupt("please keep this to the agenda", 0)
-        .expect_err("synthetic ASR must not silently skip entity mangling");
-    assert!(error.contains("mangle-able personal or product/company name"));
+    for utterance in [
+        "please keep this to the agenda",
+        "Honestly the meeting ran long",
+    ] {
+        let error = synthetic_asr_corrupt(utterance, 0).expect_err(
+            "synthetic ASR must not count a sentence-opening framing word as an entity",
+        );
+        assert!(error.contains("mangle-able personal or product/company name"));
+    }
+
+    let corrupted = synthetic_asr_corrupt("Suppose Alex—stays late", 0)
+        .expect("the mid-sentence name is a confident entity");
+    assert!(corrupted.starts_with("suppose "), "{corrupted}");
+    assert!(corrupted.ends_with(" stays late"), "{corrupted}");
+    assert_ne!(corrupted, "suppose alex stays late");
 
     let parse_error = parse_generation_response(
         r#"{"utterances":["please keep this to the agenda"]}"#,
@@ -565,8 +577,8 @@ fn punctuation_casing_loss_mode_applies_its_transform() {
     assert_eq!(generated[0].utterance, "please keep this private");
     assert_eq!(
         punctuation_casing_loss("Ava’s Plan—Now!"),
-        "avas plannow",
-        "all Unicode punctuation, including a curly apostrophe, is removed"
+        "avas plan now",
+        "Unicode apostrophes fuse naturally while an em dash splits words"
     );
 }
 
@@ -601,6 +613,13 @@ fn generation_mode_validators_accept_required_forms() {
         }),
     )
     .expect("indirect hard negative without forbidden vocabulary is accepted");
+    parse_generation_response(
+        r#"{"anchor":"Maya follows Jordan's lead.","utterances":["Maya treats the problem as Jordan's cue to stay with the agenda."]}"#,
+        &context(GenerationMode::HardParaphrase {
+            cluster_id: "validator-hard-problem".to_string(),
+        }),
+    )
+    .expect("word-level matching does not reject problem");
 }
 
 #[test]
@@ -628,6 +647,11 @@ fn generation_mode_validators_reject_invalid_utterances_with_mode_and_id() {
             "hypothetical",
         ),
         (
+            GenerationMode::Hypothetical,
+            r#"{"utterances":["She was supposed to ask Mark first."]}"#,
+            "hypothetical",
+        ),
+        (
             GenerationMode::HardParaphrase {
                 cluster_id: "validator-hard".to_string(),
             },
@@ -639,6 +663,44 @@ fn generation_mode_validators_reject_invalid_utterances_with_mode_and_id() {
             .expect_err("invalid mode content is rejected loudly");
         assert!(error.contains(expected_mode), "{error}");
         assert!(error.contains("validator-reject-01"), "{error}");
+    }
+
+    for negator in ["cannot", "nothing", "nobody", "none", "neither", "nor"] {
+        let response =
+            format!(r#"{{"utterances":["Maya says {negator} before Jordan answers."]}}"#);
+        let error =
+            parse_generation_response(&response, &context(GenerationMode::ImplicitNegation))
+                .expect_err("every explicit-negator variant is rejected");
+        assert!(error.contains("implicit_negation"), "{negator}: {error}");
+        assert!(error.contains("validator-reject-01"), "{negator}: {error}");
+    }
+
+    for forbidden in [
+        "privacy",
+        "prying",
+        "pried",
+        "personally",
+        "gossiping",
+        "gossiped",
+        "probe",
+        "probed",
+        "probes",
+    ] {
+        let response = format!(
+            r#"{{"anchor":"Maya follows Jordan's lead.","utterances":["Maya said {forbidden} around Jordan."]}}"#
+        );
+        let error = parse_generation_response(
+            &response,
+            &context(GenerationMode::HardParaphrase {
+                cluster_id: "validator-hard-inflection".to_string(),
+            }),
+        )
+        .expect_err("every hard-negative forbidden inflection is rejected");
+        assert!(error.contains("hard_negative"), "{forbidden}: {error}");
+        assert!(
+            error.contains("validator-reject-01"),
+            "{forbidden}: {error}"
+        );
     }
 }
 
@@ -933,6 +995,62 @@ fn tool_local_price_table_is_hashed_and_covers_both_live_models() {
         )
         .contains("estimated cost unavailable")
     );
+}
+
+/// Scripted transport double: serves each queued response once, then repeats the
+/// last one; counts every completion call.
+struct ScriptedTransport {
+    responses: std::cell::RefCell<Vec<String>>,
+    calls: std::cell::Cell<usize>,
+}
+
+impl ScriptedTransport {
+    fn new(responses: Vec<String>) -> Self {
+        Self {
+            responses: std::cell::RefCell::new(responses),
+            calls: std::cell::Cell::new(0),
+        }
+    }
+}
+
+impl ModelTransport for ScriptedTransport {
+    fn complete(&self, _request: &CompletionRequest) -> Result<crate::Completion, String> {
+        self.calls.set(self.calls.get() + 1);
+        let mut responses = self.responses.borrow_mut();
+        let content = if responses.len() > 1 {
+            responses.remove(0)
+        } else {
+            responses[0].clone()
+        };
+        Ok(crate::Completion {
+            content,
+            usage: None,
+        })
+    }
+}
+
+#[test]
+fn generation_retries_a_rejected_batch_and_then_succeeds() {
+    let good = ReplayTransport::default_response(FixtureResponse::Generation)
+        .expect("generation fixture readable");
+    let transport = ScriptedTransport::new(vec!["not json".to_string(), good]);
+    let run = run_generation(&transport, &roster(), "retry-run")
+        .expect("run succeeds after one batch retry");
+    assert_eq!(run.records.len(), 240);
+    // 30 batches plus exactly one retried first batch.
+    assert_eq!(transport.calls.get(), 31);
+}
+
+#[test]
+fn generation_fails_loudly_after_exhausting_batch_attempts() {
+    let transport = ScriptedTransport::new(vec!["not json".to_string()]);
+    let error = run_generation(&transport, &roster(), "retry-run")
+        .expect_err("persistently invalid batch fails the run");
+    assert!(
+        error.contains("invalid generation model response"),
+        "{error}"
+    );
+    assert_eq!(transport.calls.get(), crate::MAX_GENERATION_BATCH_ATTEMPTS);
 }
 
 #[test]
