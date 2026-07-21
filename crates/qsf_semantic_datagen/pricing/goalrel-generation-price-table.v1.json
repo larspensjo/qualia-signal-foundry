@@ -1,0 +1,14 @@
+{
+  "version": "goalrel-generation-prices-v1",
+  "provenance_date": "2026-07-21",
+  "source_url": "https://developers.openai.com/api/docs/models/gpt-5.4-nano",
+  "content_sha256": "sha256:1d42cbf453dacd2f2e33ba20946cd39d50eabe89cae30eee12633874d75bcb35",
+  "entries": [
+    {
+      "model_id": "gpt-5.4-nano",
+      "input_usd_per_million": 0.2,
+      "cached_input_usd_per_million": 0.02,
+      "output_usd_per_million": 1.25
+    }
+  ]
+}

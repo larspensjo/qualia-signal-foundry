@@ -146,6 +146,7 @@ pub fn parse_generation_output(input: &str) -> Result<Vec<GenerationOutput>, Str
 
 pub fn validate_generation_output(records: &[GenerationOutput]) -> Result<(), String> {
     let mut ids = BTreeSet::new();
+    let mut semantic_cluster_by_paraphrase_cluster = BTreeMap::new();
     for record in records {
         if record.interchange_version != INTERCHANGE_VERSION {
             return Err(format!(
@@ -168,6 +169,31 @@ pub fn validate_generation_output(records: &[GenerationOutput]) -> Result<(), St
                 record.utterance_id
             ));
         }
+        for tag in &record.intended_slice_tags {
+            if let SliceTag::ParaphraseCluster { id } = tag {
+                match semantic_cluster_by_paraphrase_cluster.get(id) {
+                    Some(semantic_cluster_id)
+                        if semantic_cluster_id != &record.semantic_cluster_id =>
+                    {
+                        return Err(format!(
+                            "paraphrase cluster {id} spans semantic_cluster_id values {semantic_cluster_id} and {}",
+                            record.semantic_cluster_id
+                        ));
+                    }
+                    Some(_) => {}
+                    None => {
+                        semantic_cluster_by_paraphrase_cluster
+                            .insert(id.clone(), record.semantic_cluster_id.clone());
+                    }
+                }
+            }
+        }
+    }
+    if !crate::hard_negative_within_distribution(records) {
+        return Err(format!(
+            "hard_negative records exceed the {:.0}% maximum share of the base generation pool",
+            crate::MAX_HARD_NEGATIVE_SHARE_OF_BASE * 100.0
+        ));
     }
     Ok(())
 }

@@ -1,13 +1,17 @@
-use std::{path::PathBuf, process::Command};
+use std::{path::PathBuf, process::Command, time::Instant};
 
 use qsf_semantic_eval::{GoldLabel, ReviewStatus, RosterSnapshot};
 use serde_json::Value;
 
 use crate::{
-    CompletionRequest, FixtureResponse, GenerationOutput, INTERCHANGE_VERSION, LabelInterchange,
-    ModelTransport, PerGoalLabel, ReplayTransport, ReviewDecision, ReviewField, ReviewValue,
-    ReviewedPoolRequest, TransportKind, build_labeling_input, default_transport_kind,
-    fold_reviewed_pool, parse_generation_output, parse_label_interchange, reconcile, write_jsonl,
+    CompletionRequest, FixtureResponse, GenerationMode, GenerationOutput,
+    GenerationResponseContext, GoalDescription, INTERCHANGE_VERSION, LabelInterchange,
+    ModelTransport, PerGoalLabel, PromptRequest, ReplayTransport, ReviewDecision, ReviewField,
+    ReviewValue, ReviewedPoolRequest, TransportKind, build_labeling_input, build_prompt,
+    default_transport_kind, fold_reviewed_pool, hard_negative_count,
+    hard_negative_within_distribution, parse_generation_response, parse_label_interchange,
+    punctuation_casing_loss, reconcile, split_feasibility_preflight, synthetic_asr_corrupt,
+    tool_local_price_table, validate_generation_output, write_jsonl,
 };
 
 fn roster() -> RosterSnapshot {
@@ -23,7 +27,7 @@ fn generated() -> GenerationOutput {
         utterance: "Could automation change work?".to_string(),
         language: "en".to_string(),
         conditioning_goal_ref: Some(roster().goals[0].goal_ref.clone()),
-        intended_slice_tags: vec![qsf_semantic_eval::SliceTag::HardNegative],
+        intended_slice_tags: Vec::new(),
         session_id: "session-1".to_string(),
         semantic_cluster_id: "cluster-1".to_string(),
         generation_run_id: "generation-1".to_string(),
@@ -218,9 +222,48 @@ fn default_transport_replays_fixtures_that_pass_real_parsers_and_validators() {
     let generation = ReplayTransport::new(FixtureResponse::Generation)
         .complete(&request)
         .expect("generation fixture replays");
-    assert_ne!(generation, request.prompt);
-    let generated = parse_generation_output(&generation).expect("generation fixture validates");
-    assert_eq!(generated.len(), 1);
+    assert!(generation.usage.is_none());
+    assert_ne!(generation.content, request.prompt);
+    let generated = parse_generation_response(
+        &generation.content,
+        &GenerationResponseContext {
+            utterance_id_prefix: "fixture".to_string(),
+            language: "en".to_string(),
+            conditioning_goal_ref: Some(roster().goals[0].goal_ref.clone()),
+            mode: GenerationMode::Hypothetical,
+            session_id: "fixture-session".to_string(),
+            semantic_cluster_id: "fixture-cluster".to_string(),
+            generation_run_id: "fixture-run".to_string(),
+            generator_model_id: "gpt-5.4-nano".to_string(),
+            synthetic_asr_seed: 7,
+        },
+    )
+    .expect("generation fixture parses");
+    let expected_utterances = [
+        "Could automation change work?",
+        "I heard the new system will decide it for us.",
+        "What if the evidence changes tomorrow?",
+        "Please leave that part of my story private.",
+        "Nvidia and OpenAI are changing how teams plan.",
+        "I want a clearer way to separate what happened from what I infer.",
+        "Maybe my colleague meant a different project.",
+        "This detail could cost someone their job.",
+    ];
+    let actual: Vec<_> = generated
+        .iter()
+        .map(|record| (record.utterance_id.clone(), record.utterance.as_str()))
+        .collect();
+    let expected: Vec<_> = expected_utterances
+        .iter()
+        .enumerate()
+        .map(|(index, utterance)| (format!("fixture-{:02}", index + 1), *utterance))
+        .collect();
+    assert_eq!(actual, expected);
+    assert!(
+        generated
+            .iter()
+            .all(|record| !record.saw_activation_keywords)
+    );
 
     for (kind, expected_labeler) in [
         (FixtureResponse::MiniLabel, "gpt-5.4-mini"),
@@ -229,13 +272,272 @@ fn default_transport_replays_fixtures_that_pass_real_parsers_and_validators() {
         let response = ReplayTransport::new(kind)
             .complete(&request)
             .expect("label fixture replays");
-        assert_ne!(response, request.prompt);
-        let labels = parse_label_interchange(&response, &roster())
+        assert_ne!(response.content, request.prompt);
+        let labels = parse_label_interchange(&response.content, &roster())
             .expect("label fixture parses and validates against roster");
         assert_eq!(labels.len(), 1);
         assert_eq!(labels[0].labeler_id, expected_labeler);
         assert_eq!(labels[0].per_goal.len(), roster().goals.len());
     }
+}
+
+#[test]
+fn prompt_uses_only_goal_description_and_vague_mode_has_no_goal() {
+    let description = GoalDescription {
+        title: "A title".to_string(),
+        summary: "A summary".to_string(),
+        tension_summaries: vec!["A tension".to_string()],
+    };
+    let prompt = build_prompt(&PromptRequest {
+        description: Some(description),
+        mode: GenerationMode::Natural,
+        count: 2,
+    })
+    .expect("description prompt");
+    assert!(
+        prompt.contains("A title") && prompt.contains("A summary") && prompt.contains("A tension")
+    );
+    assert!(!prompt.contains("activation keyword"));
+    assert!(
+        build_prompt(&PromptRequest {
+            description: None,
+            mode: GenerationMode::VagueNoneOfRoster,
+            count: 2,
+        })
+        .is_ok()
+    );
+}
+
+#[test]
+fn synthetic_asr_corruption_is_seeded_and_uses_observed_modes() {
+    let corrupted = synthetic_asr_corrupt("Nvidia, OpenAI! Plans?", 0);
+    assert_eq!(corrupted, "nvi dia ope nai plans");
+    assert_eq!(
+        corrupted,
+        synthetic_asr_corrupt("Nvidia, OpenAI! Plans?", 0)
+    );
+    assert_ne!(
+        corrupted,
+        synthetic_asr_corrupt("Nvidia, OpenAI! Plans?", 1)
+    );
+    assert_ne!(corrupted, punctuation_casing_loss("Nvidia, OpenAI! Plans?"));
+}
+
+#[test]
+fn punctuation_casing_loss_mode_applies_its_transform() {
+    let generated = parse_generation_response(
+        r#"{"utterances":["Please, Keep THIS Private!"]}"#,
+        &GenerationResponseContext {
+            utterance_id_prefix: "punctuation".to_string(),
+            language: "en".to_string(),
+            conditioning_goal_ref: Some(roster().goals[0].goal_ref.clone()),
+            mode: GenerationMode::PunctuationCasingLoss,
+            session_id: "punctuation-session".to_string(),
+            semantic_cluster_id: "punctuation-cluster".to_string(),
+            generation_run_id: "punctuation-run".to_string(),
+            generator_model_id: "gpt-5.4-nano".to_string(),
+            synthetic_asr_seed: 0,
+        },
+    )
+    .expect("punctuation/casing response parses");
+    assert_eq!(generated[0].utterance, "please keep this private");
+}
+
+#[test]
+fn hard_paraphrase_is_tagged_and_limited_against_the_base_pool() {
+    let mut pool = Vec::new();
+    for index in 0..8 {
+        let mut record = generated();
+        record.utterance_id = format!("base-{index}");
+        record.intended_slice_tags.clear();
+        pool.push(record);
+    }
+    let hard = parse_generation_response(
+        r#"{"utterances":["A difficult paraphrase.","Another difficult paraphrase."]}"#,
+        &GenerationResponseContext {
+            utterance_id_prefix: "hard".to_string(),
+            language: "en".to_string(),
+            conditioning_goal_ref: Some(roster().goals[0].goal_ref.clone()),
+            mode: GenerationMode::HardParaphrase {
+                cluster_id: "hard-cluster".to_string(),
+            },
+            session_id: "hard-session".to_string(),
+            semantic_cluster_id: "hard-cluster".to_string(),
+            generation_run_id: "hard-run".to_string(),
+            generator_model_id: "gpt-5.4-nano".to_string(),
+            synthetic_asr_seed: 0,
+        },
+    )
+    .expect("hard-paraphrase response parses");
+    assert!(hard.iter().all(|record| {
+        record
+            .intended_slice_tags
+            .contains(&qsf_semantic_eval::SliceTag::HardNegative)
+    }));
+    pool.extend(hard);
+    assert_eq!(hard_negative_count(&pool), 2);
+    assert!(hard_negative_within_distribution(&pool));
+}
+
+#[test]
+fn generation_validator_enforces_hard_negative_distribution_cap() {
+    let mut pool = Vec::new();
+    for index in 0..3 {
+        let mut record = generated();
+        record.utterance_id = format!("base-{index}");
+        pool.push(record);
+    }
+    let mut hard = generated();
+    hard.utterance_id = "hard".to_string();
+    hard.intended_slice_tags = vec![qsf_semantic_eval::SliceTag::HardNegative];
+    pool.push(hard);
+
+    let error = validate_generation_output(&pool).expect_err("one hard to three base exceeds cap");
+    assert!(error.contains("hard_negative"), "{error}");
+}
+
+#[test]
+fn generation_validator_rejects_paraphrase_cluster_spanning_semantic_clusters() {
+    let mut left = generated();
+    left.utterance_id = "left".to_string();
+    left.semantic_cluster_id = "semantic-left".to_string();
+    left.intended_slice_tags = vec![qsf_semantic_eval::SliceTag::ParaphraseCluster {
+        id: "shared-paraphrase".to_string(),
+    }];
+    let mut right = left.clone();
+    right.utterance_id = "right".to_string();
+    right.semantic_cluster_id = "semantic-right".to_string();
+
+    let error = validate_generation_output(&[left, right])
+        .expect_err("paraphrase cluster cannot span semantic clusters");
+    assert!(error.contains("shared-paraphrase"), "{error}");
+    assert!(error.contains("semantic_cluster_id"), "{error}");
+}
+
+fn feasibility_pool() -> Vec<GenerationOutput> {
+    let mut pool = Vec::new();
+    for partition in ["left", "right"] {
+        for index in 0..8 {
+            let mut record = generated();
+            record.utterance_id = format!("{partition}-{index}");
+            record.session_id = format!("session-{partition}");
+            record.semantic_cluster_id = format!("semantic-{partition}");
+            record.conditioning_goal_ref = None;
+            record.intended_slice_tags = vec![
+                qsf_semantic_eval::SliceTag::ExplicitNegation,
+                qsf_semantic_eval::SliceTag::ImplicitNegation,
+                qsf_semantic_eval::SliceTag::QuotedSpeech,
+                qsf_semantic_eval::SliceTag::Hypothetical,
+                qsf_semantic_eval::SliceTag::SubjectConfusion,
+                qsf_semantic_eval::SliceTag::PunctuationCasingLoss,
+                qsf_semantic_eval::SliceTag::SyntheticAsr,
+                qsf_semantic_eval::SliceTag::RareHighCost,
+                qsf_semantic_eval::SliceTag::HardNegative,
+                qsf_semantic_eval::SliceTag::ParaphraseCluster {
+                    id: format!("{partition}-{}", index / 2),
+                },
+            ];
+            pool.push(record);
+        }
+    }
+    pool
+}
+
+#[test]
+fn split_feasibility_assigns_whole_components_and_names_an_unmet_floor() {
+    let pool = feasibility_pool();
+    let result = split_feasibility_preflight(&pool, 7).expect("fixture pool is feasible");
+    assert_eq!(result.assignment_by_component.len(), 2);
+
+    let mut infeasible = pool;
+    for record in &mut infeasible {
+        if record
+            .intended_slice_tags
+            .contains(&qsf_semantic_eval::SliceTag::ExplicitNegation)
+        {
+            record.session_id = "one-negation-component".to_string();
+            record.semantic_cluster_id = "one-negation-component".to_string();
+        }
+    }
+    let error =
+        split_feasibility_preflight(&infeasible, 7).expect_err("negations cannot cross the split");
+    assert!(
+        error.contains("negation requires 6 utterances per split"),
+        "{error}"
+    );
+}
+
+fn realistic_infeasible_quoted_speech_pool() -> Vec<GenerationOutput> {
+    let mut pool = Vec::new();
+    for component in 0..25 {
+        let utterance_count = if component == 0 { 12 } else { 3 };
+        for utterance in 0..utterance_count {
+            let mut record = generated();
+            record.utterance_id = format!("realistic-{component}-{utterance}");
+            record.session_id = format!("realistic-session-{component}");
+            record.semantic_cluster_id = format!("realistic-semantic-{component}");
+            record.conditioning_goal_ref = None;
+            record.intended_slice_tags = vec![
+                qsf_semantic_eval::SliceTag::ExplicitNegation,
+                qsf_semantic_eval::SliceTag::ImplicitNegation,
+                qsf_semantic_eval::SliceTag::Hypothetical,
+                qsf_semantic_eval::SliceTag::SubjectConfusion,
+                qsf_semantic_eval::SliceTag::PunctuationCasingLoss,
+                qsf_semantic_eval::SliceTag::SyntheticAsr,
+                qsf_semantic_eval::SliceTag::RareHighCost,
+                qsf_semantic_eval::SliceTag::ParaphraseCluster {
+                    id: format!("realistic-paraphrase-{component}"),
+                },
+            ];
+            if component == 0 {
+                record
+                    .intended_slice_tags
+                    .push(qsf_semantic_eval::SliceTag::QuotedSpeech);
+            }
+            if (1..=8).contains(&component) && utterance == 0 {
+                record
+                    .intended_slice_tags
+                    .push(qsf_semantic_eval::SliceTag::HardNegative);
+            }
+            pool.push(record);
+        }
+    }
+    pool
+}
+
+#[test]
+fn realistic_infeasible_pool_is_fast_and_names_nonfirst_floor() {
+    let pool = realistic_infeasible_quoted_speech_pool();
+    assert_eq!(pool.len(), 84);
+    let started = Instant::now();
+    let error = split_feasibility_preflight(&pool, 7)
+        .expect_err("quoted speech is confined to one component");
+    assert!(
+        started.elapsed().as_secs_f64() < 2.0,
+        "took too long: {error}"
+    );
+    assert!(
+        error.contains("quoted_speech requires 5 utterances per split"),
+        "{error}"
+    );
+    assert!(!error.contains("negation requires"), "{error}");
+}
+
+#[test]
+fn tool_local_price_table_is_hashed_and_unknown_models_are_token_only() {
+    let table = tool_local_price_table().expect("checked-in price table is valid");
+    assert_eq!(table.version, "goalrel-generation-prices-v1");
+    assert!(
+        crate::render_usage_report(
+            "unknown-model",
+            crate::TokenUsage {
+                input_tokens: 10,
+                cached_input_tokens: 0,
+                output_tokens: 2,
+            }
+        )
+        .contains("estimated cost unavailable")
+    );
 }
 
 #[test]

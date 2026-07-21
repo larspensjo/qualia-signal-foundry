@@ -50,15 +50,16 @@ entity detection; arbitration standing for ConsultWorld-capable goals under
 current-information cues).
 
 ### Semantic evaluation (goal relevance)
-**Continue [Plan.GoalRelevanceFrozenSets](Plans/Plan.GoalRelevanceFrozenSets.md): build the
-description-conditioned generation stage next, toward the frozen validation/test sets
-(parent: [Plan.SemanticEvaluationFoundation](Plans/Plan.SemanticEvaluationFoundation.md)).**
-Why: schema v2 and the replay-default datagen crate landed 2026-07-21; generation is the
-first stage that produces real utterances, and frozen labeled data is what makes the
-baseline report, failure-floor measurement, and regression gate real.
-Alternate: the remote-usage telemetry baseline (token-ledger extraction) is independent and
-can proceed in parallel; small pending item — the operator label review that flips the
-12 sample records from `draft`.
+**Run the optional goal-relevance live generation smoke, then continue
+[Plan.GoalRelevanceFrozenSets](Plans/Plan.GoalRelevanceFrozenSets.md) with blind labeling and
+review tooling toward frozen validation/test sets (parent:
+[Plan.SemanticEvaluationFoundation](Plans/Plan.SemanticEvaluationFoundation.md)).**
+Why: the description-conditioned, replay-default generation tooling now validates mode coverage,
+ASR corruption, split feasibility, and isolated cost reporting; the live smoke is the recommended
+cheap human check before producing labeled utterances.
+Alternate: the remote-usage telemetry baseline (token-ledger extraction) is independent and can
+proceed in parallel; small pending item — the operator label review that flips the 12 sample
+records from `draft`.
 
 ## Horizon — direction
 

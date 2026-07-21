@@ -1985,3 +1985,37 @@ keywords are scorer configuration rather than the description the label was made
 Consequences: Frozen goal-relevance artifacts declare their roster binding explicitly. Rebinding is
 an auditable mechanical transformation, never a manual label edit; semantic description changes do
 not silently reuse prior annotations.
+
+## 2026-07-21 - Goal-relevance generation is conditioned on descriptions with keywords withheld
+Decision: Goal-relevance generation prompts receive only a goal title, summary, and tension
+summaries. Activation keywords are structurally excluded from the prompt-input type, and generated
+records record `saw_activation_keywords: false`.
+
+Context: The downstream exact-token failure-floor measurement is meaningful only if generated
+utterances were not steered by the scorer's activation-keyword list.
+
+Consequences: The description-only conditioning property is an auditable prerequisite of that
+measurement. Generation prompt construction cannot accidentally gain keyword access without a
+deliberate contract change.
+
+## 2026-07-21 - Offline goal-relevance generation has isolated usage and pricing reporting
+Decision: Offline goal-relevance dataset generation is excluded from the shared token-usage ledger.
+Its tool reports provider token usage and an estimate from a checked-in, versioned local price
+table; when the model has no matching entry, it reports tokens only.
+
+Context: Dataset construction is offline tooling rather than a production surface. Mixing it into
+the shared ledger would conflate evaluation-production cost with runtime telemetry, while inventing
+a price for an unknown model would make the report misleading.
+
+Consequences: The tool-local table carries a provenance date and content hash and affects only
+stdout reporting. Shared runtime accounting remains raw and independent.
+
+## 2026-07-21 - Goal-relevance expansion defers the OpenAI Batch API
+Decision: Goal-relevance generation uses synchronous chat completions at the current corpus size.
+The OpenAI Batch API is reserved for a future 1000+-utterance expansion.
+
+Context: At the current size Batch savings are small compared with the extra state management and
+latency of an asynchronous batch workflow; the pinned provider kit also predates its Batch support.
+
+Consequences: The live smoke and ordinary generation path stay simple and synchronous. An expansion
+can adopt Batch deliberately with its own state and artifact contracts.
