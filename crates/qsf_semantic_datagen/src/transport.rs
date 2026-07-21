@@ -265,6 +265,12 @@ fn run_generate_cli(args: &[String]) -> Result<(), String> {
         output_path.display(),
         transport_name(transport.kind())
     );
+    for cluster in &run.cluster_anchors {
+        println!(
+            "paraphrase cluster {} anchor: {}",
+            cluster.cluster_id, cluster.anchor
+        );
+    }
     if let Some(usage) = run.usage {
         println!("{}", render_usage_report(GENERATOR_MODEL_ID, usage));
     } else {

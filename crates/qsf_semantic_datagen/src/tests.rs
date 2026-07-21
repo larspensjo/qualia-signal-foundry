@@ -154,6 +154,9 @@ fn replay_generation_run_produces_the_valid_generation_pool_contract() {
     .expect("replay generation completes without network");
     assert!(run.usage.is_none());
     assert_eq!(run.records.len(), 240);
+    assert_eq!(run.cluster_anchors.len(), 10);
+    assert!(run.cluster_anchors.iter().all(|cluster| cluster.anchor
+        == "A user imagines named people following another person's conversational lead."));
     validate_generation_output(&run.records).expect("generated pool validates");
     let jsonl = write_jsonl(&run.records).expect("serialize generated pool");
     let reparsed = parse_generation_output(&jsonl).expect("parse generated pool artifact");
@@ -417,14 +420,14 @@ fn default_transport_replays_fixtures_that_pass_real_parsers_and_validators() {
     )
     .expect("generation fixture parses");
     let expected_utterances = [
-        "Could automation change work?",
-        "I heard the new system will decide it for us.",
-        "What if the evidence changes tomorrow?",
-        "Please leave that part of my story private.",
-        "Nvidia and OpenAI are changing how teams plan.",
-        "I want a clearer way to separate what happened from what I infer.",
-        "Maybe my colleague meant a different project.",
-        "This detail could cost someone their job.",
+        "Imagine Maya focuses on the project plans after a coworker grows quiet.",
+        "What if OpenAI gets a gentle reminder from Jordan about the meeting agenda?",
+        "Suppose Priya shifts the topic toward the release plan after Sam hesitates.",
+        "If I ever hear Maya pause, I would follow her lead with the schedule.",
+        "Imagine Nvidia receives a request for the public timeline from Jordan.",
+        "What if Lena describes the deliverables while Omar waits for an answer?",
+        "Suppose Alex stays with the design notes after Priya changes the subject.",
+        "If I were Casey, I would ask Lee about the proposal.",
     ];
     let actual: Vec<_> = generated
         .iter()
@@ -485,6 +488,10 @@ fn prompt_uses_only_goal_description_and_vague_mode_has_no_goal() {
     assert!(
         prompt.contains("A title") && prompt.contains("A summary") && prompt.contains("A tension")
     );
+    assert!(prompt.contains("must never address the AI as though it were a human interlocutor"));
+    assert!(
+        prompt.contains("vary actors, settings, speech acts, stances, tenses, and consequences")
+    );
     assert!(!prompt.contains("activation keyword"));
     assert!(
         build_prompt(&PromptRequest {
@@ -498,17 +505,44 @@ fn prompt_uses_only_goal_description_and_vague_mode_has_no_goal() {
 
 #[test]
 fn synthetic_asr_corruption_is_seeded_and_uses_observed_modes() {
-    let corrupted = synthetic_asr_corrupt("Nvidia, OpenAI! Plans?", 0);
+    let corrupted =
+        synthetic_asr_corrupt("Nvidia, OpenAI! Plans?", 0).expect("named entities can be mangled");
     assert_eq!(corrupted, "nvi dia ope nai plans");
     assert_eq!(
         corrupted,
-        synthetic_asr_corrupt("Nvidia, OpenAI! Plans?", 0)
+        synthetic_asr_corrupt("Nvidia, OpenAI! Plans?", 0).expect("same named entities mangle")
     );
     assert_ne!(
         corrupted,
         synthetic_asr_corrupt("Nvidia, OpenAI! Plans?", 1)
+            .expect("different seed still mangles named entities")
     );
     assert_ne!(corrupted, punctuation_casing_loss("Nvidia, OpenAI! Plans?"));
+}
+
+#[test]
+fn synthetic_asr_rejects_utterances_without_a_mangleable_entity() {
+    let error = synthetic_asr_corrupt("please keep this to the agenda", 0)
+        .expect_err("synthetic ASR must not silently skip entity mangling");
+    assert!(error.contains("mangle-able personal or product/company name"));
+
+    let parse_error = parse_generation_response(
+        r#"{"utterances":["please keep this to the agenda"]}"#,
+        &GenerationResponseContext {
+            utterance_id_prefix: "asr-no-entity".to_string(),
+            language: "en".to_string(),
+            conditioning_goal_ref: Some(roster().goals[0].goal_ref.clone()),
+            mode: GenerationMode::SyntheticAsr,
+            session_id: "asr-session".to_string(),
+            semantic_cluster_id: "asr-cluster".to_string(),
+            generation_run_id: "asr-run".to_string(),
+            generator_model_id: "gpt-5.4-nano".to_string(),
+            synthetic_asr_seed: 0,
+        },
+    )
+    .expect_err("mode parser names the source utterance for a missing entity");
+    assert!(parse_error.contains("synthetic_asr"), "{parse_error}");
+    assert!(parse_error.contains("asr-no-entity-01"), "{parse_error}");
 }
 
 #[test]
@@ -529,6 +563,142 @@ fn punctuation_casing_loss_mode_applies_its_transform() {
     )
     .expect("punctuation/casing response parses");
     assert_eq!(generated[0].utterance, "please keep this private");
+    assert_eq!(
+        punctuation_casing_loss("Ava’s Plan—Now!"),
+        "avas plannow",
+        "all Unicode punctuation, including a curly apostrophe, is removed"
+    );
+}
+
+#[test]
+fn generation_mode_validators_accept_required_forms() {
+    let context = |mode| GenerationResponseContext {
+        utterance_id_prefix: "validator-accept".to_string(),
+        language: "en".to_string(),
+        conditioning_goal_ref: Some(roster().goals[0].goal_ref.clone()),
+        mode,
+        session_id: "validator-session".to_string(),
+        semantic_cluster_id: "validator-cluster".to_string(),
+        generation_run_id: "validator-run".to_string(),
+        generator_model_id: "gpt-5.4-nano".to_string(),
+        synthetic_asr_seed: 0,
+    };
+
+    parse_generation_response(
+        r#"{"utterances":["I would rather let Maya set the pace."]}"#,
+        &context(GenerationMode::ImplicitNegation),
+    )
+    .expect("implicit negation without grammatical negators is accepted");
+    parse_generation_response(
+        r#"{"utterances":["Imagine Maya changes the subject after Jordan pauses."]}"#,
+        &context(GenerationMode::Hypothetical),
+    )
+    .expect("explicitly imagined event is accepted");
+    parse_generation_response(
+        r#"{"anchor":"Maya follows Jordan's lead.","utterances":["Maya takes Jordan's pause as a cue to stay with the agenda."]}"#,
+        &context(GenerationMode::HardParaphrase {
+            cluster_id: "validator-hard".to_string(),
+        }),
+    )
+    .expect("indirect hard negative without forbidden vocabulary is accepted");
+}
+
+#[test]
+fn generation_mode_validators_reject_invalid_utterances_with_mode_and_id() {
+    let context = |mode| GenerationResponseContext {
+        utterance_id_prefix: "validator-reject".to_string(),
+        language: "en".to_string(),
+        conditioning_goal_ref: Some(roster().goals[0].goal_ref.clone()),
+        mode,
+        session_id: "validator-session".to_string(),
+        semantic_cluster_id: "validator-cluster".to_string(),
+        generation_run_id: "validator-run".to_string(),
+        generator_model_id: "gpt-5.4-nano".to_string(),
+        synthetic_asr_seed: 0,
+    };
+    for (mode, response, expected_mode) in [
+        (
+            GenerationMode::ImplicitNegation,
+            r#"{"utterances":["I don’t want Maya to continue."]}"#,
+            "implicit_negation",
+        ),
+        (
+            GenerationMode::Hypothetical,
+            r#"{"utterances":["Maya changes the subject whenever Jordan pauses."]}"#,
+            "hypothetical",
+        ),
+        (
+            GenerationMode::HardParaphrase {
+                cluster_id: "validator-hard".to_string(),
+            },
+            r#"{"anchor":"Maya follows Jordan's lead.","utterances":["Maya respects Jordan's boundary."]}"#,
+            "hard_negative",
+        ),
+    ] {
+        let error = parse_generation_response(response, &context(mode))
+            .expect_err("invalid mode content is rejected loudly");
+        assert!(error.contains(expected_mode), "{error}");
+        assert!(error.contains("validator-reject-01"), "{error}");
+    }
+}
+
+#[test]
+fn cluster_modes_require_an_anchor_without_changing_the_interchange() {
+    let context = GenerationResponseContext {
+        utterance_id_prefix: "anchor".to_string(),
+        language: "en".to_string(),
+        conditioning_goal_ref: Some(roster().goals[0].goal_ref.clone()),
+        mode: GenerationMode::ParaphraseCluster {
+            cluster_id: "anchor-cluster".to_string(),
+        },
+        session_id: "anchor-session".to_string(),
+        semantic_cluster_id: "anchor-cluster".to_string(),
+        generation_run_id: "anchor-run".to_string(),
+        generator_model_id: "gpt-5.4-nano".to_string(),
+        synthetic_asr_seed: 0,
+    };
+    let error = parse_generation_response(
+        r#"{"utterances":["Maya follows Jordan's lead."]}"#,
+        &context,
+    )
+    .expect_err("cluster response without anchor is rejected");
+    assert!(error.contains("paraphrase_cluster"), "{error}");
+    assert!(error.contains("anchor"), "{error}");
+}
+
+#[test]
+fn model_generation_response_rejects_unknown_fields_with_or_without_anchor() {
+    let natural_context = GenerationResponseContext {
+        utterance_id_prefix: "unknown-natural".to_string(),
+        language: "en".to_string(),
+        conditioning_goal_ref: Some(roster().goals[0].goal_ref.clone()),
+        mode: GenerationMode::Natural,
+        session_id: "unknown-session".to_string(),
+        semantic_cluster_id: "unknown-cluster".to_string(),
+        generation_run_id: "unknown-run".to_string(),
+        generator_model_id: "gpt-5.4-nano".to_string(),
+        synthetic_asr_seed: 0,
+    };
+    let cluster_context = GenerationResponseContext {
+        mode: GenerationMode::ParaphraseCluster {
+            cluster_id: "unknown-cluster".to_string(),
+        },
+        ..natural_context.clone()
+    };
+    for (response, context) in [
+        (
+            r#"{"utterances":["Maya follows Jordan's lead."],"unexpected":true}"#,
+            natural_context,
+        ),
+        (
+            r#"{"anchor":"Maya follows Jordan's lead.","utterances":["Maya follows Jordan's lead."],"unexpected":true}"#,
+            cluster_context,
+        ),
+    ] {
+        let error = parse_generation_response(response, &context)
+            .expect_err("model response must reject unknown fields");
+        assert!(error.contains("unknown field"), "{error}");
+    }
 }
 
 #[test]
@@ -570,7 +740,7 @@ fn hard_paraphrase_is_tagged_and_limited_against_the_base_pool() {
         pool.push(record);
     }
     let hard = parse_generation_response(
-        r#"{"utterances":["A difficult paraphrase.","Another difficult paraphrase."]}"#,
+        r#"{"anchor":"A difficult shared proposition.","utterances":["A difficult paraphrase.","Another difficult paraphrase."]}"#,
         &GenerationResponseContext {
             utterance_id_prefix: "hard".to_string(),
             language: "en".to_string(),
