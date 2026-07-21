@@ -7,8 +7,8 @@ use qsf_semantic_eval::RosterSnapshot;
 
 use crate::{
     GenerationMode, GenerationResponseContext, GoalDescription, PromptRequest, TokenUsage,
-    build_prompt, parse_generation_response, render_usage_report, split_feasibility_preflight,
-    validate_generation_output, write_jsonl,
+    build_prompt, parse_generation_response, render_generation_report, render_usage_report,
+    split_feasibility_preflight, validate_generation_output,
 };
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -207,11 +207,11 @@ pub fn run_cli(mut args: impl Iterator<Item = String>) -> Result<(), String> {
                     synthetic_asr_seed: 20260721,
                 },
             )?;
+            println!("using live transport");
             println!(
-                "using live transport ({} utterances generated)",
-                generated.len()
+                "{}",
+                render_generation_report(Some(&goal.title), &generated)?
             );
-            println!("{}", write_jsonl(&generated)?);
             if let Some(usage) = response.usage {
                 println!("{}", render_usage_report(&request.model_id, usage));
             }

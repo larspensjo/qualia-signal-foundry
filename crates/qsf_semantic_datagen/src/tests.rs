@@ -10,8 +10,8 @@ use crate::{
     ReviewValue, ReviewedPoolRequest, TransportKind, build_labeling_input, build_prompt,
     default_transport_kind, fold_reviewed_pool, hard_negative_count,
     hard_negative_within_distribution, parse_generation_response, parse_label_interchange,
-    punctuation_casing_loss, reconcile, split_feasibility_preflight, synthetic_asr_corrupt,
-    tool_local_price_table, validate_generation_output, write_jsonl,
+    punctuation_casing_loss, reconcile, render_generation_report, split_feasibility_preflight,
+    synthetic_asr_corrupt, tool_local_price_table, validate_generation_output, write_jsonl,
 };
 
 fn roster() -> RosterSnapshot {
@@ -32,7 +32,7 @@ fn generated() -> GenerationOutput {
         semantic_cluster_id: "cluster-1".to_string(),
         generation_run_id: "generation-1".to_string(),
         generator_model_id: "gpt-5.4-nano".to_string(),
-        prompt_version: "goalrel-gen-v1".to_string(),
+        prompt_version: crate::GENERATION_PROMPT_VERSION.to_string(),
         saw_activation_keywords: false,
     }
 }
@@ -341,6 +341,35 @@ fn punctuation_casing_loss_mode_applies_its_transform() {
     )
     .expect("punctuation/casing response parses");
     assert_eq!(generated[0].utterance, "please keep this private");
+}
+
+#[test]
+fn generation_report_lists_utterances_with_shared_metadata_stated_once() {
+    let generated = parse_generation_response(
+        r#"{"utterances":["First thing I said.","Second thing I said."]}"#,
+        &GenerationResponseContext {
+            utterance_id_prefix: "report".to_string(),
+            language: "en".to_string(),
+            conditioning_goal_ref: Some(roster().goals[0].goal_ref.clone()),
+            mode: GenerationMode::QuotedSpeech,
+            session_id: "report-session".to_string(),
+            semantic_cluster_id: "report-cluster".to_string(),
+            generation_run_id: "report-run".to_string(),
+            generator_model_id: "gpt-5.4-nano".to_string(),
+            synthetic_asr_seed: 0,
+        },
+    )
+    .expect("report fixture parses");
+    let report = render_generation_report(Some("Respect a person's boundaries"), &generated)
+        .expect("report renders");
+    assert!(report.starts_with("generated 2 utterance(s) — model gpt-5.4-nano, run report-run\n"));
+    assert!(report.contains("goal: Respect a person's boundaries\n"));
+    assert!(report.contains("saw_activation_keywords=false"));
+    assert!(report.contains("  1. First thing I said.\n"));
+    assert!(report.contains("  2. Second thing I said.\n"));
+    assert!(report.contains("slices: quoted_speech"));
+    assert_eq!(report.matches("report-session").count(), 1);
+    assert!(render_generation_report(None, &[]).is_err());
 }
 
 #[test]

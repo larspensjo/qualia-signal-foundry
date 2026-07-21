@@ -3,7 +3,7 @@ use serde::Deserialize;
 
 use crate::{GenerationOutput, INTERCHANGE_VERSION};
 
-pub const GENERATION_PROMPT_VERSION: &str = "goalrel-gen-v1";
+pub const GENERATION_PROMPT_VERSION: &str = "goalrel-gen-v2";
 pub const MAX_HARD_NEGATIVE_SHARE_OF_BASE: f64 = 0.25;
 
 /// The only goal material that can cross the generation prompt boundary.
@@ -126,7 +126,9 @@ pub fn build_prompt(request: &PromptRequest) -> Result<String, String> {
             );
         }
         (_, Some(description)) => format!(
-            "Goal title: {}\nGoal summary: {}\nTension summaries:\n{}\n",
+            "The utterances must bear on the following goal. The goal belongs to the assistant, \
+not the user — do not restate it or act it out; write what a user whose words touch on this \
+goal's subject matter would say.\nGoal title: {}\nGoal summary: {}\nTension summaries:\n{}\n",
             description.title,
             description.summary,
             description
@@ -139,7 +141,11 @@ pub fn build_prompt(request: &PromptRequest) -> Result<String, String> {
         (_, None) => return Err("goal-conditioned generation requires a description".to_string()),
     };
     Ok(format!(
-        "Generate {} English user utterances. {}\n{}Return JSON only: {{\"utterances\":[\"...\"]}}. Do not include labels, metadata, or explanations.",
+        "Generate {} English utterances spoken by a human user to their AI assistant. \
+Write only the user's side of the conversation, in the user's own voice — things the user \
+would say about their own life, work, thoughts, or questions. Never write the assistant's \
+replies or an assistant-like voice (no offering help, no inviting the user to share). {}\n\
+{}Return JSON only: {{\"utterances\":[\"...\"]}}. Do not include labels, metadata, or explanations.",
         request.count,
         request.mode.instruction(),
         description
@@ -242,6 +248,64 @@ pub fn punctuation_casing_loss(input: &str) -> String {
         .split_whitespace()
         .collect::<Vec<_>>()
         .join(" ")
+}
+
+/// Human-readable rendering of a generated pool for operator review. Shared
+/// run metadata is stated once; each utterance is listed by number with its
+/// slice tags only when it carries any.
+pub fn render_generation_report(
+    goal_title: Option<&str>,
+    records: &[GenerationOutput],
+) -> Result<String, String> {
+    let first = records
+        .first()
+        .ok_or_else(|| "cannot render a report for an empty generation pool".to_string())?;
+    let mut report = format!(
+        "generated {} utterance(s) — model {}, run {}\n",
+        records.len(),
+        first.generator_model_id,
+        first.generation_run_id
+    );
+    report.push_str(&format!(
+        "goal: {}\n",
+        goal_title.unwrap_or("(none — goal-unconditioned batch)")
+    ));
+    report.push_str(&format!(
+        "prompt {}, language {}, session {}, cluster {}, saw_activation_keywords={}\n\n",
+        first.prompt_version,
+        first.language,
+        first.session_id,
+        first.semantic_cluster_id,
+        first.saw_activation_keywords
+    ));
+    for (index, record) in records.iter().enumerate() {
+        report.push_str(&format!("{:3}. {}\n", index + 1, record.utterance));
+        if !record.intended_slice_tags.is_empty() {
+            let tags = record
+                .intended_slice_tags
+                .iter()
+                .map(slice_tag_display)
+                .collect::<Vec<_>>()
+                .join(", ");
+            report.push_str(&format!("     slices: {tags}\n"));
+        }
+    }
+    Ok(report)
+}
+
+/// Renders a slice tag with the same snake_case vocabulary the interchange
+/// artifacts use, keeping serde as the one source of truth for tag names.
+fn slice_tag_display(tag: &SliceTag) -> String {
+    let value = serde_json::to_value(tag).unwrap_or_default();
+    let kind = value
+        .get("kind")
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or("unknown")
+        .to_string();
+    match value.get("id").and_then(serde_json::Value::as_str) {
+        Some(id) => format!("{kind}:{id}"),
+        None => kind,
+    }
 }
 
 pub fn hard_negative_count(records: &[GenerationOutput]) -> usize {
