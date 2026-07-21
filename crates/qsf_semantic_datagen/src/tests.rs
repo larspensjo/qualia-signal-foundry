@@ -4,14 +4,18 @@ use qsf_semantic_eval::{GoldLabel, ReviewStatus, RosterSnapshot};
 use serde_json::Value;
 
 use crate::{
-    CompletionRequest, FixtureResponse, GenerationMode, GenerationOutput,
-    GenerationResponseContext, GoalDescription, INTERCHANGE_VERSION, LabelInterchange,
-    ModelTransport, PerGoalLabel, PromptRequest, ReplayTransport, ReviewDecision, ReviewField,
-    ReviewValue, ReviewedPoolRequest, TransportKind, build_labeling_input, build_prompt,
-    default_transport_kind, fold_reviewed_pool, hard_negative_count,
-    hard_negative_within_distribution, parse_generation_response, parse_label_interchange,
-    punctuation_casing_loss, reconcile, render_generation_report, split_feasibility_preflight,
-    synthetic_asr_corrupt, tool_local_price_table, validate_generation_output, write_jsonl,
+    CompletionRequest, FixtureResponse, GOAL_RELEVANCE_GUIDELINE_VERSION, GenerationMode,
+    GenerationOutput, GenerationResponseContext, GoalDescription, INTERCHANGE_VERSION,
+    LabelInterchange, LabelingResponseContext, MINI_LABELER_ID, ModelTransport, PerGoalLabel,
+    PromptRequest, ReplayTransport, ReviewDecision, ReviewField, ReviewValue, ReviewedPoolRequest,
+    TransportKind, build_blind_qa_review_view_model, build_goal_relevance_label_prompt,
+    build_labeling_input, build_prompt, build_review_view_model, default_transport_kind,
+    fold_reviewed_pool, hard_negative_count, hard_negative_within_distribution,
+    mini_fable_agreement_rate, parse_generation_output, parse_generation_response,
+    parse_goal_relevance_label_response, parse_label_interchange, priority_review_queue,
+    punctuation_casing_loss, reconcile, render_blind_qa_review_view, render_generation_report,
+    run_generation, run_mini_labeling, split_feasibility_preflight, synthetic_asr_corrupt,
+    tool_local_price_table, validate_generation_output, write_jsonl,
 };
 
 fn roster() -> RosterSnapshot {
@@ -53,6 +57,28 @@ fn label(labeler_id: &str, label: GoldLabel) -> LabelInterchange {
     }
 }
 
+fn full_label(labeler_id: &str, labels: &[GoldLabel]) -> LabelInterchange {
+    let roster = roster();
+    assert_eq!(labels.len(), roster.goals.len());
+    LabelInterchange {
+        interchange_version: INTERCHANGE_VERSION,
+        labeler_id: labeler_id.to_string(),
+        labeling_run_id: format!("{labeler_id}-run"),
+        guideline_version: GOAL_RELEVANCE_GUIDELINE_VERSION.to_string(),
+        utterance_id: "utterance-1".to_string(),
+        per_goal: roster
+            .goals
+            .iter()
+            .zip(labels)
+            .map(|(goal, label)| PerGoalLabel {
+                goal_ref: goal.goal_ref.clone(),
+                label: label.clone(),
+            })
+            .collect(),
+        none_of_roster: false,
+    }
+}
+
 #[test]
 fn blind_labeling_input_cannot_leak_pool_metadata() {
     let input = build_labeling_input(&[generated()], &roster()).expect("build blind input");
@@ -74,6 +100,64 @@ fn blind_labeling_input_cannot_leak_pool_metadata() {
     }
     let reparsed = crate::parse_labeling_input(&json).expect("blind input round trips");
     assert_eq!(reparsed, input);
+}
+
+#[test]
+fn mini_label_prompt_is_blind_to_generator_intent_slice_tags_and_provenance() {
+    let mut record = generated();
+    record.conditioning_goal_ref = Some("intended-goal-secret".to_string());
+    record.intended_slice_tags = vec![qsf_semantic_eval::SliceTag::ExplicitNegation];
+    record.generation_run_id = "generation-provenance-secret".to_string();
+    record.generator_model_id = "generator-model-secret".to_string();
+    let input = build_labeling_input(&[record], &roster()).expect("build blind input");
+    let prompt = build_goal_relevance_label_prompt(&input[0]).expect("build blind mini prompt");
+    for forbidden in [
+        "intended-goal-secret",
+        "explicit_negation",
+        "generation-provenance-secret",
+        "generator-model-secret",
+    ] {
+        assert!(!prompt.contains(forbidden), "prompt leaked {forbidden}");
+    }
+}
+
+#[test]
+fn replay_mini_labeling_builds_and_validates_a_complete_interchange_file() {
+    assert_eq!(default_transport_kind(), TransportKind::Replay);
+    let input = build_labeling_input(&[generated()], &roster()).expect("build input");
+    let run = run_mini_labeling(
+        &ReplayTransport::new(FixtureResponse::MiniLabel),
+        &input,
+        "fixture-mini-label-run",
+    )
+    .expect("replay mini labeling completes without network");
+    assert!(run.usage.is_none());
+    let serialized = write_jsonl(&run.labels).expect("write label-mini artifact");
+    let labels = parse_label_interchange(&serialized, &roster()).expect("shared validation");
+    assert_eq!(labels[0].labeler_id, MINI_LABELER_ID);
+    assert_eq!(labels[0].labeling_run_id, "fixture-mini-label-run");
+    assert_eq!(
+        labels[0].guideline_version,
+        GOAL_RELEVANCE_GUIDELINE_VERSION
+    );
+    assert_eq!(labels[0].utterance_id, "utterance-1");
+    assert_eq!(labels[0].per_goal.len(), roster().goals.len());
+}
+
+#[test]
+fn replay_generation_run_produces_the_valid_generation_pool_contract() {
+    let run = run_generation(
+        &ReplayTransport::new(FixtureResponse::Generation),
+        &roster(),
+        "fixture-generation-contract",
+    )
+    .expect("replay generation completes without network");
+    assert!(run.usage.is_none());
+    assert_eq!(run.records.len(), 240);
+    validate_generation_output(&run.records).expect("generated pool validates");
+    let jsonl = write_jsonl(&run.records).expect("serialize generated pool");
+    let reparsed = parse_generation_output(&jsonl).expect("parse generated pool artifact");
+    assert_eq!(reparsed, run.records);
 }
 
 #[test]
@@ -107,6 +191,94 @@ fn reconciliation_is_deterministic_and_marks_disagreement() {
 }
 
 #[test]
+fn priority_review_queue_places_planted_disagreements_first_and_reports_agreement_rate() {
+    let mini = full_label(
+        "gpt-5.4-mini",
+        &[
+            GoldLabel::Relevant,
+            GoldLabel::NotRelevant,
+            GoldLabel::NotRelevant,
+            GoldLabel::NotRelevant,
+            GoldLabel::NotRelevant,
+            GoldLabel::NotRelevant,
+            GoldLabel::NotRelevant,
+        ],
+    );
+    let fable = full_label(
+        "claude-fable",
+        &[
+            GoldLabel::Ambiguous,
+            GoldLabel::NotRelevant,
+            GoldLabel::NotRelevant,
+            GoldLabel::NotRelevant,
+            GoldLabel::NotRelevant,
+            GoldLabel::NotRelevant,
+            GoldLabel::NotRelevant,
+        ],
+    );
+    let reconciliation = reconcile(&[mini], &[fable]).expect("reconcile planted disagreement");
+    let queue = priority_review_queue(&reconciliation);
+    assert!(!queue[0].agree);
+    assert_eq!(queue[0].goal_ref, roster().goals[0].goal_ref);
+    let agreement = mini_fable_agreement_rate(&reconciliation);
+    assert_eq!(agreement.agreed_pairs, 6);
+    assert_eq!(agreement.total_pairs, 7);
+    assert_eq!(agreement.rate, 6.0 / 7.0);
+}
+
+#[test]
+fn review_view_shows_all_roster_labels_and_blind_qa_omits_them() {
+    let input = build_labeling_input(&[generated()], &roster()).expect("build input");
+    let labels = vec![GoldLabel::NotRelevant; roster().goals.len()];
+    let mini = full_label("gpt-5.4-mini", &labels);
+    let fable = full_label("claude-fable", &labels);
+    let review = build_review_view_model("utterance-1", &input, &[mini], &[fable], &[])
+        .expect("build review view");
+    assert_eq!(review.per_goal.len(), 7);
+    let blind =
+        build_blind_qa_review_view_model("utterance-1", &input).expect("build blind QA view");
+    assert_eq!(blind.per_goal.len(), 7);
+    assert!(blind.asks_for_none_of_roster);
+    let rendered = render_blind_qa_review_view(&blind);
+    assert!(
+        !rendered.contains("label"),
+        "blind view leaked a label: {rendered}"
+    );
+}
+
+#[test]
+fn blind_qa_uses_a_distinct_artifact_and_cannot_replace_review_decisions() {
+    let review_path = PathBuf::from("lineage/review-decisions.jsonl");
+    assert_eq!(
+        crate::transport::review_output_path(&review_path, false),
+        review_path
+    );
+    assert_eq!(
+        crate::transport::review_output_path(&review_path, true),
+        PathBuf::from("lineage/blind-qa-decisions.jsonl")
+    );
+}
+
+#[test]
+fn conflicting_none_of_roster_answer_is_reprompted_without_losing_goal_answers() {
+    let decisions = vec![ReviewDecision {
+        decided_at: "now".to_string(),
+        utterance_id: "utterance-1".to_string(),
+        goal_ref: Some(roster().goals[0].goal_ref.clone()),
+        field: ReviewField::GoldLabel,
+        value: ReviewValue::GoldLabel(GoldLabel::Relevant),
+    }];
+    assert_eq!(
+        crate::transport::review_none_of_roster_action(&decisions, true),
+        crate::transport::NoneOfRosterAction::Reprompt
+    );
+    assert_eq!(
+        crate::transport::review_none_of_roster_action(&decisions, false),
+        crate::transport::NoneOfRosterAction::Accept(false)
+    );
+}
+
+#[test]
 fn reviewed_pool_fold_is_last_decision_wins_after_explicit_coverage() {
     let roster = roster();
     let mini = label("gpt-5.4-mini", GoldLabel::Relevant);
@@ -135,12 +307,15 @@ fn reviewed_pool_fold_is_last_decision_wins_after_explicit_coverage() {
             value: ReviewValue::NoneOfRoster(false),
         },
     ];
+    let decision_file = write_jsonl(&decisions).expect("record decisions JSONL");
+    let recorded_decisions =
+        crate::parse_review_decisions(&decision_file).expect("parse decisions");
     let request = ReviewedPoolRequest {
         generated: &[generated()],
         roster: &roster,
         mini: &[mini],
         fable: &[fable],
-        decisions: &decisions,
+        decisions: &recorded_decisions,
         dataset_version: "pool-v2",
         generation_output_sha256: "sha256:g",
         label_mini_sha256: "sha256:m",
@@ -217,7 +392,9 @@ fn default_transport_replays_fixtures_that_pass_real_parsers_and_validators() {
         prompt: "this prompt must not be echoed".to_string(),
         goal_ref: "fixture-goal".to_string(),
         run_id: "fixture-run".to_string(),
+        utterance_id: None,
     };
+    let input = build_labeling_input(&[generated()], &roster()).expect("build labeling input");
 
     let generation = ReplayTransport::new(FixtureResponse::Generation)
         .complete(&request)
@@ -273,8 +450,19 @@ fn default_transport_replays_fixtures_that_pass_real_parsers_and_validators() {
             .complete(&request)
             .expect("label fixture replays");
         assert_ne!(response.content, request.prompt);
-        let labels = parse_label_interchange(&response.content, &roster())
-            .expect("label fixture parses and validates against roster");
+        let label = parse_goal_relevance_label_response(
+            &response.content,
+            LabelingResponseContext {
+                input: &input[0],
+                labeler_id: expected_labeler,
+                labeling_run_id: "fixture-label-run",
+                guideline_version: GOAL_RELEVANCE_GUIDELINE_VERSION,
+            },
+        )
+        .expect("label fixture response parses");
+        let labels =
+            parse_label_interchange(&write_jsonl(&[label]).expect("serialize label"), &roster())
+                .expect("label fixture validates through shared interchange validator");
         assert_eq!(labels.len(), 1);
         assert_eq!(labels[0].labeler_id, expected_labeler);
         assert_eq!(labels[0].per_goal.len(), roster().goals.len());
@@ -553,9 +741,17 @@ fn realistic_infeasible_pool_is_fast_and_names_nonfirst_floor() {
 }
 
 #[test]
-fn tool_local_price_table_is_hashed_and_unknown_models_are_token_only() {
+fn tool_local_price_table_is_hashed_and_covers_both_live_models() {
     let table = tool_local_price_table().expect("checked-in price table is valid");
     assert_eq!(table.version, "goalrel-generation-prices-v1");
+    let mini = table
+        .entries
+        .iter()
+        .find(|entry| entry.model_id == MINI_LABELER_ID)
+        .expect("mini price entry");
+    assert_eq!(mini.input_usd_per_million, 0.75);
+    assert_eq!(mini.cached_input_usd_per_million, 0.075);
+    assert_eq!(mini.output_usd_per_million, 4.5);
     assert!(
         crate::render_usage_report(
             "unknown-model",

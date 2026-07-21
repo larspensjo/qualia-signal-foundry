@@ -1,14 +1,20 @@
 {
   "version": "goalrel-generation-prices-v1",
   "provenance_date": "2026-07-21",
-  "source_url": "https://developers.openai.com/api/docs/models/gpt-5.4-nano",
-  "content_sha256": "sha256:1d42cbf453dacd2f2e33ba20946cd39d50eabe89cae30eee12633874d75bcb35",
+  "source_url": "https://developers.openai.com/api/docs/models/compare",
+  "content_sha256": "sha256:c29f6745189088840323f9cde3efb8230a9b3a6311c858aebce6d8694120c9ee",
   "entries": [
     {
       "model_id": "gpt-5.4-nano",
       "input_usd_per_million": 0.2,
       "cached_input_usd_per_million": 0.02,
       "output_usd_per_million": 1.25
+    },
+    {
+      "model_id": "gpt-5.4-mini",
+      "input_usd_per_million": 0.75,
+      "cached_input_usd_per_million": 0.075,
+      "output_usd_per_million": 4.5
     }
   ]
 }

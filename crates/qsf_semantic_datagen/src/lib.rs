@@ -3,14 +3,18 @@
 
 mod artifacts;
 mod generation;
+mod labeling;
 mod preflight;
 mod pricing;
+mod review;
 mod transport;
 
 pub use artifacts::*;
 pub use generation::*;
+pub use labeling::*;
 pub use preflight::*;
 pub use pricing::*;
+pub use review::*;
 pub use transport::*;
 
 #[cfg(test)]

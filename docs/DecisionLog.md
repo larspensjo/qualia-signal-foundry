@@ -2019,3 +2019,27 @@ latency of an asynchronous batch workflow; the pinned provider kit also predates
 
 Consequences: The live smoke and ordinary generation path stay simple and synchronous. An expansion
 can adopt Batch deliberately with its own state and artifact contracts.
+
+## 2026-07-21 - Goal-relevance labels use independent blind review
+Decision: Goal-relevance data uses a two-model OpenAI generate/label split, an independent Claude
+Fable cross-label, and mandatory human review. Both model labelers are blind to generator intent
+and slice tags.
+
+Context: Relevance labels must be auditable independently of how synthetic utterances were made,
+and disagreement is useful evidence for focused human review.
+
+Consequences: Label interchanges share one validation contract, mini/Fable disagreement is a
+priority review signal, and no model-produced label becomes reviewed data without an operator
+decision. Authoritative operator corrections live in `review-decisions.jsonl`; cold blind-QA
+answers live in a separate `blind-qa-decisions.jsonl` and never enter the reviewed-pool fold.
+
+## 2026-07-21 - Goal-relevance coverage is dense across the frozen roster
+Decision: Goal-relevance corpus coverage is the dense utterance-times-roster cross-product, so
+each utterance receives a label for every goal in its frozen roster.
+
+Context: Sparse intended-goal labeling would leave negative examples incidental and make precision
+figures incomparable as roster snapshots and datasets change.
+
+Consequences: Labeling and review operate on a full roster per utterance, `none_of_roster` remains
+an utterance-level invariant, and dataset versions have systematic negatives for comparable
+precision reporting.

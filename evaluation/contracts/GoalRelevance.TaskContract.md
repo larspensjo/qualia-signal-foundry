@@ -20,6 +20,11 @@ binary precision/recall/F1 and reported as a counted slice. `NoneOfRoster` is an
 annotation; every pair for such an utterance must be `NotRelevant` or `Ambiguous`, and its
 non-ambiguous pairs contribute negatives.
 
+`Relevant` includes an utterance that opposes or counters a goal's tension space; negating a goal
+topic is not by itself `NotRelevant`. The authoritative definitions, ambiguity rule, worked
+examples, and operator/cross-label procedure are in
+[AnnotationGuidelines.GoalRelevance](../annotations/AnnotationGuidelines.GoalRelevance.md).
+
 Prediction states are relevant/not-relevant at a chosen score threshold, plus reserved
 `Abstain` for a future learned scorer. The deterministic lexical baseline does not emit
 `Abstain`: every pair receives a numeric score.

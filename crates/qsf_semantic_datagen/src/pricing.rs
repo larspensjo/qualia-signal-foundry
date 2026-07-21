@@ -11,6 +11,14 @@ pub struct TokenUsage {
     pub output_tokens: u32,
 }
 
+impl TokenUsage {
+    pub(crate) fn add(&mut self, other: Self) {
+        self.input_tokens += other.input_tokens;
+        self.cached_input_tokens += other.cached_input_tokens;
+        self.output_tokens += other.output_tokens;
+    }
+}
+
 #[derive(Clone, Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct PriceTable {

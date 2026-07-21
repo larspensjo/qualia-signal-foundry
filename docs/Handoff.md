@@ -50,13 +50,24 @@ entity detection; arbitration standing for ConsultWorld-capable goals under
 current-information cues).
 
 ### Semantic evaluation (goal relevance)
-**Run the optional goal-relevance live generation smoke, then continue
-[Plan.GoalRelevanceFrozenSets](Plans/Plan.GoalRelevanceFrozenSets.md) with blind labeling and
-review tooling toward frozen validation/test sets (parent:
+**Produce the generated pool, perform the documented independent Claude Fable cross-label, and
+use the goal-relevance review queue to reach reviewed validation/test candidates (parent:
 [Plan.SemanticEvaluationFoundation](Plans/Plan.SemanticEvaluationFoundation.md)).**
-Why: the description-conditioned, replay-default generation tooling now validates mode coverage,
-ASR corruption, split feasibility, and isolated cost reporting; the live smoke is the recommended
-cheap human check before producing labeled utterances.
+Why: the replay-default tooling now constructs blind mini labels, validates the shared interchange,
+prioritizes disagreements, and supports one-utterance human review; the remaining work is the
+human-controlled corpus run and freeze gates.
+Run the shipped stages from the repository root (omit `--live` for replay fixtures):
+
+```text
+cargo run -p qsf_semantic_datagen -- generate --live evaluation/frozen/goal-relevance/realtime-seed.roster.json generation-output.jsonl
+cargo run -p qsf_semantic_datagen -- label --live generation-output.jsonl evaluation/frozen/goal-relevance/realtime-seed.roster.json goalrel-labeling goalrel-mini-live
+cargo run -p qsf_semantic_datagen -- validate-labels evaluation/frozen/goal-relevance/realtime-seed.roster.json goalrel-labeling/label-fable.jsonl
+cargo run -p qsf_semantic_datagen -- reconcile evaluation/frozen/goal-relevance/realtime-seed.roster.json goalrel-labeling/label-mini.jsonl goalrel-labeling/label-fable.jsonl goalrel-labeling/reconciliation.jsonl
+cargo run -p qsf_semantic_datagen -- review evaluation/frozen/goal-relevance/realtime-seed.roster.json goalrel-labeling/labeling-input.jsonl goalrel-labeling/label-mini.jsonl goalrel-labeling/label-fable.jsonl goalrel-labeling/review-decisions.jsonl
+```
+
+`--live` requires `OPENAI_API_KEY`. For a cold QA pass, add `--blind-qa` after `review`; the CLI
+writes `goalrel-labeling/blind-qa-decisions.jsonl` and leaves authoritative review decisions alone.
 Alternate: the remote-usage telemetry baseline (token-ledger extraction) is independent and can
 proceed in parallel; small pending item — the operator label review that flips the 12 sample
 records from `draft`.

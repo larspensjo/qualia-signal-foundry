@@ -1,10 +1,17 @@
-use qsf_semantic_eval::{FrozenGoalRef, SliceTag};
+use qsf_semantic_eval::{FrozenGoalRef, RosterSnapshot, SliceTag};
 use serde::Deserialize;
 
-use crate::{GenerationOutput, INTERCHANGE_VERSION};
+use crate::{CompletionRequest, GenerationOutput, INTERCHANGE_VERSION, ModelTransport, TokenUsage};
 
 pub const GENERATION_PROMPT_VERSION: &str = "goalrel-gen-v2";
+pub const GENERATOR_MODEL_ID: &str = "gpt-5.4-nano";
 pub const MAX_HARD_NEGATIVE_SHARE_OF_BASE: f64 = 0.25;
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct GenerationRun {
+    pub records: Vec<GenerationOutput>,
+    pub usage: Option<TokenUsage>,
+}
 
 /// The only goal material that can cross the generation prompt boundary.
 /// Activation keywords deliberately have no representation in this type.
@@ -216,6 +223,97 @@ pub fn parse_generation_response(
             saw_activation_keywords: false,
         })
         .collect())
+}
+
+/// Runs the deterministic generation request schedule through the supplied transport.
+/// Prompt construction and response parsing remain transport-independent and testable.
+pub fn run_generation<T: ModelTransport>(
+    transport: &T,
+    roster: &RosterSnapshot,
+    generation_run_id: &str,
+) -> Result<GenerationRun, String> {
+    let goal = roster
+        .goals
+        .first()
+        .ok_or_else(|| "roster has no goals".to_string())?;
+    let mut records = Vec::new();
+    let mut usage = TokenUsage {
+        input_tokens: 0,
+        cached_input_tokens: 0,
+        output_tokens: 0,
+    };
+    let mut has_usage = false;
+    for partition in ["validation", "test"] {
+        for (index, mode) in generation_modes(partition).into_iter().enumerate() {
+            let description = if mode == GenerationMode::VagueNoneOfRoster {
+                None
+            } else {
+                Some(GoalDescription::from(goal))
+            };
+            let prompt = build_prompt(&PromptRequest {
+                description,
+                mode: mode.clone(),
+                count: 8,
+            })?;
+            let response = transport.complete(&CompletionRequest {
+                model_id: GENERATOR_MODEL_ID.to_string(),
+                prompt,
+                goal_ref: goal.goal_ref.clone(),
+                run_id: generation_run_id.to_string(),
+                utterance_id: None,
+            })?;
+            if let Some(call_usage) = response.usage {
+                usage.add(call_usage);
+                has_usage = true;
+            }
+            records.extend(parse_generation_response(
+                &response.content,
+                &GenerationResponseContext {
+                    utterance_id_prefix: format!("{generation_run_id}-{partition}-{index}"),
+                    language: "en".to_string(),
+                    conditioning_goal_ref: if mode == GenerationMode::VagueNoneOfRoster {
+                        None
+                    } else {
+                        Some(goal.goal_ref.clone())
+                    },
+                    mode,
+                    session_id: format!("{generation_run_id}-session-{partition}"),
+                    semantic_cluster_id: format!("{generation_run_id}-semantic-{partition}"),
+                    generation_run_id: generation_run_id.to_string(),
+                    generator_model_id: GENERATOR_MODEL_ID.to_string(),
+                    synthetic_asr_seed: 20260721,
+                },
+            )?);
+        }
+    }
+    Ok(GenerationRun {
+        records,
+        usage: has_usage.then_some(usage),
+    })
+}
+
+fn generation_modes(partition: &str) -> Vec<GenerationMode> {
+    let mut modes = vec![GenerationMode::Natural];
+    for cluster in 1..=4 {
+        modes.push(GenerationMode::ParaphraseCluster {
+            cluster_id: format!("{partition}-cluster-{cluster}"),
+        });
+    }
+    modes.extend([
+        GenerationMode::ExplicitNegation,
+        GenerationMode::ImplicitNegation,
+        GenerationMode::QuotedSpeech,
+        GenerationMode::Hypothetical,
+        GenerationMode::SubjectConfusion,
+        GenerationMode::PunctuationCasingLoss,
+        GenerationMode::SyntheticAsr,
+        GenerationMode::RareHighCost,
+        GenerationMode::HardParaphrase {
+            cluster_id: format!("{partition}-hard-cluster"),
+        },
+        GenerationMode::VagueNoneOfRoster,
+    ]);
+    modes
 }
 
 /// Observed ASR-style corruption: loss of casing/punctuation plus deterministic entity mangling.

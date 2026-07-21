@@ -300,6 +300,8 @@ reconciliation.jsonl      Merged per-(utterance_id, goal_ref) view: {mini_label,
                           agree: bool}. Derived deterministically from the two label files;
                           the disagreement queue and the mini/Fable agreement rate come from here.
 review-decisions.jsonl    Operator accept/correct decisions, append-only (below).
+blind-qa-decisions.jsonl  Cold re-annotations used only to measure accepted labels; never folded
+                          into the reviewed pool.
 reviewed-pool.jsonl       The reviewed PairRecord pool (schema v2, review.review_status=reviewed),
                           produced by folding review-decisions over reconciliation.
 freeze-manifest.json      Authoritative freeze binding (below).
@@ -503,8 +505,9 @@ fixtures before any real review happens.
 - Review tooling (CLI subcommand): a pure view-model builder renders **one utterance with all 7
   per-goal labels on one screen**, plus the utterance-level `none_of_roster`; the thin terminal
   front-end appends operator accept/correct decisions to `review-decisions.jsonl`. A **blind-QA
-  view** hides the draft/accepted label so the operator can re-annotate cold (F6, and used again in
-  Phase D). Decision application is a pure fold (Phase A) so review is reproducible.
+  view** hides the draft/accepted label so the operator can re-annotate cold and writes only to the
+  separate `blind-qa-decisions.jsonl`, which is never an input to the reviewed-pool fold (F6, and
+  used again in Phase D). Decision application is a pure fold (Phase A) so review is reproducible.
 
 **Verification**
 
