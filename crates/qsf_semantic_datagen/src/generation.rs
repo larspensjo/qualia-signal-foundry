@@ -426,7 +426,7 @@ pub fn build_anchor_prompt(request: &PromptRequest) -> Result<String, String> {
         _ => String::new(),
     };
     Ok(format!(
-        "Create exactly one concrete anchor proposition for a later human-user utterance batch. Supply no utterances. The proposition must name specific actors, event, stance, and consequence. {}\n{}{} Return JSON only: {{\"anchor\":\"one concrete proposition\"}}. Do not include labels, metadata, explanations, or an utterances field.",
+        "Create exactly one concrete anchor proposition for a later human-user utterance batch. Supply no utterances. The proposition must name specific actors, event, stance, and consequence. State it in the first person from the human user's own perspective: the \"I\" of the proposition is the user, in the role the scenario requires, speaking about their own conduct or plans. Never write a third-person narrative in which the user does not appear. {}\n{}{} Return JSON only: {{\"anchor\":\"one concrete proposition\"}}. Do not include labels, metadata, explanations, or an utterances field.",
         description, cluster_guidance, forbidden
     ))
 }
