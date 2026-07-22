@@ -1,21 +1,27 @@
-use std::{path::PathBuf, process::Command, time::Instant};
+use std::{
+    fs,
+    path::PathBuf,
+    process::Command,
+    time::{Instant, SystemTime, UNIX_EPOCH},
+};
 
 use qsf_semantic_eval::{GoldLabel, ReviewStatus, RosterSnapshot};
 use serde_json::Value;
 
 use crate::{
-    CompletionRequest, FixtureResponse, GOAL_RELEVANCE_GUIDELINE_VERSION, GenerationMode,
-    GenerationOutput, GenerationResponseContext, GoalDescription, INTERCHANGE_VERSION,
-    LabelInterchange, LabelingResponseContext, MINI_LABELER_ID, ModelTransport, PerGoalLabel,
-    PromptRequest, ReplayTransport, ReviewDecision, ReviewField, ReviewValue, ReviewedPoolRequest,
-    TransportKind, build_blind_qa_review_view_model, build_goal_relevance_label_prompt,
-    build_labeling_input, build_prompt, build_review_view_model, default_transport_kind,
-    fold_reviewed_pool, hard_negative_count, hard_negative_within_distribution,
-    mini_fable_agreement_rate, parse_generation_output, parse_generation_response,
-    parse_goal_relevance_label_response, parse_label_interchange, priority_review_queue,
-    punctuation_casing_loss, reconcile, render_blind_qa_review_view, render_generation_report,
-    run_generation, run_mini_labeling, split_feasibility_preflight, synthetic_asr_corrupt,
-    tool_local_price_table, validate_generation_output, write_jsonl,
+    CompletionRequest, FixtureResponse, GOAL_RELEVANCE_GUIDELINE_VERSION, GenerationClusterAnchor,
+    GenerationMode, GenerationOutput, GenerationResponseContext, GoalDescription,
+    INTERCHANGE_VERSION, LabelInterchange, LabelingResponseContext, MINI_LABELER_ID,
+    ModelTransport, PerGoalLabel, PromptRequest, ReplayTransport, ReviewDecision, ReviewField,
+    ReviewValue, ReviewedPoolRequest, TransportKind, build_blind_qa_review_view_model,
+    build_goal_relevance_label_prompt, build_labeling_input, build_prompt, build_review_view_model,
+    cluster_scenario_directive, default_transport_kind, fold_reviewed_pool, hard_negative_count,
+    hard_negative_within_distribution, mini_fable_agreement_rate, parse_generation_anchor_sidecar,
+    parse_generation_output, parse_generation_response, parse_goal_relevance_label_response,
+    parse_label_interchange, priority_review_queue, punctuation_casing_loss, reconcile,
+    render_blind_qa_review_view, render_generation_report, run_cli, run_generation,
+    run_mini_labeling, split_feasibility_preflight, synthetic_asr_corrupt, tool_local_price_table,
+    validate_generation_output, write_generation_anchor_sidecar, write_jsonl,
 };
 
 fn roster() -> RosterSnapshot {
@@ -161,6 +167,57 @@ fn replay_generation_run_produces_the_valid_generation_pool_contract() {
     let jsonl = write_jsonl(&run.records).expect("serialize generated pool");
     let reparsed = parse_generation_output(&jsonl).expect("parse generated pool artifact");
     assert_eq!(reparsed, run.records);
+}
+
+#[test]
+fn cluster_anchor_sidecar_round_trips_and_rejects_unknown_fields() {
+    let anchors = vec![GenerationClusterAnchor {
+        cluster_id: "validation-cluster-1".to_string(),
+        anchor: "The user names a limit before a meeting.".to_string(),
+    }];
+    let jsonl = write_generation_anchor_sidecar(&anchors).expect("anchor sidecar serializes");
+    assert_eq!(parse_generation_anchor_sidecar(&jsonl), Ok(anchors));
+    let error = parse_generation_anchor_sidecar(
+        r#"{"cluster_id":"validation-cluster-1","anchor":"A proposition","unexpected":true}"#,
+    )
+    .expect_err("anchor sidecar rejects unknown fields");
+    assert!(error.contains("unknown field"), "{error}");
+}
+
+#[test]
+fn replay_generate_cli_writes_one_anchor_sidecar_entry_per_cluster_batch() {
+    let unique = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("clock after Unix epoch")
+        .as_nanos();
+    let output_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../../target")
+        .join(format!("qsf-anchor-sidecar-{unique}"));
+    fs::create_dir_all(&output_dir).expect("test output directory");
+    let output_path = output_dir.join("generation-output.jsonl");
+    let roster_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../../evaluation/frozen/goal-relevance/realtime-seed.roster.json");
+    run_cli(
+        [
+            "generate".to_string(),
+            roster_path.display().to_string(),
+            output_path.display().to_string(),
+        ]
+        .into_iter(),
+    )
+    .expect("replay generate CLI succeeds");
+    let anchors_path = crate::transport::generation_anchor_sidecar_path(&output_path);
+    assert_eq!(
+        anchors_path,
+        output_dir.join("generation-anchors.jsonl"),
+        "sidecar stays next to the output with its fixed name"
+    );
+    let anchors = parse_generation_anchor_sidecar(
+        &fs::read_to_string(&anchors_path).expect("anchor sidecar was written"),
+    )
+    .expect("anchor sidecar parses");
+    assert_eq!(anchors.len(), 10, "one entry per cluster batch");
+    fs::remove_dir_all(&output_dir).expect("remove test output directory");
 }
 
 #[test]
@@ -483,6 +540,7 @@ fn prompt_uses_only_goal_description_and_vague_mode_has_no_goal() {
         description: Some(description),
         mode: GenerationMode::Natural,
         count: 2,
+        prior_cluster_anchors: Vec::new(),
     })
     .expect("description prompt");
     assert!(
@@ -493,14 +551,104 @@ fn prompt_uses_only_goal_description_and_vague_mode_has_no_goal() {
         prompt.contains("vary actors, settings, speech acts, stances, tenses, and consequences")
     );
     assert!(!prompt.contains("activation keyword"));
-    assert!(
-        build_prompt(&PromptRequest {
-            description: None,
-            mode: GenerationMode::VagueNoneOfRoster,
-            count: 2,
-        })
-        .is_ok()
-    );
+    let vague_prompt = build_prompt(&PromptRequest {
+        description: None,
+        mode: GenerationMode::VagueNoneOfRoster,
+        count: 2,
+        prior_cluster_anchors: Vec::new(),
+    })
+    .expect("vague prompt");
+    for required in [
+        "outside every roster goal",
+        "speaker's own work, projects, manager, or deadlines",
+        "remember, remind, or bring anything back",
+        "prices, the economy, technology adoption, or world trends",
+    ] {
+        assert!(
+            vague_prompt.contains(required),
+            "vague prompt omits {required}"
+        );
+    }
+    let subject_prompt = build_prompt(&PromptRequest {
+        description: Some(GoalDescription {
+            title: "A title".to_string(),
+            summary: "A summary".to_string(),
+            tension_summaries: vec!["A tension".to_string()],
+        }),
+        mode: GenerationMode::SubjectConfusion,
+        count: 2,
+        prior_cluster_anchors: Vec::new(),
+    })
+    .expect("subject-confusion prompt");
+    for required in [
+        "exactly one of these patterns",
+        "the AI's own earlier question",
+        "someone was reluctant so I stopped",
+    ] {
+        assert!(
+            subject_prompt.contains(required),
+            "subject prompt omits {required}"
+        );
+    }
+}
+
+#[test]
+fn cluster_directives_are_distinct_within_each_partition_and_prompts_exclude_prior_anchors() {
+    for partition in ["validation", "test"] {
+        let directives = [
+            format!("{partition}-cluster-1"),
+            format!("{partition}-cluster-2"),
+            format!("{partition}-cluster-3"),
+            format!("{partition}-cluster-4"),
+            format!("{partition}-hard-cluster"),
+        ]
+        .map(|cluster_id| {
+            *cluster_scenario_directive(&cluster_id).expect("directive for every cluster")
+        });
+        for (left_index, left) in directives.iter().enumerate() {
+            for right in directives.iter().skip(left_index + 1) {
+                assert_ne!(left.stance, right.stance, "{partition} stance repeats");
+                assert_ne!(
+                    left.speaker_role, right.speaker_role,
+                    "{partition} speaker role repeats"
+                );
+                assert_ne!(left.action, right.action, "{partition} action repeats");
+                assert_ne!(
+                    left.consequence, right.consequence,
+                    "{partition} consequence repeats"
+                );
+            }
+        }
+    }
+
+    let prior_anchor = GenerationClusterAnchor {
+        cluster_id: "validation-cluster-1".to_string(),
+        anchor: "The user establishes an attendance limit before a meeting.".to_string(),
+    };
+    let cluster_id = "validation-cluster-2".to_string();
+    let directive = cluster_scenario_directive(&cluster_id).expect("cluster directive");
+    let prompt = build_prompt(&PromptRequest {
+        description: Some(GoalDescription {
+            title: "A title".to_string(),
+            summary: "A summary".to_string(),
+            tension_summaries: vec!["A tension".to_string()],
+        }),
+        mode: GenerationMode::ParaphraseCluster { cluster_id },
+        count: 2,
+        prior_cluster_anchors: vec![prior_anchor.clone()],
+    })
+    .expect("cluster prompt");
+    for required in [
+        directive.stance,
+        directive.speaker_role,
+        directive.action,
+        directive.consequence,
+        prior_anchor.cluster_id.as_str(),
+        prior_anchor.anchor.as_str(),
+        "Your anchor must differ in stance, actors, action, and consequence",
+    ] {
+        assert!(prompt.contains(required), "prompt omits {required}");
+    }
 }
 
 #[test]
@@ -685,6 +833,13 @@ fn generation_mode_validators_reject_invalid_utterances_with_mode_and_id() {
         "probe",
         "probed",
         "probes",
+        "press",
+        "pressed",
+        "pressing",
+        "reluctant",
+        "reluctance",
+        "dig",
+        "digging",
     ] {
         let response = format!(
             r#"{{"anchor":"Maya follows Jordan's lead.","utterances":["Maya said {forbidden} around Jordan."]}}"#

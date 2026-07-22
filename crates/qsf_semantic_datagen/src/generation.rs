@@ -1,14 +1,16 @@
 use qsf_semantic_eval::{FrozenGoalRef, RosterSnapshot, SliceTag};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
 use crate::{CompletionRequest, GenerationOutput, INTERCHANGE_VERSION, ModelTransport, TokenUsage};
 
-pub const GENERATION_PROMPT_VERSION: &str = "goalrel-gen-v3";
+pub const GENERATION_PROMPT_VERSION: &str = "goalrel-gen-v4";
 pub const GENERATOR_MODEL_ID: &str = "gpt-5.4-nano";
 pub const MAX_HARD_NEGATIVE_SHARE_OF_BASE: f64 = 0.25;
 /// Live models are stochastic against the mode validators, so a rejected batch is
-/// re-requested up to this many times before the run fails loudly.
-pub const MAX_GENERATION_BATCH_ATTEMPTS: usize = 3;
+/// re-requested up to this many times before the run fails loudly. Observed live
+/// leak rates for the heavily-constrained modes (implicit negation, hard negative)
+/// make three attempts too tight for a 30-batch all-or-nothing run.
+pub const MAX_GENERATION_BATCH_ATTEMPTS: usize = 5;
 
 const EXPLICIT_NEGATOR_WORDS: &[&str] = &[
     "no",
@@ -59,6 +61,13 @@ const HARD_NEGATIVE_FORBIDDEN_WORDS: &[&str] = &[
     "probed",
     "probes",
     "probing",
+    "press",
+    "pressed",
+    "pressing",
+    "reluctant",
+    "reluctance",
+    "dig",
+    "digging",
 ];
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -70,10 +79,69 @@ pub struct GenerationRun {
 
 /// Operator-only evidence for the semantic proposition shared by a paraphrase batch.
 /// This intentionally never enters the generation-output interchange artifact.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
 pub struct GenerationClusterAnchor {
     pub cluster_id: String,
     pub anchor: String,
+}
+
+/// A required scenario shape for a paraphrase batch. These directives deliberately
+/// diversify cluster anchors while preserving within-cluster paraphrase coherence.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct ClusterScenarioDirective {
+    pub stance: &'static str,
+    pub speaker_role: &'static str,
+    pub action: &'static str,
+    pub consequence: &'static str,
+}
+
+const CLUSTER_SCENARIO_DIRECTIVES: [ClusterScenarioDirective; 5] = [
+    ClusterScenarioDirective {
+        stance: "the speaker sets a boundary of their own",
+        speaker_role: "the user as the person who controls access to their own information",
+        action: "the speaker states a limit and offers a concrete alternative topic or arrangement",
+        consequence: "the other person knows what participation is welcome going forward",
+    },
+    ClusterScenarioDirective {
+        stance: "the speaker respects another person's stated limit",
+        speaker_role: "the user as a colleague or friend receiving that limit",
+        action: "the speaker changes their own planned action to honor the limit",
+        consequence: "the other person can continue on terms they chose",
+    },
+    ClusterScenarioDirective {
+        stance: "the speaker pushes back on a third person who is pressuring someone else",
+        speaker_role: "the user as a witness, organizer, or ally",
+        action: "the speaker interrupts the pressure and redirects the third person away from the target",
+        consequence: "the target is spared having to defend their information alone",
+    },
+    ClusterScenarioDirective {
+        stance: "the speaker seeks advice before an upcoming conversation",
+        speaker_role: "the user preparing to speak with another person",
+        action: "the speaker asks the AI how to raise a topic while honoring the other person's known limit",
+        consequence: "the upcoming conversation can start without putting the other person on the spot",
+    },
+    ClusterScenarioDirective {
+        stance: "the speaker keeps a group exchange within information voluntarily offered",
+        speaker_role: "the user facilitating a group or shared discussion",
+        action: "the speaker sets the scope of the group discussion around the information already shared",
+        consequence: "the group can make its next decision without speculating about anyone's personal details",
+    },
+];
+
+/// Returns the deterministic directive for clusters 1–4 and the hard cluster in either partition.
+pub fn cluster_scenario_directive(cluster_id: &str) -> Option<&'static ClusterScenarioDirective> {
+    let index = if cluster_id.ends_with("-hard-cluster") {
+        4
+    } else {
+        cluster_id
+            .rsplit_once("-cluster-")?
+            .1
+            .parse::<usize>()
+            .ok()?
+            .checked_sub(1)?
+    };
+    CLUSTER_SCENARIO_DIRECTIVES.get(index)
 }
 
 /// The only goal material that can cross the generation prompt boundary.
@@ -184,17 +252,17 @@ impl GenerationMode {
                 "Write an explicitly imagined event about this description using one of these framing forms in every utterance: {}. Reject memories, habits, and timeless `if someone ...` policies.",
                 HYPOTHETICAL_FRAMING_MARKERS.join(", ")
             ),
-            Self::SubjectConfusion => "Write utterances with at least three distinguishable roles (for example the user, assistant, and two other people). Make the relevant reluctance or pressure belong to someone other than the grammatical speaker, so whose perspective matters requires careful reading.".to_string(),
+            Self::SubjectConfusion => "Write utterances with an attribution dependency. Every utterance must use exactly one of these patterns: (a) one person pressures a second person about a third person's information; (b) quoted reluctance whose referent is initially ambiguous but resolvable on careful reading; or (c) the user asks whether the AI's own earlier question crossed another person's boundary. The item must remain understandable after careful reading, but the reader must have to resolve who asked, who declined, and whose information is at issue. Two-role lines with the shape \"someone was reluctant so I stopped\" are explicitly forbidden.".to_string(),
             Self::PunctuationCasingLoss => {
                 "Write ordinary utterances suitable for later punctuation and casing loss.".to_string()
             }
             Self::SyntheticAsr => "Write ordinary utterances suitable for observed ASR-style casing, punctuation, and entity corruption. Every utterance must contain a personal name or a product/company name that can be plausibly mangled by ASR.".to_string(),
-            Self::RareHighCost => "Write rare, high-stakes situations relevant to this description. Every utterance must include both a rare or high-stakes setting and a concrete severe consequence of crossing or protecting the boundary, such as loss of employment, safety, custody, legal exposure, medical confidentiality, or severe reputational harm. Naming divorce, finances, therapy, or an ordinary workplace exchange alone is insufficient.".to_string(),
+            Self::RareHighCost => "Write rare, high-stakes situations relevant to this description. Every utterance must include both a rare or high-stakes setting and a concrete severe consequence of crossing or protecting the boundary, such as loss of employment, safety, custody, legal exposure, medical confidentiality, or severe reputational harm. Naming divorce, finances, therapy, or an ordinary workplace exchange alone is insufficient. One credible severe consequence is enough; avoid stacking multiple legal consequences, so the result stays natural.".to_string(),
             Self::HardParaphrase { .. } => format!(
-                "First fix ONE concrete anchor proposition with specific actors, event, stance, and consequence. Return that proposition in the `anchor` field. Then write every utterance as a wording-level paraphrase of exactly that proposition, preserving its actors, event, stance, and consequence in every line while varying only the wording. Make the evidence indirect and behavioral rather than a summary of the goal. Do not use any of these words: {}.",
+                "First fix ONE concrete anchor proposition with specific actors, event, stance, and consequence, showing the situation purely through concrete actions and dialogue cues (short answers, a change of topic, attention returning to the task at hand) and never naming the underlying concept directly. Return that proposition in the `anchor` field. Then write every utterance as a wording-level paraphrase of exactly that proposition, preserving its actors, event, stance, and consequence in every line while varying only the wording. Neither the anchor nor any utterance may contain any of these words: {}.",
                 HARD_NEGATIVE_FORBIDDEN_WORDS.join(", ")
             ),
-            Self::VagueNoneOfRoster => "Write vague everyday utterances unrelated to any supplied goal. No goal is supplied for this request. Do not express reluctance or refusal to talk, because those can engage a boundaries-related goal even when vague.".to_string(),
+            Self::VagueNoneOfRoster => "Write vague everyday utterances outside every roster goal, not merely outside a boundaries-related goal. No goal is supplied for this request. Do not express reluctance or refusal to talk. Also forbid concrete detail about the speaker's own work, projects, manager, or deadlines; requests for the assistant to remember, remind, or bring anything back; and recurring observations about prices, the economy, technology adoption, or world trends.".to_string(),
         }
     }
 }
@@ -204,6 +272,8 @@ pub struct PromptRequest {
     pub description: Option<GoalDescription>,
     pub mode: GenerationMode,
     pub count: usize,
+    /// Anchors fixed earlier in this run. Only cluster prompts render them as exclusions.
+    pub prior_cluster_anchors: Vec<GenerationClusterAnchor>,
 }
 
 pub fn build_prompt(request: &PromptRequest) -> Result<String, String> {
@@ -232,6 +302,35 @@ goal's subject matter would say.\nGoal title: {}\nGoal summary: {}\nTension summ
         ),
         (_, None) => return Err("goal-conditioned generation requires a description".to_string()),
     };
+    let cluster_guidance = match request.mode.cluster_id() {
+        Some(cluster_id) => {
+            let directive = cluster_scenario_directive(cluster_id).ok_or_else(|| {
+                format!("no scenario directive is configured for cluster {cluster_id}")
+            })?;
+            let exclusions = if request.prior_cluster_anchors.is_empty() {
+                String::new()
+            } else {
+                format!(
+                    "Previously fixed anchors in this generation run:\n{}\nYour anchor must differ in stance, actors, action, and consequence from all of these exclusion anchors; do not reuse or adapt their scenario skeletons.\n",
+                    request
+                        .prior_cluster_anchors
+                        .iter()
+                        .map(|anchor| format!("- {}: {}", anchor.cluster_id, anchor.anchor))
+                        .collect::<Vec<_>>()
+                        .join("\n")
+                )
+            };
+            format!(
+                "Required scenario directive for this cluster:\n- stance: {}\n- speaker role: {}\n- action: {}\n- consequence: {}\nThe anchor must use this required combination.\n{}",
+                directive.stance,
+                directive.speaker_role,
+                directive.action,
+                directive.consequence,
+                exclusions
+            )
+        }
+        None => String::new(),
+    };
     let response_shape = if request.mode.cluster_id().is_some() {
         "{\"anchor\":\"one concrete proposition\",\"utterances\":[\"...\"]}"
     } else {
@@ -247,10 +346,11 @@ the conversation, in the user's own voice — things the user would say about th
 thoughts, or questions. Never write the assistant's replies or an assistant-like voice (no offering \
 help, no inviting the user to share). Across the batch, vary actors, settings, speech acts, stances, \
 tenses, and consequences; never reuse one sentence skeleton with synonym swaps. {}\n\
-{}Return JSON only: {}. Do not include labels, metadata, or explanations.",
+{}\n{}Return JSON only: {}. Do not include labels, metadata, or explanations.",
         request.count,
         request.mode.instruction(),
         description,
+        cluster_guidance,
         response_shape
     ))
 }
@@ -386,6 +486,7 @@ pub fn run_generation<T: ModelTransport>(
                 description,
                 mode: mode.clone(),
                 count: 8,
+                prior_cluster_anchors: cluster_anchors.clone(),
             })?;
             let context = GenerationResponseContext {
                 utterance_id_prefix: format!("{generation_run_id}-{partition}-{index}"),
@@ -454,6 +555,49 @@ pub fn run_generation<T: ModelTransport>(
         usage: has_usage.then_some(usage),
         cluster_anchors,
     })
+}
+
+/// Parses the operator-only cluster-anchor evidence sidecar. It is intentionally
+/// separate from the generation-output interchange artifact.
+pub fn parse_generation_anchor_sidecar(
+    input: &str,
+) -> Result<Vec<GenerationClusterAnchor>, String> {
+    let anchors = crate::parse_jsonl(input, "generation anchor sidecar")?;
+    validate_generation_anchor_sidecar(&anchors)?;
+    Ok(anchors)
+}
+
+/// Serializes the operator-only cluster-anchor evidence sidecar.
+pub fn write_generation_anchor_sidecar(
+    anchors: &[GenerationClusterAnchor],
+) -> Result<String, String> {
+    validate_generation_anchor_sidecar(anchors)?;
+    crate::write_jsonl(anchors)
+}
+
+/// Validates the standalone anchor evidence without imposing any interchange contract.
+pub fn validate_generation_anchor_sidecar(
+    anchors: &[GenerationClusterAnchor],
+) -> Result<(), String> {
+    let mut cluster_ids = std::collections::BTreeSet::new();
+    for anchor in anchors {
+        if anchor.cluster_id.trim().is_empty() {
+            return Err("generation anchor sidecar contains an empty cluster_id".to_string());
+        }
+        if anchor.anchor.trim().is_empty() {
+            return Err(format!(
+                "generation anchor sidecar contains an empty anchor for cluster {}",
+                anchor.cluster_id
+            ));
+        }
+        if !cluster_ids.insert(&anchor.cluster_id) {
+            return Err(format!(
+                "generation anchor sidecar contains duplicate cluster_id {}",
+                anchor.cluster_id
+            ));
+        }
+    }
+    Ok(())
 }
 
 fn generation_modes(partition: &str) -> Vec<GenerationMode> {

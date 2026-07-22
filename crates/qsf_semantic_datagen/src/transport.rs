@@ -18,7 +18,7 @@ use crate::{
     parse_labeling_input, parse_review_decisions, priority_review_queue,
     priority_review_utterance_ids, reconcile, render_blind_qa_review_view, render_review_view,
     render_usage_report, run_generation, run_mini_labeling, split_feasibility_preflight,
-    validate_generation_output, write_jsonl,
+    validate_generation_output, write_generation_anchor_sidecar, write_jsonl,
 };
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -258,12 +258,22 @@ fn run_generate_cli(args: &[String]) -> Result<(), String> {
     let feasibility = split_feasibility_preflight(&run.records, 20260721)?;
     let output_path = Path::new(&args[1]);
     write_file(output_path, &write_jsonl(&run.records)?)?;
+    let anchors_path = generation_anchor_sidecar_path(output_path);
+    write_file(
+        &anchors_path,
+        &write_generation_anchor_sidecar(&run.cluster_anchors)?,
+    )?;
     println!(
         "wrote {} generated utterances across {} split components to {} using {} transport",
         run.records.len(),
         feasibility.assignment_by_component.len(),
         output_path.display(),
         transport_name(transport.kind())
+    );
+    println!(
+        "wrote {} cluster anchors to {}",
+        run.cluster_anchors.len(),
+        anchors_path.display()
     );
     for cluster in &run.cluster_anchors {
         println!(
@@ -277,6 +287,10 @@ fn run_generate_cli(args: &[String]) -> Result<(), String> {
         println!("generation token usage unavailable from replay transport");
     }
     Ok(())
+}
+
+pub(crate) fn generation_anchor_sidecar_path(output_path: &Path) -> PathBuf {
+    output_path.with_file_name("generation-anchors.jsonl")
 }
 
 fn run_label_cli(args: &[String]) -> Result<(), String> {

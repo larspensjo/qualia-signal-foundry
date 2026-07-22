@@ -2043,3 +2043,17 @@ figures incomparable as roster snapshots and datasets change.
 Consequences: Labeling and review operate on a full roster per utterance, `none_of_roster` remains
 an utterance-level invariant, and dataset versions have systematic negatives for comparable
 precision reporting.
+
+## 2026-07-21 - Goal-relevance paraphrase anchors are diversified and retained as operator evidence
+Decision: Each paraphrase cluster follows a deterministic, distinct scenario directive, and every
+later cluster prompt excludes all anchors fixed earlier in the same generation run. Cluster anchors
+are saved in the adjacent `generation-anchors.jsonl` operator-evidence sidecar while remaining
+outside the generation-output interchange.
+
+Context: Within-cluster paraphrases need a shared proposition, but that constraint previously
+allowed repeated scenarios across clusters. Printed-only anchors also made saved generation runs
+impossible to audit directly.
+
+Consequences: The prompt schedule explicitly varies stance, speaker role, action, and consequence
+across cluster types. Operators can compare every cluster batch with its recorded anchor without
+changing the stable interchange consumed by labeling and evaluation.
