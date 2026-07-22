@@ -161,8 +161,21 @@ fn replay_generation_run_produces_the_valid_generation_pool_contract() {
     assert!(run.usage.is_none());
     assert_eq!(run.records.len(), 240);
     assert_eq!(run.cluster_anchors.len(), 10);
+    assert_eq!(crate::GENERATION_PROMPT_VERSION, "goalrel-gen-v5");
+    assert!(
+        run.records
+            .iter()
+            .all(|record| record.prompt_version == "goalrel-gen-v5")
+    );
     assert!(run.cluster_anchors.iter().all(|cluster| cluster.anchor
         == "A user imagines named people following another person's conversational lead."));
+    for cluster in &run.cluster_anchors {
+        assert!(
+            cluster_scenario_directive(&cluster.cluster_id).is_some(),
+            "cluster {} resolves to a partition-keyed directive",
+            cluster.cluster_id
+        );
+    }
     validate_generation_output(&run.records).expect("generated pool validates");
     let jsonl = write_jsonl(&run.records).expect("serialize generated pool");
     let reparsed = parse_generation_output(&jsonl).expect("parse generated pool artifact");
@@ -478,7 +491,7 @@ fn default_transport_replays_fixtures_that_pass_real_parsers_and_validators() {
     .expect("generation fixture parses");
     let expected_utterances = [
         "Imagine Maya focuses on the project plans after a coworker grows quiet.",
-        "What if OpenAI gets a gentle reminder from Jordan about the meeting agenda?",
+        "What if OpenAI gets a gentle nudge from Jordan about the meeting agenda?",
         "Suppose Priya shifts the topic toward the release plan after Sam hesitates.",
         "If I ever hear Maya pause, I would follow her lead with the schedule.",
         "Imagine Nvidia receives a request for the public timeline from Jordan.",
@@ -561,7 +574,9 @@ fn prompt_uses_only_goal_description_and_vague_mode_has_no_goal() {
     for required in [
         "outside every roster goal",
         "speaker's own work, projects, manager, or deadlines",
-        "remember, remind, or bring anything back",
+        "remember, remembers, remembered, remembering, remind, reminds, reminded, reminder, reminders",
+        "absent third parties' relationships, breakups, or affairs, even without endorsing them",
+        "weighing what someone said against interpretations of what they really meant",
         "prices, the economy, technology adoption, or world trends",
     ] {
         assert!(
@@ -593,33 +608,35 @@ fn prompt_uses_only_goal_description_and_vague_mode_has_no_goal() {
 }
 
 #[test]
-fn cluster_directives_are_distinct_within_each_partition_and_prompts_exclude_prior_anchors() {
-    for partition in ["validation", "test"] {
-        let directives = [
-            format!("{partition}-cluster-1"),
-            format!("{partition}-cluster-2"),
-            format!("{partition}-cluster-3"),
-            format!("{partition}-cluster-4"),
-            format!("{partition}-hard-cluster"),
-        ]
-        .map(|cluster_id| {
-            *cluster_scenario_directive(&cluster_id).expect("directive for every cluster")
-        });
-        for (left_index, left) in directives.iter().enumerate() {
-            for right in directives.iter().skip(left_index + 1) {
-                assert_ne!(left.stance, right.stance, "{partition} stance repeats");
-                assert_ne!(
-                    left.speaker_role, right.speaker_role,
-                    "{partition} speaker role repeats"
-                );
-                assert_ne!(left.action, right.action, "{partition} action repeats");
-                assert_ne!(
-                    left.consequence, right.consequence,
-                    "{partition} consequence repeats"
-                );
-            }
+fn cluster_directives_are_pairwise_distinct_across_partitions_and_prompts_exclude_prior_anchors() {
+    let cluster_ids = [
+        "validation-cluster-1",
+        "validation-cluster-2",
+        "validation-cluster-3",
+        "validation-cluster-4",
+        "validation-hard-cluster",
+        "test-cluster-1",
+        "test-cluster-2",
+        "test-cluster-3",
+        "test-cluster-4",
+        "test-hard-cluster",
+    ];
+    let directives = cluster_ids.map(|cluster_id| {
+        *cluster_scenario_directive(cluster_id).expect("directive for every configured cluster")
+    });
+    for (left_index, left) in directives.iter().enumerate() {
+        for right in directives.iter().skip(left_index + 1) {
+            assert_ne!(left.stance, right.stance, "stance repeats");
+            assert_ne!(
+                left.speaker_role, right.speaker_role,
+                "speaker role repeats"
+            );
+            assert_ne!(left.action, right.action, "action repeats");
+            assert_ne!(left.consequence, right.consequence, "consequence repeats");
         }
     }
+    assert!(cluster_scenario_directive("validation-cluster-5").is_none());
+    assert!(cluster_scenario_directive("other-cluster-1").is_none());
 
     let prior_anchor = GenerationClusterAnchor {
         cluster_id: "validation-cluster-1".to_string(),
@@ -768,6 +785,21 @@ fn generation_mode_validators_accept_required_forms() {
         }),
     )
     .expect("word-level matching does not reject problem");
+    parse_generation_response(
+        r#"{"utterances":["An unremembered song came on at the shop while I renewed my gym membership."]}"#,
+        &GenerationResponseContext {
+            utterance_id_prefix: "validator-vague-accept".to_string(),
+            language: "en".to_string(),
+            conditioning_goal_ref: None,
+            mode: GenerationMode::VagueNoneOfRoster,
+            session_id: "validator-session".to_string(),
+            semantic_cluster_id: "validator-cluster".to_string(),
+            generation_run_id: "validator-run".to_string(),
+            generator_model_id: "gpt-5.4-nano".to_string(),
+            synthetic_asr_seed: 0,
+        },
+    )
+    .expect("word-boundary matching does not reject a larger word");
 }
 
 #[test]
@@ -823,24 +855,7 @@ fn generation_mode_validators_reject_invalid_utterances_with_mode_and_id() {
         assert!(error.contains("validator-reject-01"), "{negator}: {error}");
     }
 
-    for forbidden in [
-        "privacy",
-        "prying",
-        "pried",
-        "personally",
-        "gossiping",
-        "gossiped",
-        "probe",
-        "probed",
-        "probes",
-        "press",
-        "pressed",
-        "pressing",
-        "reluctant",
-        "reluctance",
-        "dig",
-        "digging",
-    ] {
+    for forbidden in crate::generation::HARD_NEGATIVE_FORBIDDEN_WORDS {
         let response = format!(
             r#"{{"anchor":"Maya follows Jordan's lead.","utterances":["Maya said {forbidden} around Jordan."]}}"#
         );
@@ -854,6 +869,31 @@ fn generation_mode_validators_reject_invalid_utterances_with_mode_and_id() {
         assert!(error.contains("hard_negative"), "{forbidden}: {error}");
         assert!(
             error.contains("validator-reject-01"),
+            "{forbidden}: {error}"
+        );
+    }
+
+    let vague_context = GenerationResponseContext {
+        utterance_id_prefix: "validator-vague-reject".to_string(),
+        language: "en".to_string(),
+        conditioning_goal_ref: None,
+        mode: GenerationMode::VagueNoneOfRoster,
+        session_id: "validator-session".to_string(),
+        semantic_cluster_id: "validator-cluster".to_string(),
+        generation_run_id: "validator-run".to_string(),
+        generator_model_id: "gpt-5.4-nano".to_string(),
+        synthetic_asr_seed: 0,
+    };
+    for forbidden in crate::generation::VAGUE_NONE_OF_ROSTER_RETENTION_WORDS
+        .iter()
+        .chain(crate::generation::HARD_NEGATIVE_FORBIDDEN_WORDS)
+    {
+        let response = format!(r#"{{"utterances":["Maya said {forbidden} around Jordan."]}}"#);
+        let error = parse_generation_response(&response, &vague_context)
+            .expect_err("every mode-14 forbidden word is rejected");
+        assert!(error.contains("none_of_roster"), "{forbidden}: {error}");
+        assert!(
+            error.contains("validator-vague-reject-01"),
             "{forbidden}: {error}"
         );
     }

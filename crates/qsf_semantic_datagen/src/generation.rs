@@ -3,7 +3,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::{CompletionRequest, GenerationOutput, INTERCHANGE_VERSION, ModelTransport, TokenUsage};
 
-pub const GENERATION_PROMPT_VERSION: &str = "goalrel-gen-v4";
+pub const GENERATION_PROMPT_VERSION: &str = "goalrel-gen-v5";
 pub const GENERATOR_MODEL_ID: &str = "gpt-5.4-nano";
 pub const MAX_HARD_NEGATIVE_SHARE_OF_BASE: f64 = 0.25;
 /// Live models are stochastic against the mode validators, so a rejected batch is
@@ -44,7 +44,7 @@ const EXPLICIT_NEGATOR_WORDS: &[&str] = &[
 ];
 const HYPOTHETICAL_FRAMING_MARKERS: &[&str] =
     &["what if", "suppose", "imagine", "if i ever", "if i were"];
-const HARD_NEGATIVE_FORBIDDEN_WORDS: &[&str] = &[
+pub(crate) const HARD_NEGATIVE_FORBIDDEN_WORDS: &[&str] = &[
     "pry",
     "prying",
     "pried",
@@ -68,6 +68,17 @@ const HARD_NEGATIVE_FORBIDDEN_WORDS: &[&str] = &[
     "reluctance",
     "dig",
     "digging",
+];
+pub(crate) const VAGUE_NONE_OF_ROSTER_RETENTION_WORDS: &[&str] = &[
+    "remember",
+    "remembers",
+    "remembered",
+    "remembering",
+    "remind",
+    "reminds",
+    "reminded",
+    "reminder",
+    "reminders",
 ];
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -96,7 +107,7 @@ pub struct ClusterScenarioDirective {
     pub consequence: &'static str,
 }
 
-const CLUSTER_SCENARIO_DIRECTIVES: [ClusterScenarioDirective; 5] = [
+const CLUSTER_SCENARIO_DIRECTIVES: [ClusterScenarioDirective; 10] = [
     ClusterScenarioDirective {
         stance: "the speaker sets a boundary of their own",
         speaker_role: "the user as the person who controls access to their own information",
@@ -127,21 +138,59 @@ const CLUSTER_SCENARIO_DIRECTIVES: [ClusterScenarioDirective; 5] = [
         action: "the speaker sets the scope of the group discussion around the information already shared",
         consequence: "the group can make its next decision without speculating about anyone's personal details",
     },
+    ClusterScenarioDirective {
+        stance: "the speaker repairs a prior overstep and takes responsibility",
+        speaker_role: "the user as someone who earlier asked more than another person wanted to share",
+        action: "the speaker apologizes for the earlier pressure and names the different approach they will take now",
+        consequence: "the other person visibly relaxes and the exchange resumes",
+    },
+    ClusterScenarioDirective {
+        stance: "the speaker protects information entrusted by an absent person",
+        speaker_role: "the user as custodian of information shared in confidence by someone absent",
+        action: "the speaker declines to relay the entrusted information and offers a non-sensitive alternative",
+        consequence: "the absent person's information stays where it was entrusted",
+    },
+    ClusterScenarioDirective {
+        stance: "the speaker responds proactively to another person's discomfort",
+        speaker_role: "the user as a conversation partner noticing nonverbal unease",
+        action: "the speaker changes the subject before anyone has to ask",
+        consequence: "the discomfort never has to become a refusal",
+    },
+    ClusterScenarioDirective {
+        stance: "the speaker teaches another person how to leave disclosure voluntary",
+        speaker_role: "the user as a senior colleague or family member coaching a junior person",
+        action: "the speaker explains how to let people volunteer what they want to share",
+        consequence: "the learner handles their next conversation differently",
+    },
+    ClusterScenarioDirective {
+        stance: "the speaker resists their own curiosity",
+        speaker_role: "the user as someone tempted to ask about information that has not been offered",
+        action: "the speaker leaves the tempting subject alone and asks an open question about permitted topics",
+        consequence: "the relationship stays on volunteered ground",
+    },
 ];
 
-/// Returns the deterministic directive for clusters 1–4 and the hard cluster in either partition.
+/// Returns the deterministic directive for clusters 1–4 and the hard cluster in each partition.
 pub fn cluster_scenario_directive(cluster_id: &str) -> Option<&'static ClusterScenarioDirective> {
-    let index = if cluster_id.ends_with("-hard-cluster") {
+    let (partition_offset, cluster_name) =
+        if let Some(cluster_name) = cluster_id.strip_prefix("validation-") {
+            (0, cluster_name)
+        } else if let Some(cluster_name) = cluster_id.strip_prefix("test-") {
+            (5, cluster_name)
+        } else {
+            return None;
+        };
+    let index = if cluster_name == "hard-cluster" {
         4
     } else {
-        cluster_id
-            .rsplit_once("-cluster-")?
-            .1
+        cluster_name
+            .strip_prefix("cluster-")?
             .parse::<usize>()
             .ok()?
-            .checked_sub(1)?
+            .checked_sub(1)
+            .filter(|index| *index < 4)?
     };
-    CLUSTER_SCENARIO_DIRECTIVES.get(index)
+    CLUSTER_SCENARIO_DIRECTIVES.get(partition_offset + index)
 }
 
 /// The only goal material that can cross the generation prompt boundary.
@@ -262,7 +311,10 @@ impl GenerationMode {
                 "First fix ONE concrete anchor proposition with specific actors, event, stance, and consequence, showing the situation purely through concrete actions and dialogue cues (short answers, a change of topic, attention returning to the task at hand) and never naming the underlying concept directly. Return that proposition in the `anchor` field. Then write every utterance as a wording-level paraphrase of exactly that proposition, preserving its actors, event, stance, and consequence in every line while varying only the wording. Neither the anchor nor any utterance may contain any of these words: {}.",
                 HARD_NEGATIVE_FORBIDDEN_WORDS.join(", ")
             ),
-            Self::VagueNoneOfRoster => "Write vague everyday utterances outside every roster goal, not merely outside a boundaries-related goal. No goal is supplied for this request. Do not express reluctance or refusal to talk. Also forbid concrete detail about the speaker's own work, projects, manager, or deadlines; requests for the assistant to remember, remind, or bring anything back; and recurring observations about prices, the economy, technology adoption, or world trends.".to_string(),
+            Self::VagueNoneOfRoster => format!(
+                "Write vague everyday utterances outside every roster goal, not merely outside a boundaries-related goal. No goal is supplied for this request. Do not express reluctance or refusal to talk. Also forbid concrete detail about the speaker's own work, projects, manager, or deadlines; relaying or reporting on absent third parties' relationships, breakups, or affairs, even without endorsing them; weighing what someone said against interpretations of what they really meant; and recurring observations about prices, the economy, technology adoption, or world trends. Do not use any of these words: {}.",
+                vague_none_of_roster_forbidden_words().collect::<Vec<_>>().join(", ")
+            ),
         }
     }
 }
@@ -810,6 +862,11 @@ fn validate_mode_outputs(
             .filter(|record| contains_hard_negative_forbidden_word(&record.utterance))
             .map(|record| record.utterance_id.clone())
             .collect(),
+        GenerationMode::VagueNoneOfRoster => records
+            .iter()
+            .filter(|record| contains_vague_none_of_roster_forbidden_word(&record.utterance))
+            .map(|record| record.utterance_id.clone())
+            .collect(),
         _ => Vec::new(),
     };
     if invalid_ids.is_empty() {
@@ -842,9 +899,33 @@ fn contains_hypothetical_marker(utterance: &str) -> bool {
 }
 
 fn contains_hard_negative_forbidden_word(utterance: &str) -> bool {
-    normalized_words(utterance)
+    contains_forbidden_word(
+        &normalized_words(utterance),
+        HARD_NEGATIVE_FORBIDDEN_WORDS.iter().copied(),
+    )
+}
+
+fn contains_vague_none_of_roster_forbidden_word(utterance: &str) -> bool {
+    contains_forbidden_word(
+        &normalized_words(utterance),
+        vague_none_of_roster_forbidden_words(),
+    )
+}
+
+fn vague_none_of_roster_forbidden_words() -> impl Iterator<Item = &'static str> {
+    VAGUE_NONE_OF_ROSTER_RETENTION_WORDS
         .iter()
-        .any(|word| HARD_NEGATIVE_FORBIDDEN_WORDS.contains(&word.as_str()))
+        .copied()
+        .chain(HARD_NEGATIVE_FORBIDDEN_WORDS.iter().copied())
+}
+
+fn contains_forbidden_word<'a>(
+    words: &[String],
+    forbidden_words: impl IntoIterator<Item = &'a str>,
+) -> bool {
+    forbidden_words
+        .into_iter()
+        .any(|forbidden| words.iter().any(|word| word == forbidden))
 }
 
 fn normalized_words(utterance: &str) -> Vec<String> {
