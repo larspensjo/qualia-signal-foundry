@@ -20,7 +20,8 @@ use crate::{
     parse_generation_output, parse_generation_response, parse_goal_relevance_label_response,
     parse_label_interchange, priority_review_queue, punctuation_casing_loss, reconcile,
     render_blind_qa_review_view, render_generation_report, run_cli, run_generation,
-    run_mini_labeling, split_feasibility_preflight, synthetic_asr_corrupt, tool_local_price_table,
+    run_generation_anchors, run_generation_with_approved_anchors, run_mini_labeling,
+    split_feasibility_preflight, synthetic_asr_corrupt, tool_local_price_table,
     validate_generation_output, write_generation_anchor_sidecar, write_jsonl,
 };
 
@@ -82,6 +83,64 @@ fn full_label(labeler_id: &str, labels: &[GoldLabel]) -> LabelInterchange {
             })
             .collect(),
         none_of_roster: false,
+    }
+}
+
+fn approved_anchors() -> Vec<GenerationClusterAnchor> {
+    [
+        "validation-cluster-1",
+        "validation-cluster-2",
+        "validation-cluster-3",
+        "validation-cluster-4",
+        "validation-hard-cluster",
+        "test-cluster-1",
+        "test-cluster-2",
+        "test-cluster-3",
+        "test-cluster-4",
+        "test-hard-cluster",
+    ]
+    .into_iter()
+    .map(|cluster_id| GenerationClusterAnchor {
+        cluster_id: cluster_id.to_string(),
+        anchor: format!("The user chooses a permitted topic in {cluster_id}."),
+    })
+    .collect()
+}
+
+struct RecordingTransport {
+    requests: std::cell::RefCell<Vec<CompletionRequest>>,
+    usage: Option<crate::TokenUsage>,
+}
+
+impl RecordingTransport {
+    fn new(usage: Option<crate::TokenUsage>) -> Self {
+        Self {
+            requests: std::cell::RefCell::new(Vec::new()),
+            usage,
+        }
+    }
+
+    fn prompts(&self) -> Vec<String> {
+        self.requests
+            .borrow()
+            .iter()
+            .map(|request| request.prompt.clone())
+            .collect()
+    }
+
+    fn requests(&self) -> Vec<CompletionRequest> {
+        self.requests.borrow().clone()
+    }
+}
+
+impl ModelTransport for RecordingTransport {
+    fn complete(&self, request: &CompletionRequest) -> Result<crate::Completion, String> {
+        self.requests.borrow_mut().push(request.clone());
+        Ok(crate::Completion {
+            content: ReplayTransport::default_response(FixtureResponse::Generation)
+                .expect("generation fixture readable"),
+            usage: self.usage,
+        })
     }
 }
 
@@ -158,14 +217,14 @@ fn replay_generation_run_produces_the_valid_generation_pool_contract() {
         "fixture-generation-contract",
     )
     .expect("replay generation completes without network");
-    assert!(run.usage.is_none());
-    assert_eq!(run.records.len(), 240);
+    assert!(run.usage_by_model.is_none());
+    assert_eq!(run.records.len(), 248);
     assert_eq!(run.cluster_anchors.len(), 10);
-    assert_eq!(crate::GENERATION_PROMPT_VERSION, "goalrel-gen-v5");
+    assert_eq!(crate::GENERATION_PROMPT_VERSION, "goalrel-gen-v6");
     assert!(
         run.records
             .iter()
-            .all(|record| record.prompt_version == "goalrel-gen-v5")
+            .all(|record| record.prompt_version == "goalrel-gen-v6")
     );
     assert!(run.cluster_anchors.iter().all(|cluster| cluster.anchor
         == "A user imagines named people following another person's conversational lead."));
@@ -180,6 +239,99 @@ fn replay_generation_run_produces_the_valid_generation_pool_contract() {
     let jsonl = write_jsonl(&run.records).expect("serialize generated pool");
     let reparsed = parse_generation_output(&jsonl).expect("parse generated pool artifact");
     assert_eq!(reparsed, run.records);
+}
+
+#[test]
+fn generation_selects_models_by_mode_and_aggregates_usage_by_model() {
+    assert_eq!(GenerationMode::Natural.generator_model_id(), "gpt-5.4-nano");
+    for mode in [
+        GenerationMode::ParaphraseCluster {
+            cluster_id: "validation-cluster-1".to_string(),
+        },
+        GenerationMode::SubjectConfusion,
+        GenerationMode::HardParaphrase {
+            cluster_id: "validation-hard-cluster".to_string(),
+        },
+        GenerationMode::VagueNoneOfRoster,
+    ] {
+        assert_eq!(mode.generator_model_id(), "gpt-5.4-mini");
+    }
+    let transport = RecordingTransport::new(Some(crate::TokenUsage {
+        input_tokens: 2,
+        cached_input_tokens: 1,
+        output_tokens: 3,
+    }));
+    let run =
+        run_generation(&transport, &roster(), "model-selection-run").expect("generation completes");
+    let usage = run.usage_by_model.expect("usage is aggregated");
+    assert_eq!(
+        usage.get("gpt-5.4-mini"),
+        Some(&crate::TokenUsage {
+            input_tokens: 28,
+            cached_input_tokens: 14,
+            output_tokens: 42,
+        })
+    );
+    assert_eq!(
+        usage.get("gpt-5.4-nano"),
+        Some(&crate::TokenUsage {
+            input_tokens: 32,
+            cached_input_tokens: 16,
+            output_tokens: 48,
+        })
+    );
+    let requests = transport.requests();
+    assert_eq!(
+        requests
+            .iter()
+            .filter(|request| request.model_id == "gpt-5.4-mini")
+            .count(),
+        14
+    );
+    assert_eq!(
+        requests
+            .iter()
+            .filter(|request| request.model_id == "gpt-5.4-nano")
+            .count(),
+        16
+    );
+    assert_eq!(
+        run.records
+            .iter()
+            .filter(|record| record.generator_model_id == "gpt-5.4-mini")
+            .count(),
+        120
+    );
+    assert_eq!(
+        run.records
+            .iter()
+            .filter(|record| record.generator_model_id == "gpt-5.4-nano")
+            .count(),
+        128
+    );
+    let vague_per_partition = run
+        .records
+        .iter()
+        .filter(|record| record.conditioning_goal_ref.is_none())
+        .fold(std::collections::BTreeMap::new(), |mut counts, record| {
+            *counts.entry(&record.session_id).or_insert(0usize) += 1;
+            counts
+        });
+    assert_eq!(
+        vague_per_partition.values().copied().collect::<Vec<_>>(),
+        [12, 12]
+    );
+
+    let anchor_transport = RecordingTransport::new(None);
+    let anchors = run_generation_anchors(&anchor_transport, &roster(), "anchor-model-run")
+        .expect("anchor checkpoint completes");
+    assert_eq!(anchors.cluster_anchors.len(), 10);
+    assert!(
+        anchor_transport
+            .requests()
+            .iter()
+            .all(|request| request.model_id == "gpt-5.4-mini")
+    );
 }
 
 #[test]
@@ -230,6 +382,159 @@ fn replay_generate_cli_writes_one_anchor_sidecar_entry_per_cluster_batch() {
     )
     .expect("anchor sidecar parses");
     assert_eq!(anchors.len(), 10, "one entry per cluster batch");
+    fs::remove_dir_all(&output_dir).expect("remove test output directory");
+}
+
+#[test]
+fn replay_anchors_only_cli_writes_ten_validated_checkpoint_records() {
+    let unique = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("clock after Unix epoch")
+        .as_nanos();
+    let output_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../../target")
+        .join(format!("qsf-anchors-only-{unique}"));
+    fs::create_dir_all(&output_dir).expect("test output directory");
+    let anchors_path = output_dir.join("approved-anchors.jsonl");
+    let roster_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../../evaluation/frozen/goal-relevance/realtime-seed.roster.json");
+    run_cli(
+        [
+            "generate".to_string(),
+            "--anchors-only".to_string(),
+            roster_path.display().to_string(),
+            anchors_path.display().to_string(),
+        ]
+        .into_iter(),
+    )
+    .expect("replay anchors-only CLI succeeds");
+    let anchors = parse_generation_anchor_sidecar(
+        &fs::read_to_string(&anchors_path).expect("checkpoint was written"),
+    )
+    .expect("checkpoint sidecar validates");
+    assert_eq!(anchors.len(), 10);
+    crate::validate_approved_generation_anchors(&anchors).expect("all expected clusters present");
+    fs::remove_dir_all(&output_dir).expect("remove test output directory");
+}
+
+#[test]
+fn approved_anchor_validation_rejects_a_missing_cluster_id() {
+    let missing_id = "validation-cluster-3";
+    let anchors = approved_anchors()
+        .into_iter()
+        .filter(|anchor| anchor.cluster_id != missing_id)
+        .collect::<Vec<_>>();
+    let error = crate::validate_approved_generation_anchors(&anchors)
+        .expect_err("a missing scheduled cluster must be rejected");
+    assert!(error.contains(missing_id), "{error}");
+}
+
+#[test]
+fn approved_anchor_validation_rejects_an_extra_cluster_id() {
+    let extra_id = "validation-cluster-extra";
+    let mut anchors = approved_anchors();
+    anchors.push(GenerationClusterAnchor {
+        cluster_id: extra_id.to_string(),
+        anchor: "An extra proposition.".to_string(),
+    });
+    let error = crate::validate_approved_generation_anchors(&anchors)
+        .expect_err("an unscheduled cluster must be rejected");
+    assert!(error.contains(extra_id), "{error}");
+}
+
+#[test]
+fn approved_anchor_validation_rejects_a_duplicate_cluster_id() {
+    let duplicate_id = "test-hard-cluster";
+    let mut anchors = approved_anchors();
+    anchors.push(
+        anchors
+            .iter()
+            .find(|anchor| anchor.cluster_id == duplicate_id)
+            .expect("duplicate source anchor exists")
+            .clone(),
+    );
+    let error = crate::validate_approved_generation_anchors(&anchors)
+        .expect_err("a duplicate scheduled cluster must be rejected");
+    assert!(error.contains(duplicate_id), "{error}");
+}
+
+#[test]
+fn approved_anchors_are_embedded_and_cli_passes_the_sidecar_through_unchanged() {
+    let anchors = approved_anchors();
+    let transport = RecordingTransport::new(None);
+    let run = run_generation_with_approved_anchors(
+        &transport,
+        &roster(),
+        "approved-anchor-run",
+        Some(&anchors),
+    )
+    .expect("generation with approved anchors succeeds");
+    assert_eq!(run.records.len(), 248);
+    let prompts = transport.prompts();
+    let cluster_prompts = prompts
+        .iter()
+        .filter(|prompt| prompt.contains("operator-approved anchor proposition"))
+        .collect::<Vec<_>>();
+    assert_eq!(cluster_prompts.len(), 10);
+    for prompt in &cluster_prompts {
+        assert!(prompt.contains("Required scenario directive for this cluster:"));
+        for forbidden in [
+            "The anchor must use this required combination.",
+            "Previously fixed anchors in this generation run:",
+            "Your anchor must differ in stance, actors, action, and consequence",
+        ] {
+            assert!(
+                !prompt.contains(forbidden),
+                "approved-anchor prompt contains authoring guidance {forbidden}: {prompt}"
+            );
+        }
+    }
+    for anchor in &anchors {
+        assert!(
+            cluster_prompts
+                .iter()
+                .any(|prompt| prompt.contains(&anchor.anchor)),
+            "approved anchor {} was not embedded",
+            anchor.cluster_id
+        );
+    }
+
+    let unique = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("clock after Unix epoch")
+        .as_nanos();
+    let output_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../../target")
+        .join(format!("qsf-approved-anchors-{unique}"));
+    fs::create_dir_all(&output_dir).expect("test output directory");
+    let approved_path = output_dir.join("approved.jsonl");
+    let approved_content = write_generation_anchor_sidecar(&anchors).expect("serialize anchors");
+    fs::write(&approved_path, &approved_content).expect("write approved checkpoint");
+    let output_path = output_dir.join("generation-output.jsonl");
+    let roster_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../../evaluation/frozen/goal-relevance/realtime-seed.roster.json");
+    run_cli(
+        [
+            "generate".to_string(),
+            "--anchors".to_string(),
+            approved_path.display().to_string(),
+            roster_path.display().to_string(),
+            output_path.display().to_string(),
+        ]
+        .into_iter(),
+    )
+    .expect("approved-anchor replay CLI succeeds");
+    let sidecar_path = crate::transport::generation_anchor_sidecar_path(&output_path);
+    assert_eq!(
+        fs::read_to_string(&sidecar_path).expect("pass-through sidecar written"),
+        approved_content
+    );
+    assert_eq!(
+        parse_generation_output(&fs::read_to_string(&output_path).expect("output written"))
+            .expect("output validates")
+            .len(),
+        248
+    );
     fs::remove_dir_all(&output_dir).expect("remove test output directory");
 }
 
@@ -498,6 +803,10 @@ fn default_transport_replays_fixtures_that_pass_real_parsers_and_validators() {
         "What if Lena describes the deliverables while Omar waits for an answer?",
         "Suppose Alex stays with the design notes after Priya changes the subject.",
         "If I were Casey, I would ask Lee about the proposal.",
+        "Imagine Maya schedules a library visit.",
+        "What if Jordan chooses a blue notebook?",
+        "Suppose Priya waters the plants on Saturday.",
+        "If I were Casey, I would bake bread this evening.",
     ];
     let actual: Vec<_> = generated
         .iter()
@@ -554,6 +863,7 @@ fn prompt_uses_only_goal_description_and_vague_mode_has_no_goal() {
         mode: GenerationMode::Natural,
         count: 2,
         prior_cluster_anchors: Vec::new(),
+        approved_cluster_anchor: None,
     })
     .expect("description prompt");
     assert!(
@@ -569,10 +879,14 @@ fn prompt_uses_only_goal_description_and_vague_mode_has_no_goal() {
         mode: GenerationMode::VagueNoneOfRoster,
         count: 2,
         prior_cluster_anchors: Vec::new(),
+        approved_cluster_anchor: None,
     })
     .expect("vague prompt");
     for required in [
         "outside every roster goal",
+        "requests to stop or limit a recurring conversation topic",
+        "recognizing or correcting a conclusion drawn from ambiguous evidence",
+        "contrasting a statement or appearance with what was actually true or intended",
         "speaker's own work, projects, manager, or deadlines",
         "remember, remembers, remembered, remembering, remind, reminds, reminded, reminder, reminders",
         "absent third parties' relationships, breakups, or affairs, even without endorsing them",
@@ -593,6 +907,7 @@ fn prompt_uses_only_goal_description_and_vague_mode_has_no_goal() {
         mode: GenerationMode::SubjectConfusion,
         count: 2,
         prior_cluster_anchors: Vec::new(),
+        approved_cluster_anchor: None,
     })
     .expect("subject-confusion prompt");
     for required in [
@@ -653,6 +968,7 @@ fn cluster_directives_are_pairwise_distinct_across_partitions_and_prompts_exclud
         mode: GenerationMode::ParaphraseCluster { cluster_id },
         count: 2,
         prior_cluster_anchors: vec![prior_anchor.clone()],
+        approved_cluster_anchor: None,
     })
     .expect("cluster prompt");
     for required in [
@@ -1231,7 +1547,7 @@ fn generation_retries_a_rejected_batch_and_then_succeeds() {
     let transport = ScriptedTransport::new(vec!["not json".to_string(), good]);
     let run = run_generation(&transport, &roster(), "retry-run")
         .expect("run succeeds after one batch retry");
-    assert_eq!(run.records.len(), 240);
+    assert_eq!(run.records.len(), 248);
     // 30 batches plus exactly one retried first batch.
     assert_eq!(transport.calls.get(), 31);
 }
@@ -1245,6 +1561,26 @@ fn generation_fails_loudly_after_exhausting_batch_attempts() {
         error.contains("invalid generation model response"),
         "{error}"
     );
+    assert_eq!(transport.calls.get(), crate::MAX_GENERATION_BATCH_ATTEMPTS);
+}
+
+#[test]
+fn generation_retries_and_fails_loudly_on_persistent_under_delivery() {
+    let fixture = ReplayTransport::default_response(FixtureResponse::Generation)
+        .expect("generation fixture readable");
+    let mut response = serde_json::from_str::<Value>(&fixture).expect("generation fixture JSON");
+    response["utterances"]
+        .as_array_mut()
+        .expect("fixture utterances array")
+        .truncate(7);
+    let transport = ScriptedTransport::new(vec![response.to_string()]);
+
+    let error = run_generation(&transport, &roster(), "under-delivery-run")
+        .expect_err("persistently short batch fails the run");
+
+    for required in ["mode natural", "delivered 7", "requested 8"] {
+        assert!(error.contains(required), "error omits {required}: {error}");
+    }
     assert_eq!(transport.calls.get(), crate::MAX_GENERATION_BATCH_ATTEMPTS);
 }
 

@@ -82,7 +82,7 @@ pub fn estimate_cost_usd(table: &PriceTable, model_id: &str, usage: TokenUsage) 
 
 pub fn render_usage_report(model_id: &str, usage: TokenUsage) -> String {
     let tokens = format!(
-        "generation token usage: input={} (cached={}), output={}",
+        "generation token usage model_id={model_id}: input={} (cached={}), output={}",
         usage.input_tokens, usage.cached_input_tokens, usage.output_tokens
     );
     match tool_local_price_table()

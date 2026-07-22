@@ -12,13 +12,15 @@ use qsf_semantic_eval::{GoldLabel, RosterSnapshot};
 
 use crate::{
     GENERATOR_MODEL_ID, GOAL_RELEVANCE_GUIDELINE_VERSION, LabelingResponseContext, MINI_LABELER_ID,
-    ReviewDecision, ReviewField, ReviewValue, TokenUsage, build_blind_qa_review_view_model,
-    build_labeling_input, build_review_view_model, mini_fable_agreement_rate,
-    parse_generation_output, parse_goal_relevance_label_response, parse_label_interchange,
-    parse_labeling_input, parse_review_decisions, priority_review_queue,
-    priority_review_utterance_ids, reconcile, render_blind_qa_review_view, render_review_view,
-    render_usage_report, run_generation, run_mini_labeling, split_feasibility_preflight,
-    validate_generation_output, write_generation_anchor_sidecar, write_jsonl,
+    ReviewDecision, ReviewField, ReviewValue, SEMANTIC_GENERATOR_MODEL_ID, TokenUsage,
+    build_blind_qa_review_view_model, build_labeling_input, build_review_view_model,
+    mini_fable_agreement_rate, parse_generation_anchor_sidecar, parse_generation_output,
+    parse_goal_relevance_label_response, parse_label_interchange, parse_labeling_input,
+    parse_review_decisions, priority_review_queue, priority_review_utterance_ids, reconcile,
+    render_blind_qa_review_view, render_review_view, render_usage_report, run_generation,
+    run_generation_anchors, run_generation_with_approved_anchors, run_mini_labeling,
+    split_feasibility_preflight, validate_approved_generation_anchors, validate_generation_output,
+    write_generation_anchor_sidecar, write_jsonl,
 };
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -188,7 +190,7 @@ pub fn run_cli(mut args: impl Iterator<Item = String>) -> Result<(), String> {
 }
 
 fn usage() -> &'static str {
-    "usage:\n  qsf_semantic_datagen generate [--live] <roster.json> <generation-output.jsonl>\n  qsf_semantic_datagen label [--live] <generation-output.jsonl> <roster.json> <output-dir> [labeling-run-id]\n  qsf_semantic_datagen reconcile <roster.json> <label-mini.jsonl> <label-fable.jsonl> <reconciliation.jsonl>\n  qsf_semantic_datagen validate-labels <roster.json> <label-interchange.jsonl>\n  qsf_semantic_datagen review [--blind-qa] <roster.json> <labeling-input.jsonl> <label-mini.jsonl> <label-fable.jsonl> <review-decisions.jsonl>"
+    "usage:\n  qsf_semantic_datagen generate [--live] <roster.json> <generation-output.jsonl>\n  qsf_semantic_datagen generate --anchors-only [--live] <roster.json> <anchors-output.jsonl>\n  qsf_semantic_datagen generate [--live] --anchors <approved-anchors.jsonl> <roster.json> <generation-output.jsonl>\n  qsf_semantic_datagen label [--live] <generation-output.jsonl> <roster.json> <output-dir> [labeling-run-id]\n  qsf_semantic_datagen reconcile <roster.json> <label-mini.jsonl> <label-fable.jsonl> <reconciliation.jsonl>\n  qsf_semantic_datagen validate-labels <roster.json> <label-interchange.jsonl>\n  qsf_semantic_datagen review [--blind-qa] <roster.json> <labeling-input.jsonl> <label-mini.jsonl> <label-fable.jsonl> <review-decisions.jsonl>"
 }
 
 fn run_replay_labeling_smoke() -> Result<(), String> {
@@ -235,34 +237,65 @@ fn run_replay_labeling_smoke() -> Result<(), String> {
 }
 
 fn run_generate_cli(args: &[String]) -> Result<(), String> {
-    let (live, args) = live_flag(args);
-    if args.len() != 2 {
+    let options = parse_generate_options(args)?;
+    if options.positionals.len() != 2 {
         return Err(usage().to_string());
     }
-    let roster = RosterSnapshot::from_json_path(&args[0])?;
-    let run_id = if live {
+    let roster = RosterSnapshot::from_json_path(options.positionals[0])?;
+    let run_id = if options.live {
         "goalrel-generation-live"
     } else {
         "goalrel-generation-replay"
     };
-    let transport = selected_transport(live, FixtureResponse::Generation)?;
+    let transport = selected_transport(options.live, FixtureResponse::Generation)?;
     if transport.kind() == TransportKind::Live {
         engine_logging::engine_info!(
-            "goal relevance generation live transport selected run_id={} model_id={}",
+            "goal relevance generation live transport selected run_id={} routine_model_id={} semantic_model_id={}",
             run_id,
-            GENERATOR_MODEL_ID
+            GENERATOR_MODEL_ID,
+            SEMANTIC_GENERATOR_MODEL_ID
         );
     }
-    let run = run_generation(&transport, &roster, run_id)?;
+    if options.anchors_only {
+        let run = run_generation_anchors(&transport, &roster, run_id)?;
+        let output_path = Path::new(&options.positionals[1]);
+        write_file(
+            output_path,
+            &write_generation_anchor_sidecar(&run.cluster_anchors)?,
+        )?;
+        println!(
+            "wrote {} cluster anchors to {} using {} transport",
+            run.cluster_anchors.len(),
+            output_path.display(),
+            transport_name(transport.kind())
+        );
+        render_generation_usage(run.usage_by_model);
+        return Ok(());
+    }
+    let approved_anchor_content = options.anchors_path.as_ref().map(read_file).transpose()?;
+    let approved_anchors = approved_anchor_content
+        .as_deref()
+        .map(parse_generation_anchor_sidecar)
+        .transpose()?;
+    if let Some(anchors) = &approved_anchors {
+        validate_approved_generation_anchors(anchors)?;
+    }
+    let run = match approved_anchors.as_deref() {
+        Some(anchors) => {
+            run_generation_with_approved_anchors(&transport, &roster, run_id, Some(anchors))?
+        }
+        None => run_generation(&transport, &roster, run_id)?,
+    };
     validate_generation_output(&run.records)?;
     let feasibility = split_feasibility_preflight(&run.records, 20260721)?;
-    let output_path = Path::new(&args[1]);
+    let output_path = Path::new(&options.positionals[1]);
     write_file(output_path, &write_jsonl(&run.records)?)?;
     let anchors_path = generation_anchor_sidecar_path(output_path);
-    write_file(
-        &anchors_path,
-        &write_generation_anchor_sidecar(&run.cluster_anchors)?,
-    )?;
+    let sidecar_content = approved_anchor_content
+        .as_deref()
+        .map(ToOwned::to_owned)
+        .unwrap_or(write_generation_anchor_sidecar(&run.cluster_anchors)?);
+    write_file(&anchors_path, &sidecar_content)?;
     println!(
         "wrote {} generated utterances across {} split components to {} using {} transport",
         run.records.len(),
@@ -281,12 +314,57 @@ fn run_generate_cli(args: &[String]) -> Result<(), String> {
             cluster.cluster_id, cluster.anchor
         );
     }
-    if let Some(usage) = run.usage {
-        println!("{}", render_usage_report(GENERATOR_MODEL_ID, usage));
-    } else {
-        println!("generation token usage unavailable from replay transport");
-    }
+    render_generation_usage(run.usage_by_model);
     Ok(())
+}
+
+struct GenerateOptions<'a> {
+    live: bool,
+    anchors_only: bool,
+    anchors_path: Option<&'a String>,
+    positionals: Vec<&'a String>,
+}
+
+fn parse_generate_options(args: &[String]) -> Result<GenerateOptions<'_>, String> {
+    let mut live = false;
+    let mut anchors_only = false;
+    let mut anchors_path = None;
+    let mut positionals = Vec::new();
+    let mut index = 0;
+    while index < args.len() {
+        match args[index].as_str() {
+            "--live" if !live => live = true,
+            "--anchors-only" if !anchors_only => anchors_only = true,
+            "--anchors" if anchors_path.is_none() => {
+                index += 1;
+                let path = args.get(index).ok_or_else(|| usage().to_string())?;
+                anchors_path = Some(path);
+            }
+            value if value.starts_with("--") => return Err(usage().to_string()),
+            _ => positionals.push(&args[index]),
+        }
+        index += 1;
+    }
+    if anchors_only && anchors_path.is_some() {
+        return Err("generate --anchors-only cannot also accept --anchors".to_string());
+    }
+    Ok(GenerateOptions {
+        live,
+        anchors_only,
+        anchors_path,
+        positionals,
+    })
+}
+
+fn render_generation_usage(usage_by_model: Option<std::collections::BTreeMap<String, TokenUsage>>) {
+    match usage_by_model {
+        Some(usage_by_model) => {
+            for (model_id, usage) in usage_by_model {
+                println!("{}", render_usage_report(&model_id, usage));
+            }
+        }
+        None => println!("generation token usage unavailable from replay transport"),
+    }
 }
 
 pub(crate) fn generation_anchor_sidecar_path(output_path: &Path) -> PathBuf {

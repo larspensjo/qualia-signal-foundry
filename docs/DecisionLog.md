@@ -2057,3 +2057,20 @@ impossible to audit directly.
 Consequences: The prompt schedule explicitly varies stance, speaker role, action, and consequence
 across cluster types. Operators can compare every cluster batch with its recorded anchor without
 changing the stable interchange consumed by labeling and evaluation.
+
+## 2026-07-22 - Goal-relevance generation uses approved anchors, review-authoritative vague negatives, and mode-appropriate models
+Decision: Paraphrase-cluster anchors are generated as a separate checkpoint and approved by an
+operator before their batches are generated; the adjacent `generation-anchors.jsonl` sidecar is the
+approval artifact. The vague `none_of_roster` batch is deliberately over-produced, with blind
+labeling and human review deciding its final status rather than generation guaranteeing it. Semantic
+generation modes use `gpt-5.4-mini`; routine modes use `gpt-5.4-nano`.
+
+Context: Operator QA established that structural cluster diversity needs review before wording-level
+paraphrasing, and that semantic near-misses in vague requests are better classified by the blind
+labeling authority than treated as generation-artifact corruption. The difficult semantic modes
+also benefit from the more capable model without making routine coverage more expensive.
+
+Consequences: The generation CLI supports an anchor-only checkpoint and an approved-anchor batch
+flow while retaining the inline-anchor path for quick replay or live smokes. Generated records and
+usage reports retain the actual model for each mode, and the stable generation-output interchange
+remains unchanged.

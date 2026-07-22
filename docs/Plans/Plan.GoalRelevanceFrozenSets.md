@@ -430,10 +430,14 @@ live at trivial cost.
 - Prompt construction (pure) conditioned on **description only** (title + summary + tension
   summaries), with activation keywords structurally unavailable to the prompt builder (they are not
   passed in), so `saw_activation_keywords: false` is guaranteed by construction, not by discipline.
-- Generation modes: natural utterances + paraphrase clusters; per-slice variant generators
+- Generation modes: natural utterances + paraphrase clusters; cluster anchors are generated first,
+  operator-approved in the `generation-anchors.jsonl` sidecar, then embedded verbatim for the
+  paraphrase batch; per-slice variant generators
   (explicit/implicit negation, quoted speech, hypothetical, subject-confusion,
   punctuation/casing-loss, rare high-cost); the **tagged adversarial hard-paraphrase** batch; and
-  the **vague, goal-unconditioned** batch for `none_of_roster`. Synthetic-ASR corruption applies the
+  the **vague, goal-unconditioned, over-produced** batch for `none_of_roster`, whose final status
+  is decided by blind labeling and human review rather than generation; semantically hard modes use
+  `gpt-5.4-mini` while routine modes use `gpt-5.4-nano`. Synthetic-ASR corruption applies the
   observed casing/punctuation-loss + entity-mangling transform (a pure, seeded function), not
   random typos.
 - Response parsing (pure) into `generation-output.jsonl` with pipeline-known intended slice tags and

@@ -1,10 +1,13 @@
+use std::collections::{BTreeMap, BTreeSet};
+
 use qsf_semantic_eval::{FrozenGoalRef, RosterSnapshot, SliceTag};
 use serde::{Deserialize, Serialize};
 
 use crate::{CompletionRequest, GenerationOutput, INTERCHANGE_VERSION, ModelTransport, TokenUsage};
 
-pub const GENERATION_PROMPT_VERSION: &str = "goalrel-gen-v5";
+pub const GENERATION_PROMPT_VERSION: &str = "goalrel-gen-v6";
 pub const GENERATOR_MODEL_ID: &str = "gpt-5.4-nano";
+pub const SEMANTIC_GENERATOR_MODEL_ID: &str = "gpt-5.4-mini";
 pub const MAX_HARD_NEGATIVE_SHARE_OF_BASE: f64 = 0.25;
 /// Live models are stochastic against the mode validators, so a rejected batch is
 /// re-requested up to this many times before the run fails loudly. Observed live
@@ -84,8 +87,14 @@ pub(crate) const VAGUE_NONE_OF_ROSTER_RETENTION_WORDS: &[&str] = &[
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct GenerationRun {
     pub records: Vec<GenerationOutput>,
-    pub usage: Option<TokenUsage>,
+    pub usage_by_model: Option<BTreeMap<String, TokenUsage>>,
     pub cluster_anchors: Vec<GenerationClusterAnchor>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct GenerationAnchorRun {
+    pub cluster_anchors: Vec<GenerationClusterAnchor>,
+    pub usage_by_model: Option<BTreeMap<String, TokenUsage>>,
 }
 
 /// Operator-only evidence for the semantic proposition shared by a paraphrase batch.
@@ -163,10 +172,10 @@ const CLUSTER_SCENARIO_DIRECTIVES: [ClusterScenarioDirective; 10] = [
         consequence: "the learner handles their next conversation differently",
     },
     ClusterScenarioDirective {
-        stance: "the speaker resists their own curiosity",
+        stance: "the speaker independently restrains their own curiosity before anyone declines or states a limit",
         speaker_role: "the user as someone tempted to ask about information that has not been offered",
         action: "the speaker leaves the tempting subject alone and asks an open question about permitted topics",
-        consequence: "the relationship stays on volunteered ground",
+        consequence: "the relationship stays on volunteered ground; the stated-limit -> stop -> redirect-to-work -> continued-engagement arc is forbidden",
     },
 ];
 
@@ -229,6 +238,26 @@ pub enum GenerationMode {
 }
 
 impl GenerationMode {
+    pub fn generator_model_id(&self) -> &'static str {
+        match self {
+            Self::ParaphraseCluster { .. }
+            | Self::SubjectConfusion
+            | Self::HardParaphrase { .. }
+            | Self::VagueNoneOfRoster => SEMANTIC_GENERATOR_MODEL_ID,
+            _ => GENERATOR_MODEL_ID,
+        }
+    }
+
+    pub fn anchor_generator_model_id() -> &'static str {
+        SEMANTIC_GENERATOR_MODEL_ID
+    }
+
+    pub fn request_count(&self) -> usize {
+        match self {
+            Self::VagueNoneOfRoster => 12,
+            _ => 8,
+        }
+    }
     pub fn intended_slice_tags(&self) -> Vec<SliceTag> {
         match self {
             Self::Natural | Self::VagueNoneOfRoster => Vec::new(),
@@ -312,7 +341,7 @@ impl GenerationMode {
                 HARD_NEGATIVE_FORBIDDEN_WORDS.join(", ")
             ),
             Self::VagueNoneOfRoster => format!(
-                "Write vague everyday utterances outside every roster goal, not merely outside a boundaries-related goal. No goal is supplied for this request. Do not express reluctance or refusal to talk. Also forbid concrete detail about the speaker's own work, projects, manager, or deadlines; relaying or reporting on absent third parties' relationships, breakups, or affairs, even without endorsing them; weighing what someone said against interpretations of what they really meant; and recurring observations about prices, the economy, technology adoption, or world trends. Do not use any of these words: {}.",
+                "Write vague everyday utterances outside every roster goal, not merely outside a boundaries-related goal. No goal is supplied for this request. Do not express reluctance or refusal to talk. Also forbid requests to stop or limit a recurring conversation topic, even without boundary vocabulary; recognizing or correcting a conclusion drawn from ambiguous evidence; contrasting a statement or appearance with what was actually true or intended; concrete detail about the speaker's own work, projects, manager, or deadlines; relaying or reporting on absent third parties' relationships, breakups, or affairs, even without endorsing them; weighing what someone said against interpretations of what they really meant; and recurring observations about prices, the economy, technology adoption, or world trends. Do not use any of these words: {}.",
                 vague_none_of_roster_forbidden_words().collect::<Vec<_>>().join(", ")
             ),
         }
@@ -326,20 +355,92 @@ pub struct PromptRequest {
     pub count: usize,
     /// Anchors fixed earlier in this run. Only cluster prompts render them as exclusions.
     pub prior_cluster_anchors: Vec<GenerationClusterAnchor>,
+    /// An operator-approved anchor for a cluster batch. This selects the two-step response shape.
+    pub approved_cluster_anchor: Option<String>,
 }
 
 pub fn build_prompt(request: &PromptRequest) -> Result<String, String> {
     if request.count == 0 {
         return Err("generation request count must be positive".to_string());
     }
-    let description = match (&request.mode, &request.description) {
-        (GenerationMode::VagueNoneOfRoster, None) => String::new(),
+    let description = goal_description_prompt(&request.mode, request.description.as_ref())?;
+    let cluster_guidance = cluster_guidance(
+        &request.mode,
+        &request.prior_cluster_anchors,
+        request.approved_cluster_anchor.is_none(),
+    )?;
+    let approved_anchor_instruction = match (&request.mode, &request.approved_cluster_anchor) {
+        (
+            GenerationMode::ParaphraseCluster { .. } | GenerationMode::HardParaphrase { .. },
+            Some(anchor),
+        ) => format!(
+            "The operator-approved anchor proposition is:\n{anchor}\nWrite every utterance as a wording-level paraphrase of exactly that proposition: preserve its actors, event, stance, and consequence in every line, varying only the wording. Do not return an anchor field.\n"
+        ),
+        (_, Some(_)) => return Err("only cluster batches may use an approved anchor".to_string()),
+        _ => String::new(),
+    };
+    let response_shape =
+        if request.mode.cluster_id().is_some() && request.approved_cluster_anchor.is_none() {
+            "{\"anchor\":\"one concrete proposition\",\"utterances\":[\"...\"]}"
+        } else {
+            "{\"utterances\":[\"...\"]}"
+        };
+    Ok(format!(
+        "Generate {} English utterances spoken by a human user to their AI assistant. \
+The speaker is always a human user talking TO their AI assistant, typically about interactions \
+with other humans. The user may tell the AI not to pry into other people's lives, but must never \
+address the AI as though it were a human interlocutor with its own family, work, or personal life; \
+never offer the AI privacy; and never adopt an assistant-like voice. Write only the user's side of \
+the conversation, in the user's own voice — things the user would say about their own life, work, \
+thoughts, or questions. Never write the assistant's replies or an assistant-like voice (no offering \
+help, no inviting the user to share). Across the batch, vary actors, settings, speech acts, stances, \
+tenses, and consequences; never reuse one sentence skeleton with synonym swaps. {}\n\
+{}\n{}{}Return JSON only: {}. Do not include labels, metadata, or explanations.",
+        request.count,
+        request.mode.instruction(),
+        description,
+        cluster_guidance,
+        approved_anchor_instruction,
+        response_shape
+    ))
+}
+
+/// Constructs the isolated first step of operator-approved paraphrase anchoring.
+pub fn build_anchor_prompt(request: &PromptRequest) -> Result<String, String> {
+    if request.count != 1 {
+        return Err("anchor generation request count must be exactly one".to_string());
+    }
+    if request.mode.cluster_id().is_none() {
+        return Err("anchor generation requires a cluster mode".to_string());
+    }
+    if request.approved_cluster_anchor.is_some() {
+        return Err("anchor generation cannot use an approved anchor".to_string());
+    }
+    let description = goal_description_prompt(&request.mode, request.description.as_ref())?;
+    let cluster_guidance = cluster_guidance(&request.mode, &request.prior_cluster_anchors, true)?;
+    let forbidden = match request.mode {
+        GenerationMode::HardParaphrase { .. } => format!(
+            " The anchor may not contain any of these words: {}.",
+            HARD_NEGATIVE_FORBIDDEN_WORDS.join(", ")
+        ),
+        _ => String::new(),
+    };
+    Ok(format!(
+        "Create exactly one concrete anchor proposition for a later human-user utterance batch. Supply no utterances. The proposition must name specific actors, event, stance, and consequence. {}\n{}{} Return JSON only: {{\"anchor\":\"one concrete proposition\"}}. Do not include labels, metadata, explanations, or an utterances field.",
+        description, cluster_guidance, forbidden
+    ))
+}
+
+fn goal_description_prompt(
+    mode: &GenerationMode,
+    description: Option<&GoalDescription>,
+) -> Result<String, String> {
+    match (mode, description) {
+        (GenerationMode::VagueNoneOfRoster, None) => Ok(String::new()),
         (GenerationMode::VagueNoneOfRoster, Some(_)) => {
-            return Err(
-                "vague none_of_roster generation must not carry a goal description".to_string(),
-            );
+            Err("vague none_of_roster generation must not carry a goal description".to_string())
         }
-        (_, Some(description)) => format!(
+        (_, Some(description)) => Ok(format!(
             "The utterances must bear on the following goal. The goal belongs to the assistant, \
 not the user — do not restate it or act it out; write what a user whose words touch on this \
 goal's subject matter would say.\nGoal title: {}\nGoal summary: {}\nTension summaries:\n{}\n",
@@ -351,60 +452,46 @@ goal's subject matter would say.\nGoal title: {}\nGoal summary: {}\nTension summ
                 .map(|summary| format!("- {summary}"))
                 .collect::<Vec<_>>()
                 .join("\n")
-        ),
-        (_, None) => return Err("goal-conditioned generation requires a description".to_string()),
-    };
-    let cluster_guidance = match request.mode.cluster_id() {
+        )),
+        (_, None) => Err("goal-conditioned generation requires a description".to_string()),
+    }
+}
+
+fn cluster_guidance(
+    mode: &GenerationMode,
+    prior_cluster_anchors: &[GenerationClusterAnchor],
+    is_anchor_authoring: bool,
+) -> Result<String, String> {
+    match mode.cluster_id() {
         Some(cluster_id) => {
             let directive = cluster_scenario_directive(cluster_id).ok_or_else(|| {
                 format!("no scenario directive is configured for cluster {cluster_id}")
             })?;
-            let exclusions = if request.prior_cluster_anchors.is_empty() {
+            let anchor_authoring_guidance = if !is_anchor_authoring {
                 String::new()
+            } else if prior_cluster_anchors.is_empty() {
+                "The anchor must use this required combination.\n".to_string()
             } else {
                 format!(
-                    "Previously fixed anchors in this generation run:\n{}\nYour anchor must differ in stance, actors, action, and consequence from all of these exclusion anchors; do not reuse or adapt their scenario skeletons.\n",
-                    request
-                        .prior_cluster_anchors
+                    "The anchor must use this required combination.\nPreviously fixed anchors in this generation run:\n{}\nYour anchor must differ in stance, actors, action, and consequence from all of these exclusion anchors; do not reuse or adapt their scenario skeletons.\n",
+                    prior_cluster_anchors
                         .iter()
                         .map(|anchor| format!("- {}: {}", anchor.cluster_id, anchor.anchor))
                         .collect::<Vec<_>>()
                         .join("\n")
                 )
             };
-            format!(
-                "Required scenario directive for this cluster:\n- stance: {}\n- speaker role: {}\n- action: {}\n- consequence: {}\nThe anchor must use this required combination.\n{}",
+            Ok(format!(
+                "Required scenario directive for this cluster:\n- stance: {}\n- speaker role: {}\n- action: {}\n- consequence: {}\n{}",
                 directive.stance,
                 directive.speaker_role,
                 directive.action,
                 directive.consequence,
-                exclusions
-            )
+                anchor_authoring_guidance
+            ))
         }
-        None => String::new(),
-    };
-    let response_shape = if request.mode.cluster_id().is_some() {
-        "{\"anchor\":\"one concrete proposition\",\"utterances\":[\"...\"]}"
-    } else {
-        "{\"utterances\":[\"...\"]}"
-    };
-    Ok(format!(
-        "Generate {} English utterances spoken by a human user to their AI assistant. \
-The speaker is always a human user talking TO their AI assistant, typically about interactions \
-with other humans. The user may tell the AI not to pry into other people's lives, but must never \
-address the AI as though it were a human interlocutor with its own family, work, or personal life; \
-never offer the AI privacy; and never adopt an assistant-like voice. Write only the user's side of \
-the conversation, in the user's own voice — things the user would say about their own life, work, \
-thoughts, or questions. Never write the assistant's replies or an assistant-like voice (no offering \
-help, no inviting the user to share). Across the batch, vary actors, settings, speech acts, stances, \
-tenses, and consequences; never reuse one sentence skeleton with synonym swaps. {}\n\
-{}\n{}Return JSON only: {}. Do not include labels, metadata, or explanations.",
-        request.count,
-        request.mode.instruction(),
-        description,
-        cluster_guidance,
-        response_shape
-    ))
+        None => Ok(String::new()),
+    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -438,12 +525,13 @@ pub fn parse_generation_response(
     response: &str,
     context: &GenerationResponseContext,
 ) -> Result<Vec<GenerationOutput>, String> {
-    Ok(parse_generation_response_with_anchor(response, context)?.records)
+    Ok(parse_generation_response_with_anchor(response, context, true)?.records)
 }
 
 fn parse_generation_response_with_anchor(
     response: &str,
     context: &GenerationResponseContext,
+    requires_cluster_anchor: bool,
 ) -> Result<ParsedGenerationResponse, String> {
     let response: ModelGenerationResponse = serde_json::from_str(response)
         .map_err(|error| format!("invalid generation model response: {error}"))?;
@@ -459,7 +547,7 @@ fn parse_generation_response_with_anchor(
         return Err("goal-conditioned output requires conditioning_goal_ref".to_string());
     }
     let cluster_anchor = response.anchor.filter(|anchor| !anchor.trim().is_empty());
-    if context.mode.cluster_id().is_some() && cluster_anchor.is_none() {
+    if requires_cluster_anchor && context.mode.cluster_id().is_some() && cluster_anchor.is_none() {
         return Err(format!(
             "mode {} requires a non-empty anchor field",
             context.mode.name()
@@ -508,6 +596,32 @@ fn parse_generation_response_with_anchor(
     })
 }
 
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ModelAnchorResponse {
+    anchor: String,
+    #[serde(default, rename = "utterances")]
+    _utterances: Vec<String>,
+}
+
+fn parse_generation_anchor_response(
+    response: &str,
+    mode: &GenerationMode,
+) -> Result<String, String> {
+    let response: ModelAnchorResponse = serde_json::from_str(response)
+        .map_err(|error| format!("invalid generation anchor response: {error}"))?;
+    let anchor = response.anchor.trim();
+    if anchor.is_empty() {
+        return Err("generation anchor response contains an empty anchor".to_string());
+    }
+    if matches!(mode, GenerationMode::HardParaphrase { .. })
+        && contains_hard_negative_forbidden_word(anchor)
+    {
+        return Err("hard-negative anchor contains a forbidden word".to_string());
+    }
+    Ok(anchor.to_string())
+}
+
 /// Runs the deterministic generation request schedule through the supplied transport.
 /// Prompt construction and response parsing remain transport-independent and testable.
 pub fn run_generation<T: ModelTransport>(
@@ -515,16 +629,25 @@ pub fn run_generation<T: ModelTransport>(
     roster: &RosterSnapshot,
     generation_run_id: &str,
 ) -> Result<GenerationRun, String> {
+    run_generation_with_approved_anchors(transport, roster, generation_run_id, None)
+}
+
+/// Runs utterance generation using operator-approved cluster anchors when supplied.
+pub fn run_generation_with_approved_anchors<T: ModelTransport>(
+    transport: &T,
+    roster: &RosterSnapshot,
+    generation_run_id: &str,
+    approved_anchors: Option<&[GenerationClusterAnchor]>,
+) -> Result<GenerationRun, String> {
+    if let Some(anchors) = approved_anchors {
+        validate_approved_generation_anchors(anchors)?;
+    }
     let goal = roster
         .goals
         .first()
         .ok_or_else(|| "roster has no goals".to_string())?;
     let mut records = Vec::new();
-    let mut usage = TokenUsage {
-        input_tokens: 0,
-        cached_input_tokens: 0,
-        output_tokens: 0,
-    };
+    let mut usage_by_model = BTreeMap::new();
     let mut has_usage = false;
     let mut cluster_anchors = Vec::new();
     for partition in ["validation", "test"] {
@@ -537,9 +660,18 @@ pub fn run_generation<T: ModelTransport>(
             let prompt = build_prompt(&PromptRequest {
                 description,
                 mode: mode.clone(),
-                count: 8,
+                count: mode.request_count(),
                 prior_cluster_anchors: cluster_anchors.clone(),
+                approved_cluster_anchor: mode.cluster_id().and_then(|cluster_id| {
+                    approved_anchors.and_then(|anchors| {
+                        anchors
+                            .iter()
+                            .find(|anchor| anchor.cluster_id == cluster_id)
+                            .map(|anchor| anchor.anchor.clone())
+                    })
+                }),
             })?;
+            let model_id = mode.generator_model_id();
             let context = GenerationResponseContext {
                 utterance_id_prefix: format!("{generation_run_id}-{partition}-{index}"),
                 language: "en".to_string(),
@@ -552,29 +684,36 @@ pub fn run_generation<T: ModelTransport>(
                 session_id: format!("{generation_run_id}-session-{partition}"),
                 semantic_cluster_id: format!("{generation_run_id}-semantic-{partition}"),
                 generation_run_id: generation_run_id.to_string(),
-                generator_model_id: GENERATOR_MODEL_ID.to_string(),
+                generator_model_id: model_id.to_string(),
                 synthetic_asr_seed: 20260721,
             };
             let mut attempt = 1usize;
             let parsed = loop {
                 let response = transport.complete(&CompletionRequest {
-                    model_id: GENERATOR_MODEL_ID.to_string(),
+                    model_id: model_id.to_string(),
                     prompt: prompt.clone(),
                     goal_ref: goal.goal_ref.clone(),
                     run_id: generation_run_id.to_string(),
                     utterance_id: None,
                 })?;
                 if let Some(call_usage) = response.usage {
-                    usage.add(call_usage);
+                    add_usage(&mut usage_by_model, model_id, call_usage);
                     has_usage = true;
                 }
-                match parse_generation_response_with_anchor(&response.content, &context) {
+                match parse_generation_response_with_anchor(
+                    &response.content,
+                    &context,
+                    approved_anchors.is_none(),
+                )
+                .and_then(|parsed| require_requested_utterance_count(parsed, &mode))
+                {
                     Ok(parsed) => break parsed,
                     Err(error) if attempt < MAX_GENERATION_BATCH_ATTEMPTS => {
                         engine_logging::engine_warn!(
-                            "goal relevance generation batch rejected, re-requesting run_id={} mode={} attempt={}/{} error={}",
+                            "goal relevance generation batch rejected, re-requesting run_id={} mode={} model_id={} attempt={}/{} error={}",
                             generation_run_id,
                             mode.name(),
+                            model_id,
                             attempt,
                             MAX_GENERATION_BATCH_ATTEMPTS,
                             error
@@ -583,9 +722,10 @@ pub fn run_generation<T: ModelTransport>(
                     }
                     Err(error) => {
                         engine_logging::engine_error!(
-                            "goal relevance generation rejected run_id={} mode={} attempts={} error={}",
+                            "goal relevance generation rejected run_id={} mode={} model_id={} attempts={} error={}",
                             generation_run_id,
                             mode.name(),
+                            model_id,
                             attempt,
                             error
                         );
@@ -599,14 +739,118 @@ pub fn run_generation<T: ModelTransport>(
                     anchor,
                 });
             }
-            records.extend(parsed.records);
+            records.extend(parsed.records.into_iter().take(mode.request_count()));
         }
     }
     Ok(GenerationRun {
         records,
-        usage: has_usage.then_some(usage),
-        cluster_anchors,
+        usage_by_model: has_usage.then_some(usage_by_model),
+        cluster_anchors: approved_anchors
+            .map(ToOwned::to_owned)
+            .unwrap_or(cluster_anchors),
     })
+}
+
+fn require_requested_utterance_count(
+    parsed: ParsedGenerationResponse,
+    mode: &GenerationMode,
+) -> Result<ParsedGenerationResponse, String> {
+    let delivered = parsed.records.len();
+    let requested = mode.request_count();
+    if delivered < requested {
+        return Err(format!(
+            "generation mode {} delivered {delivered} utterances, requested {requested}",
+            mode.name()
+        ));
+    }
+    Ok(parsed)
+}
+
+/// Runs only the first anchor checkpoint for every scheduled paraphrase cluster.
+pub fn run_generation_anchors<T: ModelTransport>(
+    transport: &T,
+    roster: &RosterSnapshot,
+    generation_run_id: &str,
+) -> Result<GenerationAnchorRun, String> {
+    let goal = roster
+        .goals
+        .first()
+        .ok_or_else(|| "roster has no goals".to_string())?;
+    let mut cluster_anchors = Vec::new();
+    let mut usage_by_model = BTreeMap::new();
+    let mut has_usage = false;
+    for mode in cluster_generation_modes() {
+        let prompt = build_anchor_prompt(&PromptRequest {
+            description: Some(GoalDescription::from(goal)),
+            mode: mode.clone(),
+            count: 1,
+            prior_cluster_anchors: cluster_anchors.clone(),
+            approved_cluster_anchor: None,
+        })?;
+        let cluster_id = mode
+            .cluster_id()
+            .expect("cluster schedule contains only cluster modes");
+        let model_id = GenerationMode::anchor_generator_model_id();
+        let mut attempt = 1usize;
+        let anchor = loop {
+            let response = transport.complete(&CompletionRequest {
+                model_id: model_id.to_string(),
+                prompt: prompt.clone(),
+                goal_ref: goal.goal_ref.clone(),
+                run_id: generation_run_id.to_string(),
+                utterance_id: None,
+            })?;
+            if let Some(call_usage) = response.usage {
+                add_usage(&mut usage_by_model, model_id, call_usage);
+                has_usage = true;
+            }
+            match parse_generation_anchor_response(&response.content, &mode) {
+                Ok(anchor) => break anchor,
+                Err(error) if attempt < MAX_GENERATION_BATCH_ATTEMPTS => {
+                    engine_logging::engine_warn!(
+                        "goal relevance anchor rejected, re-requesting run_id={} mode={} model_id={} attempt={}/{} error={}",
+                        generation_run_id,
+                        mode.name(),
+                        model_id,
+                        attempt,
+                        MAX_GENERATION_BATCH_ATTEMPTS,
+                        error
+                    );
+                    attempt += 1;
+                }
+                Err(error) => {
+                    engine_logging::engine_error!(
+                        "goal relevance anchor rejected run_id={} mode={} model_id={} attempts={} error={}",
+                        generation_run_id,
+                        mode.name(),
+                        model_id,
+                        attempt,
+                        error
+                    );
+                    return Err(error);
+                }
+            }
+        };
+        cluster_anchors.push(GenerationClusterAnchor {
+            cluster_id: cluster_id.to_string(),
+            anchor,
+        });
+    }
+    Ok(GenerationAnchorRun {
+        cluster_anchors,
+        usage_by_model: has_usage.then_some(usage_by_model),
+    })
+}
+
+fn add_usage(usage_by_model: &mut BTreeMap<String, TokenUsage>, model_id: &str, usage: TokenUsage) {
+    usage_by_model
+        .entry(model_id.to_string())
+        .or_insert(TokenUsage {
+            input_tokens: 0,
+            cached_input_tokens: 0,
+            output_tokens: 0,
+        })
+        .add(usage);
 }
 
 /// Parses the operator-only cluster-anchor evidence sidecar. It is intentionally
@@ -631,7 +875,7 @@ pub fn write_generation_anchor_sidecar(
 pub fn validate_generation_anchor_sidecar(
     anchors: &[GenerationClusterAnchor],
 ) -> Result<(), String> {
-    let mut cluster_ids = std::collections::BTreeSet::new();
+    let mut cluster_ids = BTreeSet::new();
     for anchor in anchors {
         if anchor.cluster_id.trim().is_empty() {
             return Err("generation anchor sidecar contains an empty cluster_id".to_string());
@@ -648,6 +892,33 @@ pub fn validate_generation_anchor_sidecar(
                 anchor.cluster_id
             ));
         }
+    }
+    Ok(())
+}
+
+/// Validates an operator-approved checkpoint: exactly the scheduled ten cluster anchors,
+/// no more and no less.
+pub fn validate_approved_generation_anchors(
+    anchors: &[GenerationClusterAnchor],
+) -> Result<(), String> {
+    validate_generation_anchor_sidecar(anchors)?;
+    let actual = anchors
+        .iter()
+        .map(|anchor| anchor.cluster_id.as_str())
+        .collect::<BTreeSet<_>>();
+    let expected_ids = expected_cluster_ids();
+    let expected = expected_ids
+        .iter()
+        .map(String::as_str)
+        .collect::<BTreeSet<_>>();
+    if actual != expected {
+        let missing = expected.difference(&actual).copied().collect::<Vec<_>>();
+        let extra = actual.difference(&expected).copied().collect::<Vec<_>>();
+        return Err(format!(
+            "approved generation anchors must contain exactly one entry for every scheduled cluster; missing [{}], extra [{}]",
+            missing.join(", "),
+            extra.join(", ")
+        ));
     }
     Ok(())
 }
@@ -674,6 +945,34 @@ fn generation_modes(partition: &str) -> Vec<GenerationMode> {
         GenerationMode::VagueNoneOfRoster,
     ]);
     modes
+}
+
+fn cluster_generation_modes() -> Vec<GenerationMode> {
+    ["validation", "test"]
+        .into_iter()
+        .flat_map(|partition| {
+            let mut modes = (1..=4)
+                .map(|cluster| GenerationMode::ParaphraseCluster {
+                    cluster_id: format!("{partition}-cluster-{cluster}"),
+                })
+                .collect::<Vec<_>>();
+            modes.push(GenerationMode::HardParaphrase {
+                cluster_id: format!("{partition}-hard-cluster"),
+            });
+            modes
+        })
+        .collect()
+}
+
+fn expected_cluster_ids() -> Vec<String> {
+    cluster_generation_modes()
+        .into_iter()
+        .map(|mode| {
+            mode.cluster_id()
+                .expect("cluster schedule contains only cluster modes")
+                .to_string()
+        })
+        .collect()
 }
 
 /// Observed ASR-style corruption: loss of casing/punctuation plus deterministic entity mangling.
