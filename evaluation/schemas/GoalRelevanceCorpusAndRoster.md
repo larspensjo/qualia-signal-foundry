@@ -62,3 +62,35 @@ The runner writes `pair-results.jsonl` as the authoritative per-pair scoring cha
 matched terms with production weight classes, numeric strength, and the exact qualification
 threshold in force. `metrics.json` is derived from that JSONL. Markdown summaries are derived
 human-readable views and must never become the regression-gate input.
+
+## Frozen-set manifest and lineage
+
+The deterministic split command writes `split-summary.json` beside
+`validation.dataset.jsonl` and `test.dataset.jsonl`. This is a strict JSON object with numeric
+`split_seed` and `assignment_by_component`, whose keys are connected-component identifiers and
+whose values are `validation` or `test`. Freeze reads this artifact by default; `--seed` may
+explicitly override its seed. Before writing frozen artifacts, freeze must rerun the split over the
+combined reviewed pool and require byte equality with both supplied split files.
+
+`evaluation/frozen/goal-relevance/freeze-manifest.json` is a strict JSON object with
+`dataset_version`, `roster_snapshot_version`, `roster_fixture_hash`, `split_seed`,
+`validation_sha256`, `test_sha256`, `per_slice_counts_by_split`,
+`generation_output_sha256`, `label_mini_sha256`, `label_fable_sha256`,
+`review_decisions_sha256`, and `frozen_at`. The two dataset hashes are SHA-256 hashes of the
+canonical JSONL emitted by the deterministic split and freeze transport. Per-slice counts are
+distinct utterance counts; `paraphrase_clusters` counts clusters containing at least two
+utterances.
+
+The full committed provenance boundary is
+`evaluation/frozen/goal-relevance/lineage/<dataset_version>/`: `generation-output.jsonl`,
+`labeling-input.jsonl`, `label-mini.jsonl`, `label-fable.jsonl`, `reconciliation.jsonl`,
+`reconciliation-summary.json`, `review-decisions.jsonl`, `blind-qa-decisions.jsonl`, and
+`reviewed-pool.jsonl`. Blind-QA decisions are measurement evidence only: they never enter the
+reviewed-pool fold. `reconciliation-summary.json` records the mini/Fable numerator and denominator
+used by the methodology note.
+
+The freeze gate requires the dense utterance×roster cross-product, version-bound and resolving
+goal references, reviewed pairs, floor-satisfying validation and test components, no session or
+semantic-cluster identifier shared by both splits, valid `none_of_roster` labels, a roster that
+round-trips against the realtime seed, and at least 0.80 cold blind-QA agreement in the negation,
+quoted-speech, and hypothetical slices.

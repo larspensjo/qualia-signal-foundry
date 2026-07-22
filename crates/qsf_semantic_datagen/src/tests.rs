@@ -5,24 +5,31 @@ use std::{
     time::{Instant, SystemTime, UNIX_EPOCH},
 };
 
-use qsf_semantic_eval::{GoldLabel, ReviewStatus, RosterSnapshot};
+use qsf_semantic_eval::{
+    DATASET_SCHEMA_VERSION, DataSource, GenerationLineage, GoldLabel, LabelerLineage,
+    LabelingLineage, PairRecord, Provenance, ReviewLineage, ReviewStatus, RosterSnapshot, SliceTag,
+    UtteranceRosterAnnotation,
+};
 use serde_json::Value;
 
 use crate::{
-    CompletionRequest, FixtureResponse, GOAL_RELEVANCE_GUIDELINE_VERSION, GenerationClusterAnchor,
-    GenerationMode, GenerationOutput, GenerationResponseContext, GoalDescription,
-    INTERCHANGE_VERSION, LabelInterchange, LabelingResponseContext, MINI_LABELER_ID,
-    ModelTransport, PerGoalLabel, PromptRequest, ReplayTransport, ReviewDecision, ReviewField,
-    ReviewValue, ReviewedPoolRequest, TransportKind, build_blind_qa_review_view_model,
+    CompletionRequest, FixtureResponse, FreezeRequest, GOAL_RELEVANCE_GUIDELINE_VERSION,
+    GatekeeperRequest, GenerationClusterAnchor, GenerationMode, GenerationOutput,
+    GenerationResponseContext, GoalDescription, INTERCHANGE_VERSION, LabelInterchange,
+    LabelingResponseContext, MINI_LABELER_ID, ModelTransport, PerGoalLabel, PromptRequest,
+    ReplayTransport, ReviewDecision, ReviewField, ReviewValue, ReviewedPoolRequest, TransportKind,
+    blind_qa_agreement_by_slice, build_blind_qa_review_view_model,
     build_goal_relevance_label_prompt, build_labeling_input, build_prompt, build_review_view_model,
-    cluster_scenario_directive, default_transport_kind, fold_reviewed_pool, hard_negative_count,
-    hard_negative_within_distribution, mini_fable_agreement_rate, parse_generation_anchor_sidecar,
-    parse_generation_output, parse_generation_response, parse_goal_relevance_label_response,
-    parse_label_interchange, priority_review_queue, punctuation_casing_loss, reconcile,
-    render_blind_qa_review_view, render_generation_report, run_cli, run_generation,
-    run_generation_anchors, run_generation_with_approved_anchors, run_mini_labeling,
-    split_feasibility_preflight, synthetic_asr_corrupt, tool_local_price_table,
-    validate_generation_output, write_generation_anchor_sidecar, write_jsonl,
+    cluster_scenario_directive, default_transport_kind, fold_reviewed_pool, freeze_artifacts,
+    gatekeep_goal_relevance_freeze, hard_negative_count, hard_negative_within_distribution,
+    mini_fable_agreement_rate, parse_generation_anchor_sidecar, parse_generation_output,
+    parse_generation_response, parse_goal_relevance_label_response, parse_label_interchange,
+    priority_review_queue, punctuation_casing_loss, reconcile, render_blind_qa_review_view,
+    render_generation_report, run_cli, run_generation, run_generation_anchors,
+    run_generation_with_approved_anchors, run_mini_labeling, run_production_generation,
+    split_feasibility_preflight, split_reviewed_pool, synthetic_asr_corrupt,
+    tool_local_price_table, validate_generation_output, write_generation_anchor_sidecar,
+    write_jsonl,
 };
 
 fn roster() -> RosterSnapshot {
@@ -1553,6 +1560,41 @@ fn generation_retries_a_rejected_batch_and_then_succeeds() {
 }
 
 #[test]
+fn production_schedule_covers_the_frozen_roster_in_two_neutral_components() {
+    let run = run_production_generation(
+        &ReplayTransport::new(FixtureResponse::Generation),
+        &roster(),
+        "production-fixture",
+    )
+    .expect("production replay schedule validates");
+    assert_eq!(run.records.len(), 114);
+    let components = run
+        .records
+        .iter()
+        .map(|record| record.semantic_cluster_id.as_str())
+        .collect::<std::collections::BTreeSet<_>>();
+    assert_eq!(components.len(), 2);
+    assert!(
+        components
+            .iter()
+            .all(|value| value.contains("pool-a") || value.contains("pool-b"))
+    );
+    assert!(
+        run.records
+            .iter()
+            .any(|record| record.conditioning_goal_ref.is_none())
+    );
+    assert!(
+        run.records
+            .iter()
+            .filter_map(|record| record.conditioning_goal_ref.as_ref())
+            .collect::<std::collections::BTreeSet<_>>()
+            .len()
+            == 7
+    );
+}
+
+#[test]
 fn generation_fails_loudly_after_exhausting_batch_attempts() {
     let transport = ScriptedTransport::new(vec!["not json".to_string()]);
     let error = run_generation(&transport, &roster(), "retry-run")
@@ -1562,6 +1604,38 @@ fn generation_fails_loudly_after_exhausting_batch_attempts() {
         "{error}"
     );
     assert_eq!(transport.calls.get(), crate::MAX_GENERATION_BATCH_ATTEMPTS);
+}
+
+#[test]
+fn production_generation_and_anchor_batches_exhaust_the_shared_retry_runner() {
+    let generation_transport = ScriptedTransport::new(vec!["not json".to_string()]);
+    let generation_error =
+        run_production_generation(&generation_transport, &roster(), "production-terminal-run")
+            .expect_err("persistently invalid production generation fails");
+    assert!(
+        generation_error.contains("invalid generation model response"),
+        "{generation_error}"
+    );
+    assert_eq!(
+        generation_transport.calls.get(),
+        crate::MAX_GENERATION_BATCH_ATTEMPTS
+    );
+
+    let anchor_transport = ScriptedTransport::new(vec!["not json".to_string()]);
+    let anchor_error = crate::run_production_generation_anchors(
+        &anchor_transport,
+        &roster(),
+        "production-anchor-terminal-run",
+    )
+    .expect_err("persistently invalid production anchor fails");
+    assert!(
+        anchor_error.contains("invalid generation anchor response"),
+        "{anchor_error}"
+    );
+    assert_eq!(
+        anchor_transport.calls.get(),
+        crate::MAX_GENERATION_BATCH_ATTEMPTS
+    );
 }
 
 #[test]
@@ -1603,4 +1677,648 @@ fn semantic_eval_dependency_graph_stays_lean() {
             "qsf_semantic_eval dependency tree must not contain {forbidden}: {tree}"
         );
     }
+}
+
+fn reviewed_production_fixture() -> Vec<PairRecord> {
+    let roster = roster();
+    let mut utterances = Vec::new();
+    for component in ["pool-a", "pool-b"] {
+        for cluster in 1..=4 {
+            for index in 0..2 {
+                utterances.push((
+                    format!("{component}-cluster-{cluster}-{index}"),
+                    vec![SliceTag::ParaphraseCluster {
+                        id: format!("{component}-cluster-{cluster}"),
+                    }],
+                    false,
+                ));
+            }
+        }
+        for index in 0..5 {
+            utterances.push((
+                format!("{component}-hard-{index}"),
+                vec![
+                    SliceTag::HardNegative,
+                    SliceTag::ParaphraseCluster {
+                        id: format!("{component}-hard-cluster"),
+                    },
+                ],
+                false,
+            ));
+        }
+        for index in 0..3 {
+            utterances.push((
+                format!("{component}-subject-{index}"),
+                vec![SliceTag::SubjectConfusion],
+                false,
+            ));
+        }
+        for index in 0..3 {
+            utterances.push((
+                format!("{component}-rare-{index}"),
+                vec![SliceTag::RareHighCost],
+                false,
+            ));
+        }
+        for index in 0..4 {
+            utterances.push((
+                format!("{component}-explicit-{index}"),
+                vec![SliceTag::ExplicitNegation],
+                false,
+            ));
+        }
+        for index in 0..4 {
+            utterances.push((
+                format!("{component}-implicit-{index}"),
+                vec![SliceTag::ImplicitNegation],
+                false,
+            ));
+        }
+        for index in 0..6 {
+            utterances.push((
+                format!("{component}-quoted-{index}"),
+                vec![SliceTag::QuotedSpeech],
+                false,
+            ));
+        }
+        for index in 0..6 {
+            utterances.push((
+                format!("{component}-hypothetical-{index}"),
+                vec![SliceTag::Hypothetical],
+                false,
+            ));
+        }
+        for index in 0..3 {
+            utterances.push((
+                format!("{component}-punctuation-{index}"),
+                vec![SliceTag::PunctuationCasingLoss],
+                false,
+            ));
+        }
+        for index in 0..3 {
+            utterances.push((
+                format!("{component}-asr-{index}"),
+                vec![SliceTag::SyntheticAsr, SliceTag::PunctuationCasingLoss],
+                false,
+            ));
+        }
+        for index in 0..2 {
+            utterances.push((format!("{component}-natural-{index}"), vec![], false));
+        }
+        for index in 0..10 {
+            utterances.push((format!("{component}-none-{index}"), vec![], true));
+        }
+    }
+    assert_eq!(utterances.len(), 114);
+    utterances
+        .into_iter()
+        .flat_map(|(utterance_id, tags, none)| {
+            let roster_snapshot_version = roster.roster_snapshot_version.clone();
+            roster.goals.iter().map(move |goal| PairRecord {
+                schema_version: DATASET_SCHEMA_VERSION,
+                dataset_version: "goal-relevance-v1".to_string(),
+                roster_snapshot_version: roster_snapshot_version.clone(),
+                utterance: format!("fixture utterance {utterance_id}"),
+                utterance_id: utterance_id.clone(),
+                goal_ref: goal.goal_ref.clone(),
+                gold_label: GoldLabel::NotRelevant,
+                slice_tags: tags.clone(),
+                language: "en".to_string(),
+                session_id: format!(
+                    "session-{component}",
+                    component = utterance_id
+                        .split('-')
+                        .take(2)
+                        .collect::<Vec<_>>()
+                        .join("-")
+                ),
+                semantic_cluster_id: format!(
+                    "semantic-{component}",
+                    component = utterance_id
+                        .split('-')
+                        .take(2)
+                        .collect::<Vec<_>>()
+                        .join("-")
+                ),
+                provenance: Provenance {
+                    source: DataSource::Teacher,
+                    generation: Some(GenerationLineage {
+                        generator_model_id: "fixture".to_string(),
+                        generation_run_id: "fixture".to_string(),
+                        generation_output_sha256: "sha256:g".to_string(),
+                        prompt_version: "fixture".to_string(),
+                        saw_activation_keywords: false,
+                    }),
+                    labeling: LabelingLineage {
+                        guideline_version: "fixture".to_string(),
+                        labelers: vec![
+                            LabelerLineage {
+                                labeler_id: "mini".to_string(),
+                                labeling_run_id: "mini".to_string(),
+                                output_sha256: "sha256:m".to_string(),
+                            },
+                            LabelerLineage {
+                                labeler_id: "fable".to_string(),
+                                labeling_run_id: "fable".to_string(),
+                                output_sha256: "sha256:f".to_string(),
+                            },
+                        ],
+                    },
+                    review: ReviewLineage {
+                        review_decisions_sha256: "sha256:r".to_string(),
+                        review_status: ReviewStatus::Reviewed,
+                    },
+                },
+                utterance_roster_annotation: if none {
+                    UtteranceRosterAnnotation::NoneOfRoster
+                } else {
+                    UtteranceRosterAnnotation::HasRosterRelevance
+                },
+            })
+        })
+        .collect()
+}
+
+fn valid_split_and_qa() -> (Vec<PairRecord>, Vec<PairRecord>, Vec<ReviewDecision>) {
+    let pool = reviewed_production_fixture();
+    let split = split_reviewed_pool(&pool, 20260722).expect("fixture split is feasible");
+    let qa = split
+        .validation
+        .iter()
+        .chain(&split.test)
+        .filter(|pair| {
+            pair.slice_tags.iter().any(|tag| {
+                matches!(
+                    tag,
+                    SliceTag::ExplicitNegation
+                        | SliceTag::ImplicitNegation
+                        | SliceTag::QuotedSpeech
+                        | SliceTag::Hypothetical
+                )
+            })
+        })
+        .map(|pair| ReviewDecision {
+            decided_at: "cold".to_string(),
+            utterance_id: pair.utterance_id.clone(),
+            goal_ref: Some(pair.goal_ref.clone()),
+            field: ReviewField::GoldLabel,
+            value: ReviewValue::GoldLabel(pair.gold_label.clone()),
+        })
+        .collect();
+    (split.validation, split.test, qa)
+}
+
+fn assert_gate_error(
+    validation: &[PairRecord],
+    test: &[PairRecord],
+    qa: &[ReviewDecision],
+    roster: &RosterSnapshot,
+    needle: &str,
+) {
+    let error = gatekeep_goal_relevance_freeze(GatekeeperRequest {
+        validation,
+        test,
+        roster,
+        blind_qa_decisions: qa,
+    })
+    .expect_err("injected violation must fail the freeze gate");
+    assert!(error.contains(needle), "expected {needle:?}, got {error}");
+}
+
+#[test]
+fn freeze_gatekeeper_has_teeth_for_every_rule() {
+    let roster = roster();
+    let (validation, test, qa) = valid_split_and_qa();
+    gatekeep_goal_relevance_freeze(GatekeeperRequest {
+        validation: &validation,
+        test: &test,
+        roster: &roster,
+        blind_qa_decisions: &qa,
+    })
+    .expect("valid fixture passes gatekeeper");
+
+    let mut missing = validation.clone();
+    missing.pop();
+    assert_gate_error(&missing, &test, &qa, &roster, "dense cross-product rule");
+    let mut duplicate = validation.clone();
+    duplicate.push(duplicate[0].clone());
+    assert_gate_error(&duplicate, &test, &qa, &roster, "dense cross-product rule");
+    let mut inconsistent = validation.clone();
+    inconsistent[1].language = "sv".to_string();
+    assert_gate_error(
+        &inconsistent,
+        &test,
+        &qa,
+        &roster,
+        "dense cross-product rule",
+    );
+    let mut bad_version = validation.clone();
+    bad_version[0].roster_snapshot_version = "wrong".to_string();
+    assert_gate_error(&bad_version, &test, &qa, &roster, "roster binding rule");
+    let mut bad_goal = validation.clone();
+    bad_goal[0].goal_ref = "sha256:missing".to_string();
+    assert_gate_error(&bad_goal, &test, &qa, &roster, "roster binding rule");
+    let mut short_floor = validation.clone();
+    for pair in &mut short_floor {
+        if pair.slice_tags.contains(&SliceTag::SubjectConfusion) {
+            pair.slice_tags.clear();
+        }
+    }
+    assert_gate_error(&short_floor, &test, &qa, &roster, "per-slice floor rule");
+    let mut spans_id = test.clone();
+    let session = validation[0].session_id.clone();
+    for pair in &mut spans_id {
+        pair.session_id = session.clone();
+    }
+    assert_gate_error(&validation, &spans_id, &qa, &roster, "split integrity rule");
+    let mut none_relevant = validation.clone();
+    let none = none_relevant
+        .iter_mut()
+        .find(|pair| pair.utterance_roster_annotation == UtteranceRosterAnnotation::NoneOfRoster)
+        .expect("none record");
+    none.gold_label = GoldLabel::Relevant;
+    assert_gate_error(&none_relevant, &test, &qa, &roster, "none_of_roster rule");
+    let mut unreviewed = validation.clone();
+    unreviewed[0].provenance.review.review_status = ReviewStatus::Draft;
+    assert_gate_error(&unreviewed, &test, &qa, &roster, "review completeness rule");
+    let drifted = RosterSnapshot::from_fixture("other-version", roster.fixture.clone());
+    assert_gate_error(&validation, &test, &qa, &drifted, "roster round-trip rule");
+    let mut bad_qa = qa.clone();
+    for decision in &mut bad_qa {
+        if decision.utterance_id.contains("explicit") || decision.utterance_id.contains("implicit")
+        {
+            decision.value = ReviewValue::GoldLabel(GoldLabel::Relevant);
+        }
+    }
+    assert_gate_error(
+        &validation,
+        &test,
+        &bad_qa,
+        &roster,
+        "blind-QA agreement rule",
+    );
+}
+
+#[test]
+fn reviewed_pool_split_and_freeze_are_byte_reproducible() {
+    let pool = reviewed_production_fixture();
+    let first = split_reviewed_pool(&pool, 20260722).expect("first split");
+    let second = split_reviewed_pool(&pool, 20260722).expect("second split");
+    assert_eq!(
+        write_jsonl(&first.validation).expect("json"),
+        write_jsonl(&second.validation).expect("json")
+    );
+    assert_eq!(
+        write_jsonl(&first.test).expect("json"),
+        write_jsonl(&second.test).expect("json")
+    );
+    let freeze = |split: &crate::ReviewedPoolSplit| {
+        freeze_artifacts(FreezeRequest {
+            dataset_version: "goal-relevance-v1",
+            roster: &roster(),
+            split_seed: 20260722,
+            frozen_at: "2026-07-22T00:00:00Z",
+            validation: &split.validation,
+            test: &split.test,
+            generation_output_sha256: "sha256:g",
+            label_mini_sha256: "sha256:m",
+            label_fable_sha256: "sha256:f",
+            review_decisions_sha256: "sha256:r",
+        })
+        .expect("freeze artifacts")
+    };
+    assert_eq!(freeze(&first), freeze(&second));
+    let all = first
+        .validation
+        .iter()
+        .chain(&first.test)
+        .collect::<Vec<_>>();
+    let (_, _, qa) = valid_split_and_qa();
+    let agreement = blind_qa_agreement_by_slice(&all, &qa).expect("QA derives from reviewed pool");
+    assert_eq!(agreement["negation"].rate, 1.0);
+}
+
+#[test]
+fn blind_qa_agreement_uses_only_the_last_decision_for_each_pair() {
+    let (validation, test, mut qa) = valid_split_and_qa();
+    let all = validation.iter().chain(&test).collect::<Vec<_>>();
+    let baseline = blind_qa_agreement_by_slice(&all, &qa).expect("baseline agreement");
+    let superseded_pair = qa
+        .iter()
+        .find(|decision| {
+            validation.iter().chain(&test).any(|pair| {
+                pair.utterance_id == decision.utterance_id
+                    && pair.goal_ref == *decision.goal_ref.as_ref().expect("goal decision")
+                    && pair.slice_tags.iter().any(|tag| {
+                        matches!(tag, SliceTag::ExplicitNegation | SliceTag::ImplicitNegation)
+                    })
+            })
+        })
+        .expect("negation QA decision")
+        .clone();
+    let final_label = match superseded_pair.value {
+        ReviewValue::GoldLabel(GoldLabel::Relevant) => GoldLabel::NotRelevant,
+        _ => GoldLabel::Relevant,
+    };
+    qa.push(ReviewDecision {
+        decided_at: "cold-redecision".to_string(),
+        value: ReviewValue::GoldLabel(final_label),
+        ..superseded_pair
+    });
+
+    let agreement = blind_qa_agreement_by_slice(&all, &qa).expect("final decision agreement");
+    assert_eq!(
+        agreement["negation"].total_pairs, baseline["negation"].total_pairs,
+        "the superseded append-only decision must not enlarge the denominator"
+    );
+    assert_eq!(
+        agreement["negation"].agreed_pairs + 1,
+        baseline["negation"].agreed_pairs,
+        "only the final cold decision contributes to agreement"
+    );
+}
+
+#[test]
+fn reviewed_pool_fold_lineage_and_recorded_seed_reproduce_frozen_bytes() {
+    let expected = reviewed_production_fixture();
+    let roster = roster();
+    let generated = expected
+        .iter()
+        .fold(std::collections::BTreeMap::new(), |mut records, pair| {
+            records
+                .entry(pair.utterance_id.clone())
+                .or_insert_with(|| GenerationOutput {
+                    interchange_version: INTERCHANGE_VERSION,
+                    utterance_id: pair.utterance_id.clone(),
+                    utterance: pair.utterance.clone(),
+                    language: pair.language.clone(),
+                    conditioning_goal_ref: (pair.utterance_roster_annotation
+                        != UtteranceRosterAnnotation::NoneOfRoster)
+                        .then(|| roster.goals[0].goal_ref.clone()),
+                    intended_slice_tags: pair.slice_tags.clone(),
+                    session_id: pair.session_id.clone(),
+                    semantic_cluster_id: pair.semantic_cluster_id.clone(),
+                    generation_run_id: "lineage".to_string(),
+                    generator_model_id: "fixture".to_string(),
+                    prompt_version: "fixture".to_string(),
+                    saw_activation_keywords: false,
+                });
+            records
+        })
+        .into_values()
+        .collect::<Vec<_>>();
+    let mini = generated
+        .iter()
+        .map(|record| LabelInterchange {
+            interchange_version: INTERCHANGE_VERSION,
+            labeler_id: "mini".to_string(),
+            labeling_run_id: "mini".to_string(),
+            guideline_version: GOAL_RELEVANCE_GUIDELINE_VERSION.to_string(),
+            utterance_id: record.utterance_id.clone(),
+            per_goal: roster
+                .goals
+                .iter()
+                .map(|goal| PerGoalLabel {
+                    goal_ref: goal.goal_ref.clone(),
+                    label: GoldLabel::NotRelevant,
+                })
+                .collect(),
+            none_of_roster: record.conditioning_goal_ref.is_none(),
+        })
+        .collect::<Vec<_>>();
+    let mut fable = mini.clone();
+    for item in &mut fable {
+        item.labeler_id = "fable".to_string();
+        item.labeling_run_id = "fable".to_string();
+    }
+    let mut decisions = expected
+        .iter()
+        .map(|pair| ReviewDecision {
+            decided_at: "review".to_string(),
+            utterance_id: pair.utterance_id.clone(),
+            goal_ref: Some(pair.goal_ref.clone()),
+            field: ReviewField::GoldLabel,
+            value: ReviewValue::GoldLabel(GoldLabel::NotRelevant),
+        })
+        .collect::<Vec<_>>();
+    decisions.extend(generated.iter().map(|record| ReviewDecision {
+        decided_at: "review".to_string(),
+        utterance_id: record.utterance_id.clone(),
+        goal_ref: None,
+        field: ReviewField::NoneOfRoster,
+        value: ReviewValue::NoneOfRoster(record.conditioning_goal_ref.is_none()),
+    }));
+    let fold = || {
+        crate::fold_reviewed_pool(ReviewedPoolRequest {
+            generated: &generated,
+            roster: &roster,
+            mini: &mini,
+            fable: &fable,
+            decisions: &decisions,
+            dataset_version: "goal-relevance-v1",
+            generation_output_sha256: "sha256:g",
+            label_mini_sha256: "sha256:m",
+            label_fable_sha256: "sha256:f",
+            review_decisions_sha256: "sha256:r",
+        })
+        .expect("lineage fold")
+    };
+    let first = split_reviewed_pool(&fold(), 20260722).expect("first replay split");
+    let second = split_reviewed_pool(&fold(), 20260722).expect("second replay split");
+    let first = freeze_artifacts(FreezeRequest {
+        dataset_version: "goal-relevance-v1",
+        roster: &roster,
+        split_seed: 20260722,
+        frozen_at: "2026-07-22T00:00:00Z",
+        validation: &first.validation,
+        test: &first.test,
+        generation_output_sha256: "sha256:g",
+        label_mini_sha256: "sha256:m",
+        label_fable_sha256: "sha256:f",
+        review_decisions_sha256: "sha256:r",
+    })
+    .expect("first freeze");
+    let second = freeze_artifacts(FreezeRequest {
+        dataset_version: "goal-relevance-v1",
+        roster: &roster,
+        split_seed: 20260722,
+        frozen_at: "2026-07-22T00:00:00Z",
+        validation: &second.validation,
+        test: &second.test,
+        generation_output_sha256: "sha256:g",
+        label_mini_sha256: "sha256:m",
+        label_fable_sha256: "sha256:f",
+        review_decisions_sha256: "sha256:r",
+    })
+    .expect("second freeze");
+    assert_eq!(first.validation_jsonl, second.validation_jsonl);
+    assert_eq!(first.test_jsonl, second.test_jsonl);
+    assert_eq!(first.manifest, second.manifest);
+
+    let unique = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("clock after Unix epoch")
+        .as_nanos();
+    let test_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../../target")
+        .join(format!("qsf-freeze-reproduction-{unique}"));
+    fs::create_dir_all(&test_root).expect("test root");
+    let reviewed_path = test_root.join("reviewed-pool.jsonl");
+    let split_dir = test_root.join("split");
+    let folded = fold();
+    let folded_jsonl = write_jsonl(&folded).expect("folded pool JSONL");
+    fs::write(&reviewed_path, &folded_jsonl).expect("write reviewed pool");
+    run_cli(
+        [
+            "split".to_string(),
+            reviewed_path.display().to_string(),
+            "20260722".to_string(),
+            split_dir.display().to_string(),
+        ]
+        .into_iter(),
+    )
+    .expect("split CLI succeeds");
+
+    let validation_path = split_dir.join("validation.dataset.jsonl");
+    let test_path = split_dir.join("test.dataset.jsonl");
+    let summary_path = split_dir.join("split-summary.json");
+    let summary = crate::parse_split_summary(
+        &fs::read_to_string(&summary_path).expect("split summary was written"),
+    )
+    .expect("split summary parses");
+    let expected_split = split_reviewed_pool(&folded, 20260722).expect("recorded split");
+    assert_eq!(summary.split_seed, 20260722);
+    assert_eq!(
+        summary.assignment_by_component,
+        expected_split.assignment_by_component
+    );
+
+    let generation_path = test_root.join("generation-output.jsonl");
+    let mini_path = test_root.join("label-mini.jsonl");
+    let fable_path = test_root.join("label-fable.jsonl");
+    let reconciliation_path = test_root.join("reconciliation.jsonl");
+    let decisions_path = test_root.join("review-decisions.jsonl");
+    let qa_path = test_root.join("blind-qa-decisions.jsonl");
+    fs::write(
+        &generation_path,
+        write_jsonl(&generated).expect("generation JSONL"),
+    )
+    .expect("write generation");
+    fs::write(&mini_path, write_jsonl(&mini).expect("mini JSONL")).expect("write mini");
+    fs::write(&fable_path, write_jsonl(&fable).expect("fable JSONL")).expect("write fable");
+    fs::write(
+        &reconciliation_path,
+        write_jsonl(&reconcile(&mini, &fable).expect("reconciliation"))
+            .expect("reconciliation JSONL"),
+    )
+    .expect("write reconciliation");
+    fs::write(
+        &decisions_path,
+        write_jsonl(&decisions).expect("decisions JSONL"),
+    )
+    .expect("write decisions");
+    let qa = expected_split
+        .validation
+        .iter()
+        .chain(&expected_split.test)
+        .filter(|pair| {
+            pair.slice_tags.iter().any(|tag| {
+                matches!(
+                    tag,
+                    SliceTag::ExplicitNegation
+                        | SliceTag::ImplicitNegation
+                        | SliceTag::QuotedSpeech
+                        | SliceTag::Hypothetical
+                )
+            })
+        })
+        .map(|pair| ReviewDecision {
+            decided_at: "cold".to_string(),
+            utterance_id: pair.utterance_id.clone(),
+            goal_ref: Some(pair.goal_ref.clone()),
+            field: ReviewField::GoldLabel,
+            value: ReviewValue::GoldLabel(pair.gold_label.clone()),
+        })
+        .collect::<Vec<_>>();
+    fs::write(&qa_path, write_jsonl(&qa).expect("QA JSONL")).expect("write QA");
+    let roster_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../../evaluation/frozen/goal-relevance/realtime-seed.roster.json");
+    let freeze_args = |output: &std::path::Path, seed_override: Option<u64>| {
+        let mut args = vec!["freeze".to_string()];
+        if let Some(seed) = seed_override {
+            args.extend(["--seed".to_string(), seed.to_string()]);
+        }
+        args.extend([
+            roster_path.display().to_string(),
+            "goal-relevance-v1".to_string(),
+            "2026-07-22T00:00:00Z".to_string(),
+            validation_path.display().to_string(),
+            test_path.display().to_string(),
+            generation_path.display().to_string(),
+            mini_path.display().to_string(),
+            fable_path.display().to_string(),
+            reconciliation_path.display().to_string(),
+            decisions_path.display().to_string(),
+            qa_path.display().to_string(),
+            output.display().to_string(),
+        ]);
+        args
+    };
+
+    let expected_validation = fs::read_to_string(&validation_path).expect("validation split");
+    let wrong_seed = (0..10_000_u64)
+        .find(|seed| {
+            *seed != 20260722
+                && split_reviewed_pool(&folded, *seed)
+                    .map(|split| {
+                        write_jsonl(&split.validation).expect("candidate JSONL")
+                            != expected_validation
+                    })
+                    .unwrap_or(false)
+        })
+        .expect("fixture has a seed with a different deterministic assignment");
+    let wrong_seed_output = test_root.join("wrong-seed-freeze");
+    let wrong_seed_error = run_cli(freeze_args(&wrong_seed_output, Some(wrong_seed)).into_iter())
+        .expect_err("freeze rejects a seed that does not reproduce the supplied split");
+    assert!(
+        wrong_seed_error.contains("split reproducibility rule")
+            && wrong_seed_error.contains("dataset_version=goal-relevance-v1")
+            && wrong_seed_error.contains(&format!("seed={wrong_seed}"))
+            && wrong_seed_error.contains("split diverged"),
+        "{wrong_seed_error}"
+    );
+    assert!(!wrong_seed_output.exists());
+
+    fs::write(&validation_path, format!("{expected_validation}\n")).expect("tamper split bytes");
+    let tampered_output = test_root.join("tampered-freeze");
+    let tampered_error = run_cli(freeze_args(&tampered_output, None).into_iter())
+        .expect_err("freeze rejects a byte-tampered split");
+    assert!(
+        tampered_error.contains("dataset_version=goal-relevance-v1")
+            && tampered_error.contains("seed=20260722")
+            && tampered_error.contains("validation split diverged"),
+        "{tampered_error}"
+    );
+    assert!(!tampered_output.exists());
+    fs::write(&validation_path, &expected_validation).expect("restore validation split");
+
+    let freeze_output = test_root.join("frozen");
+    run_cli(freeze_args(&freeze_output, None).into_iter())
+        .expect("freeze consumes the adjacent split summary seed");
+    let manifest = crate::parse_freeze_manifest(
+        &fs::read_to_string(freeze_output.join("freeze-manifest.json")).expect("freeze manifest"),
+    )
+    .expect("manifest parses");
+    assert_eq!(manifest.split_seed, "20260722");
+    assert_eq!(
+        fs::read_to_string(
+            freeze_output
+                .join("lineage/goal-relevance-v1")
+                .join("reviewed-pool.jsonl")
+        )
+        .expect("lineage reviewed pool"),
+        folded_jsonl,
+        "the committed lineage pool must byte-match a rerun of the canonical fold"
+    );
+    fs::remove_dir_all(&test_root).expect("remove freeze reproduction fixtures");
 }

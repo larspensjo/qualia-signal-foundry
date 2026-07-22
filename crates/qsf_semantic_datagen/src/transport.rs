@@ -11,16 +11,23 @@ use openai_provider_kit::{
 use qsf_semantic_eval::{GoldLabel, RosterSnapshot};
 
 use crate::{
-    GENERATOR_MODEL_ID, GOAL_RELEVANCE_GUIDELINE_VERSION, LabelingResponseContext, MINI_LABELER_ID,
-    ReviewDecision, ReviewField, ReviewValue, SEMANTIC_GENERATOR_MODEL_ID, TokenUsage,
-    build_blind_qa_review_view_model, build_labeling_input, build_review_view_model,
-    mini_fable_agreement_rate, parse_generation_anchor_sidecar, parse_generation_output,
+    AgreementEvidence, FreezeRequest, GENERATOR_MODEL_ID, GOAL_RELEVANCE_GUIDELINE_VERSION,
+    GatekeeperRequest, LabelingResponseContext, MINI_LABELER_ID, ReviewDecision, ReviewField,
+    ReviewValue, SEMANTIC_GENERATOR_MODEL_ID, TokenUsage, build_blind_qa_review_view_model,
+    build_labeling_input, build_review_view_model, freeze_artifacts,
+    gatekeep_goal_relevance_freeze, methodology_goal_relevance, mini_fable_agreement_rate,
+    parse_freeze_manifest, parse_generation_anchor_sidecar, parse_generation_output,
     parse_goal_relevance_label_response, parse_label_interchange, parse_labeling_input,
-    parse_review_decisions, priority_review_queue, priority_review_utterance_ids, reconcile,
+    parse_reconciliation, parse_review_decisions, parse_reviewed_pool, parse_split_summary,
+    priority_review_queue, priority_review_utterance_ids, reconcile, reconciliation_summary,
     render_blind_qa_review_view, render_review_view, render_usage_report, run_generation,
     run_generation_anchors, run_generation_with_approved_anchors, run_mini_labeling,
-    split_feasibility_preflight, validate_approved_generation_anchors, validate_generation_output,
-    write_generation_anchor_sidecar, write_jsonl,
+    run_production_generation, run_production_generation_anchors,
+    run_production_generation_with_approved_anchors, split_feasibility_preflight,
+    split_reviewed_pool, split_summary, validate_approved_generation_anchors,
+    validate_approved_production_generation_anchors, validate_generation_output,
+    verify_reviewed_pool_split, write_freeze_manifest, write_generation_anchor_sidecar,
+    write_jsonl, write_split_summary,
 };
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -185,12 +192,16 @@ pub fn run_cli(mut args: impl Iterator<Item = String>) -> Result<(), String> {
         Some("reconcile") => run_reconcile_cli(&args[1..]),
         Some("validate-labels") => run_validate_labels_cli(&args[1..]),
         Some("review") => run_review_cli(&args[1..]),
+        Some("split") => run_split_cli(&args[1..]),
+        Some("gatekeep") => run_gatekeep_cli(&args[1..]),
+        Some("freeze") => run_freeze_cli(&args[1..]),
+        Some("methodology") => run_methodology_cli(&args[1..]),
         _ => Err(usage().to_string()),
     }
 }
 
 fn usage() -> &'static str {
-    "usage:\n  qsf_semantic_datagen generate [--live] <roster.json> <generation-output.jsonl>\n  qsf_semantic_datagen generate --anchors-only [--live] <roster.json> <anchors-output.jsonl>\n  qsf_semantic_datagen generate [--live] --anchors <approved-anchors.jsonl> <roster.json> <generation-output.jsonl>\n  qsf_semantic_datagen label [--live] <generation-output.jsonl> <roster.json> <output-dir> [labeling-run-id]\n  qsf_semantic_datagen reconcile <roster.json> <label-mini.jsonl> <label-fable.jsonl> <reconciliation.jsonl>\n  qsf_semantic_datagen validate-labels <roster.json> <label-interchange.jsonl>\n  qsf_semantic_datagen review [--blind-qa] <roster.json> <labeling-input.jsonl> <label-mini.jsonl> <label-fable.jsonl> <review-decisions.jsonl>"
+    "usage:\n  qsf_semantic_datagen generate [--production] [--live] <roster.json> <generation-output.jsonl>\n  qsf_semantic_datagen generate [--production] --anchors-only [--live] <roster.json> <anchors-output.jsonl>\n  qsf_semantic_datagen generate [--production] [--live] --anchors <approved-anchors.jsonl> <roster.json> <generation-output.jsonl>\n  qsf_semantic_datagen label [--live] <generation-output.jsonl> <roster.json> <output-dir> [labeling-run-id]\n  qsf_semantic_datagen reconcile <roster.json> <label-mini.jsonl> <label-fable.jsonl> <reconciliation.jsonl>\n  qsf_semantic_datagen validate-labels <roster.json> <label-interchange.jsonl>\n  qsf_semantic_datagen review [--blind-qa] <roster.json> <labeling-input.jsonl> <label-mini.jsonl> <label-fable.jsonl> <review-decisions.jsonl>\n  qsf_semantic_datagen split <reviewed-pool.jsonl> <seed> <output-dir>\n  qsf_semantic_datagen gatekeep <roster.json> <validation.dataset.jsonl> <test.dataset.jsonl> <blind-qa-decisions.jsonl>\n  qsf_semantic_datagen freeze [--seed <seed>] <roster.json> <dataset-version> <frozen-at> <validation.dataset.jsonl> <test.dataset.jsonl> <generation-output.jsonl> <label-mini.jsonl> <label-fable.jsonl> <reconciliation.jsonl> <review-decisions.jsonl> <blind-qa-decisions.jsonl> <output-dir>\n  qsf_semantic_datagen methodology <freeze-manifest.json> <reconciliation.jsonl> <blind-qa-decisions.jsonl> <validation.dataset.jsonl> <test.dataset.jsonl> <output.md>"
 }
 
 fn run_replay_labeling_smoke() -> Result<(), String> {
@@ -257,7 +268,11 @@ fn run_generate_cli(args: &[String]) -> Result<(), String> {
         );
     }
     if options.anchors_only {
-        let run = run_generation_anchors(&transport, &roster, run_id)?;
+        let run = if options.production {
+            run_production_generation_anchors(&transport, &roster, run_id)?
+        } else {
+            run_generation_anchors(&transport, &roster, run_id)?
+        };
         let output_path = Path::new(&options.positionals[1]);
         write_file(
             output_path,
@@ -278,9 +293,20 @@ fn run_generate_cli(args: &[String]) -> Result<(), String> {
         .map(parse_generation_anchor_sidecar)
         .transpose()?;
     if let Some(anchors) = &approved_anchors {
-        validate_approved_generation_anchors(anchors)?;
+        if options.production {
+            validate_approved_production_generation_anchors(anchors)?;
+        } else {
+            validate_approved_generation_anchors(anchors)?;
+        }
     }
     let run = match approved_anchors.as_deref() {
+        Some(anchors) if options.production => run_production_generation_with_approved_anchors(
+            &transport,
+            &roster,
+            run_id,
+            Some(anchors),
+        )?,
+        None if options.production => run_production_generation(&transport, &roster, run_id)?,
         Some(anchors) => {
             run_generation_with_approved_anchors(&transport, &roster, run_id, Some(anchors))?
         }
@@ -320,6 +346,7 @@ fn run_generate_cli(args: &[String]) -> Result<(), String> {
 
 struct GenerateOptions<'a> {
     live: bool,
+    production: bool,
     anchors_only: bool,
     anchors_path: Option<&'a String>,
     positionals: Vec<&'a String>,
@@ -327,6 +354,7 @@ struct GenerateOptions<'a> {
 
 fn parse_generate_options(args: &[String]) -> Result<GenerateOptions<'_>, String> {
     let mut live = false;
+    let mut production = false;
     let mut anchors_only = false;
     let mut anchors_path = None;
     let mut positionals = Vec::new();
@@ -334,6 +362,7 @@ fn parse_generate_options(args: &[String]) -> Result<GenerateOptions<'_>, String
     while index < args.len() {
         match args[index].as_str() {
             "--live" if !live => live = true,
+            "--production" if !production => production = true,
             "--anchors-only" if !anchors_only => anchors_only = true,
             "--anchors" if anchors_path.is_none() => {
                 index += 1;
@@ -350,6 +379,7 @@ fn parse_generate_options(args: &[String]) -> Result<GenerateOptions<'_>, String
     }
     Ok(GenerateOptions {
         live,
+        production,
         anchors_only,
         anchors_path,
         positionals,
@@ -369,6 +399,227 @@ fn render_generation_usage(usage_by_model: Option<std::collections::BTreeMap<Str
 
 pub(crate) fn generation_anchor_sidecar_path(output_path: &Path) -> PathBuf {
     output_path.with_file_name("generation-anchors.jsonl")
+}
+
+fn run_split_cli(args: &[String]) -> Result<(), String> {
+    if args.len() != 3 {
+        return Err(usage().to_string());
+    }
+    let reviewed = parse_reviewed_pool(&read_file(&args[0])?)?;
+    let seed = args[1]
+        .parse::<u64>()
+        .map_err(|error| format!("split seed must be an unsigned integer: {error}"))?;
+    let split = split_reviewed_pool(&reviewed, seed)?;
+    let output = Path::new(&args[2]);
+    fs::create_dir_all(output).map_err(|error| {
+        format!(
+            "could not create split output directory {}: {error}",
+            output.display()
+        )
+    })?;
+    write_file(
+        output.join("validation.dataset.jsonl"),
+        &write_jsonl(&split.validation)?,
+    )?;
+    write_file(
+        output.join("test.dataset.jsonl"),
+        &write_jsonl(&split.test)?,
+    )?;
+    write_file(
+        output.join("split-summary.json"),
+        &write_split_summary(&split_summary(&split, seed))?,
+    )?;
+    println!(
+        "wrote deterministic validation/test split with seed {seed} across {} components",
+        split.assignment_by_component.len()
+    );
+    Ok(())
+}
+
+fn run_gatekeep_cli(args: &[String]) -> Result<(), String> {
+    if args.len() != 4 {
+        return Err(usage().to_string());
+    }
+    let roster = RosterSnapshot::from_json_path(&args[0])?;
+    let validation = parse_reviewed_pool(&read_file(&args[1])?)?;
+    let test = parse_reviewed_pool(&read_file(&args[2])?)?;
+    let blind_qa = parse_review_decisions(&read_file(&args[3])?)?;
+    gatekeep_goal_relevance_freeze(GatekeeperRequest {
+        validation: &validation,
+        test: &test,
+        roster: &roster,
+        blind_qa_decisions: &blind_qa,
+    })?;
+    println!("goal relevance freeze gatekeeper passed");
+    Ok(())
+}
+
+fn run_freeze_cli(args: &[String]) -> Result<(), String> {
+    let options = parse_freeze_options(args)?;
+    let args = options.positionals;
+    if args.len() != 12 {
+        return Err(usage().to_string());
+    }
+    let roster = RosterSnapshot::from_json_path(args[0])?;
+    let validation_text = read_file(args[3])?;
+    let test_text = read_file(args[4])?;
+    let validation = parse_reviewed_pool(&validation_text)?;
+    let test = parse_reviewed_pool(&test_text)?;
+    let seed = match options.seed_override {
+        Some(seed) => seed,
+        None => {
+            let summary_path = split_summary_path(Path::new(&args[3]));
+            parse_split_summary(&read_file(&summary_path)?)?.split_seed
+        }
+    };
+    let generation = read_file(args[5])?;
+    let mini = read_file(args[6])?;
+    let fable = read_file(args[7])?;
+    let reconciliation_text = read_file(args[8])?;
+    let review_decisions = read_file(args[9])?;
+    let blind_qa_text = read_file(args[10])?;
+    let blind_qa = parse_review_decisions(&blind_qa_text)?;
+    gatekeep_goal_relevance_freeze(GatekeeperRequest {
+        validation: &validation,
+        test: &test,
+        roster: &roster,
+        blind_qa_decisions: &blind_qa,
+    })?;
+    if let Err(error) = verify_reviewed_pool_split(
+        args[1],
+        seed,
+        &validation,
+        &test,
+        &validation_text,
+        &test_text,
+    ) {
+        engine_logging::engine_error!(
+            "goal relevance freeze split reproduction failed operation=freeze dataset_version={} seed={} error={}",
+            args[1],
+            seed,
+            error
+        );
+        return Err(error);
+    }
+    let artifacts = freeze_artifacts(FreezeRequest {
+        dataset_version: args[1],
+        roster: &roster,
+        split_seed: seed,
+        frozen_at: args[2],
+        validation: &validation,
+        test: &test,
+        generation_output_sha256: &crate::sha256(&generation),
+        label_mini_sha256: &crate::sha256(&mini),
+        label_fable_sha256: &crate::sha256(&fable),
+        review_decisions_sha256: &crate::sha256(&review_decisions),
+    })?;
+    let output = Path::new(&args[11]);
+    let lineage = output.join("lineage").join(args[1]);
+    fs::create_dir_all(&lineage).map_err(|error| {
+        format!(
+            "could not create lineage directory {}: {error}",
+            lineage.display()
+        )
+    })?;
+    write_file(
+        output.join("validation.dataset.jsonl"),
+        &artifacts.validation_jsonl,
+    )?;
+    write_file(output.join("test.dataset.jsonl"), &artifacts.test_jsonl)?;
+    write_file(
+        output.join("freeze-manifest.json"),
+        &write_freeze_manifest(&artifacts.manifest)?,
+    )?;
+    write_file(lineage.join("generation-output.jsonl"), &generation)?;
+    let labeling_input = build_labeling_input(&parse_generation_output(&generation)?, &roster)?;
+    write_file(
+        lineage.join("labeling-input.jsonl"),
+        &write_jsonl(&labeling_input)?,
+    )?;
+    write_file(lineage.join("label-mini.jsonl"), &mini)?;
+    write_file(lineage.join("label-fable.jsonl"), &fable)?;
+    write_file(lineage.join("reconciliation.jsonl"), &reconciliation_text)?;
+    write_file(lineage.join("review-decisions.jsonl"), &review_decisions)?;
+    write_file(lineage.join("blind-qa-decisions.jsonl"), &blind_qa_text)?;
+    let reviewed = crate::canonical_reviewed_pool(&validation, &test);
+    write_file(
+        lineage.join("reviewed-pool.jsonl"),
+        &write_jsonl(&reviewed)?,
+    )?;
+    let reconciliation = parse_reconciliation(&reconciliation_text)?;
+    let all = validation.iter().chain(test.iter()).collect::<Vec<_>>();
+    let qa = crate::blind_qa_agreement_by_slice(&all, &blind_qa)?;
+    write_file(
+        lineage.join("reconciliation-summary.json"),
+        &serde_json::to_string_pretty(&reconciliation_summary(&reconciliation))
+            .map_err(|error| error.to_string())?,
+    )?;
+    write_file(
+        output.join("DatasetMethodology.GoalRelevance.md"),
+        &methodology_goal_relevance(
+            &artifacts.manifest,
+            &reconciliation_summary(&reconciliation),
+            &qa,
+        ),
+    )?;
+    println!(
+        "froze goal relevance dataset {} under {}",
+        args[1],
+        output.display()
+    );
+    Ok(())
+}
+
+struct FreezeOptions<'a> {
+    seed_override: Option<u64>,
+    positionals: Vec<&'a String>,
+}
+
+fn parse_freeze_options(args: &[String]) -> Result<FreezeOptions<'_>, String> {
+    let mut seed_override = None;
+    let mut positionals = Vec::new();
+    let mut index = 0;
+    while index < args.len() {
+        match args[index].as_str() {
+            "--seed" if seed_override.is_none() => {
+                index += 1;
+                let value = args.get(index).ok_or_else(|| usage().to_string())?;
+                seed_override =
+                    Some(value.parse::<u64>().map_err(|error| {
+                        format!("split seed must be an unsigned integer: {error}")
+                    })?);
+            }
+            value if value.starts_with("--") => return Err(usage().to_string()),
+            _ => positionals.push(&args[index]),
+        }
+        index += 1;
+    }
+    Ok(FreezeOptions {
+        seed_override,
+        positionals,
+    })
+}
+
+pub(crate) fn split_summary_path(validation_path: &Path) -> PathBuf {
+    validation_path.with_file_name("split-summary.json")
+}
+
+fn run_methodology_cli(args: &[String]) -> Result<(), String> {
+    if args.len() != 6 {
+        return Err(usage().to_string());
+    }
+    let manifest = parse_freeze_manifest(&read_file(&args[0])?)?;
+    let reconciliation = reconciliation_summary(&parse_reconciliation(&read_file(&args[1])?)?);
+    let blind_qa = parse_review_decisions(&read_file(&args[2])?)?;
+    let validation = parse_reviewed_pool(&read_file(&args[3])?)?;
+    let test = parse_reviewed_pool(&read_file(&args[4])?)?;
+    let all = validation.iter().chain(test.iter()).collect::<Vec<_>>();
+    let qa: std::collections::BTreeMap<String, AgreementEvidence> =
+        crate::blind_qa_agreement_by_slice(&all, &blind_qa)?;
+    write_file(
+        &args[5],
+        &methodology_goal_relevance(&manifest, &reconciliation, &qa),
+    )
 }
 
 fn run_label_cli(args: &[String]) -> Result<(), String> {
@@ -428,9 +679,16 @@ fn run_reconcile_cli(args: &[String]) -> Result<(), String> {
     let reconciliation = reconcile(&mini, &fable)?;
     write_file(Path::new(&args[3]), &write_jsonl(&reconciliation)?)?;
     let agreement = mini_fable_agreement_rate(&reconciliation);
+    let summary = reconciliation_summary(&reconciliation);
+    let summary_path = Path::new(&args[3]).with_file_name("reconciliation-summary.json");
+    write_file(
+        &summary_path,
+        &serde_json::to_string_pretty(&summary).map_err(|error| error.to_string())?,
+    )?;
     println!(
-        "wrote {} reconciliation pairs; mini/Fable agreement {}/{} ({:.2}%)",
+        "wrote {} reconciliation pairs and {} ; mini/Fable agreement {}/{} ({:.2}%)",
         reconciliation.len(),
+        summary_path.display(),
         agreement.agreed_pairs,
         agreement.total_pairs,
         agreement.rate * 100.0

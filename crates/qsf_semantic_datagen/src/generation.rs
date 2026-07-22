@@ -97,6 +97,17 @@ pub struct GenerationAnchorRun {
     pub usage_by_model: Option<BTreeMap<String, TokenUsage>>,
 }
 
+/// One production-scale request. The schedule deliberately distributes the
+/// non-boundary modes across the whole frozen roster while retaining the
+/// operator-cleared boundary-specific cluster prompts.
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct ProductionGenerationJob {
+    component: &'static str,
+    goal_index: Option<usize>,
+    mode: GenerationMode,
+    count: usize,
+}
+
 /// Operator-only evidence for the semantic proposition shared by a paraphrase batch.
 /// This intentionally never enters the generation-output interchange artifact.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -180,15 +191,22 @@ const CLUSTER_SCENARIO_DIRECTIVES: [ClusterScenarioDirective; 10] = [
 ];
 
 /// Returns the deterministic directive for clusters 1–4 and the hard cluster in each partition.
+/// `pool-a` / `pool-b` are the neutral production split candidates; the legacy
+/// `validation` / `test` names remain supported for smoke replay compatibility.
 pub fn cluster_scenario_directive(cluster_id: &str) -> Option<&'static ClusterScenarioDirective> {
-    let (partition_offset, cluster_name) =
-        if let Some(cluster_name) = cluster_id.strip_prefix("validation-") {
-            (0, cluster_name)
-        } else if let Some(cluster_name) = cluster_id.strip_prefix("test-") {
-            (5, cluster_name)
-        } else {
-            return None;
-        };
+    let (partition_offset, cluster_name) = if let Some(cluster_name) = cluster_id
+        .strip_prefix("validation-")
+        .or_else(|| cluster_id.strip_prefix("pool-a-"))
+    {
+        (0, cluster_name)
+    } else if let Some(cluster_name) = cluster_id
+        .strip_prefix("test-")
+        .or_else(|| cluster_id.strip_prefix("pool-b-"))
+    {
+        (5, cluster_name)
+    } else {
+        return None;
+    };
     let index = if cluster_name == "hard-cluster" {
         4
     } else {
@@ -687,52 +705,25 @@ pub fn run_generation_with_approved_anchors<T: ModelTransport>(
                 generator_model_id: model_id.to_string(),
                 synthetic_asr_seed: 20260721,
             };
-            let mut attempt = 1usize;
-            let parsed = loop {
-                let response = transport.complete(&CompletionRequest {
-                    model_id: model_id.to_string(),
-                    prompt: prompt.clone(),
-                    goal_ref: goal.goal_ref.clone(),
-                    run_id: generation_run_id.to_string(),
-                    utterance_id: None,
-                })?;
-                if let Some(call_usage) = response.usage {
-                    add_usage(&mut usage_by_model, model_id, call_usage);
-                    has_usage = true;
-                }
-                match parse_generation_response_with_anchor(
-                    &response.content,
-                    &context,
-                    approved_anchors.is_none(),
-                )
-                .and_then(|parsed| require_requested_utterance_count(parsed, &mode))
-                {
-                    Ok(parsed) => break parsed,
-                    Err(error) if attempt < MAX_GENERATION_BATCH_ATTEMPTS => {
-                        engine_logging::engine_warn!(
-                            "goal relevance generation batch rejected, re-requesting run_id={} mode={} model_id={} attempt={}/{} error={}",
-                            generation_run_id,
-                            mode.name(),
-                            model_id,
-                            attempt,
-                            MAX_GENERATION_BATCH_ATTEMPTS,
-                            error
-                        );
-                        attempt += 1;
-                    }
-                    Err(error) => {
-                        engine_logging::engine_error!(
-                            "goal relevance generation rejected run_id={} mode={} model_id={} attempts={} error={}",
-                            generation_run_id,
-                            mode.name(),
-                            model_id,
-                            attempt,
-                            error
-                        );
-                        return Err(error);
-                    }
-                }
-            };
+            let parsed = run_generation_batch(
+                transport,
+                generation_run_id,
+                &goal.goal_ref,
+                model_id,
+                &mode,
+                &prompt,
+                GenerationBatchOperation::SmokeGeneration,
+                &mut usage_by_model,
+                &mut has_usage,
+                |content| {
+                    parse_generation_response_with_anchor(
+                        content,
+                        &context,
+                        approved_anchors.is_none(),
+                    )
+                    .and_then(|parsed| require_requested_utterance_count(parsed, &mode))
+                },
+            )?;
             if let (Some(cluster_id), Some(anchor)) = (mode.cluster_id(), parsed.cluster_anchor) {
                 cluster_anchors.push(GenerationClusterAnchor {
                     cluster_id: cluster_id.to_string(),
@@ -751,12 +742,287 @@ pub fn run_generation_with_approved_anchors<T: ModelTransport>(
     })
 }
 
+/// Runs the reviewed-pool production schedule. Unlike [`run_generation`], this
+/// uses neutral split-candidate components; the later deterministic split is
+/// the sole authority for validation versus test membership.
+pub fn run_production_generation<T: ModelTransport>(
+    transport: &T,
+    roster: &RosterSnapshot,
+    generation_run_id: &str,
+) -> Result<GenerationRun, String> {
+    run_production_generation_with_approved_anchors(transport, roster, generation_run_id, None)
+}
+
+/// Production generation using the ten operator-approved pool anchor slots.
+pub fn run_production_generation_with_approved_anchors<T: ModelTransport>(
+    transport: &T,
+    roster: &RosterSnapshot,
+    generation_run_id: &str,
+    approved_anchors: Option<&[GenerationClusterAnchor]>,
+) -> Result<GenerationRun, String> {
+    if let Some(anchors) = approved_anchors {
+        validate_approved_production_generation_anchors(anchors)?;
+    }
+    if roster.goals.len() != 7 {
+        return Err(format!(
+            "production goal relevance schedule requires the frozen seven-goal roster, found {} goals",
+            roster.goals.len()
+        ));
+    }
+    let jobs = production_generation_jobs();
+    let mut records = Vec::new();
+    let mut usage_by_model = BTreeMap::new();
+    let mut has_usage = false;
+    let mut cluster_anchors = Vec::new();
+    for (index, job) in jobs.iter().enumerate() {
+        let description = job
+            .goal_index
+            .map(|goal_index| GoalDescription::from(&roster.goals[goal_index]));
+        let prompt = build_prompt(&PromptRequest {
+            description,
+            mode: job.mode.clone(),
+            count: job.count,
+            prior_cluster_anchors: cluster_anchors.clone(),
+            approved_cluster_anchor: job.mode.cluster_id().and_then(|cluster_id| {
+                approved_anchors.and_then(|anchors| {
+                    anchors
+                        .iter()
+                        .find(|anchor| anchor.cluster_id == cluster_id)
+                        .map(|anchor| anchor.anchor.clone())
+                })
+            }),
+        })?;
+        let model_id = job.mode.generator_model_id();
+        let goal_ref = job
+            .goal_index
+            .map(|goal_index| roster.goals[goal_index].goal_ref.clone())
+            .unwrap_or_else(|| "goal-unconditioned".to_string());
+        let context = GenerationResponseContext {
+            utterance_id_prefix: format!("{generation_run_id}-{}-{index}", job.component),
+            language: "en".to_string(),
+            conditioning_goal_ref: job
+                .goal_index
+                .map(|goal_index| roster.goals[goal_index].goal_ref.clone()),
+            mode: job.mode.clone(),
+            session_id: format!("{generation_run_id}-session-{}", job.component),
+            semantic_cluster_id: format!("{generation_run_id}-semantic-{}", job.component),
+            generation_run_id: generation_run_id.to_string(),
+            generator_model_id: model_id.to_string(),
+            synthetic_asr_seed: 20260721,
+        };
+        let parsed = run_generation_batch(
+            transport,
+            generation_run_id,
+            &goal_ref,
+            model_id,
+            &job.mode,
+            &prompt,
+            GenerationBatchOperation::ProductionGeneration,
+            &mut usage_by_model,
+            &mut has_usage,
+            |content| {
+                parse_generation_response_with_anchor(content, &context, approved_anchors.is_none())
+                    .and_then(|parsed| {
+                        require_requested_utterance_count_for(parsed, &job.mode, job.count)
+                    })
+            },
+        )?;
+        if let (Some(cluster_id), Some(anchor)) = (job.mode.cluster_id(), parsed.cluster_anchor) {
+            cluster_anchors.push(GenerationClusterAnchor {
+                cluster_id: cluster_id.to_string(),
+                anchor,
+            });
+        }
+        records.extend(parsed.records.into_iter().take(job.count));
+    }
+    Ok(GenerationRun {
+        records,
+        usage_by_model: has_usage.then_some(usage_by_model),
+        cluster_anchors: approved_anchors
+            .map(ToOwned::to_owned)
+            .unwrap_or(cluster_anchors),
+    })
+}
+
+#[derive(Clone, Copy)]
+enum GenerationBatchOperation {
+    SmokeGeneration,
+    ProductionGeneration,
+    SmokeAnchor,
+    ProductionAnchor,
+}
+
+#[allow(clippy::too_many_arguments)]
+fn run_generation_batch<T, Output, Parse>(
+    transport: &T,
+    generation_run_id: &str,
+    goal_ref: &str,
+    model_id: &str,
+    mode: &GenerationMode,
+    prompt: &str,
+    operation: GenerationBatchOperation,
+    usage_by_model: &mut BTreeMap<String, TokenUsage>,
+    has_usage: &mut bool,
+    mut parse: Parse,
+) -> Result<Output, String>
+where
+    T: ModelTransport,
+    Parse: FnMut(&str) -> Result<Output, String>,
+{
+    let mut attempt = 1usize;
+    loop {
+        let response = transport.complete(&CompletionRequest {
+            model_id: model_id.to_string(),
+            prompt: prompt.to_string(),
+            goal_ref: goal_ref.to_string(),
+            run_id: generation_run_id.to_string(),
+            utterance_id: None,
+        })?;
+        if let Some(call_usage) = response.usage {
+            add_usage(usage_by_model, model_id, call_usage);
+            *has_usage = true;
+        }
+        match parse(&response.content) {
+            Ok(parsed) => return Ok(parsed),
+            Err(error) if attempt < MAX_GENERATION_BATCH_ATTEMPTS => {
+                log_generation_batch_retry(
+                    operation,
+                    generation_run_id,
+                    goal_ref,
+                    mode,
+                    model_id,
+                    attempt,
+                    &error,
+                );
+                attempt += 1;
+            }
+            Err(error) => {
+                log_generation_batch_terminal_failure(
+                    operation,
+                    generation_run_id,
+                    goal_ref,
+                    mode,
+                    model_id,
+                    attempt,
+                    &error,
+                );
+                return Err(error);
+            }
+        }
+    }
+}
+
+fn log_generation_batch_retry(
+    operation: GenerationBatchOperation,
+    generation_run_id: &str,
+    goal_ref: &str,
+    mode: &GenerationMode,
+    model_id: &str,
+    attempt: usize,
+    error: &str,
+) {
+    match operation {
+        GenerationBatchOperation::SmokeGeneration => engine_logging::engine_warn!(
+            "goal relevance generation batch rejected, re-requesting run_id={} mode={} model_id={} attempt={}/{} error={}",
+            generation_run_id,
+            mode.name(),
+            model_id,
+            attempt,
+            MAX_GENERATION_BATCH_ATTEMPTS,
+            error
+        ),
+        GenerationBatchOperation::ProductionGeneration => engine_logging::engine_warn!(
+            "goal relevance production generation batch rejected, re-requesting run_id={} goal_ref={} mode={} model_id={} attempt={}/{} error={}",
+            generation_run_id,
+            goal_ref,
+            mode.name(),
+            model_id,
+            attempt,
+            MAX_GENERATION_BATCH_ATTEMPTS,
+            error
+        ),
+        GenerationBatchOperation::SmokeAnchor => engine_logging::engine_warn!(
+            "goal relevance anchor rejected, re-requesting run_id={} mode={} model_id={} attempt={}/{} error={}",
+            generation_run_id,
+            mode.name(),
+            model_id,
+            attempt,
+            MAX_GENERATION_BATCH_ATTEMPTS,
+            error
+        ),
+        GenerationBatchOperation::ProductionAnchor => engine_logging::engine_warn!(
+            "goal relevance production anchor rejected, re-requesting run_id={} goal_ref={} mode={} model_id={} attempt={}/{} error={}",
+            generation_run_id,
+            goal_ref,
+            mode.name(),
+            model_id,
+            attempt,
+            MAX_GENERATION_BATCH_ATTEMPTS,
+            error
+        ),
+    }
+}
+
+fn log_generation_batch_terminal_failure(
+    operation: GenerationBatchOperation,
+    generation_run_id: &str,
+    goal_ref: &str,
+    mode: &GenerationMode,
+    model_id: &str,
+    attempt: usize,
+    error: &str,
+) {
+    match operation {
+        GenerationBatchOperation::SmokeGeneration => engine_logging::engine_error!(
+            "goal relevance generation rejected run_id={} mode={} model_id={} attempts={} error={}",
+            generation_run_id,
+            mode.name(),
+            model_id,
+            attempt,
+            error
+        ),
+        GenerationBatchOperation::ProductionGeneration => engine_logging::engine_error!(
+            "goal relevance production generation rejected run_id={} goal_ref={} mode={} model_id={} attempts={} error={}",
+            generation_run_id,
+            goal_ref,
+            mode.name(),
+            model_id,
+            attempt,
+            error
+        ),
+        GenerationBatchOperation::SmokeAnchor => engine_logging::engine_error!(
+            "goal relevance anchor rejected run_id={} mode={} model_id={} attempts={} error={}",
+            generation_run_id,
+            mode.name(),
+            model_id,
+            attempt,
+            error
+        ),
+        GenerationBatchOperation::ProductionAnchor => engine_logging::engine_error!(
+            "goal relevance production anchor rejected run_id={} goal_ref={} mode={} model_id={} attempts={} error={}",
+            generation_run_id,
+            goal_ref,
+            mode.name(),
+            model_id,
+            attempt,
+            error
+        ),
+    }
+}
+
 fn require_requested_utterance_count(
     parsed: ParsedGenerationResponse,
     mode: &GenerationMode,
 ) -> Result<ParsedGenerationResponse, String> {
+    require_requested_utterance_count_for(parsed, mode, mode.request_count())
+}
+
+fn require_requested_utterance_count_for(
+    parsed: ParsedGenerationResponse,
+    mode: &GenerationMode,
+    requested: usize,
+) -> Result<ParsedGenerationResponse, String> {
     let delivered = parsed.records.len();
-    let requested = mode.request_count();
     if delivered < requested {
         return Err(format!(
             "generation mode {} delivered {delivered} utterances, requested {requested}",
@@ -791,46 +1057,67 @@ pub fn run_generation_anchors<T: ModelTransport>(
             .cluster_id()
             .expect("cluster schedule contains only cluster modes");
         let model_id = GenerationMode::anchor_generator_model_id();
-        let mut attempt = 1usize;
-        let anchor = loop {
-            let response = transport.complete(&CompletionRequest {
-                model_id: model_id.to_string(),
-                prompt: prompt.clone(),
-                goal_ref: goal.goal_ref.clone(),
-                run_id: generation_run_id.to_string(),
-                utterance_id: None,
-            })?;
-            if let Some(call_usage) = response.usage {
-                add_usage(&mut usage_by_model, model_id, call_usage);
-                has_usage = true;
-            }
-            match parse_generation_anchor_response(&response.content, &mode) {
-                Ok(anchor) => break anchor,
-                Err(error) if attempt < MAX_GENERATION_BATCH_ATTEMPTS => {
-                    engine_logging::engine_warn!(
-                        "goal relevance anchor rejected, re-requesting run_id={} mode={} model_id={} attempt={}/{} error={}",
-                        generation_run_id,
-                        mode.name(),
-                        model_id,
-                        attempt,
-                        MAX_GENERATION_BATCH_ATTEMPTS,
-                        error
-                    );
-                    attempt += 1;
-                }
-                Err(error) => {
-                    engine_logging::engine_error!(
-                        "goal relevance anchor rejected run_id={} mode={} model_id={} attempts={} error={}",
-                        generation_run_id,
-                        mode.name(),
-                        model_id,
-                        attempt,
-                        error
-                    );
-                    return Err(error);
-                }
-            }
-        };
+        let anchor = run_generation_batch(
+            transport,
+            generation_run_id,
+            &goal.goal_ref,
+            model_id,
+            &mode,
+            &prompt,
+            GenerationBatchOperation::SmokeAnchor,
+            &mut usage_by_model,
+            &mut has_usage,
+            |content| parse_generation_anchor_response(content, &mode),
+        )?;
+        cluster_anchors.push(GenerationClusterAnchor {
+            cluster_id: cluster_id.to_string(),
+            anchor,
+        });
+    }
+    Ok(GenerationAnchorRun {
+        cluster_anchors,
+        usage_by_model: has_usage.then_some(usage_by_model),
+    })
+}
+
+/// Runs the anchor-only checkpoint for the neutral production components.
+pub fn run_production_generation_anchors<T: ModelTransport>(
+    transport: &T,
+    roster: &RosterSnapshot,
+    generation_run_id: &str,
+) -> Result<GenerationAnchorRun, String> {
+    if roster.goals.len() != 7 {
+        return Err(
+            "production goal relevance schedule requires the frozen seven-goal roster".to_string(),
+        );
+    }
+    let mut cluster_anchors = Vec::new();
+    let mut usage_by_model = BTreeMap::new();
+    let mut has_usage = false;
+    for mode in production_cluster_generation_modes() {
+        let prompt = build_anchor_prompt(&PromptRequest {
+            description: Some(GoalDescription::from(&roster.goals[0])),
+            mode: mode.clone(),
+            count: 1,
+            prior_cluster_anchors: cluster_anchors.clone(),
+            approved_cluster_anchor: None,
+        })?;
+        let cluster_id = mode
+            .cluster_id()
+            .expect("production cluster schedule contains only cluster modes");
+        let model_id = GenerationMode::anchor_generator_model_id();
+        let anchor = run_generation_batch(
+            transport,
+            generation_run_id,
+            &roster.goals[0].goal_ref,
+            model_id,
+            &mode,
+            &prompt,
+            GenerationBatchOperation::ProductionAnchor,
+            &mut usage_by_model,
+            &mut has_usage,
+            |content| parse_generation_anchor_response(content, &mode),
+        )?;
         cluster_anchors.push(GenerationClusterAnchor {
             cluster_id: cluster_id.to_string(),
             anchor,
@@ -923,6 +1210,33 @@ pub fn validate_approved_generation_anchors(
     Ok(())
 }
 
+/// Validates the ten anchors for the neutral production pool, separately from
+/// the legacy smoke schedule so replay fixtures retain their historical shape.
+pub fn validate_approved_production_generation_anchors(
+    anchors: &[GenerationClusterAnchor],
+) -> Result<(), String> {
+    validate_generation_anchor_sidecar(anchors)?;
+    let actual = anchors
+        .iter()
+        .map(|anchor| anchor.cluster_id.as_str())
+        .collect::<BTreeSet<_>>();
+    let expected_ids = production_expected_cluster_ids();
+    let expected = expected_ids
+        .iter()
+        .map(String::as_str)
+        .collect::<BTreeSet<_>>();
+    if actual != expected {
+        let missing = expected.difference(&actual).copied().collect::<Vec<_>>();
+        let extra = actual.difference(&expected).copied().collect::<Vec<_>>();
+        return Err(format!(
+            "approved production generation anchors must contain exactly one entry for every scheduled pool cluster; missing [{}], extra [{}]",
+            missing.join(", "),
+            extra.join(", ")
+        ));
+    }
+    Ok(())
+}
+
 fn generation_modes(partition: &str) -> Vec<GenerationMode> {
     let mut modes = vec![GenerationMode::Natural];
     for cluster in 1..=4 {
@@ -970,6 +1284,176 @@ fn expected_cluster_ids() -> Vec<String> {
         .map(|mode| {
             mode.cluster_id()
                 .expect("cluster schedule contains only cluster modes")
+                .to_string()
+        })
+        .collect()
+}
+
+fn production_generation_jobs() -> Vec<ProductionGenerationJob> {
+    ["pool-a", "pool-b"]
+        .into_iter()
+        .flat_map(|component| {
+            vec![
+                // The five operator-approved anchors remain tied to the
+                // boundary-specific prompt/directive family.
+                ProductionGenerationJob {
+                    component,
+                    goal_index: Some(0),
+                    mode: GenerationMode::ParaphraseCluster {
+                        cluster_id: format!("{component}-cluster-1"),
+                    },
+                    count: 2,
+                },
+                ProductionGenerationJob {
+                    component,
+                    goal_index: Some(0),
+                    mode: GenerationMode::ParaphraseCluster {
+                        cluster_id: format!("{component}-cluster-2"),
+                    },
+                    count: 2,
+                },
+                ProductionGenerationJob {
+                    component,
+                    goal_index: Some(0),
+                    mode: GenerationMode::ParaphraseCluster {
+                        cluster_id: format!("{component}-cluster-3"),
+                    },
+                    count: 2,
+                },
+                ProductionGenerationJob {
+                    component,
+                    goal_index: Some(0),
+                    mode: GenerationMode::ParaphraseCluster {
+                        cluster_id: format!("{component}-cluster-4"),
+                    },
+                    count: 2,
+                },
+                ProductionGenerationJob {
+                    component,
+                    goal_index: Some(0),
+                    mode: GenerationMode::HardParaphrase {
+                        cluster_id: format!("{component}-hard-cluster"),
+                    },
+                    count: 5,
+                },
+                ProductionGenerationJob {
+                    component,
+                    goal_index: Some(0),
+                    mode: GenerationMode::SubjectConfusion,
+                    count: 3,
+                },
+                ProductionGenerationJob {
+                    component,
+                    goal_index: Some(0),
+                    mode: GenerationMode::RareHighCost,
+                    count: 3,
+                },
+                ProductionGenerationJob {
+                    component,
+                    goal_index: Some(1),
+                    mode: GenerationMode::ExplicitNegation,
+                    count: 4,
+                },
+                ProductionGenerationJob {
+                    component,
+                    goal_index: Some(1),
+                    mode: GenerationMode::Natural,
+                    count: 1,
+                },
+                ProductionGenerationJob {
+                    component,
+                    goal_index: Some(2),
+                    mode: GenerationMode::ImplicitNegation,
+                    count: 4,
+                },
+                ProductionGenerationJob {
+                    component,
+                    goal_index: Some(2),
+                    mode: GenerationMode::Natural,
+                    count: 1,
+                },
+                ProductionGenerationJob {
+                    component,
+                    goal_index: Some(3),
+                    mode: GenerationMode::QuotedSpeech,
+                    count: 3,
+                },
+                ProductionGenerationJob {
+                    component,
+                    goal_index: Some(3),
+                    mode: GenerationMode::PunctuationCasingLoss,
+                    count: 2,
+                },
+                ProductionGenerationJob {
+                    component,
+                    goal_index: Some(4),
+                    mode: GenerationMode::QuotedSpeech,
+                    count: 3,
+                },
+                ProductionGenerationJob {
+                    component,
+                    goal_index: Some(4),
+                    mode: GenerationMode::PunctuationCasingLoss,
+                    count: 1,
+                },
+                ProductionGenerationJob {
+                    component,
+                    goal_index: Some(5),
+                    mode: GenerationMode::Hypothetical,
+                    count: 3,
+                },
+                ProductionGenerationJob {
+                    component,
+                    goal_index: Some(5),
+                    mode: GenerationMode::SyntheticAsr,
+                    count: 2,
+                },
+                ProductionGenerationJob {
+                    component,
+                    goal_index: Some(6),
+                    mode: GenerationMode::Hypothetical,
+                    count: 3,
+                },
+                ProductionGenerationJob {
+                    component,
+                    goal_index: Some(6),
+                    mode: GenerationMode::SyntheticAsr,
+                    count: 1,
+                },
+                ProductionGenerationJob {
+                    component,
+                    goal_index: None,
+                    mode: GenerationMode::VagueNoneOfRoster,
+                    count: 10,
+                },
+            ]
+        })
+        .collect()
+}
+
+fn production_cluster_generation_modes() -> Vec<GenerationMode> {
+    ["pool-a", "pool-b"]
+        .into_iter()
+        .flat_map(|component| {
+            let mut modes = (1..=4)
+                .map(|cluster| GenerationMode::ParaphraseCluster {
+                    cluster_id: format!("{component}-cluster-{cluster}"),
+                })
+                .collect::<Vec<_>>();
+            modes.push(GenerationMode::HardParaphrase {
+                cluster_id: format!("{component}-hard-cluster"),
+            });
+            modes
+        })
+        .collect()
+}
+
+fn production_expected_cluster_ids() -> Vec<String> {
+    production_cluster_generation_modes()
+        .into_iter()
+        .map(|mode| {
+            mode.cluster_id()
+                .expect("production cluster mode")
                 .to_string()
         })
         .collect()

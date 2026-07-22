@@ -1,10 +1,11 @@
 # Handoff — Resume Here
 
-**Updated:** 2026-07-22 — the goal_relevance generation path is cleared for the full
-production run after five operator-reviewed smokes: two-step anchor approval, per-mode
-nano/mini generation, mode validators with per-batch retry, and over-produced
-`none_of_roster` negatives (labels are the authority) all landed on top of the schema-v2 /
-datagen foundation; see [Plan.GoalRelevanceFrozenSets](Plans/Plan.GoalRelevanceFrozenSets.md). World
+**Updated:** 2026-07-22 — the goal_relevance pipeline machinery is complete: on top of the
+smoke-cleared generation path, the production schedule (`generate --production`, two neutral
+floor-complete pools across all 7 goals), the seed-recorded deterministic split, the
+gatekeeper with teeth-proving tests, and the byte-reproducible freeze/lineage/methodology
+commands all landed reviewed; what remains is the human-controlled campaign itself; see
+[Plan.GoalRelevanceFrozenSets](Plans/Plan.GoalRelevanceFrozenSets.md). World
 perception is unchanged since the morning: all of
 [Plan.WorldPerception](Plans/Plan.WorldPerception.md) is implemented, but the second
 real-corpus live session requested no consultation — blockers moved to the trigger layer
@@ -50,15 +51,16 @@ entity detection; arbitration standing for ConsultWorld-capable goals under
 current-information cues).
 
 ### Semantic evaluation (goal relevance)
-**Run the full-production slice of
-[Plan.GoalRelevanceFrozenSets](Plans/Plan.GoalRelevanceFrozenSets.md): a multi-goal
-generation schedule meeting the per-slice floors across the 7-goal roster, then mini
-labeling, the independent Claude Fable cross-label, full human review, split, gatekeeper,
-and freeze.**
-Why: the generation path (two-step anchor approval via `generate --anchors-only` then
-`generate --anchors <approved>`, per-mode models, mode validators) is smoke-cleared; the
-current schedule is still single-goal smoke-scale, and the gatekeeper/freeze machinery is
-the remaining implementation before the human-controlled corpus run.
+**Run the operator campaign of
+[Plan.GoalRelevanceFrozenSets](Plans/Plan.GoalRelevanceFrozenSets.md): production
+anchors-only run and operator anchor review, `generate --production`, the required
+pool-review gate before paid labeling (DecisionLog 2026-07-22 — review relabels, never
+excludes), mini labeling, the independent Claude Fable cross-label, full human review
+(disagreements first), the blind-QA pass, then split, gatekeeper, freeze, and the
+methodology note.**
+Why: all pipeline machinery is implemented and review-hardened (recorded-seed freeze
+verification, gatekeeper teeth tests, committed lineage); the remaining work is
+operator-driven, with both anchor and pool checkpoints designed as document handoffs.
 Alternate: the remote-usage telemetry baseline (token-ledger extraction) is independent and
 can proceed in parallel; small pending item — the operator label review that flips the 12
 sample records from `draft`.

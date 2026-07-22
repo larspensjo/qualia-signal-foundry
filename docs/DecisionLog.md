@@ -2074,3 +2074,56 @@ Consequences: The generation CLI supports an anchor-only checkpoint and an appro
 flow while retaining the inline-anchor path for quick replay or live smokes. Generated records and
 usage reports retain the actual model for each mode, and the stable generation-output interchange
 remains unchanged.
+
+## 2026-07-22 - Goal-relevance production generation uses a two-pool floor-derived schedule
+Decision: Production generation emits two neutral split-candidate pools, each independently
+meeting every per-slice floor with roughly 1.36x over-production. The operator-cleared
+boundary-specific modes (paraphrase clusters, hard paraphrases, subject confusion, rare high
+cost) stay conditioned on the boundaries goal; the lighter slice modes (negation, quoted speech,
+punctuation loss, hypothetical, synthetic ASR, natural) are distributed across the remaining six
+roster goals; the vague `none_of_roster` batch stays goal-unconditioned. Only the deterministic,
+seed-recorded split assigns pools to validation and test.
+
+Context: The plan's sizing floors are pool-wide per split, not per-goal, and the cleared prompt
+directives describe boundary behavior; rewriting them goal-generically would reopen the
+generation-quality path that five operator-reviewed smokes had just closed.
+
+Consequences: No validation/test terminology exists in generation artifacts, so the recorded
+split seed is the sole authority on the final assignment. Both pools must remain floor-complete
+so either can serve as either split. Paraphrase-cluster and hard-negative depth is
+boundaries-only in v1; richer per-goal cluster coverage belongs to the documented expansion path.
+
+## 2026-07-22 - Goal-relevance freezes are gate-kept and reproducible from committed lineage
+Decision: A frozen goal-relevance dataset version exists only after an automated gatekeeper
+passes every rule: the dense cross-product invariant, roster binding, per-slice floors in both
+splits, split integrity, review completeness, roster round-trip, and blind-QA agreement of at
+least 0.80 per hard slice. The freeze independently re-derives both splits from the recorded
+seed and refuses to write a manifest unless they match the supplied files byte for byte. The
+full lineage — generation output, both label files, the reconciliation summary, review
+decisions, the reviewed pool in canonical fold order, the split summary, the manifest, and the
+methodology note — is version-controlled under the evaluation tree beside the frozen sets:
+anything a methodology number derives from is committed. The methodology note lives beside the
+manifest it describes.
+
+Context: The freeze machinery landed with the recorded-seed verification added after review
+found a manifest could otherwise record a seed it never checked. The retention rule and the
+agreement floor were plan commitments awaiting the machinery that enforces them.
+
+Consequences: No hand-edited or unreproducible artifact can be silently frozen, and every
+gatekeeper rule carries a test proving it rejects its violation. Raw model-call transcripts and
+unsanitized captures remain the only lineage inputs that never enter version control.
+
+## 2026-07-22 - Goal-relevance review relabels but never excludes utterances
+Decision: Operator review decisions are limited to correcting a pair's label and an utterance's
+`none_of_roster` status; there is no mechanism to drop an utterance from the pool. An
+irredeemable utterance is handled by regenerating the run before paid labeling begins, guarded
+by an operator pool-review gate between generation and labeling.
+
+Context: Several slices are generated at their exact floor, so a post-labeling drop would fail
+the gatekeeper and force regeneration that discards the paid labeling pass and review time. The
+mode validators plus the pre-labeling operator gate make a late irredeemable discovery unlikely,
+and a neutralizing label keeps such an utterance from corrupting label quality.
+
+Consequences: The pool-review gate before paid labeling is a required campaign step, not an
+optional check. Exclusion semantics, if ever needed, belong to the 1000+-utterance expansion
+path where review attrition becomes statistical rather than exceptional.
