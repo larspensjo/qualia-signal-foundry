@@ -1,5 +1,6 @@
 use std::collections::BTreeSet;
 
+use qsf_semantic_eval::GoldLabel;
 use serde::Deserialize;
 
 use crate::{
@@ -8,6 +9,7 @@ use crate::{
 
 pub const GOAL_RELEVANCE_GUIDELINE_VERSION: &str = "goalrel-label-v1";
 pub const MINI_LABELER_ID: &str = "gpt-5.4-mini";
+pub const MAX_LABELING_UTTERANCE_ATTEMPTS: usize = 5;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct LabelingResponseContext<'a> {
@@ -17,11 +19,21 @@ pub struct LabelingResponseContext<'a> {
     pub guideline_version: &'a str,
 }
 
+/// Model-facing response shape: goals are referenced by their 1-based prompt
+/// number, never by echoed `goal_ref` hashes — models corrupt long hex strings
+/// (dropped repeats), which made hash-echo protocols fail unrecoverably.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq)]
 #[serde(deny_unknown_fields)]
 struct ModelLabelResponse {
-    per_goal: Vec<PerGoalLabel>,
+    per_goal: Vec<ModelIndexedGoalLabel>,
     none_of_roster: bool,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq)]
+#[serde(deny_unknown_fields)]
+struct ModelIndexedGoalLabel {
+    goal: usize,
+    label: GoldLabel,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -36,10 +48,11 @@ pub fn build_goal_relevance_label_prompt(input: &LabelingInput) -> Result<String
     let roster = input
         .roster
         .iter()
-        .map(|goal| {
+        .enumerate()
+        .map(|(index, goal)| {
             format!(
-                "- goal_ref: {}\n  title: {}\n  summary: {}\n  tensions: {}",
-                goal.goal_ref,
+                "- goal {}\n  title: {}\n  summary: {}\n  tensions: {}",
+                index + 1,
                 goal.title,
                 goal.summary,
                 goal.tension_summaries.join(" | ")
@@ -61,9 +74,13 @@ pub fn build_goal_relevance_label_prompt(input: &LabelingInput) -> Result<String
          Utterance ({}):\n{}\n\n\
          Frozen roster:\n{}\n\n\
          Return exactly one JSON object with no markdown:\n\
-         {{\"per_goal\":[{{\"goal_ref\":\"...\",\"label\":\"relevant|not_relevant|ambiguous\"}}],\"none_of_roster\":false}}\n\
-         Include every supplied goal exactly once.",
-        GOAL_RELEVANCE_GUIDELINE_VERSION, input.utterance_id, input.utterance, roster
+         {{\"per_goal\":[{{\"goal\":1,\"label\":\"relevant|not_relevant|ambiguous\"}}],\"none_of_roster\":false}}\n\
+         Reference goals by their number; include every goal number from 1 to {} exactly once.",
+        GOAL_RELEVANCE_GUIDELINE_VERSION,
+        input.utterance_id,
+        input.utterance,
+        roster,
+        input.roster.len()
     ))
 }
 
@@ -74,13 +91,34 @@ pub fn parse_goal_relevance_label_response(
     validate_labeling_input(context.input)?;
     let response: ModelLabelResponse = serde_json::from_str(response.trim())
         .map_err(|error| format!("invalid goal-relevance label response: {error}"))?;
+    let roster_len = context.input.roster.len();
+    let mut seen = BTreeSet::new();
+    let mut per_goal = Vec::with_capacity(roster_len);
+    for entry in response.per_goal {
+        if entry.goal < 1 || entry.goal > roster_len {
+            return Err(format!(
+                "label response for utterance_id {} references goal number {} outside 1..={}",
+                context.input.utterance_id, entry.goal, roster_len
+            ));
+        }
+        if !seen.insert(entry.goal) {
+            return Err(format!(
+                "label response for utterance_id {} repeats goal number {}",
+                context.input.utterance_id, entry.goal
+            ));
+        }
+        per_goal.push(PerGoalLabel {
+            goal_ref: context.input.roster[entry.goal - 1].goal_ref.clone(),
+            label: entry.label,
+        });
+    }
     let label = LabelInterchange {
         interchange_version: crate::INTERCHANGE_VERSION,
         labeler_id: context.labeler_id.to_string(),
         labeling_run_id: context.labeling_run_id.to_string(),
         guideline_version: context.guideline_version.to_string(),
         utterance_id: context.input.utterance_id.clone(),
-        per_goal: response.per_goal,
+        per_goal,
         none_of_roster: response.none_of_roster,
     };
     validate_label_for_input(&label, context.input)?;
@@ -101,31 +139,72 @@ pub fn run_mini_labeling<T: ModelTransport>(
     let mut has_usage = false;
     for record in input {
         let prompt = build_goal_relevance_label_prompt(record)?;
-        let response = transport.complete(&CompletionRequest {
-            model_id: MINI_LABELER_ID.to_string(),
-            prompt,
-            goal_ref: "blind-full-roster".to_string(),
-            run_id: labeling_run_id.to_string(),
-            utterance_id: Some(record.utterance_id.clone()),
-        })?;
-        if let Some(call_usage) = response.usage {
-            usage.add(call_usage);
-            has_usage = true;
-        }
-        labels.push(parse_goal_relevance_label_response(
-            &response.content,
-            LabelingResponseContext {
-                input: record,
-                labeler_id: MINI_LABELER_ID,
-                labeling_run_id,
-                guideline_version: GOAL_RELEVANCE_GUIDELINE_VERSION,
-            },
-        )?);
+        let mut attempt = 1usize;
+        let label = loop {
+            let response = transport.complete(&CompletionRequest {
+                model_id: MINI_LABELER_ID.to_string(),
+                prompt: prompt.clone(),
+                goal_ref: "blind-full-roster".to_string(),
+                run_id: labeling_run_id.to_string(),
+                utterance_id: Some(record.utterance_id.clone()),
+            })?;
+            if let Some(call_usage) = response.usage {
+                usage.add(call_usage);
+                has_usage = true;
+            }
+            match parse_goal_relevance_label_response(
+                &response.content,
+                LabelingResponseContext {
+                    input: record,
+                    labeler_id: MINI_LABELER_ID,
+                    labeling_run_id,
+                    guideline_version: GOAL_RELEVANCE_GUIDELINE_VERSION,
+                },
+            ) {
+                Ok(label) => break label,
+                Err(error) if attempt < MAX_LABELING_UTTERANCE_ATTEMPTS => {
+                    engine_logging::engine_warn!(
+                        "goal-relevance labeling rejected a response; retrying: run_id={} utterance_id={} model_id={} attempt={}/{} error={} response_snippet={}",
+                        labeling_run_id,
+                        record.utterance_id,
+                        MINI_LABELER_ID,
+                        attempt,
+                        MAX_LABELING_UTTERANCE_ATTEMPTS,
+                        error,
+                        response_snippet(&response.content),
+                    );
+                    attempt += 1;
+                }
+                Err(error) => {
+                    engine_logging::engine_error!(
+                        "goal-relevance labeling failed after {} attempts: run_id={} utterance_id={} model_id={} error={} response_snippet={}",
+                        MAX_LABELING_UTTERANCE_ATTEMPTS,
+                        labeling_run_id,
+                        record.utterance_id,
+                        MINI_LABELER_ID,
+                        error,
+                        response_snippet(&response.content),
+                    );
+                    return Err(error);
+                }
+            }
+        };
+        labels.push(label);
     }
     Ok(MiniLabelingRun {
         labels,
         usage: has_usage.then_some(usage),
     })
+}
+
+/// Truncated single-line view of a rejected model response, for retry diagnostics.
+fn response_snippet(content: &str) -> String {
+    let single_line = content.replace(['\r', '\n'], " ");
+    let mut snippet: String = single_line.chars().take(240).collect();
+    if single_line.chars().count() > 240 {
+        snippet.push('…');
+    }
+    snippet
 }
 
 fn validate_labeling_input(input: &LabelingInput) -> Result<(), String> {

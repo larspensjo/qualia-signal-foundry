@@ -16,20 +16,20 @@ use crate::{
     CompletionRequest, FixtureResponse, FreezeRequest, GOAL_RELEVANCE_GUIDELINE_VERSION,
     GatekeeperRequest, GenerationClusterAnchor, GenerationMode, GenerationOutput,
     GenerationResponseContext, GoalDescription, INTERCHANGE_VERSION, LabelInterchange,
-    LabelingResponseContext, MINI_LABELER_ID, ModelTransport, PerGoalLabel, PromptRequest,
-    ReplayTransport, ReviewDecision, ReviewField, ReviewValue, ReviewedPoolRequest, TransportKind,
-    blind_qa_agreement_by_slice, build_blind_qa_review_view_model,
-    build_goal_relevance_label_prompt, build_labeling_input, build_prompt, build_review_view_model,
-    cluster_scenario_directive, default_transport_kind, fold_reviewed_pool, freeze_artifacts,
-    gatekeep_goal_relevance_freeze, hard_negative_count, hard_negative_within_distribution,
-    mini_fable_agreement_rate, parse_generation_anchor_sidecar, parse_generation_output,
-    parse_generation_response, parse_goal_relevance_label_response, parse_label_interchange,
-    priority_review_queue, punctuation_casing_loss, reconcile, render_blind_qa_review_view,
-    render_generation_report, run_cli, run_generation, run_generation_anchors,
-    run_generation_with_approved_anchors, run_mini_labeling, run_production_generation,
-    split_feasibility_preflight, split_reviewed_pool, synthetic_asr_corrupt,
-    tool_local_price_table, validate_generation_output, write_generation_anchor_sidecar,
-    write_jsonl,
+    LabelingResponseContext, MAX_LABELING_UTTERANCE_ATTEMPTS, MINI_LABELER_ID, ModelTransport,
+    PerGoalLabel, PromptRequest, ReplayTransport, ReviewDecision, ReviewField, ReviewValue,
+    ReviewedPoolRequest, TransportKind, blind_qa_agreement_by_slice,
+    build_blind_qa_review_view_model, build_goal_relevance_label_prompt, build_labeling_input,
+    build_prompt, build_review_view_model, cluster_scenario_directive, default_transport_kind,
+    fold_reviewed_pool, freeze_artifacts, gatekeep_goal_relevance_freeze, hard_negative_count,
+    hard_negative_within_distribution, mini_fable_agreement_rate, parse_generation_anchor_sidecar,
+    parse_generation_output, parse_generation_response, parse_goal_relevance_label_response,
+    parse_label_interchange, priority_review_queue, punctuation_casing_loss, reconcile,
+    render_blind_qa_review_view, render_generation_report, run_cli, run_generation,
+    run_generation_anchors, run_generation_with_approved_anchors, run_mini_labeling,
+    run_production_generation, split_feasibility_preflight, split_reviewed_pool,
+    synthetic_asr_corrupt, tool_local_price_table, validate_generation_output,
+    write_generation_anchor_sidecar, write_jsonl,
 };
 
 fn roster() -> RosterSnapshot {
@@ -214,6 +214,75 @@ fn replay_mini_labeling_builds_and_validates_a_complete_interchange_file() {
     );
     assert_eq!(labels[0].utterance_id, "utterance-1");
     assert_eq!(labels[0].per_goal.len(), roster().goals.len());
+}
+
+#[test]
+fn label_prompt_references_goals_by_number_and_never_exposes_hashes() {
+    let input = build_labeling_input(&[generated()], &roster()).expect("build input");
+    let prompt = build_goal_relevance_label_prompt(&input[0]).expect("build prompt");
+    assert!(
+        !prompt.contains("sha256:"),
+        "prompt must not ask the model to echo goal_ref hashes"
+    );
+    for number in 1..=roster().goals.len() {
+        assert!(
+            prompt.contains(&format!("- goal {number}")),
+            "goal {number} listed"
+        );
+    }
+}
+
+#[test]
+fn label_response_rejects_out_of_range_and_repeated_goal_numbers() {
+    let input = build_labeling_input(&[generated()], &roster()).expect("build input");
+    let context = || LabelingResponseContext {
+        input: &input[0],
+        labeler_id: MINI_LABELER_ID,
+        labeling_run_id: "index-validation-run",
+        guideline_version: GOAL_RELEVANCE_GUIDELINE_VERSION,
+    };
+    let out_of_range = r#"{"per_goal":[{"goal":1,"label":"relevant"},{"goal":2,"label":"not_relevant"},{"goal":3,"label":"not_relevant"},{"goal":4,"label":"not_relevant"},{"goal":5,"label":"not_relevant"},{"goal":6,"label":"not_relevant"},{"goal":8,"label":"not_relevant"}],"none_of_roster":false}"#;
+    let error = parse_goal_relevance_label_response(out_of_range, context())
+        .expect_err("goal number outside the roster is rejected");
+    assert!(
+        error.contains("outside 1..=7"),
+        "error names the range: {error}"
+    );
+    let repeated = r#"{"per_goal":[{"goal":1,"label":"relevant"},{"goal":1,"label":"not_relevant"},{"goal":2,"label":"not_relevant"},{"goal":3,"label":"not_relevant"},{"goal":4,"label":"not_relevant"},{"goal":5,"label":"not_relevant"},{"goal":6,"label":"not_relevant"}],"none_of_roster":false}"#;
+    let error = parse_goal_relevance_label_response(repeated, context())
+        .expect_err("a repeated goal number is rejected");
+    assert!(
+        error.contains("repeats goal number 1"),
+        "error names the repeat: {error}"
+    );
+}
+
+#[test]
+fn mini_labeling_retries_a_rejected_response_and_then_succeeds() {
+    let good = ReplayTransport::default_response(FixtureResponse::MiniLabel)
+        .expect("mini label fixture readable");
+    let incomplete = r#"{"per_goal":[{"goal":1,"label":"relevant"}],"none_of_roster":false}"#;
+    let transport = ScriptedTransport::new(vec![incomplete.to_string(), good]);
+    let input = build_labeling_input(&[generated()], &roster()).expect("build input");
+    let run = run_mini_labeling(&transport, &input, "retry-mini-label-run")
+        .expect("labeling recovers from one rejected response");
+    assert_eq!(transport.calls.get(), 2);
+    assert_eq!(run.labels.len(), 1);
+    assert_eq!(run.labels[0].per_goal.len(), roster().goals.len());
+}
+
+#[test]
+fn mini_labeling_fails_loudly_after_exhausting_attempts() {
+    let incomplete = r#"{"per_goal":[{"goal":1,"label":"relevant"}],"none_of_roster":false}"#;
+    let transport = ScriptedTransport::new(vec![incomplete.to_string()]);
+    let input = build_labeling_input(&[generated()], &roster()).expect("build input");
+    let error = run_mini_labeling(&transport, &input, "exhausted-mini-label-run")
+        .expect_err("persistently rejected responses fail the run");
+    assert_eq!(transport.calls.get(), MAX_LABELING_UTTERANCE_ATTEMPTS);
+    assert!(
+        error.contains("must cover every roster goal exactly once"),
+        "error names the violated contract: {error}"
+    );
 }
 
 #[test]
