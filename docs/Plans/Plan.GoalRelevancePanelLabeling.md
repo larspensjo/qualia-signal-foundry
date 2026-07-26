@@ -371,9 +371,18 @@ fixture-tested subcommand whose first job is to reproduce these numbers exactly.
 
 ---
 
-## Phase A — Design amendment, lineage rescue, parent-plan reconciliation, model availability
+## Phase A — Design amendment, lineage rescue, parent-plan reconciliation, model availability (DONE, 2026-07-26)
 
-Zero code except the availability smoke. Everything here removes a risk that compounds if deferred.
+Complete. Zero code changed; the only spend was the two live smoke calls. The lineage rescue landed
+as its own commit ahead of everything else, then the availability smoke, then the design amendment —
+deliberately reordered from the sequence written below, because the smoke could have invalidated the
+amendment (an unreachable member would have forced panel composition and the lineage cap to be
+re-decided, changing the design's panel table, the weights, and the lineage totals). Writing the
+amendment first risked rewriting it. The smoke came back clean, so the amendment was written once.
+
+Its outputs are inputs to every later phase: the committed lineage is what the census reads, the
+confirmed model ids are what the weights file records, and the amended design is what the weights,
+ledger, aggregation and audit work all build against.
 
 **Work**
 
@@ -413,8 +422,10 @@ Zero code except the availability smoke. Everything here removes a risk that com
    already a methodology number, so under the committed rule these artifacts belong in git.
    Nothing in the pool falls under the transcript exception — it holds no transcripts and no raw
    captures.
-3. **Reconcile the parent plan's status line** (above) and mark its labeling/review/freeze campaign
-   as superseded by this plan.
+3. **Reconcile the parent plan's status line — DONE.** `Plan.GoalRelevanceFrozenSets.md` now carries
+   the corrected status (above) and marks its labeling/review/freeze campaign as superseded by this
+   plan. Its per-slice floors, split algorithm, dense cross-product invariant, roster binding,
+   retention rule and lineage boundary were left untouched and all still stand.
 4. **Model-availability smoke — DONE, and it sizes the dry run.** The operator ran the live
    single-call tests for `gpt-5.6-sol` and `gpt-5.6-terra`: both were reachable, echoed the exact
    requested id in `model`, returned `finish_reason: stop`, and accepted `max_completion_tokens`,
@@ -432,27 +443,44 @@ Zero code except the availability smoke. Everything here removes a risk that com
    Antigravity's `claude-sonnet-4-6` and `claude-opus-4-6-thinking` are 4.6 models, not Sonnet 5
    or Opus 5, and must not substitute for the Anthropic panel members because doing so changes the
    member identity over which the 5000 bp cap is computed.
-5. **Update `docs/Handoff.md`.** Its *Next* currently recommends running the operator campaign that
-   this plan replaces, and its alternate names "the operator label review that flips the 12 sample
-   records from `draft`" — an item that ceases to exist when review provenance is deleted.
+5. **Update `docs/Handoff.md` — DONE.** Its *Next* recommended running the operator campaign this
+   plan replaces, and its alternate named "the operator label review that flips the 12 sample records
+   from `draft`" — an item that ceases to exist when review provenance is deleted. Both are gone and
+   the file now points at this plan. It also shrank back within its own one-screen rule, which it had
+   been violating with two competing *Next* primaries.
 
-**Verification** (from repo root)
+**Verification** (from repo root) — all passed
 
-- `cargo clippy --all-targets -- -D warnings` then `cargo fmt` (no code change expected; run anyway
-  so the phase leaves a clean tree).
+- `cargo clippy --all-targets -- -D warnings` and `cargo fmt` clean; the full test suite also run and
+  green. No code changed, so this only confirms the phase left a clean tree.
 - `git ls-files` accounts for **all eighteen** files that were in `runs/goalrel-production/`, each at
   the path the layout above assigns it — nothing dropped, nothing invented. **No
-  `blind-qa-decisions.jsonl` is expected or required**; it was never produced.
-- Manual: re-read the amended design end to end and confirm no sentence still describes the retired
-  gate.
-- Manual: the availability smoke prints a successful completion for every API-reachable model id,
-  with the exact id string recorded for the weights file, and the automatable-member count recorded
-  for Phase I's sizing.
+  `blind-qa-decisions.jsonl` is expected or required**; it was never produced. The source directory
+  is gone, so there is one home per artifact and no copy to drift.
+- Manual: the amended design was re-read end to end by two independent readers. The first pass
+  claimed it was clean and was wrong — three sentences still described the retired gate (a per-slice
+  *agreement* gate, a failure model attributed to the panel rather than the auditor and attached to
+  hard slices rather than `(goal × split)`, and a surviving reference to a slice average of recall).
+  All three were corrected. A later reading found no remaining retired-gate language.
+- Manual: the availability smoke returned a successful completion for both API model ids, with the
+  exact id strings recorded above for the weights file and the automatable-member count recorded for
+  the dry run's sizing.
 
-**Spends money:** yes — tier 1, two live calls.
+**One hazard worth carrying forward.** Committing the lineage triggered git's CRLF-to-LF
+normalization, leaving three files on disk hashing differently from their own committed blobs until
+the working tree was renormalized. `.gitattributes` already pins `eol=lf` for the repository *and*
+the working tree, which is what makes the hashes platform-stable and must not be weakened — but any
+hash computed from disk before a renormalizing checkout would not have reproduced on a fresh clone.
+Every phase that content-hashes a committed artifact should verify disk against blob, not assume it.
 
-**Human review:** the amended design is worth a document handoff (design + this plan's gate section)
-before Phase C spends implementation effort on the weights file.
+**Spends money:** yes — tier 1, two live calls. Actual: 17 tokens each.
+
+**Human review:** satisfied. The amended design and this plan went out for external review and came
+back with one genuine defect — the calibration sweep's denominator range started at 4 while the
+effective-floor table it produces is specified from `min_relevant_support` = 3, leaving the audit
+gate with no entry to read for a cell that lands at exactly 3. Corrected above. The same review also
+pinned `AggregationStatus` to `qsf_semantic_eval` (defining it in the datagen crate would be a
+dependency cycle) and prompted the `prepare-session` workspace location to be made explicit.
 
 ---
 
@@ -666,7 +694,11 @@ data and the gatekeeper enforces that, whereas a permanently-optional `review` t
   - `aggregation_status` added to `PairResult` (`runner.rs:19`) as an **explicitly optional** field
     (`Option<AggregationStatus>`, `#[serde(default, skip_serializing_if = "Option::is_none")]`),
     because the Phase-D sample carries no `panel_vote` and `run_baseline` must still produce results
-    for it;
+    for it. The `AggregationStatus` enum is defined in `qsf_semantic_eval`'s schema module and
+    re-exported by `qsf_semantic_datagen` where needed. This is not a style preference: the
+    dependency runs datagen → eval (`crates/qsf_semantic_datagen/Cargo.toml`), so defining the enum
+    in datagen and referring to it from `PairResult` would be a dependency cycle that does not
+    compile;
   - `tied_pair_count` added beside the existing `ambiguous_pair_count` in the report's slice
     breakdowns — the attribution that makes the design's "read the status field" true for the
     primary consumer;
@@ -810,9 +842,16 @@ is 0, 0.2, 0.4, 0.6, 0.8, 1.0. So a floor of 0.75 is exactly representable in a 
 cells. The policy therefore publishes an **effective-floor table**: for every denominator `n` from
 `min_relevant_support` to the pool's maximum observed support, the smallest achievable value ≥
 `R_floor` (and ≤ the maximum metrics). Because real cell sizes are known only after labeling,
-calibration runs across the whole denominator range the census shows the pool can produce (4–34),
-which pre-registers the effective floor for whatever size a cell turns out to have — and avoids
-calibrating on the evidence being gated.
+calibration runs across the whole denominator range from `min_relevant_support` to the pool's
+maximum observed support (3–34), which pre-registers the effective floor for whatever size a cell
+turns out to have — and avoids calibrating on the evidence being gated.
+
+The range starts at `min_relevant_support`, **not** at the lowest cell size the census happens to
+show. A cell whose actual support lands at exactly 3 clears the support condition and then needs an
+`R_floor` lookup at n = 3; a sweep starting at 4 would leave the gate with no entry to read. The
+checkpoint's `min_relevant_support + 2` margin does not close this gap — that margin is a
+projection-time buffer against erosion, so actual post-labeling support may legitimately come in
+below 5 without any of it being an error.
 
 The same requirement extends to **`R_min`**: a macro across seven goals whose denominators run 4–23
 inherits the quantization of its thinnest members, so its achievable values are sums of coarse
@@ -1101,8 +1140,10 @@ through the shared transport, so its dry-run path exercises the CLI ritual and a
   where it cannot be disabled), the verbatim prompt file, **no hand repair** (repairing malformed
   output by hand makes the operator the labeler), and the attestation fields the run record carries.
 - **`prepare-session` subcommand**, so isolation is mechanical rather than remembered: it writes an
-  isolated working directory containing exactly two files — the guideline at its selected version
-  and a copy of `labeling-input.jsonl` (or a chunk of it) — emits `workspace_listing_sha256` and
+  isolated working directory **outside the repository working tree** — not a scratch path beneath it,
+  because a workspace-aware client invoked from inside the repo resolves to the project root and can
+  enumerate the whole tree — containing exactly two files: the guideline at its selected version
+  and a copy of `labeling-input.jsonl` (or a chunk of it). It emits `workspace_listing_sha256` and
   `labeling_input_sha256`, and supports `--chunk-size N` to emit `labeling-input.part-K.jsonl`.
   Chunking is mandatory: 403 KB across 114 lines (3.5 KB per line, because the full 7-goal roster
   repeats on every line) is roughly 100k tokens. Each chunk part becomes one **labeling run** inside
