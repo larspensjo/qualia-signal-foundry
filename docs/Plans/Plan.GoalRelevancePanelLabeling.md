@@ -4,7 +4,7 @@ Status: Proposed — not started
 Maturity: Candidate
 Area: Evaluation infrastructure / Volition (goal relevance) / Data generation
 Implements: `docs/Plans/Design.GoalRelevancePanelLabeling.md` (authoritative for the design; this
-plan sequences it and amends it where the census below invalidated it)
+plan sequences it, and the census corrections below have been carried back into it)
 Evidence: `docs/Reviews/Review.GoalRelevanceGateFeasibility.md`
 Parent: `docs/Plans/Plan.GoalRelevanceFrozenSets.md`
 
@@ -25,10 +25,10 @@ shape on structural grounds.
 Two facts about the current state shape everything below:
 
 - The production pool (114 utterances × 7 goals = 798 pairs, labeled by GPT-5.4-mini and Claude
-  Fable 5 under `goalrel-label-v1`) lives **only** in `runs/goalrel-production/`, which
-  `.gitignore` line 7 excludes. There is no backup. The 591/798 agreement figure and the
-  207-disagreement corpus that the census, the rubric-sensitivity check, and the rubric's worked
-  examples all rest on exist in exactly one place, on one disk.
+  Fable 5 under `goalrel-label-v1`) and its replay/evidence lineage are committed under
+  `evaluation/frozen/goal-relevance/lineage/pools/goalrel-generation-live/`. The 591/798 agreement
+  figure and the 207-disagreement corpus that the census, rubric-sensitivity check, and rubric's
+  worked examples rest on are therefore version-controlled rather than local-only.
 - No frozen test set exists. The only frozen artifact is
   `evaluation/frozen/goal-relevance/sample.dataset.jsonl` — 12 records, utterance ids
   `sample-1`..`sample-11`, schema v2 — which is also the runner's default input.
@@ -96,7 +96,7 @@ here. Its four load-bearing findings:
    spread. This is a relevance-threshold disagreement, not a two-goal confusion.
 4. **The conservative breadth policy already exists** in
    `AnnotationGuidelines.GoalRelevance.md`, names four of the five worst-disagreeing goals, carries
-   worked examples, and landed 2026-07-21 (`d935c77`) *before both labeling runs*. Both labelers had
+   worked examples, and landed on 2026-07-21 *before both labeling runs*. Both labelers had
    it and still split 199 times in one direction. So `goalrel-label-v2` is a **determinacy**
    problem, not a missing-stance problem.
 
@@ -104,30 +104,14 @@ Measured per `(goal × split)` over the whole split, every one of the 14 cells c
 `min_relevant_support = 3` under both the strict and optimistic bounds. The parent plan's per-slice
 floors are met (negation 8/8, quoted 6/6, hypothetical 6/6 per split against 6/5/5).
 
-## The gate, as this plan builds it
+## The gate (defined by the design)
 
-This supersedes the design's *Gate conditions, per hard slice and per split*. Phase A carries it
-back into the design document.
-
-| Cell | Conditions |
-|---|---|
-| per `(slice × split)` | `relevant_false_positive_rate ≤ F_max`; `abstain_rate ≤ A_max`; `utterance_relevant_set_match ≥ M_min` |
-| per `(goal × split)` | `relevant_recall ≥ R_floor`; `relevant_support ≥ min_relevant_support`, and a cell below it **fails the freeze** |
-| per `(split)` | macro `relevant_recall` over **all seven** goals ≥ `R_min` |
-
-Six thresholds, not seven.
-
-- **Macro `relevant_recall` is retired as a per-slice condition.** A slice spans only two of seven
-  goals, so a per-slice macro reads as "negation handling across the roster" while measuring a
-  two-goal subset. That is a validity defect in the statistic, not a support shortfall, and no
-  threshold tuning repairs it. `R_min` survives as a per-split macro over all seven goals.
-- **`min_evaluated_goals` is retired.** With every `(goal × split)` cell required to clear support
-  or fail, it is satisfied at 7 by construction.
-- **"Insufficient evidence is a failure, not a pass" follows the gated cell.** It attaches to
-  `(goal × split)`.
-- **The hard-slice conditioning defect is a recorded v1 known limitation**, not a v1 fix: hard
-  slices must condition on all seven goals so a future dataset version inherits the fix rather than
-  the defect. Regeneration stays a live option at the pool-size checkpoint (Phase J).
+The authoritative gate definition, threshold classification, retirement of
+`min_evaluated_goals`, and rationale for moving macro recall to the split level are in the design's
+*The gate* section. This plan sequences that design. The census evidence also makes the hard-slice
+conditioning defect a recorded v1 known limitation rather than a v1 fix: hard slices must condition
+on all seven goals in a future dataset version. Regeneration stays a live option at the pool-size
+checkpoint.
 
 ### Gold `ambiguous`: modelled minimally, measured fully
 
@@ -228,8 +212,8 @@ evaluation/frozen/goal-relevance/lineage/
 ```
 
 `blind-qa-decisions.jsonl` is **not** in this list and is not expected anywhere: it was never
-produced. The eighteen files in `runs/goalrel-production/` are exactly those named above; there is
-no blind-QA file, so any check that demands one is wrong. The `operator-gates/` group is committed
+produced. The eighteen files rescued from `runs/goalrel-production/` are exactly those named above;
+there is no blind-QA file, so any check that demands one is wrong. The `operator-gates/` group is committed
 rather than discarded because DecisionLog 2026-07-22 makes the anchor approval and the pre-labeling
 pool review *required campaign steps* — their artifacts are the evidence those gates were passed.
 
@@ -238,7 +222,7 @@ Three deliberate deviations from the design's literal wording, all carried into 
 - **The policy files live under `lineage/policy/`, not under `lineage/<dataset_version>/`.** They
   are version-stamped in their own filenames and pinned by hash in every manifest that uses them, so
   one home keeps them DRY across dataset versions while remaining fully committed and fully
-  reproducible. (Cross-version reuse is Open Question 1.)
+  reproducible. Cross-version reuse is therefore settled by the policy layout and manifest hashes.
 - **The ledger indexes runs; the run artifacts hold the verdicts.** The design says the ledger
   "holds every verdict"; duplicating 6,384 verdicts into a second file would create a second source
   of truth. The ledger holds one content-hashed entry per run with its utterance coverage, and
@@ -393,9 +377,9 @@ Zero code except the availability smoke. Everything here removes a risk that com
 
 **Work**
 
-1. **Amend `docs/Plans/Design.GoalRelevancePanelLabeling.md`.** Everything else cites the design,
-   and the design currently describes the pre-census gate. The net change is substantial and must be
-   carried back rather than left as a plan-only correction:
+1. **Amend `docs/Plans/Design.GoalRelevancePanelLabeling.md` — DONE.** Everything else cites the
+   design, which previously described the pre-census gate. The net change was substantial and had to
+   be carried back rather than left as a plan-only correction:
    - the gate shape above (per `(slice × split)`, per `(goal × split)`, per `(split)`);
    - `min_evaluated_goals` retired; macro recall moved from per-slice to per-split over all seven
      goals; the insufficient-evidence rule re-attached to `(goal × split)`;
@@ -406,13 +390,13 @@ Zero code except the availability smoke. Everything here removes a risk that com
      pass / labeling run vocabulary;
    - `labeling_input_sha256` joins the manifest;
    - the ledger indexes hash-pinned run artifacts rather than duplicating verdicts, and the
-     `goalrel-label-v1` mini/Fable runs stay outside it (the design says they remain in the ledger
-     unselected; that was written before it was known their provenance was never captured);
+     `goalrel-label-v1` mini/Fable runs stay outside it (the earlier design said they remained in the
+     ledger unselected; that was written before it was known their provenance was never captured);
    - the tie rule for the boolean `none_of_roster` vote (`tied` → `false`);
-   - **the audit policy's contents gain a tie tripwire.** The design enumerates the policy as
-     containing exactly the seven named thresholds; it now carries a third kind of pre-registered
-     value — a mechanism-assumption tripwire on the dry run's tie **counts**, frozen like the
-     performance thresholds but triggering a recorded operator decision rather than a gate failure.
+   - **the audit policy's contents gain a tie tripwire.** The earlier design enumerated only
+     thresholds; it now carries a third kind of pre-registered value — a mechanism-assumption
+     tripwire on the dry run's tie **counts**, frozen like the performance thresholds but triggering
+     a recorded operator decision rather than a gate failure.
      The design's definition of `tied`, its precedence, and the `tied` → gold `ambiguous` rule are
      **unchanged**; the projection arithmetic that once consumed a tie rate was a plan-level
      construct and never a design claim, so nothing else in the design moves for this;
@@ -421,33 +405,33 @@ Zero code except the availability smoke. Everything here removes a risk that com
    - the hard-slice conditioning defect recorded as a v1 known limitation;
    - the *Documents to update* list is **extended, not replaced** — say so in the design, so a reader
      of both documents does not conclude one is stale.
-2. **Commit the v1 lineage now.** Move `runs/goalrel-production/` into
-   `evaluation/frozen/goal-relevance/lineage/pools/<generation_run_id>/` per the layout above and
-   commit it. This is not gated on the labeling phase and is not satisfied by a backup: a copy on
-   another disk satisfies neither the project's own version-control rule nor the reproducibility
-   argument that a money-releasing checkpoint must not rest on non-reproducible inputs. The 591/798
-   figure is already a methodology number, so under the committed rule these artifacts should
-   already be in git. Nothing in the pool falls under the transcript exception — it holds no
-   transcripts and no raw captures. Commit gives backup, integrity and rule-compliance in one act.
+2. **Commit the v1 lineage now — DONE.** The eighteen replay and evidence artifacts are tracked
+   under `evaluation/frozen/goal-relevance/lineage/` at the layout above. This was not
+   gated on the labeling phase and is not satisfied by a backup: a copy on another disk satisfies
+   neither the project's own version-control rule nor the reproducibility argument that a
+   money-releasing checkpoint must not rest on non-reproducible inputs. The 591/798 figure is
+   already a methodology number, so under the committed rule these artifacts belong in git.
+   Nothing in the pool falls under the transcript exception — it holds no transcripts and no raw
+   captures.
 3. **Reconcile the parent plan's status line** (above) and mark its labeling/review/freeze campaign
    as superseded by this plan.
-4. **Model-availability smoke — a blocking precondition that also sizes the dry run.** One live
-   single-call test per API model id (`gpt-5.6-sol`, `gpt-5.6-terra`; `gpt-5.4-mini` is already
-   proven by the v1 run), plus a reachability confirmation for each hand-driven member (Opus 5,
-   Fable 5, Sonnet 5, Gemini Flash 3.6, Kimi K3). A code inspection is *not* an acceptable
-   substitute and would return the wrong answer: `ModelId::new(provider, model_name: impl Into<String>)`
-   takes a free string with no allowlist anywhere in the kit, and the only model-name logic is
-   `prefers_max_completion_tokens` (`openai.rs:277-282`), a prefix test for gpt-5/o1/o3/o4 that
-   `gpt-5.6-sol` passes. The kit will serve any model id. The real risk is one layer out — whether
-   the account has API access to those models and whether the id strings are exactly right.
-   **This gates the dry run's sizing, not merely its ordering.** The smoke determines whether three
-   members are automatable or one. If only mini is reachable, hand-driven load rises from five
-   members to seven, both in the Phase I dry run and in the Phase K campaign, and the
-   session-capacity estimate that feeds the checkpoint changes with it. Phase I reads this result
-   before scheduling.
-   **If a member is unreachable, panel composition and the 5000 bp lineage cap must be re-decided as
-   a design amendment before the weights file is written** — a silent drop would re-create an
-   Anthropic majority that the validator is supposed to catch.
+4. **Model-availability smoke — DONE, and it sizes the dry run.** The operator ran the live
+   single-call tests for `gpt-5.6-sol` and `gpt-5.6-terra`: both were reachable, echoed the exact
+   requested id in `model`, returned `finish_reason: stop`, and accepted `max_completion_tokens`,
+   confirming the `prefers_max_completion_tokens` branch. `gpt-5.4-mini` was already proven by the
+   v1 production run. Opus 5, Fable 5, Sonnet 5, Gemini Flash 3.6, and Kimi K3 were confirmed
+   reachable by the operator. Open Question 8 did not fire; no member is unreachable, so panel
+   composition and the 5000 bp lineage cap stand exactly as designed, with Anthropic at 270 of 540
+   units on the cap, not over it.
+   Antigravity is now CLI-drivable through `agy.exe --print`; the chosen Gemini member is
+   `gemini-3.6-flash-high`. There are four automatable members (Sol, Terra, mini, Gemini) and four
+   hand-driven members (Opus, Fable, Sonnet, Kimi as auditor), one fewer hand-driven pass than the
+   earlier sizing assumed in both the dry run and campaign. The lower hand-driven load lowers the
+   session-capacity estimate feeding the money-releasing checkpoint. The `run_mode` enum remains
+   `api | manual`; its CLI-driven representation is a new open question, not resolved here.
+   Antigravity's `claude-sonnet-4-6` and `claude-opus-4-6-thinking` are 4.6 models, not Sonnet 5
+   or Opus 5, and must not substitute for the Anthropic panel members because doing so changes the
+   member identity over which the 5000 bp cap is computed.
 5. **Update `docs/Handoff.md`.** Its *Next* currently recommends running the operator campaign that
    this plan replaces, and its alternate names "the operator label review that flips the 12 sample
    records from `draft`" — an item that ceases to exist when review provenance is deleted.
@@ -1098,12 +1082,14 @@ ledger-ingest path structurally cannot consume it.
 
 ## Phase I — The hand-driven ritual and the full-panel dry run
 
-This replaces the design's single-model Antigravity mechanics check. That check could not produce a
-tie evidence at all, because a tie is a property of seven models voting.
+This implements the design's full-panel dry run. The earlier single-model Antigravity mechanics
+check could not produce tie evidence at all, because a tie is a property of seven models voting.
 
-**Sizing depends on Phase A.** The number of automatable members (three if Sol and Terra are
-reachable, one if not) sets how much of the dry run is hand-driven and therefore its operator cost.
-Read the Phase A availability result before scheduling.
+**Sizing is settled by the availability smoke.** Four members are automatable: Sol, Terra, and mini
+through the shared OpenAI transport, plus Gemini Flash 3.6 through the Antigravity CLI
+(`agy.exe --print`) at exact model id `gemini-3.6-flash-high`. The remaining four members — Opus,
+Fable, Sonnet, and Kimi as auditor — are hand-driven. Gemini is automatable but does **not** run
+through the shared transport, so its dry-run path exercises the CLI ritual and attestations.
 
 **Work**
 
@@ -1284,15 +1270,18 @@ lives.
 
 **Preconditions (all hard)**
 
-- v1 lineage committed (Phase A) and the availability smoke green;
-- the checkpoint passed with a recorded decision (Phase J);
+- v1 lineage committed and the availability smoke green;
+- the pool-size checkpoint passed with a recorded decision;
 - the audit policy committed and hashed **before any auditor verdict exists**;
 - `ledger verify` green.
 
 **Work**
 
-- Automatable through the existing transport: **Sol, Terra, mini** (3 of 8 passes, subject to the
-  Phase A result). Hand-driven: **Opus, Fable, Sonnet, Gemini, Kimi** (5 of 8).
+- Automatable through the existing shared OpenAI transport: **Sol, Terra, mini** (3 of 8 passes).
+  **Gemini Flash 3.6 is also automatable**, but through the Antigravity CLI
+  (`agy.exe --print`) at exact model id `gemini-3.6-flash-high`, not through that transport.
+  Hand-driven: **Opus, Fable, Sonnet, Kimi** (4 of 8). Total automatable members: four; total
+  hand-driven members: four.
   `crates/qsf_semantic_datagen/src/transport.rs` builds only `OpenAiProvider` / `ProviderKind::OpenAi`.
   **Stated once so it is not re-litigated on a wrong premise:** `ProviderKind` in
   `openai_provider_kit` has three variants (OpenAi, Anthropic, Google — `types.rs:31-35`), but the
@@ -1300,23 +1289,21 @@ lives.
   `AnthropicProvider` and no `GoogleProvider`. Adding them means a cross-repo change in
   `web_page_filet_mignon` at a pinned rev, or a local fork — not a small adapter job. Adding provider
   transports was **considered and rejected**: the design deliberately treats manual runs as
-  first-class, four new provider integrations to avoid five passes is a large expansion of a crate
-  the parent plan scoped as lean, and Kimi stays manual regardless.
+  first-class, new provider integrations to replace the remaining hand-driven passes would be a
+  large expansion of a crate the parent plan scoped as lean, and Kimi stays manual regardless.
 - **Per-run durable landing is a per-run gate, not a phase exit** — and "run" here means the
   chunk-level labeling run, not the member pass. Run N lands durably — artifact written to its
   lineage path, validated, ledger-appended, committed — before run N+1 begins. Implemented as a
   single check at the end of the phase, a disk failure during pass 6 costs passes 1–5, which is
   exactly the loss the gate exists to prevent. Mechanically, `prepare-session` refuses to prepare the
   next session unless `ledger verify` passes over every recorded run; the git commit itself remains
-  an operator step on the phase checklist (Open Question 4).
+  an operator step on the labeling-campaign checklist (Open Question 4).
 - Each hand-driven run sets up its isolated two-file working directory through `prepare-session`
   first and records its attestations. No hand repair; malformed output is resolved with the model and
   the replacement validated.
-- Optionally extend `crates/qsf_semantic_datagen/pricing/goalrel-generation-price-table.v1.json` to
-  a v2 table carrying real prices for the panel model ids. Today it holds only `gpt-5.4-nano` and
-  `gpt-5.4-mini`, so Sol and Terra are absent and cost estimation degrades to token-only
-  (`pricing.rs:94`). Prices must be operator-supplied; token-only is the honest fallback
-  (Open Question 3).
+- Campaign reporting is token-only, following the 2026-07-21 decision-log rule for models without a
+  matching checked-in price. The existing price table remains unchanged; no optional v2 price-table
+  work is part of this campaign.
 
 **Verification**
 
@@ -1449,8 +1436,8 @@ and a test enforces that the five performance thresholds are byte-identical acro
 
 Phases B–G and L cost nothing. Tier-1 measurement spend is roughly a tenth of the campaign and gates
 it. Tier-2 production spend is the commitment. And **most of the real effort in this plan is operator
-sessions in Phase K** — five hand-driven passes of ~12 chunks each — which the dry run measures
-rather than this plan asserting.
+sessions in the labeling campaign** — four hand-driven passes of ~12 chunks each — which the dry
+run measures rather than this plan asserting.
 
 ---
 
@@ -1479,7 +1466,7 @@ landing changes the document.
 | `evaluation/frozen/goal-relevance/sample.dataset.jsonl` | regenerated at v3, review block removed, no `panel_vote` | D |
 | `evaluation/schemas/GoalRelevanceCorpusAndRoster.md` | schema v3, `panel_vote`, review removal, lineage layout, manifest | D, F |
 | `crates/qsf_semantic_datagen/src/{artifacts,frozen}.rs` | `fold_panel_pool` rename set; `panel-pool.jsonl`; dense panel coverage; mandatory `panel_vote` | D |
-| `evaluation/frozen/goal-relevance/lineage/policy/audit-policy.<v>.json` + calibration | **new** — metrics, six thresholds, failure model, metric-to-corruption map, joint firing map, effective-floor table, tie tripwire | E |
+| `evaluation/frozen/goal-relevance/lineage/policy/audit-policy.<v>.json` + calibration | **new** — metrics, five performance thresholds, the evidence-adequacy threshold, failure model, metric-to-corruption map, joint firing map, effective-floor table, tie tripwire | E |
 | `crates/qsf_semantic_datagen/fixtures/panel-replay/` | **new** — the checked-in fixtures the default command exercises | G |
 | `evaluation/annotations/AnnotationGuidelines.GoalRelevance.md` | `goalrel-label-v2`: executable breadth test, worked examples, reader-trial boundary | H |
 | `evaluation/contracts/GoalRelevance.TaskContract.md` | checked; updated only if v2 narrows the contract's notion of relevance | H |
@@ -1547,9 +1534,9 @@ New entries (proposed here, committed when the behavior lands):
   `Provenance.review` is gone, `PairResult` carries an optional `aggregation_status`, and the schema
   doc, sample dataset and legacy-envelope fixtures match.
 - A committed weights file with computed lineage totals and an enforced cap; a committed,
-  content-hashed audit policy with six thresholds, a stated failure model, a metric-to-corruption
-  map, a joint firing map, a published effective-floor table and a pre-registered tie tripwire
-  expressed as counts, all hashed into the manifest.
+  content-hashed audit policy with five performance thresholds, the evidence-adequacy threshold, a
+  stated failure model, a metric-to-corruption map, a joint firing map, a published effective-floor
+  table and a pre-registered tie tripwire expressed as counts, all hashed into the manifest.
 - An append-only ledger of fully-provenanced runs, a snapshot selection admitting disjoint partial
   runs per member pass, and a pure integer aggregation whose three statuses are all covered by
   fixtures.
@@ -1573,42 +1560,75 @@ New entries (proposed here, committed when the behavior lands):
 
 ## Open Questions (surfaced, not resolved)
 
-1. **Cross-dataset-version reuse of policy files.** This plan gives `panel-weights.*.json` and
-   `audit-policy.*.json` a single home under `lineage/policy/` for DRY reasons, deviating from the
-   design's literal "under `lineage/<dataset_version>/`". If a future version prefers a per-version
-   copy pinned by hash (a lockfile pattern), that is a defensible alternative; the choice should be
-   settled in the design amendment rather than left implicit.
-2. **The numeric values.** This plan fixes the *derivation* of `R_min`, `R_floor`, `F_max`, `A_max`
-   and `M_min` (sweep, failure model, metric mapping, selection rule, tie-break, joint verification,
-   representability), not the numbers — they come out of the Phase E sweep. Likewise the determinacy
-   bar and its per-goal floor for Phases H/J are proposed by the rubric phase and confirmed by the
-   operator before the checkpoint runs; this plan deliberately does not invent them.
-3. **Pricing table.** Whether the operator supplies real prices for the panel model ids (making the
-   campaign report dollars) or the run reports token-only. Token-only is the honest fallback;
-   fabricating a price is not an option.
-4. **Mechanical enforcement of "committed", not just "on disk".** `ledger verify` proves the
-   artifact exists and hashes correctly; it cannot prove it is committed. Whether `prepare-session`
-   should additionally check git cleanliness of the lineage tree (adding a git dependency or a shell
-   out) is unresolved; today the commit is an operator checklist step.
-5. **Whether a future dataset version admits the prior-rubric runs into the ledger.** This plan keeps
-   them out because their provenance was never captured. If a later version wants a complete
-   labeling history in one place, it needs a deliberate representation for never-captured
-   provenance — which is a decision about the ledger's guarantee, not a migration detail.
-6. **Gemini via Antigravity and tool-freeness.** Whether the IDE can be put in a genuinely tool-free
-   state, or whether the run must record `tools_available[]` verbatim and the methodology note report
-   it as not tool-free.
-7. **The regenerated sample's size.** The dry run yields ~10 utterances × 7 goals = ~70 records
-   against a current fixture of 12. Whether the sample keeps roughly its current size (a subset of
-   the dry run) or grows to the full dry-run pool changes the runner's default output volume.
-8. **What happens if a panel member proves unreachable** at the Phase A smoke. Composition and the
-   lineage cap must be re-decided as a design amendment; which member is the preferred substitute is
-   not decided here, and the answer also changes the dry run's and the campaign's hand-driven load.
-9. **What a concentrated tie partition means.** The stability question that stood here is closed:
-   nothing projects from a tie rate any more. What survives is interpretive rather than numeric —
-   ties clustered in one goal or one hard slice would indicate something structural about that
-   goal's rubric or that slice's construction, and the plan does not pre-commit to what the operator
-   should conclude from such a pattern. The tripwire ensures the pattern is looked at; reading it is
-   a judgment the checkpoint brief presents rather than automates.
+### Closed by the design amendment and operator evidence
+
+- **1. Cross-dataset-version reuse of policy files — closed.** Policy files live under
+  `lineage/policy/`, with version-stamped filenames and hashes pinned in every manifest that uses
+  them. This keeps one DRY, committed, reproducible home across dataset versions. It deliberately
+  deviates from the design's literal `lineage/<dataset_version>/` wording; the design now records
+  the reasoning so the layout is not mistaken for an oversight.
+
+- **3. Pricing table — closed.** The campaign report is token-only. This is the honest fallback;
+  fabricating a price is not an option. A future version may add a real price table, but no artifact
+  shape depends on it.
+
+- **6. Gemini via Antigravity and tool-freeness — closed as not tool-free.** The operator measured
+  `gemini-3.6-flash-high` in headless Antigravity `--print` mode with the repo as workspace:
+  nineteen tools were nominally available, and `--sandbox` did not reduce the list; no agents were
+  defined and no plugins were installed. Headless mode auto-denied `view_file` (`BLOCKED`),
+  `grep_search` (required `read_file`), and `run_command` (required `command`). It executed
+  `search_web` freely with live results and named the tool, fetched an external page with
+  `read_url_content` and returned its title, and enumerated the repo filenames with `list_dir`.
+  Therefore it could not read file contents or execute commands, but it could search the web and
+  fetch URLs. Labeling runs must be invoked from an isolated empty directory, not the repo;
+  `tools_available[]` records the tools that actually executed, and the methodology note names
+  live web search specifically. The file-axis independence is preserved; live web access is the
+  contamination vector.
+
+- **8. Unreachable panel member — closed by the availability smoke.** All members were reachable;
+  composition and the 5000 bp lineage cap stand unchanged, with Anthropic at 270 of 540 units on
+  the cap.
+
+### Remaining questions
+
+- **2. The numeric values.** This plan fixes the *derivation* of `R_min`, `R_floor`, `F_max`, `A_max`
+  and `M_min` (sweep, failure model, metric mapping, selection rule, tie-break, joint verification,
+  representability), not the numbers — they come out of the Phase E sweep. Likewise the determinacy
+  bar and its per-goal floor for Phases H/J are proposed by the rubric phase and confirmed by the
+  operator before the checkpoint runs; this plan deliberately does not invent them.
+
+- **4. Mechanical enforcement of "committed", not just "on disk".** `ledger verify` proves the
+  artifact exists and hashes correctly; it cannot prove it is committed. Whether `prepare-session`
+  should additionally check git cleanliness of the lineage tree (adding a git dependency or a shell
+  out) is unresolved; today the commit is an operator checklist step.
+
+- **5. Whether a future dataset version admits the prior-rubric runs into the ledger.** This plan keeps
+  them out because their provenance was never captured. If a later version wants a complete
+  labeling history in one place, it needs a deliberate representation for never-captured
+  provenance — which is a decision about the ledger's guarantee, not a migration detail.
+
+- **7. The regenerated sample's size.** The dry run yields ~10 utterances × 7 goals = ~70 records
+  against a current fixture of 12. Whether the sample keeps roughly its current size (a subset of
+  the dry run) or grows to the full dry-run pool changes the runner's default output volume.
+
+- **9. What a concentrated tie partition means.** The stability question that stood here is closed:
+  nothing projects from a tie rate any more. What survives is interpretive rather than numeric —
+  ties clustered in one goal or one hard slice would indicate something structural about that
+  goal's rubric or that slice's construction, and the plan does not pre-commit to what the operator
+  should conclude from such a pattern. The tripwire ensures the pattern is looked at; reading it is
+  a judgment the checkpoint brief presents rather than automates.
+
+- **10. CLI-driven member representation in `run_mode`.** The ledger enum remains exactly
+  `"api" | "manual"`; the choice is unsettled between adding a third enum value for a CLI-driven
+  member, or reading `manual` as "not through the shared kit". This must be settled when the ledger
+  is built; this plan does not choose.
+
+- **11. Whether Antigravity deny rules can block `search_web`.** The permission categories are
+  `read_file`, `write_file`, `read_url`, `execute_url`, `command`, `unsandboxed`, and `mcp`, none
+  of which names web search. Deny reportedly takes precedence over allow and automatic workspace
+  access, but the hand-edited `~/.gemini/settings.json` was inert: `list_permissions` loaded no
+  deny rules. The operator must add the rules through interactive `/permissions` and test them
+  before the dry run. Until then, Gemini remains disclosed as not tool-free.
 
 ---
 

@@ -1,9 +1,10 @@
 # Gate feasibility census — per-goal auditor gate for goal-relevance v1
 
 Date: 2026-07-25
-Measures: `docs/Plans/Design.GoalRelevancePanelLabeling.md`, *The gate* → *Gate conditions, per hard
-slice and per split*.
-Source data: `runs/goalrel-production/` (gitignored, local only) — `generation-output.jsonl`,
+Measures: `docs/Plans/Design.GoalRelevancePanelLabeling.md`, *The gate*.
+Source data:
+`evaluation/frozen/goal-relevance/lineage/pools/goalrel-generation-live/` —
+`generation-output.jsonl`,
 `label-mini.jsonl`, `label-fable.jsonl`, 114 utterances × 7 goals = 798 pairs, `goalrel-label-v1`.
 Status: evidence for external review. No code changed; nothing was spent.
 

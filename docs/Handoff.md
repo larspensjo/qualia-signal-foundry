@@ -1,12 +1,11 @@
 # Handoff — Resume Here
 
-**Updated:** 2026-07-22 — the goal_relevance pipeline machinery is complete: on top of the
-smoke-cleared generation path, the production schedule (`generate --production`, two neutral
-floor-complete pools across all 7 goals), the seed-recorded deterministic split, the
-gatekeeper with teeth-proving tests, and the byte-reproducible freeze/lineage/methodology
-commands all landed reviewed; what remains is the human-controlled campaign itself; see
-[Plan.GoalRelevanceFrozenSets](Plans/Plan.GoalRelevanceFrozenSets.md). World
-perception is unchanged since the morning: all of
+**Updated:** 2026-07-26 — the goal_relevance pipeline machinery and v1 lineage rescue are complete;
+the eighteen replay/evidence artifacts are committed under
+`evaluation/frozen/goal-relevance/lineage/`, and the remaining work is the panel labeling and
+freeze campaign; see
+[Plan.GoalRelevancePanelLabeling](Plans/Plan.GoalRelevancePanelLabeling.md). World perception is
+unchanged since 2026-07-22: all of
 [Plan.WorldPerception](Plans/Plan.WorldPerception.md) is implemented, but the second
 real-corpus live session requested no consultation — blockers moved to the trigger layer
 (lowercased voice transcripts defeat the capitalization-based entity check; arbitration lets
@@ -40,30 +39,13 @@ Alternate: run a first real-corpus sleep consolidation and a recall probe
 tunes the provisional eligibility rule and 7-day half-life with real evidence.
 
 ## Next — active plan or plans
-### World perception
-**Close [Plan.WorldPerception](Plans/Plan.WorldPerception.md) once both probes have evidence,
-then delete the plan per workflow.**
-Why: all phases are implemented; the experiments own the remaining open questions
-(eligibility rule, news half-life, anti-repeat window, deferred-path latency).
-Alternate: if the rephrased probe surfaces facts but natural phrasing still cannot reach the
-trigger, scope a trigger-robustness slice from the experiment's new follow-ups (STT-aware
-entity detection; arbitration standing for ConsultWorld-capable goals under
-current-information cues).
-
 ### Semantic evaluation (goal relevance)
-**Run the operator campaign of
-[Plan.GoalRelevanceFrozenSets](Plans/Plan.GoalRelevanceFrozenSets.md): production
-anchors-only run and operator anchor review, `generate --production`, the required
-pool-review gate before paid labeling (DecisionLog 2026-07-22 — review relabels, never
-excludes), mini labeling, the independent Claude Fable cross-label, full human review
-(disagreements first), the blind-QA pass, then split, gatekeeper, freeze, and the
-methodology note.**
-Why: all pipeline machinery is implemented and review-hardened (recorded-seed freeze
-verification, gatekeeper teeth tests, committed lineage); the remaining work is
-operator-driven, with both anchor and pool checkpoints designed as document handoffs.
-Alternate: the remote-usage telemetry baseline (token-ledger extraction) is independent and
-can proceed in parallel; small pending item — the operator label review that flips the 12
-sample records from `draft`.
+**Execute the weighted panel labeling, audit, and freeze campaign in
+[Plan.GoalRelevancePanelLabeling](Plans/Plan.GoalRelevancePanelLabeling.md).**
+Why: the machinery, availability smoke, and committed v1 lineage are ready; the remaining
+work is operator-driven labeling and its gated replay.
+Alternate: close [Plan.WorldPerception](Plans/Plan.WorldPerception.md) once both live probes
+have evidence, then delete the plan per workflow.
 
 ## Horizon — direction
 

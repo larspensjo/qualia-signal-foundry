@@ -1,8 +1,12 @@
 # Plan: Frozen validation and test sets for goal relevance
 
-Status: Proposed — not started
+Status: Machinery complete (Phases A–D landed 2026-07-21..22); the labeling and freeze campaign is superseded by `Plan.GoalRelevancePanelLabeling.md`. Phase E (opt-in transcript capture) is not started and remains owned by this plan.
 Maturity: Candidate
 Area: Evaluation infrastructure / Volition (goal relevance) / Data generation
+
+The labeling, review, and freeze campaign described below is superseded by
+`docs/Plans/Plan.GoalRelevancePanelLabeling.md`. The per-slice floors, split algorithm, dense
+cross-product invariant, roster binding, retention rule, and lineage boundary remain in force.
 
 ## Why this plan exists
 
