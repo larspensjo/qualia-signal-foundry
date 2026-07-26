@@ -4,7 +4,7 @@ Status: proposed (revised 2026-07-26 against
 `docs/Reviews/Review.GoalRelevanceGateFeasibility.md`)
 Date: 2026-07-26
 Supports: `docs/Plans/Plan.GoalRelevanceFrozenSets.md`
-Reverses parts of one 2026-07-21 and two 2026-07-22 decision-log entries (see *Decisions this
+Reverses parts of one 2026-07-21 and three 2026-07-22 decision-log entries (see *Decisions this
 changes*).
 
 ## What the dataset claims
@@ -250,7 +250,12 @@ On top of those:
   `labeling_run_id`s per `panel_member_id`**, plus a complete set for the auditor, each pinned by
   content hash. Aggregation reads the selection, never the ledger's ordering or timestamps. In v1
   there are eight member passes (seven panel members plus the auditor), and a pass is composed of
-  complete, non-overlapping chunk runs; at a 10-utterance chunk size this is roughly 60–70 runs.
+  complete, non-overlapping chunk runs. The earlier 60–70 estimate assumed five hand-driven passes;
+  the availability smoke reduced that to four. The recomputed capacity assumption is four
+  hand-driven passes at 10 utterances per chunk
+  (`ceil(114 / 10) = 12` runs per pass; `4 × 12 = 48`) and four automatable passes at 30 utterances
+  per chunk (`ceil(114 / 30) = 4` runs per pass; `4 × 4 = 16`), or roughly **64 runs**. The dry run
+  measures whether these chunk sizes hold; the manifest records actual `runs_per_member`.
 - Aggregation requires **exactly one selected verdict in the union of a member's selected runs** for
   every `(snapshot, panel_member_id, utterance_id, goal_ref)` and for every
   `(snapshot, panel_member_id, utterance_id)` `none_of_roster` vote. Missing, overlapping, or duplicate
@@ -259,6 +264,13 @@ On top of those:
   pins it by SHA-256 over all inputs. Adding Kimi K4 later cuts `v2`; it never mutates `v1`. Scores
   are comparable within a version, and a version's labels never move under a model being measured
   against them.
+
+Every operation that reads or writes lineage takes one **lineage root parameter**, defaulting to
+`evaluation/frozen/goal-relevance/lineage/`. `ledger append`, `ledger verify`, snapshot selection,
+session preparation, and freeze all resolve through that root. Fixture replay overrides it with a
+temporary directory, so running the default smoke cannot append to or otherwise dirty the committed
+lineage. This is a general path contract rather than a smoke-only branch: rejection and replay tests
+can exercise destructive cases against scratch trees, and production uses the identical code path.
 
 ### Manual and IDE-driven labeling runs
 
@@ -345,8 +357,11 @@ verdict could rest on retrieved material the other panel members never saw.
 - The production pool is **114 utterances × 7 goals = 798 pair verdicts** plus 114 `none_of_roster`
   votes per member. Chunking a session across several exchanges is expected; the exactly-one-verdict
   rule fails the freeze on any gap, so a truncated session is caught rather than silently thinned.
-- The session transcript is retained beside the run artifact and hashed into `transcript_sha256`,
-  so "what was this model actually shown" stays answerable after the freeze.
+- The session transcript is retained at
+  `pools/<pool>/label-runs/transcripts/<labeling_run_id>.jsonl` relative to the selected lineage
+  root and hashed into `transcript_sha256`, so "what was this model actually shown" stays answerable
+  after the freeze. Transcripts are deliberately uncommitted; the committed lineage root ignores
+  `pools/*/label-runs/transcripts/` so retaining them does not dirty the repository.
 
 ### Guideline policy for v1
 
@@ -596,7 +611,7 @@ leverage that no panel member has:
 
 ## Decisions this changes
 
-Three entries need recorded reversals rather than silent replacement:
+Four entries need recorded reversals rather than silent replacement:
 
 - *2026-07-21 — Goal-relevance labels use independent blind review* — mandatory human review and
   the rule that no model-produced label becomes reviewed data without an operator decision are
@@ -604,6 +619,11 @@ Three entries need recorded reversals rather than silent replacement:
   `review-decisions.jsonl`, cold blind-QA answers no longer live in a separate
   `blind-qa-decisions.jsonl`, and deleting `Provenance.review` plus retiring
   `blind_qa_agreement_by_slice` removes the schema and gate paths those clauses required.
+- *2026-07-22 — Goal-relevance generation uses approved anchors, review-authoritative vague
+  negatives, and mode-appropriate models* — only the vague-negative clause is reversed. The vague
+  `none_of_roster` batch is no longer finalized by human review; its status comes from the panel's
+  weighted utterance-level vote plus the relevant-pair derivation override. The anchor-approval and
+  mode-appropriate-model clauses stand.
 - *Goal-relevance freezes are gate-kept and reproducible from committed lineage* — the gatekeeper
   rule list loses "review completeness", and its "blind-QA agreement" becomes a pre-registered
   auditor gate with per `(slice × split)`, per `(goal × split)`, and per `(split)` metrics. The
@@ -646,8 +666,10 @@ weighted ledger, full-panel audit, and replay provenance needed by the new desig
 - `evaluation/frozen/goal-relevance/lineage/policy/` — versioned, hash-pinned weights and audit
   policy files shared across dataset versions.
 - The append-only ledger, hash-pinned run artifacts, snapshot selection, and freeze manifest —
-  including `labeling_input_sha256`, pairwise-disjoint complete run sets, the full-panel dry-run tie
-  counts, and the Gemini web-search disclosure.
+  including the shared lineage-root parameter, `labeling_input_sha256`, pairwise-disjoint complete
+  run sets, the full-panel dry-run tie counts, and the Gemini web-search disclosure.
+- `.gitignore` — ignore the committed lineage root's
+  `pools/*/label-runs/transcripts/` directory while retaining each transcript's SHA-256 binding.
 - `docs/Handoff.md` — only if this changes the Now/Next recommendation.
 
 No `Experiment.*.md`: this is data-production methodology, not a consciousness-simulation mechanism
@@ -669,8 +691,10 @@ coupled-artifact event; the numbering separates concerns, not schema releases.
    pairwise-disjoint run coverage yielding exactly one verdict per
    `(snapshot, panel_member_id, utterance_id, goal_ref)` and per utterance-level vote. Rejection
    tests cover missing, overlapping, and duplicate selections, and a test proves that "latest" is
-   never consulted. Because four members are hand-driven and Gemini is CLI-driven with observed
-   web access in v1, the attested/manual path is a first-class path and must be covered.
+   never consulted. Every operation uses the shared lineage-root parameter, with replay and
+   rejection tests rooted in temporary directories. Because four members are hand-driven and
+   Gemini is CLI-driven with observed web access in v1, the attested/manual path is a first-class
+   path and must be covered.
 3. **N-labeler weighted aggregation** as a pure integer function — scores, ranking precedence,
    quorum, `aggregation_status`, `winner_share_bp`, `margin_bp`, plus the `none_of_roster` vote and
    its relevant-pair derivation override with the override counter. Fixtures for the `consensus`,

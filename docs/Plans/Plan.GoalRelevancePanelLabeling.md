@@ -1,6 +1,7 @@
 # Plan: Panel labeling for the frozen goal-relevance sets
 
-Status: Proposed — not started
+Status: In progress — census and design-amendment/lineage-rescue work complete; threshold-direction,
+split-seed, and census-subcommand work next
 Maturity: Candidate
 Area: Evaluation infrastructure / Volition (goal relevance) / Data generation
 Implements: `docs/Plans/Design.GoalRelevancePanelLabeling.md` (authoritative for the design; this
@@ -27,8 +28,9 @@ Two facts about the current state shape everything below:
 - The production pool (114 utterances × 7 goals = 798 pairs, labeled by GPT-5.4-mini and Claude
   Fable 5 under `goalrel-label-v1`) and its replay/evidence lineage are committed under
   `evaluation/frozen/goal-relevance/lineage/pools/goalrel-generation-live/`. The 591/798 agreement
-  figure and the 207-disagreement corpus that the census, rubric-sensitivity check, and rubric's
-  worked examples rest on are therefore version-controlled rather than local-only.
+  figure and the 207-disagreement corpus that the census, rubric-sensitivity check, and fresh
+  paraphrase/synthetic case selection rest on are therefore version-controlled rather than
+  local-only.
 - No frozen test set exists. The only frozen artifact is
   `evaluation/frozen/goal-relevance/sample.dataset.jsonl` — 12 records, utterance ids
   `sample-1`..`sample-11`, schema v2 — which is also the runner's default input.
@@ -70,8 +72,14 @@ or the manifest:
   selection expresses.
 - **Labeling run** — one `labeling_run_id`, one ledger entry, one content-hashed artifact, covering
   a *subset* of the pool. A pass is composed of one or more runs whose coverage is pairwise disjoint
-  and whose union is the pool. At a 10-utterance chunk size the ledger will hold on the order of
-  **12 runs per hand-driven pass**, so roughly 60–70 runs for eight passes.
+  and whose union is the pool. The earlier 60–70 estimate was written when five passes were assumed
+  hand-driven; the availability smoke reduced that to four, so the estimate is recomputed rather
+  than carried forward. At a 10-utterance hand-driven chunk size, `ceil(114 / 10) = 12` runs per
+  pass, so four hand-driven passes contribute `4 × 12 = 48` runs. The capacity assumption for the
+  four automatable passes is a 30-utterance chunk: `ceil(114 / 30) = 4` runs per pass, or
+  `4 × 4 = 16` runs. The projected ledger therefore holds roughly **64 runs across eight passes**.
+  The dry run measures whether those chunk sizes are realistic; any later change reports the
+  revised runs-per-member rather than preserving 64 by assertion.
 
 Wherever a count is stated, it says which unit it counts. The manifest groups `selected_runs[]` by
 `panel_member_id` and records `runs_per_member`, so a reader sees eight passes composed of N runs
@@ -171,7 +179,11 @@ distinction.
   trusts" is false unless they are in git. Sizes are trivial: generation output 82 KB, one label
   file ~110 KB, eight passes ~880 KB, the whole current pool 1.1 MB.
 - **Provenance evidence is not committed.** Session transcripts are never read by replay and fall
-  under the existing exception. `transcript_sha256` is **kept**: dropping it would not drop the
+  under the existing exception. As the design specifies, a transcript lives at
+  `pools/<pool>/label-runs/transcripts/<labeling_run_id>.jsonl` relative to the selected lineage
+  root. The committed root's `.gitignore` rule ignores
+  `evaluation/frozen/goal-relevance/lineage/pools/*/label-runs/transcripts/`; a scratch lineage root
+  needs no repository rule. `transcript_sha256` is **kept**: dropping it would not drop the
   transcript, it would drop the *binding*, so a transcript could be swapped later with no trace —
   which matters precisely where it defends an attestation.
 
@@ -217,7 +229,17 @@ there is no blind-QA file, so any check that demands one is wrong. The `operator
 rather than discarded because DecisionLog 2026-07-22 makes the anchor approval and the pre-labeling
 pool review *required campaign steps* — their artifacts are the evidence those gates were passed.
 
-Three deliberate deviations from the design's literal wording, all carried into the amendment:
+Every lineage-reading or lineage-writing operation takes the design's **lineage root parameter**.
+It defaults to `evaluation/frozen/goal-relevance/lineage/`, and is threaded without substitution
+through `ledger append`, `ledger verify`, snapshot selection, `prepare-session`, and freeze. The
+default replay smoke overrides it with a newly created temporary directory. This is a real
+parameter rather than a replay-smoke special case because the repository convention prefers the
+proper long-term solution even when it requires more work or refactoring: every existing rejection
+test can therefore exercise ledger rewrite refusal, placeholder-provenance refusal, selector
+overlap/gap errors, and `ledger verify` hash mismatches against a scratch tree rather than risking
+the committed append-only lineage.
+
+Three deliberate deviations from the pre-amendment design, now carried into it:
 
 - **The policy files live under `lineage/policy/`, not under `lineage/<dataset_version>/`.** They
   are version-stamped in their own filenames and pinned by hash in every manifest that uses them, so
@@ -487,8 +509,8 @@ dependency cycle) and prompted the `prepare-session` workspace location to be ma
 ## Phase B — Threshold-direction commitment, the split seed, and the rubric-sensitivity measurement
 
 Independent of every aggregation phase: it needs only current-schema `PairRecord`s and
-`run_baseline`. It lands early because it sizes a disclosure, generates worked examples for the
-rubric, and builds the tool the checkpoint depends on.
+`run_baseline`. It lands early because it sizes a disclosure, identifies case kinds for fresh
+worked examples, and builds the tool the checkpoint depends on.
 
 **The internal ordering is the point, and is verifiable in git history.** Work item 1 is committed
 *before* work item 4 runs.
@@ -510,8 +532,8 @@ rubric, and builds the tool the checkpoint depends on.
    floor improves **legitimately**, because the eval's target was corrected, not flattered.
    Mechanically this commit opens `goalrel-label-v2`: the guideline's own *Consistent use* rule says
    a change requires a new guideline version, so the rationale lands as the first section of the v2
-   document and Phase H fills in the executable test beneath it. No label set claims v2 until
-   Phase K, so nothing is invalidated by the early bump.
+   document and Phase H fills in the executable test beneath it. No label set claims v2 until the
+   Phase I dry run, so nothing is invalidated by the early bump.
 2. **Fix and record the split seed and the pool → split binding.** Which of pool-a / pool-b is
    validation is decided solely by the recorded split seed, and every `(goal × split)` number in the
    census, the re-census, the audit evidence and the freeze must mean the same thing. Run the
@@ -550,11 +572,11 @@ rubric, and builds the tool the checkpoint depends on.
    note and the choice of worked examples, and **never** the direction of the threshold. Its two
    legitimate uses: (a) it sizes a disclosure — if the gap is 5 points one sentence covers it; if 30
    the failure floor is barely meaningful without naming its rubric; (b) it is a determinacy signal —
-   the pairs driving the difference are exactly the ones v2 must be determinate about, a free
-   worked-example generator that says *which* cases to write examples for without saying which way
-   to answer them. Regardless of the measured value, the methodology note will state that the
-   failure floor is conditioned on `goalrel-label-v2`'s relevance threshold and is not comparable
-   across guideline versions.
+   the pairs driving the difference identify the **kinds of case** v2 must be determinate about and
+   therefore the kinds of fresh paraphrase or synthetic the worked-example library needs, without
+   making any production-pool pair itself an example or saying which way to answer it. Regardless
+   of the measured value, the methodology note will state that the failure floor is conditioned on
+   `goalrel-label-v2`'s relevance threshold and is not comparable across guideline versions.
 
 **Verification**
 
@@ -593,7 +615,9 @@ Design increments 1–2. Pure, fixture-tested, no network.
   (`panel_member_id`, model build identity, `labeling_run_id`) and every run-provenance field
   **required**. Append is the only write; a rewrite is a hard error. Ingest validates the run
   artifact through the existing `parse_label_interchange` path against the frozen roster — the
-  identical path `label-mini.jsonl` takes.
+  identical path `label-mini.jsonl` takes. Ledger append, verification, selection, session
+  preparation, and freeze all resolve paths from the shared lineage-root parameter defined in the
+  contract; none reaches around it to a compiled-in production path.
 - **The `goalrel-label-v1` mini and Fable runs stay outside the ledger.** They were cast under a
   retired rubric and can never be selected, and their provenance was never captured: no
   `labeling_prompt_sha256` (the prompt file does not exist until Phase I), no
@@ -613,8 +637,8 @@ Design increments 1–2. Pure, fixture-tested, no network.
   placeholder provenance field.
 - **Snapshot selection and selector** with the relaxation and every validation rule listed in the
   contract section above.
-- **`ledger verify`**: recomputes each recorded run's artifact hash from disk and fails on any
-  mismatch or missing file. Used by the per-run durable-landing gate in Phase K.
+- **`ledger verify`**: recomputes each recorded run's artifact hash from the selected lineage root
+  and fails on any mismatch or missing file. Used by the per-run durable-landing gate in Phase K.
 
 **Verification**
 
@@ -623,13 +647,16 @@ Design increments 1–2. Pure, fixture-tested, no network.
 - Weights validator: at-cap (Anthropic 270/540) **passes**; one unit over **fails**; a dropped GPT
   or Google member **fails** the cap; computed lineage totals match the recorded ones or the file is
   rejected.
-- Ledger rejection tests: rewrite attempt; entry with an empty or placeholder `run_sha256`,
+- Ledger rejection tests, all run against a temporary lineage root: rewrite attempt; entry with an
+  empty or placeholder `run_sha256`,
   `labeling_prompt_sha256`, `workspace_listing_sha256`, `model_build` or `harness`; entry whose
   artifact does not parse against the roster.
-- Selector rejection tests: missing verdict, duplicate verdict, unknown `labeling_run_id`, mismatched
-  `pool_id`, a member absent from the weights file, an auditor carrying weight, a run whose
-  `guideline_version` or guideline hash differs from the selection, and a selection that would
-  require inferring "latest".
+- Selector rejection tests, also against a temporary lineage root: missing verdict, duplicate
+  verdict, unknown `labeling_run_id`, mismatched `pool_id`, a member absent from the weights file,
+  an auditor carrying weight, overlap, a coverage gap, a run whose `guideline_version` or guideline
+  hash differs from the selection, and a selection that would require inferring "latest".
+- `ledger verify` hash-mismatch and missing-artifact tests mutate only a temporary lineage root and
+  prove the selected root is the one being verified.
 - **Phase-exit condition (not an extra):** a member pass assembled from **two partial runs covering
   disjoint utterance sets is selectable as complete**; an overlap is a hard error; a gap is a hard
   error. Without this, Phase K is not survivable.
@@ -718,9 +745,10 @@ data and the gatekeeper enforces that, whereas a permanently-optional `review` t
     and stored under `crates/qsf_semantic_eval/tests/legacy-envelopes/sample.v2.line.json`. It must
     not be re-derived from a later v3 artifact — that would not be an authentic v2 envelope, and the
     guarantee would drift from the artifact it protects. The existing hand-written v1 line
-    (`tests.rs:64-71`) moves into the same directory so there is one home for retired-envelope
-    fixtures. Phase I's sample regeneration touches the v3 sample only and **must not** regenerate
-    this file.
+    (`crates/qsf_semantic_eval/src/tests.rs:63-70`) moves into the same directory so there is one
+    home for retired-envelope fixtures. The `crates/qsf_semantic_eval/tests/` directory does not
+    exist yet; this work creates it and its `legacy-envelopes/` child. Phase I's sample regeneration
+    touches the v3 sample only and **must not** regenerate this file.
 - **Pipeline switchover** (design increment 7, pulled forward because the schema change forces it):
   - `fold_reviewed_pool` takes gold from the aggregated panel vote instead of `item.mini_label`
     (`artifacts.rs:376`), and is **renamed** — retaining "reviewed" after review is deleted obscures
@@ -840,11 +868,12 @@ The ladder differs by denominator: at n = 4 recall can only be 0, 0.25, 0.5, 0.7
 is 0, 0.2, 0.4, 0.6, 0.8, 1.0. So a floor of 0.75 is exactly representable in a 4-cell and
 **silently becomes 0.8** in a 5-cell — one `R_floor` is a different effective floor in different
 cells. The policy therefore publishes an **effective-floor table**: for every denominator `n` from
-`min_relevant_support` to the pool's maximum observed support, the smallest achievable value ≥
-`R_floor` (and ≤ the maximum metrics). Because real cell sizes are known only after labeling,
-calibration runs across the whole denominator range from `min_relevant_support` to the pool's
-maximum observed support (3–34), which pre-registers the effective floor for whatever size a cell
-turns out to have — and avoids calibrating on the evidence being gated.
+`min_relevant_support` to the maximum possible support of one `(goal × split)` cell, the smallest
+achievable value ≥ `R_floor` (and ≤ the maximum metrics). Because each split contains 57 utterances,
+post-v2 support can be any value through 57 even when v1's strict and optimistic bounds were lower.
+Calibration therefore runs across the complete denominator range **3–57**, from
+`min_relevant_support` to the maximum possible cell support. This pre-registers the effective floor
+for every size a cell can actually reach and avoids calibrating on the evidence being gated.
 
 The range starts at `min_relevant_support`, **not** at the lowest cell size the census happens to
 show. A cell whose actual support lands at exactly 3 clears the support condition and then needs an
@@ -853,10 +882,10 @@ checkpoint's `min_relevant_support + 2` margin does not close this gap — that 
 projection-time buffer against erosion, so actual post-labeling support may legitimately come in
 below 5 without any of it being an error.
 
-The same requirement extends to **`R_min`**: a macro across seven goals whose denominators run 4–23
-inherits the quantization of its thinnest members, so its achievable values are sums of coarse
-per-goal steps and its effective resolution is set by the 4-cells. `R_min` is swept at real cell
-sizes too, not only `R_floor`.
+The same requirement extends to **`R_min`**: a macro across seven goals whose cell denominators can
+run anywhere from 3 through 57 inherits the quantization of its thinnest members, so its achievable
+values are sums of coarse per-goal steps and its effective resolution is set by the 3-cells.
+`R_min` is swept at real cell sizes too, not only `R_floor`.
 
 ### The tie tripwire — a pre-registered count, not a rate
 
@@ -969,6 +998,10 @@ Design increment 6, plus the retention split.
 - Canonicalization as the design specifies: UTF-8, lexicographically sorted keys, no insignificant
   whitespace, LF endings, **no floating point anywhere in hashed content** — which the
   basis-point rule makes achievable across every replay artifact, not just the manifest.
+- **`frozen_at` remains an explicit freeze argument**, as it is today
+  (`crates/qsf_semantic_datagen/src/transport.rs:508`); freeze never reads a wall clock. The
+  caller-provided value is what makes two freezes from the same committed lineage byte-identical
+  rather than merely content-equivalent.
 - **Rebuild-on-replay**: the freeze re-derives every gold label, `panel_vote`, `none_of_roster` raw
   and derived value, and the full audit evidence from the selected runs, the weights file and the
   audit policy, and re-derives the split from the recorded seed. Precomputed values are compared
@@ -1012,14 +1045,17 @@ Design increment 6, plus the retention split.
   codebase; the v1 reconciliation *artifacts* are retained as historical evidence.
   `reconciliation.jsonl` (166 KB) and `reconciliation-summary.json` hold the 591/798 figure and the
   207-disagreement corpus that the census rests on, that the rubric-sensitivity check consumes, and
-  that the rubric phase mines for worked examples. The same applies to `review-decisions.jsonl`.
+  that the rubric phase mines for case kinds to paraphrase or synthesize. The same applies to
+  `review-decisions.jsonl`.
 - **Replace the default no-argument command with a panel replay smoke.** `run_cli`'s no-argument
-  path today runs `run_replay_labeling_smoke` (`transport.rs:186-210`), a mini-only fixture flow
-  ending in `reconcile` — which stops compiling when `reconcile` is deleted, and which would
-  otherwise leave the *default* path exercising the retired pipeline while the plan claims the panel
-  path is the default. The replacement runs, entirely from checked-in fixtures: a tiny fixture pool →
-  seven panel member runs plus one auditor run → ledger append → snapshot selection → weighted
-  aggregation → `none_of_roster` derivation → audit metric → gatekeeper. New committed fixtures:
+  path today runs `run_replay_labeling_smoke` (`transport.rs:207-248`), a generation → mini-label →
+  Fable-label → `reconcile` fixture flow — which stops compiling when `reconcile` is deleted, and
+  which would otherwise leave the *default* path exercising the retired pipeline while the plan
+  claims the panel path is the default. The replacement runs, entirely from checked-in fixtures: a
+  tiny fixture pool → seven panel member runs plus one auditor run → ledger append → snapshot
+  selection → weighted aggregation → `none_of_roster` derivation → audit metric → gatekeeper. It
+  creates a temporary lineage root and passes it through every lineage operation; it never appends
+  fixture runs to the committed `lineage/ledger.jsonl`. New committed fixtures:
   `crates/qsf_semantic_datagen/fixtures/panel-replay/` with one label artifact per member, a weights
   file, and an audit policy sized for the fixture pool.
   No compatibility flag preserves the mini-seeded path; the panel path is the only path, so the
@@ -1034,6 +1070,8 @@ Design increment 6, plus the retention split.
 - **A test asserts the default command constructs no live transport and makes no network call**,
   and that it exercises aggregation, `none_of_roster` derivation, the audit metric and the
   gatekeeper — asserted on the produced artifacts, not on stdout text.
+- A teeth-proving test records the committed `lineage/ledger.jsonl` SHA-256, runs the default
+  no-argument command, and asserts the committed hash is unchanged.
 - Gatekeeper teeth tests, one per rule, including a snapshot mixing `guideline_version` values and an
   auditor missing a pair.
 - A test (or CI grep) asserts `ReviewStatus`, `ReconciliationRecord`, `blind_qa_agreement_by_slice`
@@ -1058,8 +1096,12 @@ project per-cell support at all.
 - **Extend the existing conservative breadth policy into an executable test** — a procedure a reader
   executes, not a disposition they interpret. It must *extend*, never contradict, the existing
   policy; a rubric with an internal inconsistency produces fresh disagreement.
-- **Keep the design's *Grow the library* / *Assemble a world picture* worked example**, and add
-  examples chosen from the pairs that drove Phase B's recall gap and from sample A below.
+- **Keep the design's existing *Grow the library* / *Assemble a world picture* worked example.**
+  Any additional worked example is a freshly authored **paraphrase or synthetic whose utterance
+  text does not appear in the production pool**. The recall-gap analysis and sample A identify the
+  kinds of case needing examples; they do not supply pool pairs for the library. A validation check
+  normalizes and compares every worked example's utterance text against the pool and fails on any
+  match, so later editing cannot drift back to pool-sourced readback.
 - **The validation criterion is determinacy, not consensus.** It is *not* "does v2 resolve most of
   the 199 disagreements". That would optimize for agreement, and a rubric that makes all seven models
   agree on the wrong answer is worse than one that leaves them split; tuning until disagreement
@@ -1080,21 +1122,43 @@ per `(goal × split)` **stratum**, deterministically from a recorded seed:
    rather than dropping a stratum — a stratum with no sample is a cell with no projection, which is
    a checkpoint failure, not a rounding detail.
 3. Draw sample B by the identical procedure from the remaining pairs, disjoint from A by
-   construction.
+   construction. Its measured pass is exactly 60 contested pairs under the current allocation
+   (the floor rule remains authoritative if a future population makes 60 impossible).
 4. Record in the evidence artifact: the seed, the per-stratum population, the allocation, and the
    drawn ids. A test reproduces the whole allocation from the seed.
 
-### Readers, and the two signals one instrument yields
+Also draw a **deterministic stratified sample of strict pairs** — pairs both v1 labelers called
+`relevant`. Its target size is fixed and recorded in the 30–40-pair range before the seed is
+applied. It uses the same `(goal × split)` strata, proportional largest-remainder allocation, and
+recorded-seed implementation as the contested samples. The held-out readers apply v2 to it alongside
+sample B. Per stratum it yields
+`s_bp = floor(10000 × unanimous_relevant_readings / sampled_strict_pairs_in_stratum)`. As with
+`p_bp`, a stratum with fewer than 5 sampled pairs falls back to the goal's pooled `s_bp` across both
+splits; if the pooled value still has fewer than 5 sampled pairs, that cell is unprojectable and the
+checkpoint fails. The recensus evidence records `s_bp` beside `p_bp`, including the sampled counts
+and any fallback used.
 
-Use **panel members** as readers — you want to know how the panel will read v2 — 2–3 readers over
-each sample. Agreement *between* readers on sample B gives determinacy; *which way* they land gives
-the per-stratum direction signal `p_bp` that Phase J turns into projected support. Iterate the rubric
-against sample A only; sample B stays untouched until the end.
+### Readers, and the three signals one instrument yields
+
+Sample A is the rubric author's working material during drafting and iteration, not a separate
+costed panel-reader pass. The author uses it to derive the overall determinacy bar and
+per-goal floor. Those values are recorded and frozen **before any reader touches sample B**, with the
+ordering verifiable in git history: the commit containing the bar precedes every commit containing
+sample-B reader output. Then 2–3 **panel members** read sample B's 60 contested pairs exactly once
+and read the 30–40 strict-pair sample in the same held-out pass. Agreement between readers on sample
+B gives determinacy; which way they land gives the per-stratum `p_bp`, while the strict sample gives
+`s_bp`. Iterate the rubric against sample A only; sample B and the strict sample stay untouched
+until the measured pass.
+
+The bar and per-goal floor may not be lowered after sample B is visible. If the frozen bar proves
+unachievable, iterate the rubric against sample A, draw a fresh held-out sample with a new recorded
+seed, and have it read once under a newly committed bar. Reusing B or lowering its gate would tune
+the threshold on the evidence it gates.
 
 **Hard boundary, enforced structurally rather than procedurally:** the operator's own reading may
 inform the **rubric**, but those judgments **never enter the ledger and are never gold**. This is the
 exact boundary crossed last time. The trial output uses a distinct `RubricTrialRecord` shape
-(`reader_id`, `sample: a | b`, `stratum`, per-pair reading; **no** `labeling_run_id`, **no**
+(`reader_id`, `sample: a | b | strict`, `stratum`, per-pair reading; **no** `labeling_run_id`, **no**
 ledger-acceptable `guideline_version` field), stored under `pools/<pool>/evidence/rubric-v2/`, so the
 ledger-ingest path structurally cannot consume it.
 
@@ -1108,14 +1172,21 @@ ledger-ingest path structurally cannot consume it.
   then `cargo fmt`.
 - The A/B stratified allocation is reproducible from the recorded seed, satisfies the per-stratum
   floor, and A and B are disjoint (tests).
+- The strict-pair allocation is reproducible from its recorded target and seed, uses the same
+  stratification implementation, and includes only pairs both v1 labelers called `relevant`.
 - `RubricTrialRecord` cannot be ingested as a ledger run (rejection test).
 - Artifact-parsing test: the determinacy evidence file is parsed back and reports, per stratum,
-  pairwise reader agreement in `_bp` and the unanimous-relevant count that feeds `p_bp`.
+  pairwise reader agreement in `_bp`, the unanimous-relevant counts that feed `p_bp` and `s_bp`,
+  their sampled denominators, and every pooled fallback.
+- Worked-example validation rejects any example whose normalized utterance text occurs in the
+  production pool.
 - **External human review (required) — document handoff:** the v2 draft, the sample-A iteration
-  notes, the sample-B determinacy evidence, and the direction rationale from Phase B, handed over as
-  files plus a written brief. Not interactive stepping.
+  notes, the frozen determinacy bar and per-goal floor, the sample-B and strict-sample evidence, and
+  the direction rationale from Phase B, handed over as files plus a written brief. Not interactive
+  stepping.
 
-**Spends money:** yes — tier 1. 2–3 readers × 40–60 pairs ≈ 80–180 judgments.
+**Spends money:** yes — tier 1. Sample B costs `2–3 readers × 60 pairs = 120–180`
+reader judgments; the strict-retention sample adds roughly `2–3 × 30–40 = 60–120`.
 
 ---
 
@@ -1154,6 +1225,16 @@ through the shared transport, so its dry-run path exercises the CLI ritual and a
   agent rooted at the repo can open everything the rubric forbids it.
   `prepare-session` runs `ledger verify` first and refuses to prepare the next session if any
   recorded run's artifact is missing or hash-mismatched.
+- **Retain each non-API transcript at the design's lineage-root-relative path**
+  `pools/<pool>/label-runs/transcripts/<labeling_run_id>.jsonl`, hash it into the run, and add the
+  committed-root ignore rule specified in the retention contract. The transcript remains beside
+  the label runs operationally without becoming an untracked file that dirties every campaign
+  checkout.
+- **Select the dry-run utterances deterministically and stratified**, reusing the seeded
+  stratified-allocation implementation behind `census sample-contested` rather than creating a
+  second sampler. Both splits are represented; at least one utterance from each hard slice in each
+  split is selected where the ten slots allow; remaining slots are spread across goals. The dry-run
+  evidence records the seed and selected utterance ids.
 - **Full-panel dry run over ~10 utterances**: all seven panel members plus the auditor,
   ≈ 560 member pair verdicts and ~80 `none_of_roster` votes, aggregating to **~70 pairs and 10
   utterance-level votes** — under 1% of the campaign. The dry run stays this size; the tie evidence
@@ -1161,7 +1242,14 @@ through the shared transport, so its dry-run path exercises the CLI ritual and a
   - the **tie partitions**: which goals, which splits, which hard slices the tied pairs fell in, and
     the vote shapes that produced them. Concentration is the signal — ties clustered in one goal or
     one slice mean something structurally different from ties scattered evenly, and a scalar rate
-    would destroy exactly that information;
+    would destroy exactly that information. But the hard-slice populations are 8/6/6 per split:
+    40 of 114 utterances, or about 35%. An unstructured random draw of 10 would yield only about 3.5
+    hard-slice utterances in expectation, so full coverage of all six `(slice × split)` cells is not
+    a reachable design guarantee by chance. The full partition space is
+    `7 goals × 2 splits × 3 slices = 42` cells against only 10 utterances. At this size the
+    partitions are therefore a **qualitative signal, not a measurement**: they show where observed
+    ties fell, but cannot establish that ties fall there disproportionately. The checkpoint brief
+    presents that reading rather than automating it;
   - the **tie tripwire verdict** against the counts pre-registered in Phase E;
   - a real `aggregation_status` distribution;
   - end-to-end exercise of the aggregation and audit paths on live output rather than fixtures;
@@ -1170,11 +1258,11 @@ through the shared transport, so its dry-run path exercises the CLI ritual and a
     this measurement, not asserted.
 - **Regenerate `sample.dataset.jsonl` from real panel output** — confirmed as a live follow-up, and
   cleanup rather than a third migration: the schema stays at v3 and only the sample's content
-  changes. The dry run produces ~10 utterances of genuine panel output against a fixture of 11 — a
-  near-exact fit — so the v3 sample that carries no `panel_vote` is replaced by one whose
-  `panel_vote` is real. **The stored v2 legacy-envelope fixture is not touched**: it was captured
-  from the pre-bump v2 sample in Phase D and re-deriving it here would destroy the authentic v2
-  envelope it exists to preserve.
+  changes. The dry run produces ~10 utterances of genuine panel output against a current fixture of
+  **12 records over 11 utterance ids** — a near-exact fit by utterance count — so the v3 sample that
+  carries no `panel_vote` is replaced by one whose `panel_vote` is real. **The stored v2
+  legacy-envelope fixture is not touched**: it was captured from the pre-bump v2 sample in Phase D
+  and re-deriving it here would destroy the authentic v2 envelope it exists to preserve.
 
 **Verification**
 
@@ -1188,8 +1276,8 @@ through the shared transport, so its dry-run path exercises the CLI ritual and a
   thinned.
 - Aggregation over the dry-run selection produces a status distribution and the tie partition tables
   as a parsed evidence artifact of **integer counts**, with the tripwire verdict recorded; a test
-  asserts the artifact carries no tie rate. The audit metric runs to completion on live auditor
-  output.
+  asserts the artifact carries no tie rate and reproduces the selected utterance ids from the
+  recorded seed. The audit metric runs to completion on live auditor output.
 - The regenerated sample parses through `Dataset::from_jsonl_path`, carries a real `panel_vote`, and
   the runner's default path still works; the stored v2 legacy line is unchanged (a test asserts its
   hash).
@@ -1198,6 +1286,10 @@ through the shared transport, so its dry-run path exercises the CLI ritual and a
   sample of the raw verdicts.
 
 **Spends money:** yes — tier 1. Eight members × ~10 utterances.
+
+**Rejected — selecting tie-prone utterances to stress the tripwire.** The tripwire is a
+pre-registered count. Biasing the sample toward expected ties would make firing meaningless and
+not-firing accidental, converting a mechanism check into a self-fulfilling one.
 
 ---
 
@@ -1213,9 +1305,10 @@ to a number about to change several-fold.
 
 1. The rubric phase's determinacy result on the **held-out sample B**.
 2. The rubric phase's per-stratum direction signal `p_bp`.
-3. The full-panel dry run's **tie partitions** and the **tripwire verdict** — evidence the operator
+3. The rubric phase's per-stratum strict-retention signal `s_bp`.
+4. The full-panel dry run's **tie partitions** and the **tripwire verdict** — evidence the operator
    weighs, not a number the projection consumes.
-4. The recorded split seed and pool → split binding from Phase B.
+5. The recorded split seed and pool → split binding from Phase B.
 
 ### The projection algorithm (`census recensus`), stated so it is reproducible
 
@@ -1223,18 +1316,29 @@ All arithmetic is integer or basis-point; no floats; every step is recorded in t
 
 For each `(goal × split)` cell:
 
-1. `strict_count` — pairs both v1 labelers called `relevant` (the census's lower bound; unaffected
-   by v2's threshold in the conservative direction).
+1. `strict_count` — pairs both v1 labelers called `relevant`.
 2. `contested_count` — the cell's one-directional disagreements (mini `relevant`, Fable
    `not_relevant`).
-3. `p_bp` — from the cell's stratum in the rubric trial: `floor(10000 × unanimous_relevant_readings
+3. `s_bp` — the basis-point fraction of the cell's sampled strict pairs that survive v2:
+   `floor(10000 × unanimous_relevant_readings / sampled_strict_pairs_in_stratum)`.
+   - If the stratum has fewer than 5 sampled strict pairs, fall back to the goal's pooled `s_bp`
+     across both splits.
+   - If that is still under 5, the cell is **unprojectable**, which is a checkpoint failure for
+     "proceed at the current pool" — not a value to guess.
+4. `p_bp` — from the cell's contested stratum in the rubric trial:
+   `floor(10000 × unanimous_relevant_readings
    / sampled_pairs_in_stratum)`. **Unanimous** rather than majority, deliberately: a contested pair
    the readers split on is not evidence of post-v2 support.
    - If the stratum has fewer than 5 sampled pairs, fall back to the goal's pooled `p_bp` across both
      splits.
    - If that is still under 5, the cell is **unprojectable**, which is a checkpoint failure for
      "proceed at the current pool" — not a value to guess.
-4. `projected_support = strict_count + floor(p_bp × contested_count / 10000)`.
+5. `projected_support = floor(s_bp × strict_count / 10000) + floor(p_bp × contested_count / 10000)`.
+
+Measuring both terms makes the projection **direction-agnostic**: it records whatever v2 actually
+does to strict and contested pairs rather than assuming a liberal or conservative direction that
+the threshold-direction work deliberately leaves open. The recensus evidence records both
+basis-point inputs, counts, fallbacks, and integer floor terms.
 
 **There is no tie term.** An earlier draft subtracted a pool-wide projected tie rate here; that step
 is retired. A rate derived from ~70 aggregated dry-run pairs is not stable enough to multiply
@@ -1247,12 +1351,14 @@ arithmetic.
 Proceed at the current pool, **or** grow the pool and regenerate the hard slices conditioned on all
 seven goals.
 
-**Exit criteria, written before the checkpoint runs**
+**Exit criteria, with the determinacy bar frozen before sample B is read**
 
 Proceed at the current pool only if all hold:
 
-- sample-B pairwise reader agreement clears the determinacy bar recorded in the rubric phase, with
-  no individual goal below the per-goal floor recorded there (Open Question 2);
+- sample-B pairwise reader agreement clears the determinacy bar derived from sample A, recorded and
+  committed before any reader touched B, with no individual goal below the equally frozen per-goal
+  floor (Open Question 2). A miss triggers rubric iteration and a fresh held-out sample; neither
+  value may be lowered after B is visible;
 - **no cell is unprojectable**;
 - every `(goal × split)` cell satisfies `projected_support ≥ min_relevant_support + 2`. The `+2` is
   the operationalisation of "a cell at 4 does not clear 3": at `min_relevant_support = 3`, a cell
@@ -1287,7 +1393,8 @@ is restated in *Cost and capacity* below, because that is the other place a read
 - `cargo clippy --all-targets -- -D warnings`; then `cargo fmt` (a `min_relevant_support` move
   re-versions the policy file and must keep the performance-threshold-identity test green).
 - `census recensus` is deterministic and fixture-tested: a synthetic stratum set with hand-computed
-  `p_bp` and rounding reproduces the expected per-cell projection, including the unprojectable path.
+  `s_bp`, `p_bp`, and rounding reproduces the expected per-cell projection, including each
+  unprojectable path.
   A test asserts the projection consumes **no** tie quantity, so the retired subtraction cannot
   return unnoticed.
 - The evidence artifact is committed and parses, and records every intermediate quantity in the
@@ -1313,7 +1420,7 @@ lives.
 
 - v1 lineage committed and the availability smoke green;
 - the pool-size checkpoint passed with a recorded decision;
-- the audit policy committed and hashed **before any auditor verdict exists**;
+- the audit policy committed and hashed **before Kimi K3 produces any verdict that gates v1**;
 - `ledger verify` green.
 
 **Work**
@@ -1369,7 +1476,9 @@ lives.
 - Aggregate the selection, split by the recorded seed, run the gatekeeper, and freeze; the freeze
   rebuilds every label, vote and audit number from the selected runs rather than trusting the
   precomputed records.
-- **Write `evaluation/annotations/DatasetMethodology.GoalRelevance.md`**, containing:
+- **Write
+  `evaluation/frozen/goal-relevance/lineage/<dataset_version>/DatasetMethodology.GoalRelevance.md`**
+  beside the frozen manifest, containing:
   - the design's ground-truth claim paragraph **verbatim** — the labels are the decision of a
     weighted frontier-model panel audited by a model from a lineage outside the panel, `consensus`
     when the winner holds more than half of total panel weight and a contested weighted `plurality`
@@ -1397,6 +1506,11 @@ lives.
     proxy datasets, sized per Phase B, and — regardless of the value — the statement that the
     failure floor is conditioned on `goalrel-label-v2`'s relevance threshold and is **not comparable
     across guideline versions**;
+  - **the worked-example methodology**: new examples were freshly authored as paraphrases of
+    contested production-pool cases or as synthetics representing those contested case kinds, and
+    none reproduces a production-pool utterance. The honest caveat is that an author who read the
+    original contested pair may write a correlated paraphrase; the panel never sees the pool pair
+    itself, so the direct rubric-writer-to-panel readback path is broken;
   - **the prior-rubric evidence**: that mini and Fable also labeled this pool under
     `goalrel-label-v1`, that those runs are committed as evidence but deliberately outside the
     ledger, and that the 591/798 agreement figure comes from them;
@@ -1432,20 +1546,33 @@ phases spend before the checkpoint. Spend is therefore named in two tiers.
 
 | Phase | Spend | Volume |
 |---|---|---|
-| A — model-availability smoke | 2 live calls | `gpt-5.6-sol`, `gpt-5.6-terra` |
-| H — rubric determinacy readers | 2–3 readers × 40–60 of the 199 | ≈ 80–180 judgments |
+| A — model-availability smoke | 2 live calls | `gpt-5.6-sol`, `gpt-5.6-terra`; tokens reported, not labeling judgments |
+| H — rubric determinacy readers | sample B: 2–3 readers × 60 contested pairs | 120–180 reader judgments |
+| H — strict-retention readers | 2–3 readers × roughly 30–40 strict pairs | roughly 60–120 reader judgments |
 | I — full-panel dry run | 8 members × ~10 utterances × 7 goals | 560 pair verdicts + ~80 `none_of_roster` votes |
 
-Against the campaign's 6,384 pair verdicts that is roughly **10% of volume**, plus five short
-hand-driven sessions — call it half of one full session.
+The cap's unit is **judgments**, defined as individual member pair verdicts, utterance-level votes,
+and rubric-reader judgments. Sample A is rubric-author working material, not a panel-reader pass.
+The availability calls are reported in tokens but do not produce labeling judgments.
 
-**Hard cap:** tier-1 spend may not exceed ~10% of projected tier-2 spend without re-opening this
-plan. Without a cap, "a small measurement first" is exactly the shape that creeps.
+Tier 2 projects `798 pairs × 8 passes = 6,384` verdicts plus
+`114 utterances × 8 passes = 912` votes, or **7,296 judgments**. Tier 1 projects
+`70 × 8 = 560` dry-run pair verdicts, `10 × 8 = 80` dry-run utterance votes,
+`120–180` sample-B reader judgments, and roughly `60–120` strict-retention judgments, or
+**820–940 judgments ≈ 11.2%–12.9%** of tier 2.
+
+**Hard cap:** tier-1 spend may not exceed **15% of projected tier-2 judgments** without re-opening
+this plan. The original ~10% predated both the dry run becoming full-panel and the rubric samples
+being sized; recomputing against the actual design moves the cap. The denominator is explicitly the
+projected 7,296 tier-2 judgments at eight passes over 798 pairs, so a later change to panel or pool
+size visibly moves it. Token counts are reported alongside the judgment totals for every paid run,
+so a real cost signal is preserved whenever a price table becomes available.
 
 ### Tier 2 — production spend (irreversible)
 
 The eight member passes of Phase K: 6,384 pair verdicts plus 912 `none_of_roster` votes = **7,296
-judgments**, assembled from roughly 60–70 chunk-level labeling runs.
+judgments**, assembled from roughly **64 chunk-level labeling runs** under the stated assumption of
+four 12-run hand-driven passes and four 4-run automatable passes.
 
 ### The rule that connects them
 
@@ -1454,7 +1581,7 @@ judgments**, assembled from roughly 60–70 chunk-level labeling runs.
 The ordering does not change, because all three tier-1 spends exist *because* they are checkpoint
 inputs:
 
-- the availability test determines whether three members or one are automatable, which sets the
+- the availability test confirms four automatable and four hand-driven passes, which sets the
   session-capacity estimate and the dry run's own sizing;
 - the rubric readers produce both the determinacy verdict and the per-stratum direction signal that
   projects post-v2 support;
@@ -1475,10 +1602,10 @@ and a test enforces that the five performance thresholds are byte-identical acro
 
 ### Where the effort is
 
-Phases B–G and L cost nothing. Tier-1 measurement spend is roughly a tenth of the campaign and gates
-it. Tier-2 production spend is the commitment. And **most of the real effort in this plan is operator
-sessions in the labeling campaign** — four hand-driven passes of ~12 chunks each — which the dry
-run measures rather than this plan asserting.
+Phases B–G and L cost nothing. Tier-1 measurement spend is projected at about 11.2%–12.9% of the
+campaign's judgment volume and gates it. Tier-2 production spend is the commitment. And **most of
+the real effort in this plan is operator sessions in the labeling campaign** — four hand-driven
+passes of ~12 chunks each — which the dry run measures rather than this plan asserting.
 
 ---
 
@@ -1513,10 +1640,11 @@ landing changes the document.
 | `evaluation/contracts/GoalRelevance.TaskContract.md` | checked; updated only if v2 narrows the contract's notion of relevance | H |
 | `evaluation/annotations/AnnotationGuidelines.GoalRelevance.md` | Fable ritual generalized into the hand-driven labeling ritual | I |
 | `evaluation/annotations/LabelingPrompt.GoalRelevance.md` | **new** — the verbatim prompt, hashed as `labeling_prompt_sha256` | I |
+| `.gitignore` | ignore `evaluation/frozen/goal-relevance/lineage/pools/*/label-runs/transcripts/` | I |
 | `evaluation/frozen/goal-relevance/sample.dataset.jsonl` | regenerated from **real** dry-run panel output (v3 stays; legacy fixture untouched) | I |
 | `crates/qsf_semantic_datagen/pricing/goalrel-generation-price-table.v*.json` | optional panel-model prices, or token-only | K |
 | `evaluation/frozen/goal-relevance/lineage/<dataset_version>/**` | selection, `none_of_roster` raw + derived, audit evidence, frozen splits, manifest | K, L |
-| `evaluation/annotations/DatasetMethodology.GoalRelevance.md` | **new** — the full note listed in Phase L | L |
+| `evaluation/frozen/goal-relevance/lineage/<dataset_version>/DatasetMethodology.GoalRelevance.md` | **new** — the full note beside the frozen manifest | L |
 | `docs/DecisionLog.md` | **four** reversals plus new entries (below) | D/G, L |
 
 No `docs/Architecture/*` document describes this subsystem, so none is affected. No `ui/` code
@@ -1524,7 +1652,8 @@ changes, so no `npm run check` / `npm run fmt` is required in any phase.
 
 ### Decision-log entries
 
-**Four reversals, not two.** The design names the two 2026-07-22 entries. Two more are reversed:
+**Four reversals.** The design now enumerates the same four entries: one dated 2026-07-21 and three
+dated 2026-07-22:
 
 - **`docs/DecisionLog.md:2023` — *2026-07-21, Goal-relevance labels use independent blind review*.**
   It commits to "a two-model OpenAI generate/label split, an independent Claude Fable cross-label,
@@ -1635,8 +1764,10 @@ New entries (proposed here, committed when the behavior lands):
 - **2. The numeric values.** This plan fixes the *derivation* of `R_min`, `R_floor`, `F_max`, `A_max`
   and `M_min` (sweep, failure model, metric mapping, selection rule, tie-break, joint verification,
   representability), not the numbers — they come out of the Phase E sweep. Likewise the determinacy
-  bar and its per-goal floor for Phases H/J are proposed by the rubric phase and confirmed by the
-  operator before the checkpoint runs; this plan deliberately does not invent them.
+  bar and per-goal floor are derived from sample A, operator-confirmed, recorded, and frozen before
+  any reader touches sample B. Git history must show the bar commit before the sample-B reader-output
+  commit. If B misses, the rubric is iterated and a fresh held-out sample is read; the bar is not
+  lowered after seeing the evidence it gates.
 
 - **4. Mechanical enforcement of "committed", not just "on disk".** `ledger verify` proves the
   artifact exists and hashes correctly; it cannot prove it is committed. Whether `prepare-session`
@@ -1649,8 +1780,9 @@ New entries (proposed here, committed when the behavior lands):
   provenance — which is a decision about the ledger's guarantee, not a migration detail.
 
 - **7. The regenerated sample's size.** The dry run yields ~10 utterances × 7 goals = ~70 records
-  against a current fixture of 12. Whether the sample keeps roughly its current size (a subset of
-  the dry run) or grows to the full dry-run pool changes the runner's default output volume.
+  against a current fixture of **12 records over 11 utterance ids**. Whether the sample keeps
+  roughly its current record count (a subset of the dry run) or grows to the full dry-run pool
+  changes the runner's default output volume.
 
 - **9. What a concentrated tie partition means.** The stability question that stood here is closed:
   nothing projects from a tie rate any more. What survives is interpretive rather than numeric —
@@ -1681,4 +1813,5 @@ weight units; and the guideline-v2-and-re-run-everyone policy.
 Rejected with reasons recorded above: adding Anthropic/Google provider transports (Phase K);
 fabricating a sample `panel_vote` (Phase D); a second schema bump for the review removal (Phase D);
 an `unknown` provenance state or fabricated hashes for the prior-rubric runs (Phase C); dropping
-`transcript_sha256` (retention contract); committing session transcripts (retention contract).
+`transcript_sha256` (retention contract); committing session transcripts (retention contract);
+selecting tie-prone utterances to stress the pre-registered dry-run tripwire (dry-run selection).
