@@ -2127,3 +2127,28 @@ and a neutralizing label keeps such an utterance from corrupting label quality.
 Consequences: The pool-review gate before paid labeling is a required campaign step, not an
 optional check. Exclusion semantics, if ever needed, belong to the 1000+-utterance expansion
 path where review attrition becomes statistical rather than exceptional.
+
+## 2026-07-26 - Goal-relevance relevance threshold is conservative
+Decision: A goal is relevant to an utterance only when the utterance carries specific content the
+goal bears on, not when the goal could plausibly be brought to bear on it. This opens
+`goalrel-label-v2`; the threshold statement, its worked boundary, and the full rationale are the
+first section of `evaluation/annotations/AnnotationGuidelines.GoalRelevance.md`, which is
+authoritative for them.
+
+Context: Determinacy cannot select a direction — two rubrics, one liberal and one conservative, can
+be equally determinate and still build different systems — so it is anchored to what should make a
+goal activate in the realtime system. The task contract names both costs symmetrically, but only
+the false-positive cost has been observed live, as arbitration letting `present-person-priority`
+crowd out weaker world-goal matches. The two v1 labelers split 199 times in one direction at 39.1%
+against 14.8% raw positives: a threshold disagreement, not confusion, since both had the
+conservative breadth policy and still read the line differently. Recorded before the
+rubric-sensitivity measurement exists, so the direction is not selected by its result.
+
+Consequences: Tightening will probably improve the exact-token failure floor, because conservative
+relevance skews toward the specific topical content a keyword scorer matches. That improvement is
+legitimate only because the direction was fixed before the number was known, and the methodology
+note states the floor is conditioned on this threshold and is not comparable across guideline
+versions. Under the guideline's *Consistent use* rule this requires re-evaluation of any label set
+claiming the new version; the v1 mini and Fable label sets keep their `goalrel-label-v1` binding
+and remain prior-rubric evidence. The rubric-sensitivity number may size the disclosure and select
+which cases get worked examples; it may never revisit this direction.

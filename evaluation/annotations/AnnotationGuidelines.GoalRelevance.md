@@ -1,6 +1,54 @@
 # Goal-relevance annotation guidelines
 
-Guideline version: `goalrel-label-v1`
+Guideline version: `goalrel-label-v2`
+
+## The relevance threshold, and why it sits here
+
+**The threshold.** A goal is relevant to an utterance only when the utterance carries specific
+content that the goal bears on. A goal is *not* relevant merely because it could plausibly be
+brought to bear on the utterance, or because the utterance belongs to a domain the goal cares
+about.
+
+**Worked boundary.** Take the utterance *"I told Maya I'm not ready to discuss my personal life,
+and asked her to stick to our project plans instead."*
+
+- Against **person respect** — *never pressing past a decline* — this is `relevant`. The utterance
+  is a decline; that is the specific content the goal bears on.
+- Against **epistemic integrity** — *what is observed, inferred, and speculated stays
+  distinguishable* — this is `not_relevant`. The person is reporting a conversation, and reporting
+  can in principle blur observation and inference, but nothing here is actually presented as fact,
+  inference, or speculation in a way the goal speaks to. The goal *could* be brought to bear; the
+  utterance does not carry content it bears on. That distinction is the threshold.
+
+**Why the threshold sits here.** Determinacy cannot decide this. Two rubrics — one liberal, one
+conservative — can each be perfectly determinate, with every annotator agreeing on every case, and
+still produce different systems. So the direction is anchored to a third thing: what should make a
+goal activate in the realtime system.
+
+The task contract names both costs symmetrically. A false positive "can misdirect present-turn
+framing or crowd out a more pertinent goal"; a false negative "can miss a person-relevant concern."
+Only the false-positive cost has been observed in a live session, as arbitration letting
+`present-person-priority` crowd out weaker world-goal matches. In the worked boundary above, a
+liberal reading would wake `epistemic-integrity` on an utterance whose real subject is a declined
+boundary — putting it in competition with `person-respect`, the goal that actually applies. That is
+the failure this threshold is set to avoid.
+
+The prior guideline version's two labelers split 199 times in one direction, at 39.1% against 14.8%
+raw positives. Both were working from the same conservative breadth policy, so that split was a
+disagreement about where the line sits rather than confusion about the task — which is why the line
+is now stated rather than left to be inferred.
+
+**A disclosure, recorded here deliberately.** Tightening the threshold will probably *improve* the
+exact-token failure floor, because conservative relevance skews toward specific topical content and
+that is what a keyword scorer matches. This section was written and committed before the
+rubric-sensitivity measurement existed, so the direction was not chosen for that effect. Any
+measurement of the failure floor is conditioned on this threshold and is not comparable across
+guideline versions.
+
+**Still to come.** This section fixes the direction. The executable determinacy test and the
+worked examples for the cases that most divided the prior labelers are added when the rubric is
+sharpened for determinacy; those examples are authored fresh rather than lifted from the labeling
+pool, so that no pooled pair has its label decided here.
 
 ## Purpose and unit of annotation
 
@@ -92,32 +140,23 @@ goal because it expresses a limit another person should follow, even without wor
 
 ## Consistent use
 
-This rubric is the source for the automated mini label prompt, the independent Claude Fable ritual,
-and operator corrections. A change requires a new guideline version and re-evaluation of any label
-set that claims this version.
-
-## Independent Claude Fable cross-label ritual
-
-1. Give Claude Fable this document and the unchanged `labeling-input.jsonl` artifact. Do not give
-   it generation output, intended goals, slice tags, prior labels, reconciliation, or review
-   decisions.
-2. Ask it to apply this rubric independently to every utterance and every supplied roster goal.
-   It returns one JSONL `LabelInterchange` record per utterance with
-   `labeler_id: "claude-fable"`, its own `labeling_run_id`, this `guideline_version`, all
-   `per_goal` labels, and `none_of_roster`.
-3. Schema-check `label-fable.jsonl` through the same `parse_label_interchange` / validation path
-   used for `label-mini.jsonl`, against the frozen roster. Do not repair output by hand: resolve
-   malformed output with Fable and validate the replacement.
-4. Reconcile the two valid files and record the resulting mini/Fable agreement rate with the
-   dataset methodology artifacts. Review every pair; disagreements are first in the queue.
+This rubric is the source for every panel member's labeling prompt and for the independent
+auditor's. A change requires a new guideline version and re-evaluation of any label set that claims
+this version.
 
 The interchange validator enforces the shared invariant that `none_of_roster: true` cannot coexist
 with a `relevant` per-goal label.
 
-## Human-review artifacts
+## Procedures that belong to the prior version
 
-Authoritative accept/correct actions are append-only records in `review-decisions.jsonl`. This is
-the only human-decision artifact folded into `reviewed-pool.jsonl`, with the latest decision for a
-field taking precedence. A cold blind-QA session writes the same decision interchange shape to the
-separate `blind-qa-decisions.jsonl` artifact. Blind-QA decisions measure the accepted labels; they
-must never be appended to, substituted for, or folded as `review-decisions.jsonl`.
+Two sections of `goalrel-label-v1` are **not part of this version and must not be followed**: the
+two-labeler cross-label ritual, and the human-review artifacts (`review-decisions.jsonl`,
+`blind-qa-decisions.jsonl`, and folding into a reviewed pool). Independent per-pair human
+adjudication was retired because it could not be performed reliably, and it is replaced by a
+weighted panel with an independent auditor. Their text remains retrievable at the `goalrel-label-v1`
+revision, which is what the label sets bound to that version should be read against.
+
+The labeling ritual for this version — session preparation, workspace isolation, the provenance a
+run must record, and how a member's chunked runs compose into one pass — is specified with the
+campaign machinery rather than here. This document governs *how to judge a pair*; that one governs
+*how a run is conducted*.

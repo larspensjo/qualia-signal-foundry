@@ -231,7 +231,11 @@ pool review *required campaign steps* — their artifacts are the evidence those
 
 Every lineage-reading or lineage-writing operation takes the design's **lineage root parameter**.
 It defaults to `evaluation/frozen/goal-relevance/lineage/`, and is threaded without substitution
-through `ledger append`, `ledger verify`, snapshot selection, `prepare-session`, and freeze. The
+through `census`, `ledger append`, `ledger verify`, snapshot selection, `prepare-session`, and
+freeze. `census` is named first deliberately: it is the earliest of these to be built, it both reads
+the committed pool and writes evidence under `pools/<pool>/evidence/census/`, and so it is the first
+opportunity to hard-code the production path — which is the outcome this parameter exists to
+prevent. Its fixture tests run against a scratch root for the same reason. The
 default replay smoke overrides it with a newly created temporary directory. This is a real
 parameter rather than a replay-smoke special case because the repository convention prefers the
 proper long-term solution even when it requires more work or refactoring: every existing rejection
@@ -541,16 +545,25 @@ worked examples, and builds the tool the checkpoint depends on.
    `pools/<pool>/split-summary.json` (seed plus `assignment_by_component`). Every later census,
    re-census and freeze reads that file; the freeze re-derives the split from the same seed and
    refuses to write a manifest unless it matches.
-3. **Build one committed datagen subcommand serving four consumers** — `census`, in a new
+3. **Build one committed datagen subcommand serving five consumers** — `census`, in a new
    behavior-named `census` module:
    - `census support` — the `(goal × split)` and `(slice × split)` support cells under the strict
      (both labelers `relevant`) and optimistic (either `relevant`) bounds, using the recorded seed;
    - `census rubric-sensitivity` — builds strict and optimistic proxy datasets from the existing 798
      pairs and runs them through `run_baseline`;
    - `census sample-contested` — the deterministic, **stratified** sample of the 199 one-directional
-     disagreements that Phase H reads (algorithm in Phase H);
-   - `census recensus` — projected post-v2 support per `(goal × split)` (algorithm in Phase J), and
-     the tie **partition** tables the checkpoint brief reports.
+     disagreements that Phase H reads (algorithm in Phase H). Phase I's dry-run utterance selection
+     reuses this sampler rather than writing a second one;
+   - `census sample-strict` — the deterministic, stratified 30–40-pair sample of **strict** pairs
+     (both v1 labelers `relevant`) that the held-out readers apply v2 to, yielding the
+     strict-retention signal `s_bp` the projection depends on (algorithm in Phase H, beside the
+     contested sample). It shares the `(goal × split)` strata, the proportional largest-remainder
+     allocation and the recorded-seed implementation with `census sample-contested` — one sampler
+     with two populations, not two samplers. Without this consumer the rubric phase would have to
+     grow its own stratifier, duplicating logic that already exists here;
+   - `census recensus` — projected post-v2 support per `(goal × split)` (algorithm in Phase J,
+     consuming both `p_bp` and `s_bp`), and the tie **partition** tables the checkpoint brief
+     reports.
    Deterministic, fixture-tested, output written as committed JSON evidence under
    `pools/<pool>/evidence/census/`. The subcommand recomputes mini/Fable agreement from the two
    committed label artifacts via `parse_label_interchange` and **asserts it reproduces 591/798** —
@@ -583,8 +596,10 @@ worked examples, and builds the tool the checkpoint depends on.
 - `cargo build`; `cargo test -p qsf_semantic_datagen`; `cargo test -p qsf_semantic_eval`;
   `cargo clippy --all-targets -- -D warnings`; then `cargo fmt`.
 - Fixture tests: `census support` on a small synthetic pool produces hand-computable cell counts;
-  the strict/optimistic proxy builders are pure and deterministic; `census sample-contested` is
-  reproducible from its seed and satisfies its stratification guarantees; `census recensus` reports
+  the strict/optimistic proxy builders are pure and deterministic; `census sample-contested` and
+  `census sample-strict` are each reproducible from their seed and satisfy their stratification
+  guarantees, and a test asserts both populations run through the *same* allocation code path so the
+  two cannot drift apart; `census recensus` reports
   a cell projecting to 4 as **not** clearing a floor of 3, and its tie partition tables are counts
   with no derived rate anywhere in the output.
 - Reproduction test: `census support` over the committed v1 pool reproduces 591/798 agreement and
@@ -1109,7 +1124,7 @@ project per-cell support at all.
   anchoring failure this redesign exists to remove. The criterion is: **can a careful reader apply v2
   and reach a repeatable answer without guessing.**
 
-### Stratified sampling of the 199 (`census sample-contested`)
+### Stratified sampling of the contested 199 and the strict pairs (`census sample-contested`, `census sample-strict`)
 
 An unstratified 60-pair sample cannot produce per-cell projections; the sample is therefore drawn
 per `(goal × split)` **stratum**, deterministically from a recorded seed:
