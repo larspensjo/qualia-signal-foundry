@@ -75,6 +75,44 @@ Describe "qsf.ps1 transcript launcher" {
     }
 }
 
+Describe "qsf.ps1 goals launcher" {
+    BeforeAll {
+        $script:QsfSkipAutoRun = $true
+        . $script:LauncherScript -Command "help"
+    }
+
+    It "defaults to JSONL on the realtime state directory" {
+        $arguments = Get-GoalsArguments
+
+        $arguments | Should -Contain "goals"
+        $arguments | Should -Contain "--state-dir"
+        $arguments | Should -Contain "state/realtime"
+        $arguments | Should -Not -Contain "--pretty"
+        $arguments | Should -Not -Contain "--out"
+    }
+
+    It "passes an explicit session id through as --session" {
+        $script:QsfSkipAutoRun = $true
+        . $script:LauncherScript -Command "goals" -Subject "run-123"
+
+        $arguments = Get-GoalsArguments
+
+        $arguments | Should -Contain "--session"
+        $arguments | Should -Contain "run-123"
+    }
+
+    It "maps pretty and out to their cargo flags" {
+        $script:QsfSkipAutoRun = $true
+        . $script:LauncherScript -Command "goals" -Pretty -Out "goals.jsonl"
+
+        $arguments = Get-GoalsArguments
+
+        $arguments | Should -Contain "--pretty"
+        $arguments | Should -Contain "--out"
+        $arguments | Should -Contain "goals.jsonl"
+    }
+}
+
 AfterAll {
     foreach ($name in $script:TestEnvironmentNames) {
         [System.Environment]::SetEnvironmentVariable($name, $script:OriginalEnvironment[$name], "Process")

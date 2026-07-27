@@ -301,6 +301,21 @@ continuity manifest. The direct Cargo form is:
 cargo run -p qsf_app -- sleep --state-dir state/realtime --provider openai
 ```
 
+Inspect the full persisted volition goal detail from the newest continuity session:
+
+```powershell
+.\scripts\qsf.ps1 goals
+.\scripts\qsf.ps1 goals > goals.jsonl
+.\scripts\qsf.ps1 goals -Pretty
+.\scripts\qsf.ps1 goals -Out goals.jsonl
+.\scripts\qsf.ps1 goals | ConvertFrom-Json  | Where-Object kind -eq 'goal'
+```
+
+`goals` emits a self-describing JSONL session header followed by one full-detail goal record per
+line. Use `-Pretty` for the existing human-readable console view, or `-Out <path>` to write either
+output mode directly to a file. Pass an explicit session id to bypass continuity-session
+auto-selection.
+
 Read the newest realtime diagnostics run as a transcript joined to its volition traces:
 
 ```powershell

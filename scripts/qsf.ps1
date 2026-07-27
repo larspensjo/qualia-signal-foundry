@@ -550,7 +550,7 @@ Usage:
   .\scripts\qsf.ps1 workbench [<store>] [-Store <path>] [-BindHost <ip>] [-Port <port>]
   .\scripts\qsf.ps1 realtime [-RandomSessionId] [-WorldCorpusPath <path>]
   .\scripts\qsf.ps1 sleep [-StateDir <path>] [-Provider <openai|mock>] [-WorldCorpusPath <path>] [-WorldCorpusLedger <path>]
-  .\scripts\qsf.ps1 goals [<session-id>] [-StateDir <path>]
+  .\scripts\qsf.ps1 goals [<session-id>] [-StateDir <path>] [-Pretty] [-Out <path>]
   .\scripts\qsf.ps1 transcript [<session-id>] [-StateDir <path>] [-All] [-Pretty] [-Full] [-Out <path>]
   .\scripts\qsf.ps1 world-ingest [-WorldCorpusPath <path>] [-WorldCorpusLedger <path>]
   .\scripts\qsf.ps1 restore [<backup-name>|latest] [-StateDir <path>]
@@ -575,7 +575,7 @@ Defaults:
   Realtime UI:     crates/qsf_realtime_server/ui (Vite on $realtimeUiUrl)
   Sleep update:    state/realtime through the $Provider provider; openai requires OPENAI_API_KEY
                    backs up the state dir to state/backups/<name>-<timestamp> first (keeps last 5)
-  Goals:           prints full read-only volition goal detail from state/realtime; an optional session id bypasses auto-selection
+  Goals:           prints full read-only volition goal detail as JSONL from state/realtime; -Pretty restores the console view and -Out writes the result to a file
   Transcript:      prints the newest run in state/realtime/diagnostics as JSONL, one line per turn with its
                    volition traces; an optional session id bypasses ledger auto-selection; -All emits every run
   Restore:         creates undo backups as state/backups/<name>-restore-<timestamp>; latest ignores those undo backups
@@ -1531,6 +1531,10 @@ function Invoke-Sleep {
 }
 
 function Invoke-Goals {
+    Invoke-LoggedCommand -Executable "cargo" -Arguments (Get-GoalsArguments)
+}
+
+function Get-GoalsArguments {
     $arguments = @(
         "run",
         "-p",
@@ -1543,7 +1547,13 @@ function Invoke-Goals {
     if (-not [string]::IsNullOrWhiteSpace($Subject)) {
         $arguments += @("--session", $Subject)
     }
-    Invoke-LoggedCommand -Executable "cargo" -Arguments $arguments
+    if ($Pretty) {
+        $arguments += "--pretty"
+    }
+    if (-not [string]::IsNullOrWhiteSpace($Out)) {
+        $arguments += @("--out", $Out)
+    }
+    return $arguments
 }
 
 function Get-TranscriptArguments {

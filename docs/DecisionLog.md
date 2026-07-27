@@ -2171,3 +2171,13 @@ Context: Inline transcript run selection and warning rendering had no focused au
 incorrect first-run selection could pass the full suite.
 Consequences: CLI orchestration is limited to calling pure behavior and performing I/O, and policy or
 rendering changes receive direct unit coverage outside the dispatch layer.
+
+## 2026-07-27 - Goals CLI defaults to self-describing JSONL
+Decision: `qsf_app goals` emits a session header followed by one full goal-detail record per JSONL
+line by default. The existing human-readable goal-detail console view remains available through
+`--pretty`, and the launcher exposes the same choice through `-Pretty` and `-Out`.
+Context: Goal reports are useful as machine-readable continuity artifacts as well as interactive
+inspection. The tagged session and goal lines make the stream self-describing and preserve the
+full `GoalDetailReport` fields for downstream readers.
+Consequences: Consumers should treat the default goals output as JSONL and must not assume that
+the artifact is free of floating-point values as goal lifecycle data evolves.

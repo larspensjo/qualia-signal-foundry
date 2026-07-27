@@ -5,6 +5,7 @@ pub mod context;
 pub mod conversation;
 pub mod experiments;
 mod goal_detail_loading;
+mod goal_report;
 pub mod memory;
 pub mod models;
 pub mod observability;

@@ -45,6 +45,20 @@ $script:QsfCompletionProviders = @(
     "mock"
 )
 
+$script:QsfCompletionGoalsFlags = @(
+    "-StateDir",
+    "-Pretty",
+    "-Out"
+)
+
+$script:QsfCompletionTranscriptFlags = @(
+    "-StateDir",
+    "-All",
+    "-Pretty",
+    "-Full",
+    "-Out"
+)
+
 $script:QsfCompletionWorldCorpusLedgers = @(
     "state/world-corpus/index.json"
 )
@@ -255,7 +269,7 @@ function Get-QsfCompletionGoalsContext {
     # that consume values are distinguished from valueless switches.
     # Flags that consume a following value. Everything else is a valueless switch, so the classifier
     # must advance one token past it or a positional that follows gets swallowed as its value.
-    $valueFlags = @("-StateDir")
+    $valueFlags = @("-StateDir", "-Out")
     $stateDir = "state/realtime"
     $positionalCount = 0
     $index = 1
@@ -409,6 +423,10 @@ $qsfCompleter = {
                 Select-QsfCompletionMatches -Values (Get-QsfCompletionStateDirs) -WordToComplete $wordToComplete
                 return
             }
+            "-Out" {
+                Select-QsfCompletionMatches -Values (Get-QsfCompletionStorePaths) -WordToComplete $wordToComplete
+                return
+            }
             "-WorldCorpusPath" {
                 # Both `world-ingest` and `realtime` consume the same producer-owned corpus root.
                 Select-QsfCompletionMatches -Values (Get-QsfCompletionWorldCorpusPaths) -WordToComplete $wordToComplete
@@ -441,6 +459,10 @@ $qsfCompleter = {
         }
 
         if ($nativeContext.Arguments.Count -ge 1 -and $nativeContext.Arguments[0] -eq "goals") {
+            if ($wordToComplete -like "-*") {
+                Select-QsfCompletionMatches -Values $script:QsfCompletionGoalsFlags -WordToComplete $wordToComplete
+                return
+            }
             $goalsContext = Get-QsfCompletionGoalsContext -Arguments $nativeContext.Arguments
             if ($goalsContext.PositionalCount -eq 0) {
                 Select-QsfCompletionMatches -Values (Get-QsfCompletionContinuitySessionIds -StateDir $goalsContext.StateDir) -WordToComplete $wordToComplete
@@ -449,6 +471,10 @@ $qsfCompleter = {
         }
 
         if ($nativeContext.Arguments.Count -ge 1 -and $nativeContext.Arguments[0] -eq "transcript") {
+            if ($wordToComplete -like "-*") {
+                Select-QsfCompletionMatches -Values $script:QsfCompletionTranscriptFlags -WordToComplete $wordToComplete
+                return
+            }
             $transcriptContext = Get-QsfCompletionGoalsContext -Arguments $nativeContext.Arguments
             if ($transcriptContext.PositionalCount -eq 0) {
                 Select-QsfCompletionMatches -Values (Get-QsfCompletionLedgerSessionIds -StateDir $transcriptContext.StateDir) -WordToComplete $wordToComplete

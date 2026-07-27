@@ -28,10 +28,14 @@ Rules (see ProjectWorkflow.md, "Handoff Discipline"):
 
 ## Now — immediate few actions
 ### Run the Transcript CLI live-session acceptance
-**Complete the live conversation, artifact-integrity, and debug-UI cross-check in
-[Plan.TranscriptCli](Plans/Plan.TranscriptCli.md).**
+**Hold a live conversation of four or more turns (`.\scripts\qsf.ps1 realtime -RandomSessionId`,
+one turn expected to fire a goal, one expected to fire none), emit
+`.\scripts\qsf.ps1 transcript -Out turns.jsonl`, and check the artifact: `source.complete` is
+`true`, one `turn` line per trusted turn, no non-empty `undecodable`; then cross-check two or
+three turns' `user`/`assistant`/`volition.fired` against the realtime debug UI.** Usage is in the
+README's transcript section (the ephemeral plan has been deleted).
 Why: the implementation and automated gates are complete; this human acceptance run is the remaining
-evidence before the ephemeral plan can be closed.
+evidence for the tool.
 Alternate: repeat the live real-corpus probe using turns the current triggers can catch — a capitalized
 proper-name entity plus a search cue ("Can you find the latest information about Nvidia?") and
 a turn that names "AI" explicitly

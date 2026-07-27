@@ -63,6 +63,14 @@ enum Command {
         /// Explicit continuity session id. Bypasses automatic session selection.
         #[arg(long, value_name = "ID")]
         session: Option<String>,
+
+        /// Render the existing human-readable console view instead of JSONL.
+        #[arg(long)]
+        pretty: bool,
+
+        /// Write the rendered report to this file instead of stdout.
+        #[arg(long, value_name = "PATH")]
+        out: Option<PathBuf>,
     },
 
     /// Print a realtime session's turns joined to their volition traces, as JSONL.
@@ -156,23 +164,38 @@ pub fn run() -> anyhow::Result<()> {
             );
             Ok(())
         }
-        Some(Command::Goals { state_dir, session }) => {
+        Some(Command::Goals {
+            state_dir,
+            session,
+            pretty,
+            out,
+        }) => {
             let loaded = crate::goal_detail_loading::load_goal_detail_report(
                 &state_dir,
                 session.as_deref(),
             )?;
-            println!(
-                "{}",
-                crate::console::goal_detail_view::render_goal_detail_report(
-                    &loaded.report,
-                    crate::console::goal_detail_view::GoalDetailHeader {
-                        session_id: &loaded.session_id,
-                        seed_fixture_id: &loaded.seed_fixture_id,
-                        recorded_at: &loaded.recorded_at,
-                    },
-                    crate::console::styling::ColorMode::for_stdout(),
-                )
-            );
+            let rendered = crate::goal_report::render_goal_report(
+                &loaded.report,
+                crate::console::goal_detail_view::GoalDetailHeader {
+                    session_id: &loaded.session_id,
+                    seed_fixture_id: &loaded.seed_fixture_id,
+                    recorded_at: &loaded.recorded_at,
+                },
+                pretty,
+            )?;
+            match out {
+                Some(destination) => {
+                    std::fs::write(&destination, rendered).with_context(|| {
+                        format!(
+                            "failed to write goals report to `{}`",
+                            destination.display()
+                        )
+                    })?;
+                    eprintln!("wrote {}", destination.display());
+                }
+                None if pretty => println!("{rendered}"),
+                None => print!("{rendered}"),
+            }
             Ok(())
         }
         Some(Command::Transcript {
@@ -267,11 +290,19 @@ mod tests {
     #[test]
     fn goals_command_defaults_to_realtime_state_and_parses_session() {
         let default_cli = Cli::try_parse_from(["qsf_app", "goals"]).unwrap();
-        let Some(super::Command::Goals { state_dir, session }) = default_cli.command else {
+        let Some(super::Command::Goals {
+            state_dir,
+            session,
+            pretty,
+            out,
+        }) = default_cli.command
+        else {
             panic!("expected goals command");
         };
         assert_eq!(state_dir, std::path::PathBuf::from("state/realtime"));
         assert_eq!(session, None);
+        assert!(!pretty);
+        assert_eq!(out, None);
 
         let session_cli =
             Cli::try_parse_from(["qsf_app", "goals", "--session", "run-123"]).unwrap();
@@ -279,6 +310,18 @@ mod tests {
             panic!("expected goals command");
         };
         assert_eq!(session.as_deref(), Some("run-123"));
+    }
+
+    #[test]
+    fn goals_command_parses_pretty_and_out() {
+        let cli =
+            Cli::try_parse_from(["qsf_app", "goals", "--pretty", "--out", "goals.jsonl"]).unwrap();
+
+        let Some(super::Command::Goals { pretty, out, .. }) = cli.command else {
+            panic!("expected goals command");
+        };
+        assert!(pretty);
+        assert_eq!(out, Some(std::path::PathBuf::from("goals.jsonl")));
     }
 
     #[test]

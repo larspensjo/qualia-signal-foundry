@@ -179,6 +179,14 @@ Describe "qsf.ps1 argument completion" {
         $completions | Should -Contain "transcript"
     }
 
+    It "completes goals output flags" {
+        $pretty = Complete-QsfInput -InputText ".\scripts\qsf.ps1 goals -P"
+        $out = Complete-QsfInput -InputText ".\scripts\qsf.ps1 goals -O"
+
+        $pretty | Should -Contain "-Pretty"
+        $out | Should -Contain "-Out"
+    }
+
     It "completes latest for restore even without backups" {
         $completions = Complete-QsfInput -InputText ".\scripts\qsf.ps1 restore "
 
@@ -285,6 +293,33 @@ Describe "qsf.ps1 argument completion" {
 
             $completions | Should -Contain "elsewhere"
             $completions | Should -Not -Contain "default"
+        }
+    }
+
+    Context "with a hermetic project root that has continuity sessions" {
+        BeforeEach {
+            $script:OriginalCompletionRoot = $script:QsfCompletionProjectRoot
+            $script:QsfCompletionProjectRoot = "$TestDrive"
+            New-Item -ItemType Directory -Force (Join-Path $TestDrive "state/realtime/continuity/default") | Out-Null
+            New-Item -ItemType Directory -Force (Join-Path $TestDrive "state/realtime/continuity/run-abc") | Out-Null
+        }
+
+        AfterEach {
+            $script:QsfCompletionProjectRoot = $script:OriginalCompletionRoot
+            Remove-Item -LiteralPath (Join-Path $TestDrive "state") -Recurse -Force -ErrorAction SilentlyContinue
+        }
+
+        It "completes continuity session ids for goals after pretty" {
+            $completions = Complete-QsfInput -InputText ".\scripts\qsf.ps1 goals -Pretty "
+
+            $completions | Should -Contain "default"
+            $completions | Should -Contain "run-abc"
+        }
+
+        It "stops completing goals session ids when one already follows pretty" {
+            $completions = Complete-QsfInput -InputText ".\scripts\qsf.ps1 goals -Pretty default "
+
+            $completions | Should -Not -Contain "run-abc"
         }
     }
 }
