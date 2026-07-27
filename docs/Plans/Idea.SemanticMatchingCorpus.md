@@ -98,10 +98,11 @@ Four consequences, in order of severity:
    and ~30 at 150. The failure already observed live is crowd-out — `present-person-priority`
    displacing weaker matches — so the failure mode that actually threatens the system is the one a
    7-goal corpus structurally cannot see.
-2. **Goal-text provenance differs.** The scorer keys off goal descriptions. The seed roster's are
-   hand-authored and carefully worded; production goals are self-authored, shorter, more variable.
-   Measuring keyword extraction against seven polished descriptions says little about a hundred
-   auto-authored ones.
+2. **Keyword provenance differs.** The scorer keys off each goal's `activation_keywords` list, not
+   its prose. For the permanent seven those lists are hand-authored and individually weighted; for
+   dynamic goals they are derived mechanically or written by the model that proposed the goal, and
+   arrive unweighted (see "Evidence in hand" below). Measuring against seven curated lists says
+   little about a hundred auto-generated ones.
 3. **The dense method has a hard ceiling.** 7 goals is 798 pairs and 6,384 panel verdicts. 150
    goals would be 17,100 pairs and 136,800 verdicts. Dense cross-product cannot grow to the
    production roster, so it will never become realistic by adding goals — it caps out.
@@ -133,23 +134,58 @@ Measured with the real runtime scorer (`qsf_volition::normalize_terms` → `matc
 about those goals* — the friendliest possible conditions. Organic phrasing and a larger roster
 would be worse.
 
-**Why it is this low: activation keywords are derived from the goal's own identifier.**
-`crates/qsf_volition/src/candidate.rs` builds a goal's activation keywords by splitting its tension
-id on hyphens and lowercasing the parts — `person-respect` becomes `["person", "respect"]`. There
-is no curation anywhere, for seed goals or self-formed ones. A goal therefore fires only when the
-utterance literally contains a word taken from its own id.
+**Why it is this low: what the fast tier actually matches on.** Each goal carries an
+`activation_keywords` list of exact lowercase tokens, each with a weight class — Weak 1, Normal 4,
+Strong 8 (`crates/qsf_volition/src/model.rs`). A goal is selected when any keyword equals a
+normalized input token; `match_strength` is the sum of the matched weights; and a selection must
+reach the fixture's `arbitration_qualification_threshold` (4 — one Normal, one Strong, or four
+Weak) before it may win arbitration.
 
-Two observed behaviours fall directly out of this:
+**Those lists come from two different places, and only one of them is curated.** This is a
+correction to an earlier version of this section, which stated that keywords are derived from the
+goal's own identifier everywhere. That is true only of dynamic goals.
 
-- **Goals with technical names are effectively unreachable.** `epistemic-integrity` activates on
-  the tokens *epistemic* or *integrity*, which essentially never occur in speech.
-- **Goals with common-word names dominate.** `present-person-priority` contributes *present*,
-  *person* and *priority*, so it fires on utterances it has nothing to do with. This is the
-  crowd-out failure observed live — a consequence of the matching signal, not a subtle arbitration
-  bug.
+- **The permanent seven are hand-authored and weighted.** `crates/qsf_volition/src/fixture.rs`
+  gives each seed goal an explicit list. `keep-theses-distinct-from-fact` carries *evidence* and
+  *prove* as Strong, *certain*/*true*/*fact* as Normal, *sure*/*really*/*actually*/*know*/*why* as
+  Weak. None of these are taken from its id.
+- **Dynamic goals get uncurated keywords, by three separate paths.**
+  `propose_goal_candidates` (`candidate.rs`) splits the *matched tension* id on hyphens —
+  `continuity-preservation` becomes `["continuity", "preservation"]`.
+  `explicit_goal_request_candidate` (`live_goal_formation.rs`) takes the first eight normalized
+  tokens of the requested goal text. The live-formation model may also supply
+  `activation_keywords` itself. All three land as `ActivationKeyword::normal` in `into_goal`, so
+  every dynamic keyword weighs 4 and any single match clears the qualification threshold alone.
 
-It also means renaming a goal silently changes its matching behaviour, which is an implicit
-coupling nobody would choose deliberately.
+Two behaviours were previously attributed to id-derivation. Both are real; neither has that cause:
+
+- **Technically-named goals are not unreachable.** `epistemic-integrity` never contributes
+  *epistemic* or *integrity* to anything. The goal serving it fires on *evidence*, *prove*,
+  *certain*, *true* and *fact* — reachable words. The gap that remains is paraphrase: "Was that
+  your own guess, or something you read somewhere?" is unmistakably about that goal and activates
+  nothing at all, because no curated list can enumerate the ways people avoid the obvious word.
+- **Crowd-out is a curation and weighting effect, not a naming accident.**
+  `serve-the-present-person`'s list is deliberately generic — *what*, *how*, *can*, *do*, *tell*,
+  *show*, *make*, *want*, *need* — so it fires on almost any question. But they are all Weak, so
+  three of them (strength 3) fail to qualify while one Strong keyword on an unrelated goal clears
+  the threshold by itself. "Don't tell me about AI and jobs again — what I actually want is a plan
+  for my own work" puts `track-the-ai-transition` at strength 12 on the topic the person just
+  refused, and `serve-the-present-person` at 3, below the threshold, on the request they actually
+  made. Displacement comes out of the weight/threshold interaction over hand-chosen generic terms.
+
+Renaming still couples to matching, but only for dynamic goals — and via the *tension* id for
+candidate-derived keywords, not the goal id. Seed goals are immune, because their lists are
+explicit.
+
+Two consequences for this corpus:
+
+- **The 33.6% recall figure stands and is if anything generous.** It was measured with the real
+  scorer against the seven curated, weighted lists. Dynamic goals have flat unweighted lists drawn
+  from their own id or request text, so the production regime is worse than the measured one.
+- **This sharpens consequence 4 above rather than softening it.** The permanent seven are not
+  merely the goals that *could* be given curated matchers — they already have them. A corpus over
+  those seven measures the curated regime exclusively, and the roster it needs to predict is
+  mostly uncurated.
 
 **The rubric-direction prediction was confirmed.** Recall gap = −11.86 points: a conservative
 (tighter) relevance threshold *raises* measured recall, because tightening preferentially discards
