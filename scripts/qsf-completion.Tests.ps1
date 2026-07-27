@@ -173,6 +173,12 @@ Describe "qsf.ps1 argument completion" {
         $completions | Should -Contain "realtime"
     }
 
+    It "completes the transcript command" {
+        $completions = Complete-QsfInput -InputText ".\scripts\qsf.ps1 tr"
+
+        $completions | Should -Contain "transcript"
+    }
+
     It "completes latest for restore even without backups" {
         $completions = Complete-QsfInput -InputText ".\scripts\qsf.ps1 restore "
 
@@ -222,6 +228,63 @@ Describe "qsf.ps1 argument completion" {
 
             $completions | Should -Contain "state/realtime"
             $completions | Should -Not -Contain "state/backups"
+        }
+    }
+
+    Context "with a hermetic project root that has diagnostics ledgers" {
+        BeforeEach {
+            $script:OriginalCompletionRoot = $script:QsfCompletionProjectRoot
+            $script:QsfCompletionProjectRoot = "$TestDrive"
+            New-Item -ItemType Directory -Force (Join-Path $TestDrive "state/realtime/diagnostics") | Out-Null
+            Set-Content -LiteralPath (Join-Path $TestDrive "state/realtime/diagnostics/default.jsonl") -Value ""
+            Set-Content -LiteralPath (Join-Path $TestDrive "state/realtime/diagnostics/run-abc.jsonl") -Value ""
+        }
+
+        AfterEach {
+            $script:QsfCompletionProjectRoot = $script:OriginalCompletionRoot
+            Remove-Item -LiteralPath (Join-Path $TestDrive "state") -Recurse -Force -ErrorAction SilentlyContinue
+        }
+
+        It "completes ledger session ids for transcript" {
+            $completions = Complete-QsfInput -InputText ".\scripts\qsf.ps1 transcript "
+
+            $completions | Should -Contain "default"
+            $completions | Should -Contain "run-abc"
+        }
+
+        It "strips the jsonl extension from completed session ids" {
+            $completions = Complete-QsfInput -InputText ".\scripts\qsf.ps1 transcript "
+
+            $completions | Should -Not -Contain "default.jsonl"
+        }
+
+        It "stops completing session ids once one is supplied" {
+            $completions = Complete-QsfInput -InputText ".\scripts\qsf.ps1 transcript default "
+
+            $completions | Should -Not -Contain "run-abc"
+        }
+
+        It "completes session ids after a valueless switch" {
+            $completions = Complete-QsfInput -InputText ".\scripts\qsf.ps1 transcript -Pretty "
+
+            $completions | Should -Contain "default"
+            $completions | Should -Contain "run-abc"
+        }
+
+        It "stops completing session ids when one already follows a valueless switch" {
+            $completions = Complete-QsfInput -InputText ".\scripts\qsf.ps1 transcript -Full default "
+
+            $completions | Should -Not -Contain "run-abc"
+        }
+
+        It "still honours an explicit state dir alongside switches" {
+            New-Item -ItemType Directory -Force (Join-Path $TestDrive "state/other/diagnostics") | Out-Null
+            Set-Content -LiteralPath (Join-Path $TestDrive "state/other/diagnostics/elsewhere.jsonl") -Value ""
+
+            $completions = Complete-QsfInput -InputText ".\scripts\qsf.ps1 transcript -All -StateDir state/other "
+
+            $completions | Should -Contain "elsewhere"
+            $completions | Should -Not -Contain "default"
         }
     }
 }

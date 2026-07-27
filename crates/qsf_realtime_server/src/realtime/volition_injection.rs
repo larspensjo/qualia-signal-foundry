@@ -1,97 +1,22 @@
 use qsf_realtime_protocol::build_openai_realtime_conversation_item_create;
 use qsf_volition::{
-    ActivationKeyword, DeclineReason, DeclinedCandidate, GoalVisibility, Mode,
-    ModeArbitrationOutcome, OpportunitySignal, RankedSelectionResult, ShapingIntensity,
-    ShapingIntensityInputs, VolitionFixture, render_volition_stance,
-    stable_baseline_hash as volition_stable_baseline_hash,
+    DeclinedCandidate, GoalVisibility, Mode, ModeArbitrationOutcome, OpportunitySignal,
+    RankedSelectionResult, ShapingIntensity, ShapingIntensityInputs, VolitionFixture,
+    render_volition_stance, stable_baseline_hash as volition_stable_baseline_hash,
 };
 use serde::{Deserialize, Serialize};
 
 use crate::realtime::tools::VolitionStateSnapshot;
 pub(crate) use crate::realtime::volition_injection_summary::build_mode_bias_outcomes;
 use crate::realtime::volition_injection_summary::build_turn_packet_summary;
+pub(crate) use crate::realtime::volition_injection_text::compute_ambient_exposure;
 use crate::realtime::volition_injection_text::render_turn_packet_text;
-pub(crate) use crate::realtime::volition_injection_text::{
-    AmbientExposure, compute_ambient_exposure,
+
+pub use qsf_diagnostics::{
+    AmbientExposure, DeclinedCandidateInjectionRef, VolitionArbitrationSummary,
+    VolitionCandidateSummary, VolitionContextInjectionTrace, VolitionInjectionLayer,
+    VolitionModeBiasOutcome, VolitionSelectedMatchDetail, VolitionSelectorSummary,
 };
-
-/// A declined candidate as it appears in an injection trace: just enough to reconstruct which
-/// coherence rejection was model-visible for this turn, without duplicating the full record.
-#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
-pub struct DeclinedCandidateInjectionRef {
-    pub candidate_id: String,
-    pub conflict: DeclineReason,
-}
-
-#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
-pub struct VolitionInjectionLayer {
-    pub name: String,
-    pub carrier: String,
-    pub injection_point: String,
-}
-
-#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
-pub struct VolitionCandidateSummary {
-    pub goal_id: String,
-    pub goal_title: String,
-    pub reason_category: String,
-    pub reason: String,
-    /// Matched keywords with weight classes (empty for status-filtered candidates that never
-    /// matched a keyword). Carried so the trace can recompute `match_strength`.
-    #[serde(default)]
-    pub matched_keywords: Vec<ActivationKeyword>,
-    /// Summed weight of `matched_keywords` (0 when nothing matched).
-    #[serde(default)]
-    pub match_strength: u32,
-}
-
-/// Per-selected-goal matched keywords with weight classes and strength, for the trace's
-/// `selector_output` (the arbitration-losing / below-threshold detail lives on the candidate
-/// summaries).
-#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
-pub struct VolitionSelectedMatchDetail {
-    pub goal_id: String,
-    pub matched_keywords: Vec<ActivationKeyword>,
-    pub match_strength: u32,
-    /// Per-goal narration visibility, so an operator can reconstruct which selected goals were
-    /// subconscious dispositions and which were conscious. `#[serde(default)]` = `Conscious` for
-    /// traces serialized before this field.
-    #[serde(default)]
-    pub visibility: GoalVisibility,
-}
-
-#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
-pub struct VolitionSelectorSummary {
-    pub selected_goal_ids: Vec<String>,
-    pub selected_goal_titles: Vec<String>,
-    pub selected_goal_summaries: Vec<String>,
-    pub selected_count: usize,
-    pub omitted_count: usize,
-    pub suppressed_cooldown_count: usize,
-    pub visible_blocked_count: usize,
-    #[serde(default)]
-    pub selected_match_details: Vec<VolitionSelectedMatchDetail>,
-}
-
-#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
-pub struct VolitionModeBiasOutcome {
-    pub goal_id: String,
-    pub goal_title: String,
-    pub effective_tier: u8,
-    pub biased_tier: u8,
-    pub protected: bool,
-}
-
-#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
-pub struct VolitionArbitrationSummary {
-    pub mode: Mode,
-    pub winner_goal_id: String,
-    pub winner_goal_title: String,
-    pub winner_goal_summary: String,
-    pub winner_effective_tier: u8,
-    pub winner_biased_tier: u8,
-    pub loser_count: usize,
-}
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 pub struct VolitionTurnPacket {
@@ -138,47 +63,10 @@ pub struct VolitionTurnPacketSummary {
     /// How the winner was exposed in the model-visible text this turn. `ordinary` for a conscious
     /// winner or no winner; `reduced_subconscious` / `forced_surfaced_subconscious` for a
     /// subconscious winner. `#[serde(default)]` = `Ordinary` for back-compat.
-    #[serde(default = "default_ambient_exposure")]
+    #[serde(default = "qsf_diagnostics::default_ambient_exposure")]
     pub ambient_exposure: AmbientExposure,
     /// Number of selected goals that are subconscious dispositions this turn. Lets an operator
     /// reconstruct how much subconscious biasing shaped the turn without diffing visibilities.
-    #[serde(default)]
-    pub subconscious_selected_count: usize,
-}
-
-fn default_ambient_exposure() -> AmbientExposure {
-    AmbientExposure::Ordinary
-}
-
-#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
-pub struct VolitionContextInjectionTrace {
-    pub qsf_session_id: String,
-    pub exchange_index: usize,
-    pub injected_layers: Vec<VolitionInjectionLayer>,
-    pub stable_baseline_hash: String,
-    pub input_transcript_ref: String,
-    pub volition_tick_before: u64,
-    pub events_applied: Vec<qsf_volition::VolitionEvent>,
-    pub opportunity_signals: Vec<OpportunitySignal>,
-    pub selector_output: VolitionSelectorSummary,
-    pub omitted_or_suppressed_candidates: Vec<VolitionCandidateSummary>,
-    #[serde(default)]
-    pub qualification_threshold: u32,
-    #[serde(default)]
-    pub below_threshold_candidates: Vec<VolitionCandidateSummary>,
-    pub arbitration_result: Option<VolitionArbitrationSummary>,
-    pub mode_bias_outcomes: Vec<VolitionModeBiasOutcome>,
-    pub protected_tier_active: bool,
-    pub shaping_intensity: ShapingIntensity,
-    pub shaping_intensity_inputs: Option<ShapingIntensityInputs>,
-    pub context_packet_hash: String,
-    pub context_packet_token_estimate: usize,
-    pub response_create_event_ref: String,
-    pub declined_candidates_injected: Vec<DeclinedCandidateInjectionRef>,
-    #[serde(default)]
-    pub winner_visibility: Option<GoalVisibility>,
-    #[serde(default = "default_ambient_exposure")]
-    pub ambient_exposure: AmbientExposure,
     #[serde(default)]
     pub subconscious_selected_count: usize,
 }

@@ -301,6 +301,24 @@ continuity manifest. The direct Cargo form is:
 cargo run -p qsf_app -- sleep --state-dir state/realtime --provider openai
 ```
 
+Read the newest realtime diagnostics run as a transcript joined to its volition traces:
+
+```powershell
+.\scripts\qsf.ps1 transcript
+.\scripts\qsf.ps1 transcript > turns.jsonl
+```
+
+`transcript` emits a session record followed by one JSONL turn per trusted exchange. The
+launcher uses `Write-Host` for banners, and Cargo's build output uses other streams, so `>`
+captures only the JSONL. Use `-Out turns.jsonl` to have the command write the file directly
+instead. Pass an explicit session id to bypass ledger auto-selection, or `-All` to emit every run.
+Every session record carries `source`: `source.complete` is `false` when a line was skipped or a
+trace was orphaned, and each turn's `undecodable` lists record kinds this build could not read.
+Runs recorded before 2026-07-19 contain world-consultation records this build cannot decode, so
+those runs report `source.complete: false`.
+The default curated output contains no floating-point values; `--full` embeds traces verbatim and
+can contain floating point because `qsf_corpus::QueryCandidate.score` is `f64`.
+
 #### Launcher troubleshooting
 
 - **Blocked port:** `doctor` reports whether `127.0.0.1:3939` and `127.0.0.1:3940`

@@ -1,6 +1,7 @@
 # Handoff — Resume Here
 
-**Updated:** 2026-07-26 — the goal_relevance pipeline machinery and v1 lineage rescue are complete;
+**Updated:** 2026-07-27 — Transcript CLI implementation is complete through the launcher and awaits
+its live-session acceptance run. The goal_relevance pipeline machinery and v1 lineage rescue are complete;
 the eighteen replay/evidence artifacts are committed under
 `evaluation/frozen/goal-relevance/lineage/`, and the remaining work is the panel labeling and
 freeze campaign; see
@@ -26,14 +27,16 @@ Rules (see ProjectWorkflow.md, "Handoff Discipline"):
 -->
 
 ## Now — immediate few actions
-### Re-run the live probe with trigger-compatible phrasing
-**Repeat the live real-corpus probe using turns the current triggers can catch — a capitalized
+### Run the Transcript CLI live-session acceptance
+**Complete the live conversation, artifact-integrity, and debug-UI cross-check in
+[Plan.TranscriptCli](Plans/Plan.TranscriptCli.md).**
+Why: the implementation and automated gates are complete; this human acceptance run is the remaining
+evidence before the ephemeral plan can be closed.
+Alternate: repeat the live real-corpus probe using turns the current triggers can catch — a capitalized
 proper-name entity plus a search cue ("Can you find the latest information about Nvidia?") and
 a turn that names "AI" explicitly
-([Experiment.WorldConsultation](Experiments/Experiment.WorldConsultation.md)).**
-Why: this separates "surfacing works once a consultation is requested" from the newly observed
-trigger gaps; real-corpus surfacing is still the plan's unobserved central result, and the
-panel's retrieval detail is the verification surface.
+([Experiment.WorldConsultation](Experiments/Experiment.WorldConsultation.md)) — this separates
+surfacing from the newly observed trigger gaps.
 Alternate: run a first real-corpus sleep consolidation and a recall probe
 ([Experiment.WorldMemoryConsolidation](Experiments/Experiment.WorldMemoryConsolidation.md)) —
 tunes the provisional eligibility rule and 7-day half-life with real evidence.

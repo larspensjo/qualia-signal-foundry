@@ -377,6 +377,11 @@ and the diagnostics stream remains in:
 <state_dir>/diagnostics/<qsf_session_id>.jsonl
 ```
 
+The persisted diagnostics record schema is owned by the `qsf_diagnostics` crate so readers such as
+the sleep phase and transcript command share the writer's definition. The
+`qsf_realtime_server::diagnostics` module remains a re-export facade for the server's existing write
+sites.
+
 ### Lifecycle protection for protected goals
 
 `tick_events` accepts the `VolitionFixture` and skips retirement events for any goal

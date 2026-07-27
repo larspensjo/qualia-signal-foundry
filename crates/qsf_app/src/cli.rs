@@ -1,5 +1,6 @@
 use std::path::PathBuf;
 
+use anyhow::Context;
 use clap::{CommandFactory, Parser, Subcommand};
 
 use crate::experiments::{self, ExperimentName};
@@ -62,6 +63,33 @@ enum Command {
         /// Explicit continuity session id. Bypasses automatic session selection.
         #[arg(long, value_name = "ID")]
         session: Option<String>,
+    },
+
+    /// Print a realtime session's turns joined to their volition traces, as JSONL.
+    Transcript {
+        /// Realtime state directory containing the diagnostics ledger.
+        #[arg(long, default_value = "state/realtime", value_name = "PATH")]
+        state_dir: PathBuf,
+
+        /// Explicit session id. Bypasses automatic ledger selection.
+        #[arg(long, value_name = "ID")]
+        session: Option<String>,
+
+        /// Emit every run in the ledger, not just the most recent one.
+        #[arg(long)]
+        all: bool,
+
+        /// Indent each record. Readable, but no longer one record per line.
+        #[arg(long)]
+        pretty: bool,
+
+        /// Attach the verbatim traces and the full exchange to each turn.
+        #[arg(long)]
+        full: bool,
+
+        /// Write to this file instead of stdout.
+        #[arg(long, value_name = "PATH")]
+        out: Option<PathBuf>,
     },
 
     /// Build or incrementally refresh the read-only external world corpus index.
@@ -147,6 +175,39 @@ pub fn run() -> anyhow::Result<()> {
             );
             Ok(())
         }
+        Some(Command::Transcript {
+            state_dir,
+            session,
+            all,
+            pretty,
+            full,
+            out,
+        }) => {
+            let path = crate::transcript::resolve_ledger_path(&state_dir, session.as_deref())?;
+            let entries = crate::transcript::load_ledger(&path)?;
+
+            let ledger_label = path.display().to_string();
+            let runs = crate::transcript::runs_from_entries(entries, &ledger_label, full);
+            let runs = crate::transcript::select_runs(runs, all);
+
+            // Warnings duplicate what `header.source` already carries in the artifact. They exist so
+            // an interactive run notices; the artifact does not depend on anyone having read them.
+            for warning in crate::transcript::render_source_warnings(&runs) {
+                eprintln!("{warning}");
+            }
+
+            let rendered = crate::transcript::render_runs(runs, pretty)?;
+            match out {
+                Some(destination) => {
+                    std::fs::write(&destination, rendered).with_context(|| {
+                        format!("failed to write transcript to `{}`", destination.display())
+                    })?;
+                    eprintln!("wrote {}", destination.display());
+                }
+                None => print!("{rendered}"),
+            }
+            Ok(())
+        }
         Some(Command::IngestWorld {
             corpus_path,
             ledger_path,
@@ -218,6 +279,62 @@ mod tests {
             panic!("expected goals command");
         };
         assert_eq!(session.as_deref(), Some("run-123"));
+    }
+
+    #[test]
+    fn transcript_command_defaults_to_realtime_state_and_compact_output() {
+        let cli = Cli::try_parse_from(["qsf_app", "transcript"]).unwrap();
+
+        let Some(super::Command::Transcript {
+            state_dir,
+            session,
+            all,
+            pretty,
+            full,
+            out,
+        }) = cli.command
+        else {
+            panic!("expected transcript command");
+        };
+        assert_eq!(state_dir, std::path::PathBuf::from("state/realtime"));
+        assert_eq!(session, None);
+        assert!(!all);
+        assert!(!pretty);
+        assert!(!full);
+        assert_eq!(out, None);
+    }
+
+    #[test]
+    fn transcript_command_parses_every_flag() {
+        let cli = Cli::try_parse_from([
+            "qsf_app",
+            "transcript",
+            "--session",
+            "run-123",
+            "--all",
+            "--pretty",
+            "--full",
+            "--out",
+            "turns.jsonl",
+        ])
+        .unwrap();
+
+        let Some(super::Command::Transcript {
+            session,
+            all,
+            pretty,
+            full,
+            out,
+            ..
+        }) = cli.command
+        else {
+            panic!("expected transcript command");
+        };
+        assert_eq!(session.as_deref(), Some("run-123"));
+        assert!(all);
+        assert!(pretty);
+        assert!(full);
+        assert_eq!(out, Some(std::path::PathBuf::from("turns.jsonl")));
     }
 
     #[test]

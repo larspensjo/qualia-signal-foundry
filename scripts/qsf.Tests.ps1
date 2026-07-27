@@ -34,6 +34,47 @@ BeforeAll {
     }
 }
 
+Describe "qsf.ps1 transcript launcher" {
+    BeforeAll {
+        $script:QsfSkipAutoRun = $true
+        . $script:LauncherScript -Command "help"
+    }
+
+    It "defaults to the realtime state directory and compact output" {
+        $arguments = Get-TranscriptArguments
+
+        $arguments | Should -Contain "transcript"
+        $arguments | Should -Contain "--state-dir"
+        $arguments | Should -Contain "state/realtime"
+        $arguments | Should -Not -Contain "--pretty"
+        $arguments | Should -Not -Contain "--all"
+        $arguments | Should -Not -Contain "--full"
+    }
+
+    It "passes an explicit session id through as --session" {
+        $script:QsfSkipAutoRun = $true
+        . $script:LauncherScript -Command "transcript" -Subject "run-123"
+
+        $arguments = Get-TranscriptArguments
+
+        $arguments | Should -Contain "--session"
+        $arguments | Should -Contain "run-123"
+    }
+
+    It "maps each switch to its cargo flag" {
+        $script:QsfSkipAutoRun = $true
+        . $script:LauncherScript -Command "transcript" -All -Pretty -Full -Out "turns.jsonl"
+
+        $arguments = Get-TranscriptArguments
+
+        $arguments | Should -Contain "--all"
+        $arguments | Should -Contain "--pretty"
+        $arguments | Should -Contain "--full"
+        $arguments | Should -Contain "--out"
+        $arguments | Should -Contain "turns.jsonl"
+    }
+}
+
 AfterAll {
     foreach ($name in $script:TestEnvironmentNames) {
         [System.Environment]::SetEnvironmentVariable($name, $script:OriginalEnvironment[$name], "Process")

@@ -19,6 +19,7 @@ log.workspace = true
 qsf_memory = { path = "../qsf_memory" }
 qsf_context = { path = "../qsf_context" }
 qsf_corpus = { path = "../qsf_corpus" }
+qsf_diagnostics = { path = "../qsf_diagnostics" }
 qsf_models = { path = "../qsf_models" }
 qsf_volition = { path = "../qsf_volition" }
 qsf_realtime_protocol = { path = "../qsf_realtime_protocol" }

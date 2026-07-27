@@ -14,6 +14,7 @@ pub mod runtime;
 pub mod session;
 pub mod sleep;
 pub mod tools;
+pub mod transcript;
 pub mod volition;
 pub mod world_corpus;
 

@@ -22,7 +22,8 @@
 - Preserve the unidirectional data flow: input -> action -> reducer -> state -> render, with side effects isolated and fed back as actions.
 - Reducers must stay pure and unit-testable.
 - Keep view-derivation logic in pure selectors/view-models, not inline in components; components consume state and render. This is the `state -> render` analogue of pure reducers.
-- Keep entry points (`main.rs`, `mod.rs` and `lib.rs`) files as thin wrappers only.
+- Keep entry points (`main.rs`, `mod.rs`, `lib.rs`, and `cli.rs`) as thin wrappers only; CLI
+  dispatch arms delegate, with policy and rendering kept in pure functions.
 - Keep shared constants and behavior DRY; prefer one source of truth over duplicated definitions.
 - Name runtime modules after stable behavior or domain concepts, not temporary plan phases or milestones.
 

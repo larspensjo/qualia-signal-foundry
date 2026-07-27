@@ -1544,6 +1544,7 @@ dependencies = [
  "log",
  "qsf_context",
  "qsf_corpus",
+ "qsf_diagnostics",
  "qsf_memory",
  "qsf_models",
  "qsf_realtime_protocol",
@@ -1612,6 +1613,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "qsf_diagnostics"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "qsf_corpus",
+ "qsf_session",
+ "qsf_volition",
+ "serde",
+ "serde_json",
+ "time",
+]
+
+[[package]]
 name = "qsf_memory"
 version = "0.1.0"
 dependencies = [
@@ -1661,6 +1675,7 @@ dependencies = [
  "log",
  "qsf_context",
  "qsf_corpus",
+ "qsf_diagnostics",
  "qsf_memory",
  "qsf_models",
  "qsf_realtime_protocol",

@@ -3,8 +3,6 @@ use std::path::{Path, PathBuf};
 use std::time::Instant;
 
 use anyhow::Context;
-use serde_json::Value;
-
 use qsf_models::{
     CoherenceJudge, LiveGoalFormationJudge, ModelBackedCoherenceJudge,
     ModelBackedLiveGoalFormationJudge, ModelClient, coherence_judge_goal_set,
@@ -18,6 +16,7 @@ use crate::runtime::run_context::RunContext;
 use crate::session::{
     ContinuityManifest, StateDirectoryResolution, resolve_shared_state_directory_from_env,
 };
+use qsf_diagnostics::{DiagnosticRecord, REALTIME_BOUNDED_INITIATIVE_KIND, decode_envelope};
 use qsf_volition::{
     AdmissionResolution, DeclinedCandidate, REALTIME_SEED_FIXTURE_ID, ReviewedVolitionSeed,
     VolitionConsolidationReport, VolitionConsolidationSnapshotRecord, VolitionContinuitySnapshot,
@@ -504,9 +503,16 @@ fn load_reviewed_seed(path: &Path) -> anyhow::Result<ReviewedVolitionSeed> {
         .with_context(|| format!("failed to load reviewed volition seed `{}`", path.display()))
 }
 
-/// Parse `VolitionTurnOutcome` records from a diagnostics JSONL file, skipping non-initiative
-/// records. Merges record-level `recorded_at` and renames `artifact_or_record_reference` to
-/// `artifact_reference` to match `VolitionTurnOutcome`'s field layout.
+/// Parse `VolitionTurnOutcome` records from a diagnostics JSONL file.
+///
+/// Dispatches on `RecordEnvelope::kind` and deserializes only initiative records. The ledger is
+/// append-only across builds, so a line of some other kind that this build cannot parse — an
+/// unknown kind, or a known kind in an older shape — must not fail the read: none of it is input to
+/// sleep. A malformed *initiative* record is a different matter and still fails, with its line
+/// number, because that one is input.
+///
+/// `recorded_at` lives at the record level rather than inside the trace, and the trace names its
+/// reference field `artifact_or_record_reference`, so this function maps the two shapes explicitly.
 pub(crate) fn load_initiative_outcomes(path: &Path) -> anyhow::Result<Vec<VolitionTurnOutcome>> {
     if !path.exists() {
         return Ok(vec![]);
@@ -516,45 +522,44 @@ pub(crate) fn load_initiative_outcomes(path: &Path) -> anyhow::Result<Vec<Voliti
         .with_context(|| format!("failed to read diagnostics JSONL `{}`", path.display()))?;
     let mut outcomes = Vec::new();
     for (line_index, line) in contents.lines().enumerate() {
-        let record: Value = serde_json::from_str(line).with_context(|| {
+        let Some(envelope) = decode_envelope(line) else {
+            continue;
+        };
+        if envelope.kind.as_deref() != Some(REALTIME_BOUNDED_INITIATIVE_KIND) {
+            continue;
+        }
+        let record: DiagnosticRecord = serde_json::from_str(line).with_context(|| {
             format!(
-                "failed to parse diagnostics line {} from `{}`",
+                "failed to parse initiative record on line {} of `{}`",
                 line_index + 1,
                 path.display()
             )
         })?;
-        if record.get("kind").and_then(Value::as_str) != Some("realtime_bounded_initiative") {
-            continue;
-        }
-        let Some(trace) = record.get("trace") else {
-            continue;
-        };
-
-        // `recorded_at` lives at the record level (not inside the trace), and the trace
-        // names its reference field `artifact_or_record_reference` while `VolitionTurnOutcome`
-        // expects `artifact_reference`. Merge both fixes into a single JSON object before
-        // deserializing.
-        let recorded_at = record
-            .get("recorded_at")
-            .cloned()
-            .unwrap_or(Value::String(String::new()));
-        let mut merged = trace.clone();
-        if let Value::Object(ref mut map) = merged {
-            map.entry("recorded_at".to_string()).or_insert(recorded_at);
-            if !map.contains_key("artifact_reference") {
-                if let Some(v) = map.remove("artifact_or_record_reference") {
-                    map.insert("artifact_reference".to_string(), v);
-                }
-            }
-        }
-
-        let outcome: VolitionTurnOutcome = serde_json::from_value(merged).with_context(|| {
-            format!(
-                "failed to parse volition initiative trace from `{}`",
+        let DiagnosticRecord::RealtimeBoundedInitiative {
+            recorded_at, trace, ..
+        } = record
+        else {
+            anyhow::bail!(
+                "line {} of `{}` carries kind `{REALTIME_BOUNDED_INITIATIVE_KIND}` but did not \
+                 deserialize as that variant",
+                line_index + 1,
                 path.display()
-            )
-        })?;
-        outcomes.push(outcome);
+            );
+        };
+        outcomes.push(VolitionTurnOutcome {
+            qsf_session_id: trace.qsf_session_id,
+            exchange_index: trace.exchange_index,
+            recorded_at: recorded_at
+                .format(&time::format_description::well_known::Rfc3339)
+                .unwrap_or_default(),
+            response_create_event_ref: trace.response_create_event_ref,
+            winning_goal_id: trace.winning_goal_id,
+            initiative_output: trace.initiative_output,
+            surfaced: trace.surfaced,
+            suppression_reason: trace.suppression_reason,
+            rendered_line_present: trace.rendered_line_present,
+            artifact_reference: trace.artifact_or_record_reference,
+        });
     }
     Ok(outcomes)
 }
@@ -595,9 +600,16 @@ pub(crate) fn render_markdown_report(report: &VolitionConsolidationReport) -> St
 #[cfg(test)]
 mod tests {
     use super::*;
+    use qsf_diagnostics::{
+        DiagnosticRecord, RealtimeBoundedInitiativeTrace, RealtimeBoundedOrExternalOutput,
+    };
     use qsf_models::MockModelClient;
-    use qsf_volition::{VolitionState, realtime_seed_fixture};
+    use qsf_volition::{
+        AllowedEffect, GoalScope, InitiativeOutput, InitiativeProposal, VolitionState,
+        build_state_inspection, realtime_seed_fixture,
+    };
     use tempfile::TempDir;
+    use time::OffsetDateTime;
 
     fn write_snapshot_fixture(state_root: &Path, session_id: &str) -> anyhow::Result<()> {
         let continuity_dir = state_root.join("continuity").join(session_id);
@@ -790,22 +802,56 @@ mod tests {
         assert!(result.is_none());
     }
 
-    /// Constructs a minimal `realtime_bounded_initiative` JSONL line matching the wire format
-    /// emitted by `DiagnosticRecord::RealtimeBoundedInitiative` (which cannot be imported here
-    /// because `qsf_app` must not depend on `qsf_realtime_server`).
+    /// Serializes a real `DiagnosticRecord::RealtimeBoundedInitiative` so the test exercises the
+    /// same wire format the realtime server writes.
     fn minimal_initiative_jsonl_line(
-        suppression_reason: Option<&str>,
+        suppression_reason: Option<qsf_volition::VolitionSuppressionReason>,
         surfaced: bool,
         artifact_or_record_reference: &str,
-        recorded_at: &str,
+        recorded_at: time::OffsetDateTime,
     ) -> String {
-        let suppression = match suppression_reason {
-            None => "null".to_string(),
-            Some(r) => format!(r#""{r}""#),
+        let output = InitiativeOutput::ReflectionRequested {
+            proposed_question: "What next?".to_string(),
         };
-        format!(
-            r#"{{"kind":"realtime_bounded_initiative","qsf_session_id":"session-1","exchange_index":3,"recorded_at":"{recorded_at}","trace":{{"qsf_session_id":"session-1","exchange_index":3,"winning_goal_id":"serve-the-present-person","initiative_proposal":{{"goal_id":"serve-the-present-person","goal_title":"Serve","effect":"reflect","rationale":"test","matched_terms":[],"scope":"input"}},"allowed_effect":"reflect","initiative_output":{{"kind":"reflection_requested","proposed_question":"What next?"}},"bounded_or_external_output":{{"initiative_output":{{"kind":"reflection_requested","proposed_question":"What next?"}},"external_effect_executed":false}},"surfaced":{surfaced},"suppression_reason":{suppression},"rendered_line_present":{surfaced},"context_retrieval_hint_terms":null,"hint_consumed_by_next_memory_injection":false,"rationale":"test","state_snapshot_before":{{"tick":0,"mode":"neutral","accepted_goal_count":0,"active_goal_count":0,"pending_candidate_count":0,"blocked_goals":[],"last_initiative_summaries":[]}},"state_snapshot_after":{{"tick":0,"mode":"neutral","accepted_goal_count":0,"active_goal_count":0,"pending_candidate_count":0,"blocked_goals":[],"last_initiative_summaries":[]}},"response_create_event_ref":"ref-1","artifact_or_record_reference":"{artifact_or_record_reference}"}}}}"#
-        )
+        let inspection = build_state_inspection(
+            &VolitionState::from_fixture(&realtime_seed_fixture()),
+            &realtime_seed_fixture(),
+        );
+        let record = DiagnosticRecord::RealtimeBoundedInitiative {
+            qsf_session_id: "session-1".to_string(),
+            exchange_index: 3,
+            recorded_at,
+            trace: RealtimeBoundedInitiativeTrace {
+                qsf_session_id: "session-1".to_string(),
+                exchange_index: 3,
+                winning_goal_id: "serve-the-present-person".to_string(),
+                initiative_proposal: InitiativeProposal {
+                    goal_id: "serve-the-present-person".to_string(),
+                    goal_title: "Serve".to_string(),
+                    effect: AllowedEffect::Reflect,
+                    rationale: "test".to_string(),
+                    matched_terms: vec![],
+                    scope: GoalScope::Input,
+                },
+                allowed_effect: AllowedEffect::Reflect,
+                initiative_output: output.clone(),
+                bounded_or_external_output: RealtimeBoundedOrExternalOutput {
+                    initiative_output: output,
+                    external_effect_executed: false,
+                },
+                surfaced,
+                suppression_reason,
+                rendered_line_present: surfaced,
+                context_retrieval_hint_terms: None,
+                hint_consumed_by_next_memory_injection: false,
+                rationale: "test".to_string(),
+                state_snapshot_before: inspection.clone(),
+                state_snapshot_after: inspection,
+                response_create_event_ref: "ref-1".to_string(),
+                artifact_or_record_reference: artifact_or_record_reference.to_string(),
+            },
+        };
+        serde_json::to_string(&record).expect("serialize initiative record")
     }
 
     #[test]
@@ -816,7 +862,11 @@ mod tests {
             None,
             true,
             "exchange:3/diagnostic:realtime_bounded_initiative",
-            "2026-06-30T12:00:00Z",
+            time::OffsetDateTime::parse(
+                "2026-06-30T12:00:00Z",
+                &time::format_description::well_known::Rfc3339,
+            )
+            .unwrap(),
         );
         fs::write(&path, &line).unwrap();
 
@@ -854,10 +904,14 @@ mod tests {
         for (reason_str, expected) in cases {
             let path = dir.path().join(format!("{reason_str}.jsonl"));
             let line = minimal_initiative_jsonl_line(
-                Some(reason_str),
+                Some(*expected),
                 false,
                 "exchange:3/diagnostic:realtime_bounded_initiative",
-                "2026-06-30T12:00:00Z",
+                time::OffsetDateTime::parse(
+                    "2026-06-30T12:00:00Z",
+                    &time::format_description::well_known::Rfc3339,
+                )
+                .unwrap(),
             );
             fs::write(&path, &line).unwrap();
 
@@ -883,12 +937,59 @@ mod tests {
             None,
             true,
             "exchange:0/diagnostic:realtime_bounded_initiative",
-            "2026-06-30T12:00:00Z",
+            time::OffsetDateTime::parse(
+                "2026-06-30T12:00:00Z",
+                &time::format_description::well_known::Rfc3339,
+            )
+            .unwrap(),
         );
         fs::write(&path, format!("{other}\n{initiative}\n")).unwrap();
 
         let outcomes = load_initiative_outcomes(&path).unwrap();
 
         assert_eq!(outcomes.len(), 1);
+    }
+
+    #[test]
+    fn unrelated_and_unknown_record_kinds_do_not_prevent_reading_initiative_outcomes() {
+        let dir = TempDir::new().unwrap();
+        let path = dir.path().join("diagnostics.jsonl");
+        let initiative =
+            minimal_initiative_jsonl_line(None, true, "artifact-1", OffsetDateTime::UNIX_EPOCH);
+        std::fs::write(
+            &path,
+            format!(
+                // A kind from a future build, a known kind in an older shape (missing fields this
+                // build requires), and then a valid initiative record.
+                "{{\"kind\":\"from_a_future_build\",\"anything\":true}}\n\
+                 {{\"kind\":\"live_goal_formation_skipped\",\"qsf_session_id\":\"s\"}}\n\
+                 {initiative}\n"
+            ),
+        )
+        .unwrap();
+
+        let outcomes = load_initiative_outcomes(&path).expect("unrelated kinds must not abort");
+
+        assert_eq!(outcomes.len(), 1);
+        assert_eq!(outcomes[0].artifact_reference, "artifact-1");
+    }
+
+    #[test]
+    fn a_malformed_initiative_record_still_fails_with_its_line_number() {
+        let dir = TempDir::new().unwrap();
+        let path = dir.path().join("diagnostics.jsonl");
+        std::fs::write(
+            &path,
+            "{\"kind\":\"from_a_future_build\"}\n\
+             {\"kind\":\"realtime_bounded_initiative\",\"trace\":{\"nope\":true}}\n",
+        )
+        .unwrap();
+
+        let error = load_initiative_outcomes(&path).expect_err("a bad initiative record must fail");
+
+        assert!(
+            error.to_string().contains("line 2"),
+            "error must name the failing line: {error}"
+        );
     }
 }

@@ -2152,3 +2152,22 @@ versions. Under the guideline's *Consistent use* rule this requires re-evaluatio
 claiming the new version; the v1 mini and Fable label sets keep their `goalrel-label-v1` binding
 and remain prior-rubric evidence. The rubric-sensitivity number may size the disclosure and select
 which cases get worked examples; it may never revisit this direction.
+
+## 2026-07-27 - The persisted diagnostics schema owns its own crate
+Decision: `DiagnosticRecord`, `DiagnosticWriter` and the trace types they carry moved from
+`qsf_realtime_server` into `qsf_diagnostics`.
+Context: The ledger has readers outside the process that writes it — the sleep phase's initiative
+outcomes and the transcript command — and while the schema lived inside the writer each reader
+re-described the wire format by hand, one of them through untyped `serde_json::Value` field surgery.
+A persisted format with more than one consumer is a contract, and a contract belongs in a crate whose
+purpose is that contract.
+Consequences: Realtime writing and application reporting share one persisted-schema definition, with
+`qsf_realtime_server::diagnostics` retained as a re-export facade for existing write sites.
+
+## 2026-07-27 - CLI dispatch arms are thin wrappers
+Decision: `cli.rs` dispatch arms delegate policy and rendering to pure functions, like the thin
+`main.rs`, `mod.rs`, and `lib.rs` entry points.
+Context: Inline transcript run selection and warning rendering had no focused automated contract; an
+incorrect first-run selection could pass the full suite.
+Consequences: CLI orchestration is limited to calling pure behavior and performing I/O, and policy or
+rendering changes receive direct unit coverage outside the dispatch layer.

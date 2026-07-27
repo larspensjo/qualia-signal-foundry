@@ -1,15 +1,6 @@
-use serde::{Deserialize, Serialize};
+pub use qsf_diagnostics::TurnPhase;
 
 const CONTINUATION_NOISE_ALLOW_LIST: &[&str] = &["cheers", "thanks", "thank you"];
-
-#[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
-#[serde(rename_all = "snake_case")]
-pub enum TurnPhase {
-    #[default]
-    Idle,
-    AwaitingResponse,
-    ToolLoop,
-}
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum TranscriptDisposition {

@@ -48,11 +48,14 @@ candidate categories listed below still have no shared module.
   limit omissions.
 - `engine.log` initialization redirected to `runs/<run-id>/engine.log` per run; human-facing
   logger timestamps use the host's local offset (with UTC only as a safe fallback)
-- `qsf_realtime_server` diagnostic artifacts for session allocation, server-side
-  SDP rendezvous, browser relay events, call binding, and untrusted diagnostic
-  exchanges with explicit source/trust markers
-  ([crates/qsf_realtime_server/src/diagnostics.rs](../../crates/qsf_realtime_server/src/diagnostics.rs),
+- `qsf_diagnostics` owns the persisted diagnostic record schema; `qsf_realtime_server` writes
+  artifacts for session allocation, server-side SDP rendezvous, browser relay events, call binding,
+  and untrusted diagnostic exchanges with explicit source/trust markers, while
+  `qsf_realtime_server::diagnostics` remains a re-export facade
+  ([crates/qsf_diagnostics/src/record.rs](../../crates/qsf_diagnostics/src/record.rs),
   [crates/qsf_realtime_server/src/realtime/routes.rs](../../crates/qsf_realtime_server/src/realtime/routes.rs))
+- The `qsf_app transcript` command reads the persisted diagnostics ledger into a curated,
+  source-integrity-aware JSONL view.
 - `qsf_realtime_server` now also records trusted sideband exchange promotion into
   the shared continuity root, while keeping browser relay exchanges confined to
   relay diagnostics.

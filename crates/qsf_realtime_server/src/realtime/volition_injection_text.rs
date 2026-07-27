@@ -2,30 +2,13 @@ use qsf_volition::{
     DeclineReason, DeclinedCandidate, GoalVisibility, OpportunitySignal, ShapingIntensity,
     ShapingIntensityInputs,
 };
-use serde::{Deserialize, Serialize};
 use sha2::Digest;
+
+pub use qsf_diagnostics::AmbientExposure;
 
 use crate::realtime::volition_injection::{
     VolitionArbitrationSummary, VolitionCandidateSummary, VolitionTurnPacketSummary,
 };
-
-/// How the arbitration winner is exposed in this turn's model-visible text.
-///
-/// - `Ordinary` — a conscious winner rendered as the full `Active goal` line.
-/// - `ReducedSubconscious` — a subconscious winner with no forced-surfacing condition this turn:
-///   the model-visible text carries only a labeled background-guidance line (visibility, intensity,
-///   safe guidance, artifact reference), never the winner's title, summary, or id. The trace keeps
-///   the full winner identity.
-/// - `ForcedSurfacedSubconscious` — a subconscious winner that rendered an initiative line or is
-///   named in a coherence conflict this turn: full detail, labeled as a surfaced background goal
-///   and backed by the forcing evidence.
-#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
-#[serde(rename_all = "snake_case")]
-pub enum AmbientExposure {
-    Ordinary,
-    ReducedSubconscious,
-    ForcedSurfacedSubconscious,
-}
 
 /// Classify how the arbitration winner is exposed in the model-visible text. A subconscious winner
 /// that renders an initiative line or is named in a coherence conflict this turn is forced to

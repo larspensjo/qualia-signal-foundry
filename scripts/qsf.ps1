@@ -24,6 +24,10 @@ param(
     [int]$Port = 3939,
     [switch]$Workbench,
     [switch]$RandomSessionId,
+    [switch]$All,
+    [switch]$Pretty,
+    [switch]$Full,
+    [string]$Out = "",
     [string]$WorldCorpusPath = "",
     [string]$WorldCorpusLedger = "state/world-corpus/index.json"
 )
@@ -547,6 +551,7 @@ Usage:
   .\scripts\qsf.ps1 realtime [-RandomSessionId] [-WorldCorpusPath <path>]
   .\scripts\qsf.ps1 sleep [-StateDir <path>] [-Provider <openai|mock>] [-WorldCorpusPath <path>] [-WorldCorpusLedger <path>]
   .\scripts\qsf.ps1 goals [<session-id>] [-StateDir <path>]
+  .\scripts\qsf.ps1 transcript [<session-id>] [-StateDir <path>] [-All] [-Pretty] [-Full] [-Out <path>]
   .\scripts\qsf.ps1 world-ingest [-WorldCorpusPath <path>] [-WorldCorpusLedger <path>]
   .\scripts\qsf.ps1 restore [<backup-name>|latest] [-StateDir <path>]
   .\scripts\qsf.ps1 doctor [-LaunchProfile <name>] [-Workbench]
@@ -571,6 +576,8 @@ Defaults:
   Sleep update:    state/realtime through the $Provider provider; openai requires OPENAI_API_KEY
                    backs up the state dir to state/backups/<name>-<timestamp> first (keeps last 5)
   Goals:           prints full read-only volition goal detail from state/realtime; an optional session id bypasses auto-selection
+  Transcript:      prints the newest run in state/realtime/diagnostics as JSONL, one line per turn with its
+                   volition traces; an optional session id bypasses ledger auto-selection; -All emits every run
   Restore:         creates undo backups as state/backups/<name>-restore-<timestamp>; latest ignores those undo backups
 
 Examples:
@@ -1539,6 +1546,38 @@ function Invoke-Goals {
     Invoke-LoggedCommand -Executable "cargo" -Arguments $arguments
 }
 
+function Get-TranscriptArguments {
+    $arguments = @(
+        "run",
+        "-p",
+        "qsf_app",
+        "--",
+        "transcript",
+        "--state-dir",
+        $StateDir
+    )
+    if (-not [string]::IsNullOrWhiteSpace($Subject)) {
+        $arguments += @("--session", $Subject)
+    }
+    if ($All) {
+        $arguments += "--all"
+    }
+    if ($Pretty) {
+        $arguments += "--pretty"
+    }
+    if ($Full) {
+        $arguments += "--full"
+    }
+    if (-not [string]::IsNullOrWhiteSpace($Out)) {
+        $arguments += @("--out", $Out)
+    }
+    return $arguments
+}
+
+function Invoke-Transcript {
+    Invoke-LoggedCommand -Executable "cargo" -Arguments (Get-TranscriptArguments)
+}
+
 function Invoke-WorldIngest {
     Invoke-WithEnvironmentDelta -Delta (Get-WorldCorpusIngestEnvironmentDelta) -ScriptBlock {
         Invoke-LoggedCommand -Executable "cargo" -Arguments @(
@@ -1583,6 +1622,9 @@ if (Test-QsfAutoRunEnabled) {
         }
         "goals" {
             Invoke-Goals
+        }
+        "transcript" {
+            Invoke-Transcript
         }
         "world-ingest" {
             Invoke-WorldIngest

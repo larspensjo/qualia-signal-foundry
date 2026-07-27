@@ -13,6 +13,11 @@ use qsf_volition::{
 };
 use serde::{Deserialize, Serialize};
 
+pub use qsf_diagnostics::{
+    CandidateEligibility, CorpusMarkerMetadata, SurfacedWorldFact, TopicTermMajorityThreshold,
+    WorldConsultationCandidate, WorldConsultationTrace, WorldEffectBoundary, WorldInjectionPoint,
+};
+
 /// The maximum synchronous corpus-read cost allowed on a user-input turn.
 pub(crate) const WORLD_CONSULT_INLINE_BUDGET_MS: u64 = 5;
 const WORLD_CONSULT_INLINE_BUDGET_NS: u64 = WORLD_CONSULT_INLINE_BUDGET_MS * 1_000_000;
@@ -94,89 +99,6 @@ pub(crate) enum WorldQueryOrigin {
 pub(crate) enum WorldConsultationTrigger {
     GoalActivation,
     ExplicitCurrentTopic { required_anchors: Vec<String> },
-}
-
-#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
-#[serde(rename_all = "snake_case")]
-pub(crate) enum WorldInjectionPoint {
-    InlineSameTurn,
-    DeferredNextTurn,
-}
-
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
-#[serde(rename_all = "snake_case")]
-pub(crate) enum CandidateEligibility {
-    Eligible,
-    Omitted { reason: String },
-}
-
-#[derive(Clone, Debug, Deserialize, Serialize)]
-pub(crate) struct WorldConsultationCandidate {
-    #[serde(flatten)]
-    pub(crate) candidate: QueryCandidate,
-    pub(crate) eligibility: CandidateEligibility,
-}
-
-#[derive(Clone, Debug, Deserialize, Serialize)]
-pub(crate) struct SurfacedWorldFact {
-    pub(crate) content_hash: String,
-    pub(crate) title: String,
-    pub(crate) url: String,
-    pub(crate) source_domain: String,
-    #[serde(with = "time::serde::rfc3339")]
-    pub(crate) fetched_utc: time::OffsetDateTime,
-    pub(crate) trust_tier: String,
-    /// Exact model-visible material for this external source, including its sandbox wrapper.
-    pub(crate) framed_text: String,
-}
-
-#[derive(Clone, Debug, Deserialize, Serialize)]
-pub(crate) struct CorpusMarkerMetadata {
-    pub(crate) schema_version: u32,
-    pub(crate) producer: String,
-    pub(crate) articles_indexed: usize,
-    pub(crate) drift_warning: Option<String>,
-    pub(crate) corpus_path: String,
-}
-
-#[derive(Clone, Debug, Deserialize, Serialize)]
-pub(crate) struct WorldEffectBoundary {
-    pub(crate) initiative_output: InitiativeOutput,
-    pub(crate) external_effect_executed: bool,
-}
-
-/// The topic-term requirement applied to a goal-activation lookup. `required_matches` is
-/// calculated from `total_terms` using `WORLD_CONSULT_TOPIC_TERM_MINIMUM_MATCH_PERCENT`.
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
-pub(crate) struct TopicTermMajorityThreshold {
-    pub(crate) required_matches: usize,
-    pub(crate) total_terms: usize,
-}
-
-#[derive(Clone, Debug, Deserialize, Serialize)]
-pub struct WorldConsultationTrace {
-    pub(crate) serving_goal_id: String,
-    pub(crate) serving_goal_title: String,
-    pub(crate) serving_tension_ids: Vec<String>,
-    pub(crate) query_terms: Vec<WorldQueryTerm>,
-    /// Every surfaced candidate matched every item in this relevance gate.
-    pub(crate) required_anchors: Vec<String>,
-    /// The subset of `required_anchors` derived from serving-goal activation terms.
-    pub(crate) goal_derived_required_anchors: Vec<String>,
-    /// Present only for the goal-activation policy; explicit entity/version requests retain
-    /// their existing anchor-only relevance gate.
-    pub(crate) topic_term_majority_threshold: Option<TopicTermMajorityThreshold>,
-    pub(crate) candidates: Vec<WorldConsultationCandidate>,
-    pub(crate) surfaced_facts: Vec<SurfacedWorldFact>,
-    pub(crate) injected_text: String,
-    pub(crate) lookup_latency_ms: u64,
-    pub(crate) lookup_latency_ns: u64,
-    pub(crate) injection_point: WorldInjectionPoint,
-    pub(crate) injection_reason: String,
-    pub(crate) corpus_marker: CorpusMarkerMetadata,
-    pub(crate) bounded_or_external_output: WorldEffectBoundary,
-    pub(crate) response_create_event_ref: String,
-    pub(crate) artifact_or_record_reference: String,
 }
 
 #[derive(Clone, Debug)]
