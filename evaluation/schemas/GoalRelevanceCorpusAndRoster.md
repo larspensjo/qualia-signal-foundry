@@ -67,8 +67,10 @@ human-readable views and must never become the regression-gate input.
 
 The deterministic split command writes `split-summary.json` beside
 `validation.dataset.jsonl` and `test.dataset.jsonl`. This is a strict JSON object with numeric
-`split_seed` and `assignment_by_component`, whose keys are connected-component identifiers and
-whose values are `validation` or `test`. Freeze reads this artifact by default; `--seed` may
+`split_seed`, `assignment_by_component`, and required `assignment_rationale`, whose keys are
+connected-component identifiers and whose values are `validation` or `test`. The rationale records
+why the seed-to-component binding is authoritative for downstream census and freeze evidence.
+Freeze reads this artifact by default; `--seed` may
 explicitly override its seed. Before writing frozen artifacts, freeze must rerun the split over the
 combined reviewed pool and require byte equality with both supplied split files.
 

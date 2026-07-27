@@ -1,0 +1,172 @@
+{
+  "evidence_version": 1,
+  "mode": "sample-strict",
+  "pool_id": "goalrel-generation-live",
+  "census_date": "2026-07-26",
+  "split_seed": 20260736,
+  "sample_seed": 20260736,
+  "population_kind": "strict",
+  "samples": [
+    {
+      "sample_name": "strict",
+      "target_size": 40,
+      "realised_size": 42,
+      "strata": [
+        {
+          "goal_ref": "sha256:0876ddaf0df34a67cc7385a57cb1f33456be0d0ee5fd4de0cf8ab826013eff45",
+          "split": "validation",
+          "population": 5,
+          "allocation": 3,
+          "drawn_pair_ids": [
+            "goalrel-generation-live-pool-a-12-02:sha256:0876ddaf0df34a67cc7385a57cb1f33456be0d0ee5fd4de0cf8ab826013eff45",
+            "goalrel-generation-live-pool-a-12-01:sha256:0876ddaf0df34a67cc7385a57cb1f33456be0d0ee5fd4de0cf8ab826013eff45",
+            "goalrel-generation-live-pool-a-11-02:sha256:0876ddaf0df34a67cc7385a57cb1f33456be0d0ee5fd4de0cf8ab826013eff45"
+          ]
+        },
+        {
+          "goal_ref": "sha256:0876ddaf0df34a67cc7385a57cb1f33456be0d0ee5fd4de0cf8ab826013eff45",
+          "split": "test",
+          "population": 5,
+          "allocation": 3,
+          "drawn_pair_ids": [
+            "goalrel-generation-live-pool-b-31-03:sha256:0876ddaf0df34a67cc7385a57cb1f33456be0d0ee5fd4de0cf8ab826013eff45",
+            "goalrel-generation-live-pool-b-31-01:sha256:0876ddaf0df34a67cc7385a57cb1f33456be0d0ee5fd4de0cf8ab826013eff45",
+            "goalrel-generation-live-pool-b-31-02:sha256:0876ddaf0df34a67cc7385a57cb1f33456be0d0ee5fd4de0cf8ab826013eff45"
+          ]
+        },
+        {
+          "goal_ref": "sha256:15af80ae2f779c8fc70ce63ebe1a557c83a2181996cc3cbda873127566566858",
+          "split": "validation",
+          "population": 4,
+          "allocation": 3,
+          "drawn_pair_ids": [
+            "goalrel-generation-live-pool-a-13-03:sha256:15af80ae2f779c8fc70ce63ebe1a557c83a2181996cc3cbda873127566566858",
+            "goalrel-generation-live-pool-a-14-01:sha256:15af80ae2f779c8fc70ce63ebe1a557c83a2181996cc3cbda873127566566858",
+            "goalrel-generation-live-pool-a-13-02:sha256:15af80ae2f779c8fc70ce63ebe1a557c83a2181996cc3cbda873127566566858"
+          ]
+        },
+        {
+          "goal_ref": "sha256:15af80ae2f779c8fc70ce63ebe1a557c83a2181996cc3cbda873127566566858",
+          "split": "test",
+          "population": 4,
+          "allocation": 3,
+          "drawn_pair_ids": [
+            "goalrel-generation-live-pool-b-33-01:sha256:15af80ae2f779c8fc70ce63ebe1a557c83a2181996cc3cbda873127566566858",
+            "goalrel-generation-live-pool-b-34-01:sha256:15af80ae2f779c8fc70ce63ebe1a557c83a2181996cc3cbda873127566566858",
+            "goalrel-generation-live-pool-b-33-03:sha256:15af80ae2f779c8fc70ce63ebe1a557c83a2181996cc3cbda873127566566858"
+          ]
+        },
+        {
+          "goal_ref": "sha256:2d940b0d2c327d48f5c1db2a25f50d2bd7b02b7c5777b8352579074837b4e379",
+          "split": "validation",
+          "population": 4,
+          "allocation": 3,
+          "drawn_pair_ids": [
+            "goalrel-generation-live-pool-a-9-02:sha256:2d940b0d2c327d48f5c1db2a25f50d2bd7b02b7c5777b8352579074837b4e379",
+            "goalrel-generation-live-pool-a-9-04:sha256:2d940b0d2c327d48f5c1db2a25f50d2bd7b02b7c5777b8352579074837b4e379",
+            "goalrel-generation-live-pool-a-9-01:sha256:2d940b0d2c327d48f5c1db2a25f50d2bd7b02b7c5777b8352579074837b4e379"
+          ]
+        },
+        {
+          "goal_ref": "sha256:2d940b0d2c327d48f5c1db2a25f50d2bd7b02b7c5777b8352579074837b4e379",
+          "split": "test",
+          "population": 4,
+          "allocation": 3,
+          "drawn_pair_ids": [
+            "goalrel-generation-live-pool-b-29-02:sha256:2d940b0d2c327d48f5c1db2a25f50d2bd7b02b7c5777b8352579074837b4e379",
+            "goalrel-generation-live-pool-b-29-03:sha256:2d940b0d2c327d48f5c1db2a25f50d2bd7b02b7c5777b8352579074837b4e379",
+            "goalrel-generation-live-pool-b-29-04:sha256:2d940b0d2c327d48f5c1db2a25f50d2bd7b02b7c5777b8352579074837b4e379"
+          ]
+        },
+        {
+          "goal_ref": "sha256:395341a9f5447f544895fa3da3261447f41aec1fc6789b455adaa8d230f30f59",
+          "split": "validation",
+          "population": 9,
+          "allocation": 3,
+          "drawn_pair_ids": [
+            "goalrel-generation-live-pool-a-15-01:sha256:395341a9f5447f544895fa3da3261447f41aec1fc6789b455adaa8d230f30f59",
+            "goalrel-generation-live-pool-a-15-03:sha256:395341a9f5447f544895fa3da3261447f41aec1fc6789b455adaa8d230f30f59",
+            "goalrel-generation-live-pool-a-16-02:sha256:395341a9f5447f544895fa3da3261447f41aec1fc6789b455adaa8d230f30f59"
+          ]
+        },
+        {
+          "goal_ref": "sha256:395341a9f5447f544895fa3da3261447f41aec1fc6789b455adaa8d230f30f59",
+          "split": "test",
+          "population": 9,
+          "allocation": 3,
+          "drawn_pair_ids": [
+            "goalrel-generation-live-pool-b-35-03:sha256:395341a9f5447f544895fa3da3261447f41aec1fc6789b455adaa8d230f30f59",
+            "goalrel-generation-live-pool-b-36-01:sha256:395341a9f5447f544895fa3da3261447f41aec1fc6789b455adaa8d230f30f59",
+            "goalrel-generation-live-pool-b-36-02:sha256:395341a9f5447f544895fa3da3261447f41aec1fc6789b455adaa8d230f30f59"
+          ]
+        },
+        {
+          "goal_ref": "sha256:5db6eb6907600f96f047b21015017e432ec9b8cdfa114e984bff031b4cec2b6c",
+          "split": "validation",
+          "population": 20,
+          "allocation": 3,
+          "drawn_pair_ids": [
+            "goalrel-generation-live-pool-a-2-02:sha256:5db6eb6907600f96f047b21015017e432ec9b8cdfa114e984bff031b4cec2b6c",
+            "goalrel-generation-live-pool-a-0-01:sha256:5db6eb6907600f96f047b21015017e432ec9b8cdfa114e984bff031b4cec2b6c",
+            "goalrel-generation-live-pool-a-7-03:sha256:5db6eb6907600f96f047b21015017e432ec9b8cdfa114e984bff031b4cec2b6c"
+          ]
+        },
+        {
+          "goal_ref": "sha256:5db6eb6907600f96f047b21015017e432ec9b8cdfa114e984bff031b4cec2b6c",
+          "split": "test",
+          "population": 23,
+          "allocation": 3,
+          "drawn_pair_ids": [
+            "goalrel-generation-live-pool-b-24-05:sha256:5db6eb6907600f96f047b21015017e432ec9b8cdfa114e984bff031b4cec2b6c",
+            "goalrel-generation-live-pool-b-24-03:sha256:5db6eb6907600f96f047b21015017e432ec9b8cdfa114e984bff031b4cec2b6c",
+            "goalrel-generation-live-pool-b-20-02:sha256:5db6eb6907600f96f047b21015017e432ec9b8cdfa114e984bff031b4cec2b6c"
+          ]
+        },
+        {
+          "goal_ref": "sha256:7e35d9c405038a0d8c8d6dbe8811f40bc1b8672f9d7d26955d3ecae26a2396b9",
+          "split": "validation",
+          "population": 5,
+          "allocation": 3,
+          "drawn_pair_ids": [
+            "goalrel-generation-live-pool-a-15-03:sha256:7e35d9c405038a0d8c8d6dbe8811f40bc1b8672f9d7d26955d3ecae26a2396b9",
+            "goalrel-generation-live-pool-a-16-02:sha256:7e35d9c405038a0d8c8d6dbe8811f40bc1b8672f9d7d26955d3ecae26a2396b9",
+            "goalrel-generation-live-pool-a-16-01:sha256:7e35d9c405038a0d8c8d6dbe8811f40bc1b8672f9d7d26955d3ecae26a2396b9"
+          ]
+        },
+        {
+          "goal_ref": "sha256:7e35d9c405038a0d8c8d6dbe8811f40bc1b8672f9d7d26955d3ecae26a2396b9",
+          "split": "test",
+          "population": 5,
+          "allocation": 3,
+          "drawn_pair_ids": [
+            "goalrel-generation-live-pool-b-35-03:sha256:7e35d9c405038a0d8c8d6dbe8811f40bc1b8672f9d7d26955d3ecae26a2396b9",
+            "goalrel-generation-live-pool-b-35-01:sha256:7e35d9c405038a0d8c8d6dbe8811f40bc1b8672f9d7d26955d3ecae26a2396b9",
+            "goalrel-generation-live-pool-b-35-02:sha256:7e35d9c405038a0d8c8d6dbe8811f40bc1b8672f9d7d26955d3ecae26a2396b9"
+          ]
+        },
+        {
+          "goal_ref": "sha256:a1c9597ec205eca72ddbdc09681c4ec90d730e5a3e5687d299fdcdec8272211f",
+          "split": "validation",
+          "population": 8,
+          "allocation": 3,
+          "drawn_pair_ids": [
+            "goalrel-generation-live-pool-a-12-01:sha256:a1c9597ec205eca72ddbdc09681c4ec90d730e5a3e5687d299fdcdec8272211f",
+            "goalrel-generation-live-pool-a-7-04:sha256:a1c9597ec205eca72ddbdc09681c4ec90d730e5a3e5687d299fdcdec8272211f",
+            "goalrel-generation-live-pool-a-8-01:sha256:a1c9597ec205eca72ddbdc09681c4ec90d730e5a3e5687d299fdcdec8272211f"
+          ]
+        },
+        {
+          "goal_ref": "sha256:a1c9597ec205eca72ddbdc09681c4ec90d730e5a3e5687d299fdcdec8272211f",
+          "split": "test",
+          "population": 8,
+          "allocation": 3,
+          "drawn_pair_ids": [
+            "goalrel-generation-live-pool-b-27-04:sha256:a1c9597ec205eca72ddbdc09681c4ec90d730e5a3e5687d299fdcdec8272211f",
+            "goalrel-generation-live-pool-b-27-03:sha256:a1c9597ec205eca72ddbdc09681c4ec90d730e5a3e5687d299fdcdec8272211f",
+            "goalrel-generation-live-pool-b-31-01:sha256:a1c9597ec205eca72ddbdc09681c4ec90d730e5a3e5687d299fdcdec8272211f"
+          ]
+        }
+      ]
+    }
+  ]
+}

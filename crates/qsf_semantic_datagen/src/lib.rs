@@ -2,6 +2,7 @@
 //! The facade deliberately separates deterministic interchange handling from model transport.
 
 mod artifacts;
+mod census;
 mod frozen;
 mod generation;
 mod labeling;
@@ -11,6 +12,7 @@ mod review;
 mod transport;
 
 pub use artifacts::*;
+pub use census::*;
 pub use frozen::*;
 pub use generation::*;
 pub use labeling::*;

@@ -1,0 +1,194 @@
+{
+  "evidence_version": 1,
+  "mode": "support",
+  "pool_id": "goalrel-generation-live",
+  "census_date": "2026-07-26",
+  "split_seed": 20260736,
+  "agreed_pairs": 591,
+  "disagreement_pairs": 207,
+  "total_pairs": 798,
+  "goal_split_cells": [
+    {
+      "goal_ref": "sha256:0876ddaf0df34a67cc7385a57cb1f33456be0d0ee5fd4de0cf8ab826013eff45",
+      "split": "validation",
+      "strict_count": 5,
+      "optimistic_count": 33
+    },
+    {
+      "goal_ref": "sha256:0876ddaf0df34a67cc7385a57cb1f33456be0d0ee5fd4de0cf8ab826013eff45",
+      "split": "test",
+      "strict_count": 5,
+      "optimistic_count": 33
+    },
+    {
+      "goal_ref": "sha256:15af80ae2f779c8fc70ce63ebe1a557c83a2181996cc3cbda873127566566858",
+      "split": "validation",
+      "strict_count": 4,
+      "optimistic_count": 13
+    },
+    {
+      "goal_ref": "sha256:15af80ae2f779c8fc70ce63ebe1a557c83a2181996cc3cbda873127566566858",
+      "split": "test",
+      "strict_count": 4,
+      "optimistic_count": 16
+    },
+    {
+      "goal_ref": "sha256:2d940b0d2c327d48f5c1db2a25f50d2bd7b02b7c5777b8352579074837b4e379",
+      "split": "validation",
+      "strict_count": 4,
+      "optimistic_count": 13
+    },
+    {
+      "goal_ref": "sha256:2d940b0d2c327d48f5c1db2a25f50d2bd7b02b7c5777b8352579074837b4e379",
+      "split": "test",
+      "strict_count": 4,
+      "optimistic_count": 20
+    },
+    {
+      "goal_ref": "sha256:395341a9f5447f544895fa3da3261447f41aec1fc6789b455adaa8d230f30f59",
+      "split": "validation",
+      "strict_count": 9,
+      "optimistic_count": 34
+    },
+    {
+      "goal_ref": "sha256:395341a9f5447f544895fa3da3261447f41aec1fc6789b455adaa8d230f30f59",
+      "split": "test",
+      "strict_count": 9,
+      "optimistic_count": 31
+    },
+    {
+      "goal_ref": "sha256:5db6eb6907600f96f047b21015017e432ec9b8cdfa114e984bff031b4cec2b6c",
+      "split": "validation",
+      "strict_count": 20,
+      "optimistic_count": 25
+    },
+    {
+      "goal_ref": "sha256:5db6eb6907600f96f047b21015017e432ec9b8cdfa114e984bff031b4cec2b6c",
+      "split": "test",
+      "strict_count": 23,
+      "optimistic_count": 28
+    },
+    {
+      "goal_ref": "sha256:7e35d9c405038a0d8c8d6dbe8811f40bc1b8672f9d7d26955d3ecae26a2396b9",
+      "split": "validation",
+      "strict_count": 5,
+      "optimistic_count": 7
+    },
+    {
+      "goal_ref": "sha256:7e35d9c405038a0d8c8d6dbe8811f40bc1b8672f9d7d26955d3ecae26a2396b9",
+      "split": "test",
+      "strict_count": 5,
+      "optimistic_count": 6
+    },
+    {
+      "goal_ref": "sha256:a1c9597ec205eca72ddbdc09681c4ec90d730e5a3e5687d299fdcdec8272211f",
+      "split": "validation",
+      "strict_count": 8,
+      "optimistic_count": 32
+    },
+    {
+      "goal_ref": "sha256:a1c9597ec205eca72ddbdc09681c4ec90d730e5a3e5687d299fdcdec8272211f",
+      "split": "test",
+      "strict_count": 8,
+      "optimistic_count": 26
+    }
+  ],
+  "slice_split_cells": [
+    {
+      "slice": "asr_corruption",
+      "split": "validation",
+      "strict_count": 5,
+      "optimistic_count": 12
+    },
+    {
+      "slice": "asr_corruption",
+      "split": "test",
+      "strict_count": 6,
+      "optimistic_count": 15
+    },
+    {
+      "slice": "hard_negative",
+      "split": "validation",
+      "strict_count": 2,
+      "optimistic_count": 17
+    },
+    {
+      "slice": "hard_negative",
+      "split": "test",
+      "strict_count": 5,
+      "optimistic_count": 16
+    },
+    {
+      "slice": "hypothetical",
+      "split": "validation",
+      "strict_count": 9,
+      "optimistic_count": 21
+    },
+    {
+      "slice": "hypothetical",
+      "split": "test",
+      "strict_count": 10,
+      "optimistic_count": 24
+    },
+    {
+      "slice": "negation",
+      "split": "validation",
+      "strict_count": 9,
+      "optimistic_count": 17
+    },
+    {
+      "slice": "negation",
+      "split": "test",
+      "strict_count": 10,
+      "optimistic_count": 26
+    },
+    {
+      "slice": "punctuation_casing_loss",
+      "split": "validation",
+      "strict_count": 10,
+      "optimistic_count": 22
+    },
+    {
+      "slice": "punctuation_casing_loss",
+      "split": "test",
+      "strict_count": 9,
+      "optimistic_count": 23
+    },
+    {
+      "slice": "quoted_speech",
+      "split": "validation",
+      "strict_count": 10,
+      "optimistic_count": 23
+    },
+    {
+      "slice": "quoted_speech",
+      "split": "test",
+      "strict_count": 8,
+      "optimistic_count": 21
+    },
+    {
+      "slice": "rare_high_cost",
+      "split": "validation",
+      "strict_count": 3,
+      "optimistic_count": 6
+    },
+    {
+      "slice": "rare_high_cost",
+      "split": "test",
+      "strict_count": 4,
+      "optimistic_count": 7
+    },
+    {
+      "slice": "subject_confusion",
+      "split": "validation",
+      "strict_count": 3,
+      "optimistic_count": 9
+    },
+    {
+      "slice": "subject_confusion",
+      "split": "test",
+      "strict_count": 3,
+      "optimistic_count": 11
+    }
+  ]
+}

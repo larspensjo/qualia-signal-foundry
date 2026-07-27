@@ -1,0 +1,8 @@
+{
+  "split_seed": 20260736,
+  "assignment_by_component": {
+    "component-0056": "validation",
+    "component-0113": "test"
+  },
+  "assignment_rationale": "The seed was chosen by deterministic search from date-shaped seeds starting at 20260726 to reproduce the published census assignment; pool-a -> validation is the binding for all downstream census, re-census, and freeze evidence."
+}

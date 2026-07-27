@@ -1,7 +1,7 @@
 # Plan: Panel labeling for the frozen goal-relevance sets
 
-Status: In progress — census and design-amendment/lineage-rescue work complete; threshold-direction,
-split-seed, and census-subcommand work next
+Status: In progress — census and design-amendment/lineage-rescue work, threshold-direction,
+split-seed binding, and census-subcommand work complete; panel-labeling work next
 Maturity: Candidate
 Area: Evaluation infrastructure / Volition (goal relevance) / Data generation
 Implements: `docs/Plans/Design.GoalRelevancePanelLabeling.md` (authoritative for the design; this
@@ -511,6 +511,9 @@ dependency cycle) and prompted the `prepare-session` workspace location to be ma
 ---
 
 ## Phase B — Threshold-direction commitment, the split seed, and the rubric-sensitivity measurement
+
+Status: Complete — the direction rationale precedes this work at `76ab6d1`; the fixed component
+binding and deterministic census evidence are recorded under the v1 pool lineage.
 
 Independent of every aggregation phase: it needs only current-schema `PairRecord`s and
 `run_baseline`. It lands early because it sizes a disclosure, identifies case kinds for fresh

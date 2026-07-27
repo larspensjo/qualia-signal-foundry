@@ -1,0 +1,19 @@
+{
+  "evidence_version": 1,
+  "mode": "rubric-sensitivity",
+  "pool_id": "goalrel-generation-live",
+  "census_date": "2026-07-26",
+  "scorer_source": "qsf_volition::normalize_terms + qsf_volition::matched_keywords + qsf_volition::match_strength",
+  "strict": {
+    "relevant_pairs": 113,
+    "matched_relevant_pairs": 38,
+    "recall_bp": 3362
+  },
+  "optimistic": {
+    "relevant_pairs": 317,
+    "matched_relevant_pairs": 69,
+    "recall_bp": 2176
+  },
+  "recall_gap_bp": -1186,
+  "permitted_uses": "The rubric-sensitivity recall gap sizes a disclosure and identifies kinds of cases needing fresh worked examples. It must never inform the direction of the relevance threshold."
+}

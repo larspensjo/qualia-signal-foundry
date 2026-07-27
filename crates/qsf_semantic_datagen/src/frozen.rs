@@ -24,6 +24,8 @@ pub struct ReviewedPoolSplit {
 pub struct SplitSummary {
     pub split_seed: u64,
     pub assignment_by_component: BTreeMap<String, Split>,
+    /// Why this seed-to-component assignment is the binding used by downstream evidence.
+    pub assignment_rationale: String,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize)]
@@ -258,9 +260,22 @@ pub fn blind_qa_agreement_by_slice(
 }
 
 pub fn split_summary(split: &ReviewedPoolSplit, seed: u64) -> SplitSummary {
+    split_summary_with_rationale(
+        split,
+        seed,
+        "Deterministic component split; this artifact binds the recorded seed to its component assignments.",
+    )
+}
+
+pub fn split_summary_with_rationale(
+    split: &ReviewedPoolSplit,
+    seed: u64,
+    assignment_rationale: impl Into<String>,
+) -> SplitSummary {
     SplitSummary {
         split_seed: seed,
         assignment_by_component: split.assignment_by_component.clone(),
+        assignment_rationale: assignment_rationale.into(),
     }
 }
 
