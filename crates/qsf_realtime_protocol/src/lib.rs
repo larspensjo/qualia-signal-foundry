@@ -3,6 +3,12 @@ use serde_json::Value;
 
 pub const OPENAI_REALTIME_WS_BASE_URL: &str = "wss://api.openai.com/v1/realtime";
 pub const OPENAI_REALTIME_VOICE_MODEL: &str = "gpt-realtime-2.1";
+/// Input transcription model for the speech-to-speech voice session. Single source of
+/// truth for both the server-side session default and the app-side provider default.
+///
+/// Distinct from the standalone streaming transcription adapter, which runs its own
+/// transcription session against a different model.
+pub const OPENAI_REALTIME_VOICE_INPUT_TRANSCRIPTION_MODEL: &str = "gpt-transcribe";
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct RealtimeToolDefinition {
@@ -386,13 +392,13 @@ mod tests {
             "marin",
             "Speak briefly.",
             &["audio".to_string()],
-            Some("gpt-4o-mini-transcribe"),
+            Some("gpt-transcribe"),
             24_000,
         );
 
         assert_eq!(
             update["session"]["audio"]["input"]["transcription"]["model"],
-            "gpt-4o-mini-transcribe"
+            "gpt-transcribe"
         );
         assert_eq!(
             update["session"]["audio"]["output"]["format"]["rate"],
@@ -438,12 +444,12 @@ mod tests {
             false,
             &[],
             None,
-            Some("gpt-4o-mini-transcribe"),
+            Some("gpt-transcribe"),
         );
 
         assert_eq!(
             update["session"]["audio"]["input"]["transcription"]["model"],
-            "gpt-4o-mini-transcribe"
+            "gpt-transcribe"
         );
     }
 

@@ -2181,3 +2181,33 @@ inspection. The tagged session and goal lines make the stream self-describing an
 full `GoalDetailReport` fields for downstream readers.
 Consequences: Consumers should treat the default goals output as JSONL and must not assume that
 the artifact is free of floating-point values as goal lifecycle data evolves.
+
+## 2026-07-29 - Voice-session input transcription optimizes for accuracy
+Decision: Input transcription inside the speech-to-speech voice session defaults to
+`gpt-transcribe`, defined once in the realtime protocol crate and shared by the server session
+default and the app-side provider default. The standalone streaming transcription adapter keeps
+its own latency-first model and is unaffected.
+Context: The voice session previously ran a mini-tier transcription model. A model review found
+that the mini tier was not refreshed by the current provider catalog, while the newer batch-tier
+model measures a materially lower word error rate at a small absolute cost increase per minute of
+speech. Voice-session transcripts are not display-only: goal formation, volition injection, and
+memory extraction all consume them, so transcription errors propagate into committed inner state.
+Consequences: Transcription accuracy is the first defaulting criterion for the voice session,
+which is the opposite ordering from the standalone realtime transcription path where latency leads.
+The two transcription paths are expected to diverge on model choice and should not be collapsed
+into a shared default. Provider-backed voice runs need external verification that the chosen model
+is accepted for session input transcription, since simulated tests only assert pass-through.
+
+## 2026-07-29 - The token meter reports configured models, not only billed ones
+Decision: The session token ledger distinguishes a declared model from a billed one. A model the
+session is configured to use is announced at session start with a zero call count, and the
+diagnostics card renders it with an explanatory note until usage arrives. Declared rows never
+contribute to the session call count or token total.
+Context: Input transcription only reports usage after the session receives audio, and it reports
+that usage on the transcription-completed event rather than in the response usage the meter already
+consumed. A meter fed purely by observed usage therefore could not answer which transcription model
+a session was wired to, which made an idle row indistinguishable from a missing integration.
+Consequences: The card now answers a configuration question as well as a spend question, so an
+empty row is evidence of an idle path rather than of a broken one. Any future model the runtime
+selects but does not always exercise should be declared the same way. The distinction stays
+diagnostics-only, and the card still carries no price table.

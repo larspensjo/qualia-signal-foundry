@@ -4,7 +4,8 @@ use std::sync::Arc;
 
 use anyhow::Context;
 use qsf_realtime_protocol::{
-    OPENAI_REALTIME_VOICE_MODEL, OPENAI_REALTIME_WS_BASE_URL, RealtimeToolDefinition,
+    OPENAI_REALTIME_VOICE_INPUT_TRANSCRIPTION_MODEL, OPENAI_REALTIME_VOICE_MODEL,
+    OPENAI_REALTIME_WS_BASE_URL, RealtimeToolDefinition,
 };
 use qsf_session::LiveSessionState;
 use qsf_session::{MemorySourceConfig, SessionConfig as QsfSessionConfig, SessionState};
@@ -17,7 +18,9 @@ use uuid::Uuid;
 use crate::cli::Args;
 use crate::diagnostics::{DiagnosticRecord, DiagnosticTrust, DiagnosticWriter};
 use crate::realtime::live_goal_formation::PendingLiveGoalFormation;
-use crate::realtime::token_usage::{TokenClassCounts, TokenUsageSnapshot};
+use crate::realtime::token_usage::{
+    INPUT_TRANSCRIPTION_ROLE, TokenClassCounts, TokenUsageSnapshot,
+};
 use crate::realtime::turn_context::TurnContextCapture;
 use crate::realtime::volition_injection::build_stable_baseline_instructions;
 use crate::realtime::volition_inspection_capture::VolitionInspectionCapture;
@@ -41,7 +44,9 @@ These tools report your own inner state; speak about it in the first person, as 
 /// Input transcription model for realtime voice. Enabling it makes the provider
 /// emit `conversation.item.input_audio_transcription.completed`, which the
 /// sideband requires to retrieve memory and issue `response.create`.
-const DEFAULT_INPUT_TRANSCRIPTION_MODEL: &str = "gpt-4o-mini-transcribe";
+/// Sourced from `qsf_realtime_protocol` so the server default and the app-side
+/// provider default cannot drift apart.
+const DEFAULT_INPUT_TRANSCRIPTION_MODEL: &str = OPENAI_REALTIME_VOICE_INPUT_TRANSCRIPTION_MODEL;
 
 #[derive(Clone)]
 pub struct AppState {
@@ -565,7 +570,13 @@ impl SessionRuntime {
             QsfRealtimeSessionConfig::from_browser_config(&config),
         );
         let tool_registry = crate::realtime::tools::build_tool_registry(&config.tools);
-        let token_usage = TokenUsageSnapshot::new(qsf_session_id.clone());
+        let mut token_usage = TokenUsageSnapshot::new(qsf_session_id.clone());
+        // Announce the configured transcription model up front. Its usage only arrives
+        // once the session receives audio, so without this the meter cannot show which
+        // transcription model a session is wired to until someone actually speaks.
+        if let Some(transcription_model) = config.input_transcription_model.as_deref() {
+            token_usage.declare(INPUT_TRANSCRIPTION_ROLE, transcription_model);
+        }
         Self {
             qsf_session_id,
             config,
@@ -1031,9 +1042,36 @@ mod tests {
             .clone()
             .expect("late subscriber must see stored snapshot");
         assert_eq!(snapshot.qsf_session_id, "test-session");
-        assert_eq!(snapshot.models.len(), 1);
-        assert_eq!(snapshot.models[0].calls, 2);
-        assert_eq!(snapshot.models[0].counts.text_input, 11);
-        assert_eq!(snapshot.models[0].counts.audio_output, 7);
+        let voice = snapshot
+            .models
+            .iter()
+            .find(|model| model.role == "realtime_voice")
+            .expect("voice row");
+        assert_eq!(voice.calls, 2);
+        assert_eq!(voice.counts.text_input, 11);
+        assert_eq!(voice.counts.audio_output, 7);
+    }
+
+    #[test]
+    fn configured_transcription_model_is_declared_before_any_audio_arrives() {
+        let tempdir = tempfile::tempdir().expect("tempdir");
+        let diagnostics =
+            DiagnosticWriter::create(tempdir.path().join("test.jsonl")).expect("diagnostics");
+        let config = BrowserSessionConfig::default();
+        let expected_model = config
+            .input_transcription_model
+            .clone()
+            .expect("default config configures input transcription");
+        let runtime = SessionRuntime::new("test-session".to_string(), config, diagnostics);
+
+        let declared = runtime
+            .token_usage
+            .models
+            .iter()
+            .find(|model| model.role == INPUT_TRANSCRIPTION_ROLE)
+            .expect("transcription row is declared at session start");
+        assert_eq!(declared.model_id, expected_model);
+        // No audio has been transcribed yet, so the row must not claim a call.
+        assert_eq!(declared.calls, 0);
     }
 }

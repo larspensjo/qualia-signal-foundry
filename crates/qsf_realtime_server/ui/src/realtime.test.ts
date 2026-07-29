@@ -28,6 +28,7 @@ import {
   selectVolitionPanelModel,
   selectVolitionVerdict,
   selectWorldPerceptionPanelModel,
+  TOKEN_ROW_IDLE_NOTE,
   type TokenUsageSnapshot,
 } from "./realtime";
 
@@ -1982,6 +1983,86 @@ describe("selectTokenUsagePanelModel", () => {
       },
     };
     expect(selectTokenUsagePanelModel(single).heroDetail).toBe("session total · 1 model call");
+  });
+
+  it("annotates a declared model that has not been billed yet", () => {
+    const state: ConversationState = {
+      ...INITIAL_STATE,
+      sessionId: "session-1",
+      latestTokenUsage: {
+        qsfSessionId: "session-1",
+        models: [
+          {
+            modelId: "gpt-transcribe",
+            role: "input_transcription",
+            calls: 0,
+            counts: {
+              textInput: 0,
+              audioInput: 0,
+              cachedInput: 0,
+              textOutput: 0,
+              audioOutput: 0,
+            },
+          },
+          {
+            modelId: "gpt-realtime-2",
+            role: "realtime_voice",
+            calls: 3,
+            counts: {
+              textInput: 100,
+              audioInput: 0,
+              cachedInput: 0,
+              textOutput: 20,
+              audioOutput: 0,
+            },
+          },
+        ],
+      },
+    };
+
+    const model = selectTokenUsagePanelModel(state);
+    // The declared row is visible, sorts last, and explains its own zero.
+    expect(model.rows.map((row) => row.name)).toEqual([
+      "gpt-realtime-2 · voice",
+      "gpt-transcribe · input transcription",
+    ]);
+    const declared = model.rows[1];
+    expect(declared.totalLabel).toBe("0");
+    expect(declared.barPercent).toBe(0);
+    expect(declared.segments).toEqual([]);
+    expect(declared.note).toBe(TOKEN_ROW_IDLE_NOTE);
+    // A declared row must not claim calls it never made.
+    expect(model.heroDetail).toBe("session total · 3 model calls");
+    expect(model.rows[0].note).toBeUndefined();
+  });
+
+  it("drops the idle note once the declared model reports usage", () => {
+    const state: ConversationState = {
+      ...INITIAL_STATE,
+      sessionId: "session-1",
+      latestTokenUsage: {
+        qsfSessionId: "session-1",
+        models: [
+          {
+            modelId: "gpt-transcribe",
+            role: "input_transcription",
+            calls: 1,
+            counts: {
+              textInput: 12,
+              audioInput: 48,
+              cachedInput: 0,
+              textOutput: 8,
+              audioOutput: 0,
+            },
+          },
+        ],
+      },
+    };
+
+    const model = selectTokenUsagePanelModel(state);
+    expect(model.rows[0].note).toBeUndefined();
+    expect(model.rows[0].totalLabel).toBe("68");
+    expect(model.heroDetail).toBe("session total · 1 model call");
   });
 
   it("formats token counts compactly", () => {

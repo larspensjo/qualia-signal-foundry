@@ -2554,7 +2554,13 @@ const TOKEN_CLASS_ORDER = [
 const TOKEN_ROLE_LABELS: Record<string, string> = {
   realtime_voice: "voice",
   goal_formation: "goal formation",
+  input_transcription: "input transcription",
 };
+
+/// Shown for a model the session declared but that has not been billed yet. Input
+/// transcription only reports usage once the session receives audio, so a text-only
+/// session leaves the row at zero without anything being wrong.
+export const TOKEN_ROW_IDLE_NOTE = "configured, no audio yet";
 
 export interface TokenUsageSegmentModel {
   className: string;
@@ -2569,6 +2575,8 @@ export interface TokenUsageRowModel {
   totalLabel: string;
   barPercent: number;
   segments: TokenUsageSegmentModel[];
+  /// Set only for a declared-but-unbilled row, to explain an otherwise bare zero.
+  note?: string;
 }
 
 export interface TokenUsageLegendEntry {
@@ -2630,6 +2638,7 @@ export function selectTokenUsagePanelModel(state: ConversationState): TokenUsage
 
   const rows: TokenUsageRowModel[] = ranked.map(({ model, total }) => {
     const rowTotal = total;
+    const idle = rowTotal === 0 && model.calls === 0;
     const roleLabel = TOKEN_ROLE_LABELS[model.role] ?? formatLabelValue(model.role);
     const segments: TokenUsageSegmentModel[] = [];
     for (const tokenClass of TOKEN_CLASS_ORDER) {
@@ -2650,6 +2659,7 @@ export function selectTokenUsagePanelModel(state: ConversationState): TokenUsage
       totalLabel: formatTokenCount(rowTotal),
       barPercent: maxTotal === 0 ? 0 : (rowTotal * 100) / maxTotal,
       segments,
+      ...(idle ? { note: TOKEN_ROW_IDLE_NOTE } : {}),
     };
   });
 

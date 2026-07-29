@@ -943,6 +943,12 @@ function renderTokenUsagePanel(container: HTMLElement, model: TokenUsagePanelMod
     }
 
     rowElement.append(head, bar);
+    if (row.note !== undefined) {
+      const note = document.createElement("span");
+      note.className = "token-model-note";
+      note.textContent = row.note;
+      rowElement.appendChild(note);
+    }
     container.appendChild(rowElement);
   }
 }

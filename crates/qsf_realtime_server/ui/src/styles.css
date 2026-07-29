@@ -639,6 +639,13 @@ button[aria-pressed="true"]:hover:not(:disabled) {
   white-space: nowrap;
 }
 
+.token-model-note {
+  color: var(--muted);
+  font-size: 0.76rem;
+  font-style: italic;
+  line-height: 1.2;
+}
+
 .token-bar {
   display: flex;
   min-width: 0;

@@ -5,6 +5,10 @@
 
 use serde::{Deserialize, Serialize};
 
+/// Ledger role for input transcription inside the speech-to-speech session. Shared by
+/// the session-start declaration and the usage recorder so both address the same row.
+pub const INPUT_TRANSCRIPTION_ROLE: &str = "input_transcription";
+
 #[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
 pub struct TokenClassCounts {
     pub text_input: u64,
@@ -63,27 +67,74 @@ impl TokenUsageSnapshot {
             counts,
         });
     }
+
+    /// Announce a model the session is configured to use before it has reported any
+    /// usage, so the meter can distinguish "wired up but idle" from "not configured".
+    /// Leaves `calls` at zero: a declared row must not inflate the session call count.
+    /// Idempotent, and never disturbs a row that has already recorded usage.
+    pub fn declare(&mut self, role: &str, model_id: &str) {
+        if self
+            .models
+            .iter()
+            .any(|row| row.role == role && row.model_id == model_id)
+        {
+            return;
+        }
+        self.models.push(ModelTokenUsage {
+            model_id: model_id.to_string(),
+            role: role.to_string(),
+            calls: 0,
+            counts: TokenClassCounts::default(),
+        });
+    }
 }
 
-pub(crate) fn usage_number(event: &serde_json::Value, path: &[&str]) -> Option<u64> {
-    let mut current = event.get("response")?.get("usage")?;
+/// Walk a dotted path inside an already-located `usage` object.
+fn usage_number_at(usage: &serde_json::Value, path: &[&str]) -> Option<u64> {
+    let mut current = usage;
     for segment in path {
         current = current.get(segment)?;
     }
     current.as_u64()
 }
 
-pub(crate) fn response_done_token_counts(event: &serde_json::Value) -> TokenClassCounts {
-    let input = usage_number(event, &["input_tokens"]).unwrap_or(0);
-    let cached = usage_number(event, &["input_token_details", "cached_tokens"])
-        .or_else(|| usage_number(event, &["cached_input_tokens"]))
-        .unwrap_or(0);
-    let output = usage_number(event, &["output_tokens"]).unwrap_or(0);
+pub(crate) fn usage_number(event: &serde_json::Value, path: &[&str]) -> Option<u64> {
+    usage_number_at(event.get("response")?.get("usage")?, path)
+}
 
-    let input_text = usage_number(event, &["input_token_details", "text_tokens"]);
-    let input_audio = usage_number(event, &["input_token_details", "audio_tokens"]);
-    let cached_text = usage_number(
-        event,
+/// Token counts for a `response.done` event, whose usage hangs off `response.usage`.
+pub(crate) fn response_done_token_counts(event: &serde_json::Value) -> TokenClassCounts {
+    match event
+        .get("response")
+        .and_then(|response| response.get("usage"))
+    {
+        Some(usage) => token_counts_from_usage(usage),
+        None => TokenClassCounts::default(),
+    }
+}
+
+/// Token counts for `conversation.item.input_audio_transcription.completed`, whose usage
+/// hangs off the event root. Input transcription is billed against the transcription
+/// model rather than the speech-to-speech model, and the provider reports it here
+/// instead of in `response.done`.
+pub(crate) fn transcription_token_counts(event: &serde_json::Value) -> TokenClassCounts {
+    match event.get("usage") {
+        Some(usage) => token_counts_from_usage(usage),
+        None => TokenClassCounts::default(),
+    }
+}
+
+fn token_counts_from_usage(usage: &serde_json::Value) -> TokenClassCounts {
+    let input = usage_number_at(usage, &["input_tokens"]).unwrap_or(0);
+    let cached = usage_number_at(usage, &["input_token_details", "cached_tokens"])
+        .or_else(|| usage_number_at(usage, &["cached_input_tokens"]))
+        .unwrap_or(0);
+    let output = usage_number_at(usage, &["output_tokens"]).unwrap_or(0);
+
+    let input_text = usage_number_at(usage, &["input_token_details", "text_tokens"]);
+    let input_audio = usage_number_at(usage, &["input_token_details", "audio_tokens"]);
+    let cached_text = usage_number_at(
+        usage,
         &[
             "input_token_details",
             "cached_tokens_details",
@@ -91,8 +142,8 @@ pub(crate) fn response_done_token_counts(event: &serde_json::Value) -> TokenClas
         ],
     )
     .unwrap_or(0);
-    let cached_audio = usage_number(
-        event,
+    let cached_audio = usage_number_at(
+        usage,
         &[
             "input_token_details",
             "cached_tokens_details",
@@ -100,8 +151,8 @@ pub(crate) fn response_done_token_counts(event: &serde_json::Value) -> TokenClas
         ],
     )
     .unwrap_or(0);
-    let output_text = usage_number(event, &["output_token_details", "text_tokens"]);
-    let output_audio = usage_number(event, &["output_token_details", "audio_tokens"]);
+    let output_text = usage_number_at(usage, &["output_token_details", "text_tokens"]);
+    let output_audio = usage_number_at(usage, &["output_token_details", "audio_tokens"]);
 
     let (text_input, audio_input) = match (input_text, input_audio) {
         (None, None) => (input.saturating_sub(cached), 0),
@@ -261,5 +312,100 @@ mod tests {
         assert_eq!(snapshot.models[0].counts.audio_input, 20);
         assert_eq!(snapshot.models[1].role, "goal_formation");
         assert_eq!(snapshot.models[1].calls, 1);
+    }
+
+    #[test]
+    fn transcription_usage_reads_from_the_event_root_not_the_response() {
+        let event = serde_json::json!({
+            "type": "conversation.item.input_audio_transcription.completed",
+            "transcript": "hello there",
+            "usage": {
+                "type": "tokens",
+                "total_tokens": 68,
+                "input_tokens": 60,
+                "output_tokens": 8,
+                "input_token_details": { "text_tokens": 12, "audio_tokens": 48 }
+            }
+        });
+
+        assert_eq!(
+            transcription_token_counts(&event),
+            TokenClassCounts {
+                text_input: 12,
+                audio_input: 48,
+                cached_input: 0,
+                text_output: 8,
+                audio_output: 0,
+            }
+        );
+        // The same event carries no `response.usage`, so the response-done reader must
+        // not pick it up and attribute transcription spend to the voice model.
+        assert_eq!(
+            response_done_token_counts(&event),
+            TokenClassCounts::default()
+        );
+    }
+
+    #[test]
+    fn transcription_usage_without_a_usage_object_is_zero() {
+        let event = serde_json::json!({
+            "type": "conversation.item.input_audio_transcription.completed",
+            "transcript": "hello there"
+        });
+        assert_eq!(
+            transcription_token_counts(&event),
+            TokenClassCounts::default()
+        );
+    }
+
+    #[test]
+    fn declare_announces_an_idle_model_without_counting_a_call() {
+        let mut snapshot = TokenUsageSnapshot::new("session-test".to_string());
+        snapshot.declare(INPUT_TRANSCRIPTION_ROLE, "gpt-transcribe");
+        snapshot.declare(INPUT_TRANSCRIPTION_ROLE, "gpt-transcribe");
+
+        assert_eq!(snapshot.models.len(), 1);
+        assert_eq!(snapshot.models[0].role, INPUT_TRANSCRIPTION_ROLE);
+        assert_eq!(snapshot.models[0].model_id, "gpt-transcribe");
+        assert_eq!(snapshot.models[0].calls, 0);
+        assert_eq!(snapshot.models[0].counts, TokenClassCounts::default());
+    }
+
+    #[test]
+    fn declared_model_merges_into_one_row_once_usage_arrives() {
+        let mut snapshot = TokenUsageSnapshot::new("session-test".to_string());
+        snapshot.declare(INPUT_TRANSCRIPTION_ROLE, "gpt-transcribe");
+        snapshot.record(
+            INPUT_TRANSCRIPTION_ROLE,
+            "gpt-transcribe",
+            TokenClassCounts {
+                audio_input: 48,
+                text_output: 8,
+                ..TokenClassCounts::default()
+            },
+        );
+
+        assert_eq!(snapshot.models.len(), 1);
+        assert_eq!(snapshot.models[0].calls, 1);
+        assert_eq!(snapshot.models[0].counts.audio_input, 48);
+        assert_eq!(snapshot.models[0].counts.text_output, 8);
+    }
+
+    #[test]
+    fn declare_never_resets_a_row_that_already_recorded_usage() {
+        let mut snapshot = TokenUsageSnapshot::new("session-test".to_string());
+        snapshot.record(
+            INPUT_TRANSCRIPTION_ROLE,
+            "gpt-transcribe",
+            TokenClassCounts {
+                audio_input: 48,
+                ..TokenClassCounts::default()
+            },
+        );
+        snapshot.declare(INPUT_TRANSCRIPTION_ROLE, "gpt-transcribe");
+
+        assert_eq!(snapshot.models.len(), 1);
+        assert_eq!(snapshot.models[0].calls, 1);
+        assert_eq!(snapshot.models[0].counts.audio_input, 48);
     }
 }

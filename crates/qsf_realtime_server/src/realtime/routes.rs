@@ -1120,7 +1120,7 @@ mod tests {
         // model the conversation never produces a response.
         assert_eq!(
             json["session"]["input_transcription_model"],
-            "gpt-4o-mini-transcribe"
+            "gpt-transcribe"
         );
         assert!(json.get("api_key").is_none());
         assert!(!body_text.contains("test-api-key"));

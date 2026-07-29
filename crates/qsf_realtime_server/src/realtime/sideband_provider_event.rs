@@ -19,6 +19,9 @@ use crate::realtime::sideband::{
 };
 use crate::realtime::sideband_response_done::handle_response_done_event;
 use crate::realtime::sideband_turn_injection::inject_trusted_turn_context_and_response;
+use crate::realtime::token_usage::{
+    INPUT_TRANSCRIPTION_ROLE, TokenClassCounts, transcription_token_counts,
+};
 use crate::realtime::tools::VolitionStateSnapshot;
 use crate::realtime::turn_integrity::{
     TranscriptDisposition, TurnPhase, classify_final_transcript,
@@ -63,6 +66,20 @@ pub(crate) async fn handle_provider_event(
                 })?;
         }
         "conversation.item.input_audio_transcription.completed" => {
+            // Transcription spend is billed against the transcription model and reported
+            // here rather than in `response.done`. Record it before any disposition check
+            // so noise-classified turns still account for what the provider charged. The
+            // model id comes from session config: the event does not carry one.
+            if let Some(transcription_model) = config.input_transcription_model.as_deref() {
+                let transcription_counts = transcription_token_counts(event);
+                if transcription_counts != TokenClassCounts::default() {
+                    guard.record_token_usage(
+                        INPUT_TRANSCRIPTION_ROLE,
+                        transcription_model,
+                        transcription_counts,
+                    );
+                }
+            }
             let transcript = realtime_event_transcript(event)
                 .or_else(|| event.get("transcript").and_then(serde_json::Value::as_str))
                 .unwrap_or_default()
