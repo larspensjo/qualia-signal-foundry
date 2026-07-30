@@ -351,7 +351,7 @@ async fn session_config(
 /// For an HTTP rejection this includes the status and (bounded) response body,
 /// which carries OpenAI's machine-readable error (e.g. an unknown call_id),
 /// rather than the opaque "HTTP error" the default `Display` would emit.
-fn format_connect_error(
+pub fn format_connect_error(
     qsf_session_id: &str,
     error: &tokio_tungstenite::tungstenite::Error,
 ) -> String {

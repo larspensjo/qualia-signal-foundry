@@ -1,11 +1,11 @@
-mod injection;
+pub(crate) mod injection;
 pub(crate) mod live_goal_formation;
 mod memory_store;
 mod routes;
-mod safety_identifier;
+pub(crate) mod safety_identifier;
 pub(crate) mod sideband;
 pub(crate) mod sideband_attachment;
-mod sideband_connection;
+pub(crate) mod sideband_connection;
 mod sideband_exchange_promotion;
 mod sideband_provider_event;
 mod sideband_response_done;

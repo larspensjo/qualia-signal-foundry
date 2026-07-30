@@ -32,5 +32,6 @@ tokio-tungstenite.workspace = true
 uuid.workspace = true
 
 [dev-dependencies]
+base64.workspace = true
 tempfile = "3"
 tower = "0.5"

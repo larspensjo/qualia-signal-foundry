@@ -1,6 +1,7 @@
 # Plan: Headless scripted realtime conversation probe
 
-Status: In progress — Phase 1 complete (2026-07-30), uncommitted on `feature/headless-conversation`
+Status: In progress — Phases 1 and 2 complete including the live operator runs (2026-07-30,
+`feature/headless-conversation`); next is Phase 3 (audio-payload suppression, offline)
 Maturity: Candidate
 Area: Realtime session server / Launcher / Artifact generation
 
@@ -372,26 +373,51 @@ adds fields.
 
 ## Phase 2 — Live model-scoped attach reconnaissance (first paid step, cheapest)
 
+**Status: COMPLETE (2026-07-30), including both operator runs.** Implemented by Codex
+GPT-5.6-Luna, reviewed by Claude Opus (ten findings, all approved and
+applied by Codex GPT-5.6-Sol). Operator decisions recorded during review: the idle-close
+measurement is split into its own unbilled `#[ignore]` probe with a 900-second default cap, and the
+inventory artifact may record enumerated `response.status` values, provider error type/code
+identifiers, `(field path, JSON type)` pairs, and QSF-configured tool names — every other string
+value stays forbidden regardless of length. Review hardening beyond the original sketch: both
+raw-audio event names are probed, non-completed responses and pre-`response.done` `error` events
+fail fast with the provider's actual complaint, handshake rejections are reported through the
+shared `format_connect_error`, `DEFAULT_PCM_RATE_HZ` is the re-exported production constant, and a
+capture error is printed even when the artifact write also fails. Offline verification is green
+(`cargo build`; `cargo test -p qsf_realtime_server` with both live probes ignored; clippy
+`-D warnings`; `cargo fmt --check`).
+
 One real model-scoped session's provider-event stream must be captured **before** the suppression and
 latency design in Phase 3 is locked, because Corrections item 5's fix depends on which event actually
 arrives first.
 
-**Work**
+**What was built**
 
-- New integration test `crates/qsf_realtime_server/tests/model_scoped_attach_smoke.rs`, marked
-  `#[ignore]` so it never runs in a normal `cargo test`. It is a durable on-demand live smoke test,
-  not throwaway code.
-- The test builds the model-scoped URL via the Phase 1 builder, attaches with the bearer header and
-  the safety identifier, sends the same `session.update` the sideband sends
+- New integration tests in `crates/qsf_realtime_server/tests/model_scoped_attach_smoke.rs`, both
+  marked `#[ignore]` so they never run in a normal `cargo test`. They are durable, separately
+  invokable live probes, not throwaway code: `model_scoped_attach_smoke` owns the billed turn capture,
+  while `model_scoped_attach_idle_close_probe` owns the no-turn idle-close measurement.
+- Both tests build the model-scoped URL via the Phase 1 builder, attach with the bearer header and
+  the safety identifier, and send the same `session.update` the sideband sends
   (`build_openai_realtime_conversation_session_update` with `output_modalities: ["audio"]`,
   `create_response: false`, `interrupt_response: false`, the default tool list and transcription
-  model), sends one `conversation.item.create` + `response.create`, and reads until `response.done`.
-- It writes an **event-shape inventory** artifact (not raw payloads) to a path given by an
-  environment variable, defaulting under `state/`: for each observed event `type`, the count,
-  first-seen offset in milliseconds from `response.created`, the set of top-level JSON keys, and for
-  any key whose value is a long string, its byte length only. Payload text is never written.
+  model). The billed test sends one `conversation.item.create` + `response.create`, reads until a
+  completed `response.done`, then ends immediately. The idle test submits no turn and waits for the
+  provider close with a 900-second default cap configurable through
+  `QSF_MODEL_SCOPED_ATTACH_IDLE_CLOSE_TIMEOUT_SECS`; read errors count as categorized close
+  observations, and cap expiry records `cap_elapsed` and says explicitly how to raise the cap.
+- Each test writes its own **event-shape inventory** artifact (not raw payloads), defaulting under the
+  repository-root `state/`: for each observed event `type`, the count, first-seen offset in
+  milliseconds from `response.created` where applicable, the set of top-level JSON keys, the full
+  set of normalized `(field path, JSON type)` pairs, and byte lengths for long strings. The artifact
+  may additionally contain enumerated `response.status` values, provider error type/code identifiers,
+  the configured tool names from QSF's own session config, and the idle outcome/category/offset.
+  Every other string value is forbidden regardless of length; payload and transcript text are never
+  written. The billed artifact path remains overridable by
+  `QSF_MODEL_SCOPED_ATTACH_ARTIFACT_PATH`.
 - Observations the later phases depend on:
-  1. Does `response.output_audio.delta` arrive, and does it carry base64 in `delta`?
+  1. Does either raw-audio event name (`response.output_audio.delta` or `response.audio.delta`)
+     arrive, and does it carry base64 in `delta`?
   2. Which event type arrives first after `response.created` (the first-audio label's source)?
   3. **Smoke assertion only:** the documented `OpenAI-Safety-Identifier` header is accepted on the
      handshake. A rejection would be a provider/docs mismatch to report and escalate, not a design
@@ -404,12 +430,43 @@ arrives first.
 **Verification**
 
 - `cargo build`; `cargo clippy --all-targets -- -D warnings`; `cargo fmt`.
-- `cargo test -p qsf_realtime_server` (the ignored test does not run).
+- `cargo test -p qsf_realtime_server` (the two ignored tests do not run).
 - **Operator / human testing required (paid):**
-  `cargo test -p qsf_realtime_server --test model_scoped_attach_smoke -- --ignored --nocapture`
+  `cargo test -p qsf_realtime_server --test model_scoped_attach_smoke model_scoped_attach_smoke -- --ignored --exact --nocapture`
   with `OPENAI_API_KEY` set. Cost: **one realtime session, one turn, one short spoken response** —
-  the cheapest live step in this plan. The operator records the event-shape inventory (or its path)
-  in the phase's follow-up so the next phases are designed on evidence.
+  the cheapest paid live step in this plan. The operator records the event-shape inventory (or its
+  path) in the phase's follow-up so the next phases are designed on evidence.
+- **Operator / human idle measurement (no turn and no token billing):**
+  `cargo test -p qsf_realtime_server --test model_scoped_attach_smoke model_scoped_attach_idle_close_probe -- --ignored --exact --nocapture`.
+  This is deliberately separate so it can be re-run or skipped without buying another turn.
+
+**Operator follow-up — both live runs performed 2026-07-30, observations recorded:**
+
+Artifacts: `state/model-scoped-attach-event-shape-inventory.json` (billed turn capture) and
+`state/model-scoped-attach-idle-close-inventory.json` (idle probe). The five observations:
+
+1. **Raw audio deltas arrive under the modern name only**: `response.output_audio.delta`
+   (7 events for one short greeting, `delta` chunks of ~22–25 KB, all base64-decodable). The
+   legacy `response.audio.delta` name never appeared.
+2. **The transcript delta precedes the raw audio delta.** First event after `response.created`
+   was `response.output_item.added` (297 ms); `response.output_audio_transcript.delta` arrived at
+   348 ms, the first `response.output_audio.delta` at 931 ms, `response.done` at 1452 ms.
+   Corrections item 5's concern — that under `?model=` the raw audio delta would arrive first and
+   silently redefine the first-audio labels — did **not** materialize; the transcript pinning in
+   the audio-suppression work remains correct and is retained as shape-independent insurance.
+3. **The `OpenAI-Safety-Identifier` header was accepted** on the model-scoped handshake
+   (`handshake_accepted: true` in both artifacts). No provider/docs mismatch to escalate.
+4. **`session.updated`, tool advertisement, and `response.done` match the `?call_id=` shapes the
+   sideband parses.** All five configured tools are advertised by name; `response.done.usage`
+   carries every nested field the token ledger reads (`input_token_details.text_tokens`,
+   `input_token_details.cached_tokens_details.*`, `output_token_details.*`). Statuses observed:
+   `in_progress`, `completed`; no provider error events. One novelty: transcript deltas carry an
+   `obfuscation` field the sideband does not parse (harmless).
+5. **An idle model-scoped session stays open for at least 900 s** — the probe hit its cap
+   (`cap_elapsed`, 900 001 ms) without a provider close. This comfortably exceeds any inter-turn
+   gap a scripted run can produce (the per-turn timeout defaults to 120 s), so the fail-closed
+   policy is not at risk from run pacing; the session's absolute lifetime is separately bounded by
+   the `session.expires_at` value the artifact captured. No longer measurement is needed.
 
 ---
 
@@ -417,6 +474,14 @@ arrives first.
 
 Offline, gated on Phase 2's evidence. This is the architecture-invariant phase
 (`Architecture.RealtimeSessionServer.md`: "Raw audio is not logged").
+
+**Phase 2 evidence (2026-07-30) resolves this phase's open assumption:** under the model-scoped
+attach the transcript delta (348 ms) arrives *before* the first raw audio delta (931 ms), so the
+first-audio labels would not have been silently redefined in practice; pinning them to the
+transcript event types is retained as designed, as shape-independent insurance. Only
+`response.output_audio.delta` was observed (never the legacy `response.audio.delta`); keep both
+names in the suppression list regardless, since the list exists to make payload paths
+unrepresentable, not to mirror one observed run.
 
 **Work**
 

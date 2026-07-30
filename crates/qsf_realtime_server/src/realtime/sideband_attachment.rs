@@ -16,7 +16,6 @@ use qsf_realtime_protocol::{
     build_openai_realtime_browser_call_ws_url, build_openai_realtime_model_ws_url,
 };
 
-#[allow(dead_code)]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum SidebandAttachment {
     BrowserCall { call_id: String },

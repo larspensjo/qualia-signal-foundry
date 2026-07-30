@@ -5,7 +5,7 @@ use qsf_realtime_protocol::{
     build_openai_realtime_conversation_session_update,
 };
 
-pub(crate) const DEFAULT_PCM_RATE_HZ: u32 = 24_000;
+pub const DEFAULT_PCM_RATE_HZ: u32 = 24_000;
 
 #[derive(Clone, Debug, PartialEq, serde::Serialize)]
 pub struct MemoryInjectionPacket {
