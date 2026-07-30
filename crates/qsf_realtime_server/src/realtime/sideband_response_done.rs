@@ -24,7 +24,10 @@ use crate::realtime::sideband_tool_execution::{
     PendingToolExecution, aborted_tool_resolution, execute_realtime_tool_call,
     extract_response_function_call_attempts,
 };
-use crate::realtime::token_usage::{response_done_token_counts, usage_number};
+use crate::realtime::token_usage::{
+    REALTIME_VOICE_ROLE, log_observed_usage, response_done_token_counts, response_done_usage,
+    usage_number,
+};
 use crate::realtime::tools::{
     self, RealtimeToolContext, ToolSessionSnapshot, VolitionStateSnapshot, tool_allow_list,
     tool_permission_decision,
@@ -83,7 +86,14 @@ pub(crate) async fn handle_response_done_event(
     };
     let model_id = guard.config.model.clone();
     let token_usage_counts = response_done_token_counts(event);
-    guard.record_token_usage("realtime_voice", &model_id, token_usage_counts);
+    log_observed_usage(
+        qsf_session_id,
+        REALTIME_VOICE_ROLE,
+        &model_id,
+        response_done_usage(event),
+        token_usage_counts,
+    );
+    guard.record_token_usage(REALTIME_VOICE_ROLE, &model_id, token_usage_counts);
     if response_is_stale || exchange_is_stale {
         guard
             .diagnostics

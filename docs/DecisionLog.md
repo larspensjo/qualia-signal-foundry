@@ -2211,3 +2211,21 @@ Consequences: The card now answers a configuration question as well as a spend q
 empty row is evidence of an idle path rather than of a broken one. Any future model the runtime
 selects but does not always exercise should be declared the same way. The distinction stays
 diagnostics-only, and the card still carries no price table.
+
+## 2026-07-30 - Every token ledger boundary logs the usage it observed
+Decision: Each provider event that feeds the session token ledger logs the raw `usage` object it
+carried alongside the token classes that were parsed from it, and logs a warning when the event
+carried no usage object at all. The transcription boundary additionally warns when the session has
+no configured transcription model. The location of each boundary's usage object is defined once and
+shared by the reader and the log, so the two cannot disagree about where they looked.
+Context: A provider-backed voice run left the input transcription row at zero. The declared row
+correctly showed which model the session was wired to, but nothing in the run artifacts could
+separate a provider that reported no transcription usage from a reader that looked at the wrong
+path, and those need opposite fixes. The conclusion had to be reached by eliminating branches in
+the source rather than by reading evidence, and the in-memory ledger is discarded when the session
+stops, so the numbers behind the observation were unrecoverable afterwards.
+Consequences: A zero row is now diagnosable from a single session's log without reproducing it
+under a debugger. The ledger deliberately still skips recording an all-zero reading, so the log is
+the only place that distinguishes an unbilled turn from an unobserved one; any change to that
+skip should keep the distinction visible somewhere. Assumptions about where a provider reports
+usage are expected to be confirmed against a logged live event before being treated as settled.

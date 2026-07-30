@@ -9,6 +9,12 @@ use serde::{Deserialize, Serialize};
 /// the session-start declaration and the usage recorder so both address the same row.
 pub const INPUT_TRANSCRIPTION_ROLE: &str = "input_transcription";
 
+/// Ledger role for the speech-to-speech model itself, billed via `response.done`.
+pub const REALTIME_VOICE_ROLE: &str = "realtime_voice";
+
+/// Ledger role for the off-hot-path goal formation and detection calls.
+pub const GOAL_FORMATION_ROLE: &str = "goal_formation";
+
 #[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
 pub struct TokenClassCounts {
     pub text_input: u64,
@@ -99,15 +105,24 @@ fn usage_number_at(usage: &serde_json::Value, path: &[&str]) -> Option<u64> {
 }
 
 pub(crate) fn usage_number(event: &serde_json::Value, path: &[&str]) -> Option<u64> {
-    usage_number_at(event.get("response")?.get("usage")?, path)
+    usage_number_at(response_done_usage(event)?, path)
+}
+
+/// The `usage` object a `response.done` event carries, at `response.usage`. The single
+/// place that knows this location, so the reader and the observation log cannot disagree
+/// about where they looked.
+pub(crate) fn response_done_usage(event: &serde_json::Value) -> Option<&serde_json::Value> {
+    event.get("response")?.get("usage")
+}
+
+/// The `usage` object a transcription-completed event carries, at the event root.
+pub(crate) fn transcription_usage(event: &serde_json::Value) -> Option<&serde_json::Value> {
+    event.get("usage")
 }
 
 /// Token counts for a `response.done` event, whose usage hangs off `response.usage`.
 pub(crate) fn response_done_token_counts(event: &serde_json::Value) -> TokenClassCounts {
-    match event
-        .get("response")
-        .and_then(|response| response.get("usage"))
-    {
+    match response_done_usage(event) {
         Some(usage) => token_counts_from_usage(usage),
         None => TokenClassCounts::default(),
     }
@@ -118,9 +133,30 @@ pub(crate) fn response_done_token_counts(event: &serde_json::Value) -> TokenClas
 /// model rather than the speech-to-speech model, and the provider reports it here
 /// instead of in `response.done`.
 pub(crate) fn transcription_token_counts(event: &serde_json::Value) -> TokenClassCounts {
-    match event.get("usage") {
+    match transcription_usage(event) {
         Some(usage) => token_counts_from_usage(usage),
         None => TokenClassCounts::default(),
+    }
+}
+
+/// Record what the provider reported at a ledger boundary, next to the classes it parsed
+/// into. Without this a zero row is ambiguous after the fact: a provider that reported no
+/// usage and a reader that looked at the wrong path produce the same empty counters but
+/// need opposite fixes. Called once per billed provider event, so the volume tracks turns.
+pub(crate) fn log_observed_usage(
+    qsf_session_id: &str,
+    role: &str,
+    model_id: &str,
+    usage: Option<&serde_json::Value>,
+    counts: TokenClassCounts,
+) {
+    match usage {
+        Some(usage) => log::info!(
+            "token usage observed for session `{qsf_session_id}` role `{role}` model `{model_id}`: parsed {counts:?} from raw usage {usage}"
+        ),
+        None => log::warn!(
+            "token usage missing for session `{qsf_session_id}` role `{role}` model `{model_id}`: provider event carried no usage object, so this turn is unbilled in the ledger"
+        ),
     }
 }
 
@@ -344,6 +380,30 @@ mod tests {
             response_done_token_counts(&event),
             TokenClassCounts::default()
         );
+    }
+
+    #[test]
+    fn usage_locators_report_absence_so_an_empty_row_is_never_ambiguous() {
+        // The observation log distinguishes "provider reported nothing" from "reported
+        // zero" purely by these locators, so each must find its own boundary's object and
+        // return None rather than falling back to the other's.
+        let transcription = serde_json::json!({
+            "type": "conversation.item.input_audio_transcription.completed",
+            "usage": { "input_tokens": 60, "output_tokens": 8 }
+        });
+        assert!(transcription_usage(&transcription).is_some());
+        assert!(response_done_usage(&transcription).is_none());
+
+        let response_done = serde_json::json!({
+            "type": "response.done",
+            "response": { "usage": { "input_tokens": 10, "output_tokens": 4 } }
+        });
+        assert!(response_done_usage(&response_done).is_some());
+        assert!(transcription_usage(&response_done).is_none());
+
+        let usage_free = serde_json::json!({ "type": "response.done", "response": {} });
+        assert!(response_done_usage(&usage_free).is_none());
+        assert!(transcription_usage(&usage_free).is_none());
     }
 
     #[test]

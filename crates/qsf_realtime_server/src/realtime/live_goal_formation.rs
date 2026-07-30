@@ -275,7 +275,7 @@ where
         let mut guard = session.lock().await;
         for captured_use in captured {
             guard.record_token_usage(
-                "goal_formation",
+                crate::realtime::token_usage::GOAL_FORMATION_ROLE,
                 &captured_use.model_name,
                 token_counts_from_model_usage(&captured_use.usage),
             );
