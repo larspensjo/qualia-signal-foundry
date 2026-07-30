@@ -5,7 +5,7 @@ use std::sync::Arc;
 use anyhow::Context;
 use qsf_realtime_protocol::{
     OPENAI_REALTIME_VOICE_INPUT_TRANSCRIPTION_MODEL, OPENAI_REALTIME_VOICE_MODEL,
-    OPENAI_REALTIME_WS_BASE_URL, RealtimeToolDefinition,
+    OPENAI_REALTIME_WS_BASE_URL, RealtimeToolDefinition, build_openai_realtime_browser_call_ws_url,
 };
 use qsf_session::LiveSessionState;
 use qsf_session::{MemorySourceConfig, SessionConfig as QsfSessionConfig, SessionState};
@@ -207,11 +207,7 @@ impl AppState {
     }
 
     pub fn openai_realtime_ws_url(&self, call_id: &str) -> String {
-        format!(
-            "{}?call_id={}",
-            self.openai_realtime_ws_base_url().trim_end_matches('/'),
-            call_id
-        )
+        build_openai_realtime_browser_call_ws_url(self.openai_realtime_ws_base_url(), call_id)
     }
 
     pub async fn create_session(&self) -> anyhow::Result<SessionAllocationResponse> {
@@ -520,6 +516,10 @@ pub struct OpenAiRealtimeTurnDetection {
 pub struct SidebandStatus {
     pub degraded: bool,
     pub detail: Option<String>,
+    #[serde(default)]
+    pub attached: bool,
+    #[serde(default)]
+    pub terminated: Option<String>,
 }
 
 pub struct SessionRuntime {
@@ -538,6 +538,8 @@ pub struct SessionRuntime {
     pub trusted_promoted_exchange_count: usize,
     pub non_promotable_exchange_indices: HashSet<usize>,
     pub degraded: bool,
+    pub sideband_attached: bool,
+    pub sideband_terminated: Option<String>,
     pub sideband: Option<crate::realtime::sideband::SidebandHandle>,
     pub volition: crate::realtime::volition::VolitionRuntimeState,
     /// Set while a worker task is draining `live_goal_formation_queue` for this session, so a
@@ -593,6 +595,8 @@ impl SessionRuntime {
             trusted_promoted_exchange_count: 0,
             non_promotable_exchange_indices: HashSet::new(),
             degraded: false,
+            sideband_attached: false,
+            sideband_terminated: None,
             sideband: None,
             volition: crate::realtime::volition::VolitionRuntimeState::new(),
             live_goal_formation_in_flight: false,
@@ -672,8 +676,27 @@ impl SessionRuntime {
     /// Keeps `degraded` and the broadcast status in lockstep.
     pub fn set_sideband_status(&mut self, degraded: bool, detail: Option<String>) {
         self.degraded = degraded;
+        self.status_tx.send_replace(SidebandStatus {
+            degraded,
+            detail,
+            attached: self.sideband_attached,
+            terminated: self.sideband_terminated.clone(),
+        });
+    }
+
+    pub fn set_sideband_attached(&mut self, attached: bool) {
+        self.sideband_attached = attached;
+        let status = self.status_tx.borrow().clone();
         self.status_tx
-            .send_replace(SidebandStatus { degraded, detail });
+            .send_replace(SidebandStatus { attached, ..status });
+    }
+
+    pub fn terminate_sideband(&mut self, reason: String) {
+        if self.sideband_terminated.is_none() {
+            self.sideband_terminated = Some(reason.clone());
+        }
+        self.sideband_attached = false;
+        self.set_sideband_status(true, Some(reason));
     }
 
     pub fn new_exchange_index(&mut self) -> usize {
@@ -717,6 +740,27 @@ pub struct CallBinding {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn app_state_uses_the_shared_browser_call_websocket_url_builder() {
+        let tempdir = tempfile::tempdir().expect("tempdir");
+        let state = AppState::new_with_realtime_ws_base_url(
+            "test-api-key",
+            "http://127.0.0.1:9999",
+            "ws://localhost:9000/v1/realtime/",
+            tempdir.path(),
+            SessionIdMode::Default,
+        )
+        .expect("state");
+
+        assert_eq!(
+            state.openai_realtime_ws_url("call-123"),
+            qsf_realtime_protocol::build_openai_realtime_browser_call_ws_url(
+                state.openai_realtime_ws_base_url(),
+                "call-123",
+            )
+        );
+    }
 
     #[test]
     fn default_instructions_carry_ari_identity_without_denials() {

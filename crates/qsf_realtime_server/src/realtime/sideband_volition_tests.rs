@@ -17,7 +17,7 @@ async fn run_trusted_transcript_turn(
     handle_provider_event(
         state,
         qsf_session_id,
-        call_id,
+        &browser_call(call_id),
         "conversation.item.input_audio_transcription.completed",
         &serde_json::json!({
             "type": "conversation.item.input_audio_transcription.completed",
@@ -724,7 +724,7 @@ async fn tool_loop_continuation_does_not_emit_bounded_initiative_record() {
     handle_provider_event(
         &state,
         &allocation.qsf_session_id,
-        "tool-loop-continuation",
+        &browser_call("tool-loop-continuation"),
         "response.done",
         &function_call_response_done(
             "evt-tool-loop",

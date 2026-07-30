@@ -9,6 +9,12 @@ use super::*;
 use crate::diagnostics::DiagnosticRecord;
 use crate::realtime::sideband_provider_event::handle_provider_event;
 
+fn browser_call(call_id: &str) -> SidebandAttachment {
+    SidebandAttachment::BrowserCall {
+        call_id: call_id.to_string(),
+    }
+}
+
 fn state(tempdir: &TempDir) -> AppState {
     AppState::new_with_realtime_ws_base_url(
         "test-api-key",
@@ -29,7 +35,7 @@ async fn start_test_turn(
     handle_provider_event(
         state,
         qsf_session_id,
-        "call-test",
+        &browser_call("call-test"),
         "conversation.item.input_audio_transcription.completed",
         &serde_json::json!({
             "type": "conversation.item.input_audio_transcription.completed",
@@ -125,7 +131,7 @@ async fn empty_store_turn_records_empty_context_and_promotes() {
     handle_provider_event(
         &state,
         &allocation.qsf_session_id,
-        "call-empty",
+        &browser_call("call-empty"),
         "conversation.item.input_audio_transcription.completed",
         &serde_json::json!({
             "type": "conversation.item.input_audio_transcription.completed",
@@ -158,7 +164,7 @@ async fn empty_store_turn_records_empty_context_and_promotes() {
     handle_provider_event(
         &state,
         &allocation.qsf_session_id,
-        "call-empty",
+        &browser_call("call-empty"),
         "response.done",
         &serde_json::json!({
             "type": "response.done",
@@ -213,7 +219,7 @@ async fn completed_trusted_turn_spawns_live_goal_formation() {
     handle_provider_event(
         &state,
         &allocation.qsf_session_id,
-        "call-formation",
+        &browser_call("call-formation"),
         "conversation.item.input_audio_transcription.completed",
         &serde_json::json!({
             "type": "conversation.item.input_audio_transcription.completed",
@@ -231,7 +237,7 @@ async fn completed_trusted_turn_spawns_live_goal_formation() {
     handle_provider_event(
         &state,
         &allocation.qsf_session_id,
-        "call-formation",
+        &browser_call("call-formation"),
         "response.done",
         &serde_json::json!({
             "type": "response.done",
@@ -320,7 +326,7 @@ async fn response_done_accumulates_realtime_token_usage() {
     handle_provider_event(
         &state,
         &allocation.qsf_session_id,
-        "call-test",
+        &browser_call("call-test"),
         "response.done",
         &serde_json::json!({
             "type": "response.done",
@@ -399,7 +405,7 @@ async fn stale_response_done_records_token_usage_without_promoting() {
     handle_provider_event(
         &state,
         &allocation.qsf_session_id,
-        "call-test",
+        &browser_call("call-test"),
         "response.done",
         &serde_json::json!({
             "type": "response.done",
@@ -469,7 +475,7 @@ async fn typed_turn_emits_user_item_before_context_and_response_create() {
     handle_text_turn(
         &state,
         &allocation.qsf_session_id,
-        "call-typed",
+        &browser_call("call-typed"),
         "how can you help me with this task",
         &mut runtime_state,
         &outbound_tx,
@@ -500,6 +506,25 @@ async fn typed_turn_emits_user_item_before_context_and_response_create() {
             .to_text()
             .expect("text")
             .contains("\"response.create\"")
+    );
+
+    let runtime = state
+        .session_runtime(&allocation.qsf_session_id)
+        .await
+        .expect("runtime");
+    let guard = runtime.lock().await;
+    let active_exchange = guard
+        .session_state
+        .live
+        .active_exchange
+        .as_ref()
+        .expect("active exchange");
+    let qsf_session::ExchangeInput::Voice { utterances, .. } = &active_exchange.input else {
+        panic!("typed turn should use a voice exchange");
+    };
+    assert_eq!(
+        utterances[0].provider_id.as_deref(),
+        Some("call-typed:typed")
     );
 }
 

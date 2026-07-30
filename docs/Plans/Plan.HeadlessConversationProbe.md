@@ -1,6 +1,6 @@
 # Plan: Headless scripted realtime conversation probe
 
-Status: Proposed — not started
+Status: In progress — Phase 1 complete (2026-07-30), uncommitted on `feature/headless-conversation`
 Maturity: Candidate
 Area: Realtime session server / Launcher / Artifact generation
 
@@ -301,79 +301,72 @@ state/probe/<run-id>/run-manifest.json
 
 ## Phase 1 — Realtime websocket URLs, the sideband attachment shape, and its reconnect policy
 
-Pure, offline, no API calls. Establishes the abstraction everything else hangs off, including the
-fail-closed reconnect policy that Corrections item 11 makes necessary.
+**Status: COMPLETE (2026-07-30).** Implemented by Codex GPT-5.6-Luna, reviewed by Claude Opus
+(seven findings, all approved and applied by Codex GPT-5.6-Sol), verified green. Work is
+uncommitted on `feature/headless-conversation`.
 
-**Work**
+**What was done**
 
-- `crates/qsf_realtime_protocol/src/lib.rs`: add two builders next to `OPENAI_REALTIME_WS_BASE_URL`
-  — one for the browser-call attach (`?call_id=`) and one for the server-owned model-scoped attach
-  (`?model=`), each taking the base URL so tests can point at a local stub.
-- `crates/qsf_realtime_server/src/state.rs`: `AppState::openai_realtime_ws_url` delegates to the
-  shared call-id builder (it keeps owning the configurable base URL).
-- `crates/qsf_app/src/audio/voice_session_provider.rs`: delete the private
-  `OPENAI_REALTIME_VOICE_WEBSOCKET_BASE_URL` literal (line 21) and the inline `format!` at line 538;
-  consume `OPENAI_REALTIME_WS_BASE_URL` plus the shared model builder. The base URL is currently
-  duplicated as a private literal there, against the `Agents.md` one-source-of-truth rule.
-- New behavior-named module `crates/qsf_realtime_server/src/realtime/sideband_attachment.rs`:
+- `crates/qsf_realtime_protocol/src/lib.rs`: `build_openai_realtime_browser_call_ws_url(base,
+  call_id)` and `build_openai_realtime_model_ws_url(base, model)` next to
+  `OPENAI_REALTIME_WS_BASE_URL`; both take the base URL (trailing-slash tolerant) so tests point at
+  a local stub, with unit tests pinning the produced shapes.
+- `AppState::openai_realtime_ws_url` delegates to the shared call-id builder;
+  `crates/qsf_app/src/audio/voice_session_provider.rs` lost its private
+  `OPENAI_REALTIME_VOICE_WEBSOCKET_BASE_URL` literal and inline `format!` and now consumes
+  `OPENAI_REALTIME_WS_BASE_URL` plus the shared model builder.
+- New module `crates/qsf_realtime_server/src/realtime/sideband_attachment.rs`: `SidebandAttachment
+  { BrowserCall { call_id }, ServerModelSession { model } }` with `websocket_url(base)`,
+  `provider_id()`, `typed_turn_provider_id()` (`{label}:typed`; added in review so the browser
+  typed-turn `provider_id` stays byte-identical to the pre-existing `{call_id}:typed`),
+  `call_id()` (`None` for model sessions, so model-attached `ProviderEventRecord`s carry
+  `call_id: null`), and `reconnect_policy()` (`BrowserCall -> ReattachToOwningCall`,
+  `ServerModelSession -> FailClosedAfterFirstAttach`). Module docs state the Corrections item 11
+  rationale; `Display` impls name the concrete attachment and policy in log lines.
+- The attachment threads as `&SidebandAttachment` through `SidebandHandle::spawn`, `run_sideband`,
+  `connect_and_run_once`, `handle_text_turn`, `handle_provider_event`,
+  `handle_response_done_event`, and `mark_session_degraded`, replacing the call-id parameter.
+  `exchange_sdp_impl` constructs `BrowserCall`. **No string→attachment coercion exists**: a
+  review-proposed `From<&str>` convenience was rejected because it would silently give a bare
+  string the browser-call reconnect policy; the six pre-existing sideband test files were instead
+  mechanically updated to construct attachments (asserted behavior unchanged;
+  `sideband_promotion_tests.rs` needed no edits).
+- `run_sideband` consults the policy: before the first successful attach (receiving
+  `session.updated`) both policies retry with the existing backoff (preserving the `?call_id=`
+  404-until-WebRTC-handshake behavior); after it, `FailClosedAfterFirstAttach` records the
+  degradation, publishes a terminal `terminated` reason, and exits, while `ReattachToOwningCall`
+  keeps the pre-existing loop. Review hardening: a requested stop always wins over fail-closed
+  termination (so a finalizer stop racing a provider close cannot fail a clean run); unexpected
+  stream exhaustion (`stream.next()` → `None` without a stop request) is treated as a disconnect,
+  not a stop; `attached` is cleared on task exit.
+- `SidebandStatus` gained minimal `attached` and set-once `terminated` fields (both
+  `#[serde(default)]`) — the slice Phase 1's fail-closed policy itself requires. The monotonic
+  `degradation_epoch` was deliberately **not** added (Phase 4b owns it). The browser events-socket
+  message does not include the new fields, so no `ui/` changes were needed.
+- `OpenAI-Safety-Identifier` is applied to the websocket handshake for both attach shapes;
+  `hash_session_id` was extracted into `crates/qsf_realtime_server/src/realtime/
+  safety_identifier.rs`, which also owns the header-name constant, and both the SDP POST and the
+  websocket attach use it.
 
-  ```text
-  SidebandAttachment
-    BrowserCall { call_id }            -> websocket_url = ?call_id=<call_id>
-    ServerModelSession { model }       -> websocket_url = ?model=<model>
+**Verification (ran 2026-07-30, all green)**
 
-  SidebandAttachment::provider_id()    label written onto UtteranceRecord.provider_id
-  SidebandAttachment::call_id()        Option<&str>; None for ServerModelSession, so model-attached
-                                       ProviderEventRecords carry call_id: null, never a fake value
-  SidebandAttachment::reconnect_policy()
-    BrowserCall        -> ReattachToOwningCall
-    ServerModelSession -> FailClosedAfterFirstAttach
-  ```
+- `cargo build`; `cargo test -p qsf_realtime_protocol -p qsf_realtime_server -p qsf_app`
+  (761 tests, 0 failures); `cargo clippy --all-targets -- -D warnings`; `cargo fmt --check`.
+- Offline lifecycle tests against a local websocket stub: the model-scoped session attaches,
+  completes exactly one promoted turn (pinned — the test cannot pass vacuously), the stub drops
+  the connection, no reconnect is attempted, the task exits with a terminal reason, and a
+  subsequently submitted phrase allocates no exchange and no turn; the `BrowserCall` mirror test
+  asserts the reattach loop still runs. The stub captures handshake headers and asserts the
+  safety-identifier hash for both shapes.
 
-  **Why the policy differs, stated in the module docs:** a `?model=` websocket *is* the stateful
-  provider session, so reopening it creates a new session with an empty conversation while the local
-  `SessionRuntime` still holds every earlier turn; `?call_id=` reattaches to the browser-owned call,
-  whose conversation survives (Corrections item 11).
-- `run_sideband` consults the policy:
-  - Before the **first successful attach** (defined as receiving `session.updated`, the same event
-    that sets the new `attached` flag), both policies retry with the existing backoff. This preserves
-    today's behavior for `?call_id=`, where OpenAI returns `404 No session found for the provided
-    call_id` until the browser's WebRTC handshake completes.
-  - After the first successful attach, `FailClosedAfterFirstAttach` does **not** reconnect: it
-    records the degradation (monotonic, Phase 4), sets a terminal `terminated` reason on the session
-    status, and returns from the task. `ReattachToOwningCall` keeps today's loop.
-- Thread the attachment through `SidebandHandle::spawn`, `run_sideband`, `connect_and_run_once`,
-  `handle_text_turn`, `handle_provider_event`, `handle_response_done_event`, and
-  `mark_session_degraded`, replacing the call-id parameter (which is `String` on the first two and
-  `&str` on the rest). `exchange_sdp_impl` constructs `BrowserCall`. Log lines keep naming the
-  concrete attachment and the policy decision so a failing operation stays identifiable
-  (`Agents.md` logging rule).
-- Apply the `OpenAI-Safety-Identifier` header to the websocket handshake request in
-  `connect_and_run_once` for **both** attach shapes. The header is documented for server-to-server
-  Realtime WebSocket connections and is absent from the attach today, so this is real work
-  (Corrections item 14). Extract `hash_session_id` out of `routes.rs:1040-1051` into a shared helper
-  so the SDP POST and the websocket attach use one implementation.
-
-**Verification (automated)**
-
-- `cargo build`.
-- Unit tests: both URL builders produce the expected shapes from a given base; the `AppState` and
-  `qsf_app` callers produce identical URLs to the shared builders for the same inputs (one source of
-  truth, pinned); `provider_id()`, `call_id()`, and `reconnect_policy()` return the documented values
-  for both variants.
-- **Offline lifecycle test:** with a local websocket stub, a `ServerModelSession` attaches, completes
-  one scripted turn, then the stub drops the connection; the test asserts that no reconnection is
-  attempted, that the sideband task exits with a terminal reason, and that a subsequently submitted
-  phrase produces **no** new exchange and **no** promoted turn. The mirror test for `BrowserCall`
-  asserts the reconnect loop still runs.
-- Existing `qsf_realtime_server` sideband tests (`sideband_tests.rs`, `sideband_lifecycle_tests.rs`,
-  `sideband_status_tests.rs`, `sideband_promotion_tests.rs`, `sideband_tool_loop_tests.rs`,
-  `sideband_volition_tests.rs`) must pass unchanged — the refactor is behavior-preserving for the
-  browser-call path.
-- `cargo test -p qsf_realtime_protocol -p qsf_realtime_server -p qsf_app` green.
-- `cargo clippy --all-targets -- -D warnings` then `cargo fmt`.
-
-**Human testing**: not required. **Cost**: none (no API calls).
+**Deferred follow-ups** (review advisories, deliberately not applied): a third copy of the
+realtime base URL remains in `crates/qsf_app/src/audio/transcript_provider.rs`
+(`?intent=transcription` — a matching shared builder would finish the DRY job); the caller-side
+"one source of truth" URL tests are delegation-tautological and would be stronger asserting
+literal URLs; the crate-level `#[allow(dead_code)]` on `SidebandAttachment` should fall away when
+the probe constructs `ServerModelSession`; `set_sideband_status` and `set_sideband_attached`
+assemble the published status separately and should share one `publish_status()` when Phase 4b
+adds fields.
 
 ---
 

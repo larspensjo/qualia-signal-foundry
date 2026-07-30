@@ -17,6 +17,7 @@ use crate::realtime::sideband::{
     SidebandRuntimeState, apply_trusted_transcript_to_volition, ensure_authoritative_exchange,
     hash_text, record_latency_observation_if_ready, send_json,
 };
+use crate::realtime::sideband_attachment::SidebandAttachment;
 use crate::realtime::sideband_response_done::handle_response_done_event;
 use crate::realtime::sideband_turn_injection::inject_trusted_turn_context_and_response;
 use crate::realtime::token_usage::{
@@ -32,7 +33,7 @@ use crate::state::AppState;
 pub(crate) async fn handle_provider_event(
     state: &AppState,
     qsf_session_id: &str,
-    call_id: &str,
+    attachment: &SidebandAttachment,
     event_type: &str,
     event: &serde_json::Value,
     runtime_state: &mut SidebandRuntimeState,
@@ -47,11 +48,16 @@ pub(crate) async fn handle_provider_event(
 
     match event_type {
         "session.created" | "session.updated" => {
-            if event_type == "session.updated" && guard.degraded {
-                guard.set_sideband_status(false, None);
-                log::info!(
-                    "sideband recovery verified for session `{qsf_session_id}` call `{call_id}` after session.updated"
-                );
+            if event_type == "session.updated" {
+                let was_degraded = guard.degraded;
+                guard.set_sideband_attached(true);
+                if was_degraded {
+                    guard.set_sideband_status(false, None);
+                    engine_logging::engine_info!(
+                        "sideband recovery verified for session `{qsf_session_id}` attachment `{attachment}` policy `{}` after session.updated",
+                        attachment.reconnect_policy()
+                    );
+                }
             }
             guard
                 .diagnostics
@@ -207,7 +213,7 @@ pub(crate) async fn handle_provider_event(
                                 revision_index: 0,
                                 transcript: transcript.clone(),
                                 received_at: SystemTime::now(),
-                                provider_id: Some(call_id.to_string()),
+                                provider_id: Some(attachment.provider_id().to_string()),
                                 source_chunk_index: None,
                             },
                             final_transcript: transcript.clone(),
@@ -248,7 +254,7 @@ pub(crate) async fn handle_provider_event(
                                 revision_index: 0,
                                 transcript: transcript.clone(),
                                 received_at: SystemTime::now(),
-                                provider_id: Some(call_id.to_string()),
+                                provider_id: Some(attachment.provider_id().to_string()),
                                 source_chunk_index: None,
                             },
                             final_transcript: transcript.clone(),
@@ -341,7 +347,7 @@ pub(crate) async fn handle_provider_event(
                     event_kind: ProviderEventKind::ResponseStarted,
                     provider_id: "openai_realtime".to_string(),
                     received_at: SystemTime::now(),
-                    call_id: Some(call_id.to_string()),
+                    call_id: attachment.call_id().map(str::to_string),
                     event_id: Some(
                         event
                             .get("event_id")
@@ -399,7 +405,7 @@ pub(crate) async fn handle_provider_event(
                     event_kind: ProviderEventKind::SpeechPlaybackStarted,
                     provider_id: "openai_realtime".to_string(),
                     received_at: SystemTime::now(),
-                    call_id: Some(call_id.to_string()),
+                    call_id: attachment.call_id().map(str::to_string),
                     event_id: Some(
                         event
                             .get("event_id")
@@ -453,7 +459,7 @@ pub(crate) async fn handle_provider_event(
             handle_response_done_event(
                 state,
                 qsf_session_id,
-                call_id,
+                attachment,
                 event,
                 session.clone(),
                 guard,
@@ -473,6 +479,7 @@ pub(crate) async fn handle_provider_event(
                 true,
                 Some("provider closed the realtime session".to_string()),
             );
+            guard.set_sideband_attached(false);
             runtime_state.clear_in_flight_response_state();
             runtime_state.active_exchange_index = None;
             runtime_state.pending_response_exchange = None;
@@ -488,7 +495,7 @@ pub(crate) async fn handle_provider_event(
                         event_kind: ProviderEventKind::Preamble,
                         provider_id: "openai_realtime".to_string(),
                         received_at: SystemTime::now(),
-                        call_id: Some(call_id.to_string()),
+                        call_id: attachment.call_id().map(str::to_string),
                         event_id: event
                             .get("event_id")
                             .and_then(serde_json::Value::as_str)

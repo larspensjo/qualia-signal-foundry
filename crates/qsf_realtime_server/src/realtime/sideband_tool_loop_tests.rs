@@ -121,7 +121,7 @@ async fn continuation_noise_transcript_is_ignored_until_the_response_completes()
     handle_provider_event(
         &state,
         &allocation.qsf_session_id,
-        "call-tools",
+        &browser_call("call-tools"),
         "response.done",
         &function_call_response_done(
             "evt-tool-call",
@@ -147,7 +147,7 @@ async fn continuation_noise_transcript_is_ignored_until_the_response_completes()
     handle_provider_event(
         &state,
         &allocation.qsf_session_id,
-        "call-tools",
+        &browser_call("call-tools"),
         "conversation.item.input_audio_transcription.completed",
         &serde_json::json!({
             "type": "conversation.item.input_audio_transcription.completed",
@@ -190,7 +190,7 @@ async fn continuation_noise_transcript_is_ignored_until_the_response_completes()
     handle_provider_event(
         &state,
         &allocation.qsf_session_id,
-        "call-tools",
+        &browser_call("call-tools"),
         "response.done",
         &serde_json::json!({
             "type": "response.done",
@@ -251,7 +251,7 @@ async fn cancelled_continuation_finalizes_the_active_exchange_before_the_next_tu
     handle_provider_event(
         &state,
         &allocation.qsf_session_id,
-        "call-tools",
+        &browser_call("call-tools"),
         "response.done",
         &function_call_response_done(
             "evt-tool-call",
@@ -276,7 +276,7 @@ async fn cancelled_continuation_finalizes_the_active_exchange_before_the_next_tu
     handle_provider_event(
         &state,
         &allocation.qsf_session_id,
-        "call-tools",
+        &browser_call("call-tools"),
         "conversation.item.input_audio_transcription.completed",
         &serde_json::json!({
             "type": "conversation.item.input_audio_transcription.completed",
@@ -296,7 +296,7 @@ async fn cancelled_continuation_finalizes_the_active_exchange_before_the_next_tu
     handle_provider_event(
         &state,
         &allocation.qsf_session_id,
-        "call-tools",
+        &browser_call("call-tools"),
         "response.done",
         &function_call_response_done(
             "evt-tool-cancelled",
@@ -326,7 +326,7 @@ async fn cancelled_continuation_finalizes_the_active_exchange_before_the_next_tu
     handle_provider_event(
         &state,
         &allocation.qsf_session_id,
-        "call-tools",
+        &browser_call("call-tools"),
         "conversation.item.input_audio_transcription.completed",
         &serde_json::json!({
             "type": "conversation.item.input_audio_transcription.completed",
@@ -348,7 +348,7 @@ async fn cancelled_continuation_finalizes_the_active_exchange_before_the_next_tu
     handle_provider_event(
         &state,
         &allocation.qsf_session_id,
-        "call-tools",
+        &browser_call("call-tools"),
         "conversation.item.input_audio_transcription.completed",
         &serde_json::json!({
             "type": "conversation.item.input_audio_transcription.completed",
@@ -377,7 +377,7 @@ async fn cancelled_continuation_finalizes_the_active_exchange_before_the_next_tu
     handle_provider_event(
         &state,
         &allocation.qsf_session_id,
-        "call-tools",
+        &browser_call("call-tools"),
         "response.done",
         &serde_json::json!({
             "type": "response.done",
@@ -438,7 +438,7 @@ async fn stale_response_events_are_audited_without_mutating_the_fresh_exchange()
     handle_provider_event(
         &state,
         &allocation.qsf_session_id,
-        "call-tools",
+        &browser_call("call-tools"),
         "response.created",
         &serde_json::json!({
             "type": "response.created",
@@ -461,7 +461,7 @@ async fn stale_response_events_are_audited_without_mutating_the_fresh_exchange()
     handle_provider_event(
         &state,
         &allocation.qsf_session_id,
-        "call-tools",
+        &browser_call("call-tools"),
         "conversation.item.input_audio_transcription.completed",
         &serde_json::json!({
             "type": "conversation.item.input_audio_transcription.completed",
@@ -505,7 +505,7 @@ async fn stale_response_events_are_audited_without_mutating_the_fresh_exchange()
     handle_provider_event(
         &state,
         &allocation.qsf_session_id,
-        "call-tools",
+        &browser_call("call-tools"),
         "response.created",
         &serde_json::json!({
             "type": "response.created",
@@ -525,7 +525,7 @@ async fn stale_response_events_are_audited_without_mutating_the_fresh_exchange()
     handle_provider_event(
         &state,
         &allocation.qsf_session_id,
-        "call-tools",
+        &browser_call("call-tools"),
         "response.done",
         &serde_json::json!({
             "type": "response.done",
@@ -594,7 +594,7 @@ async fn stale_response_events_are_audited_without_mutating_the_fresh_exchange()
     handle_provider_event(
         &state,
         &allocation.qsf_session_id,
-        "call-tools",
+        &browser_call("call-tools"),
         "response.done",
         &serde_json::json!({
             "type": "response.done",
@@ -656,7 +656,7 @@ async fn malformed_function_call_arguments_recover_with_denial_output() {
     handle_provider_event(
         &state,
         &allocation.qsf_session_id,
-        "call-tools",
+        &browser_call("call-tools"),
         "response.done",
         &serde_json::json!({
             "type": "response.done",
@@ -736,7 +736,7 @@ async fn loop_cap_forces_next_response_to_disable_tools() {
     handle_provider_event(
         &state,
         &allocation.qsf_session_id,
-        "call-tools",
+        &browser_call("call-tools"),
         "response.done",
         &serde_json::json!({
             "type": "response.done",
@@ -795,7 +795,7 @@ async fn non_allow_listed_tool_call_is_denied_and_recorded() {
     handle_provider_event(
         &state,
         &allocation.qsf_session_id,
-        "call-tools",
+        &browser_call("call-tools"),
         "response.done",
         &serde_json::json!({
             "type": "response.done",
@@ -866,7 +866,7 @@ async fn mixed_response_done_answers_function_call_without_finalizing_exchange()
     handle_provider_event(
         &state,
         &allocation.qsf_session_id,
-        "call-tools",
+        &browser_call("call-tools"),
         "response.done",
         &serde_json::json!({
             "type": "response.done",
@@ -966,7 +966,7 @@ async fn tool_execution_does_not_hold_session_lock() {
         handle_provider_event(
             &task_state,
             &task_session_id,
-            "call-tools",
+            &browser_call("call-tools"),
             "response.done",
             &serde_json::json!({
                 "type": "response.done",

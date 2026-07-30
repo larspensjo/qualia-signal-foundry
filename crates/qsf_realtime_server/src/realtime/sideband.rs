@@ -9,6 +9,7 @@ use tokio::sync::{mpsc, watch};
 use tokio_tungstenite::tungstenite::Message;
 
 use crate::diagnostics::DiagnosticRecord;
+use crate::realtime::sideband_attachment::SidebandAttachment;
 use crate::realtime::sideband_connection::run_sideband;
 use crate::realtime::sideband_turn_injection::inject_trusted_turn_context_and_response;
 use crate::realtime::tools::VolitionStateSnapshot;
@@ -26,13 +27,17 @@ pub struct SidebandHandle {
 }
 
 impl SidebandHandle {
-    pub fn spawn(state: AppState, qsf_session_id: String, call_id: String) -> Self {
+    pub(crate) fn spawn(
+        state: AppState,
+        qsf_session_id: String,
+        attachment: SidebandAttachment,
+    ) -> Self {
         let (stop_tx, stop_rx) = watch::channel(false);
         let (command_tx, command_rx) = mpsc::unbounded_channel();
         let join_handle = tokio::spawn(run_sideband(
             state,
             qsf_session_id,
-            call_id,
+            attachment,
             stop_rx,
             command_rx,
         ));
@@ -119,7 +124,7 @@ impl SidebandRuntimeState {
 pub(super) async fn handle_text_turn(
     state: &AppState,
     qsf_session_id: &str,
-    call_id: &str,
+    attachment: &SidebandAttachment,
     text: &str,
     runtime_state: &mut SidebandRuntimeState,
     outbound_tx: &mpsc::UnboundedSender<Message>,
@@ -145,7 +150,7 @@ pub(super) async fn handle_text_turn(
                 revision_index: 0,
                 transcript: transcript.to_string(),
                 received_at: SystemTime::now(),
-                provider_id: Some(format!("{call_id}:typed")),
+                provider_id: Some(attachment.typed_turn_provider_id()),
                 source_chunk_index: None,
             },
             final_transcript: transcript.to_string(),

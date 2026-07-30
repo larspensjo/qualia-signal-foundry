@@ -12,13 +12,13 @@ use super::{
 
 pub use qsf_realtime_protocol::{
     OPENAI_REALTIME_VOICE_INPUT_TRANSCRIPTION_MODEL, OPENAI_REALTIME_VOICE_MODEL,
+    OPENAI_REALTIME_WS_BASE_URL,
 };
 pub const REALTIME_SESSION_PROVIDER_ENV_VAR: &str = "QSF_REALTIME_SESSION_PROVIDER";
 pub const REALTIME_SESSION_INPUT_SOURCE_ENV_VAR: &str = "QSF_REALTIME_SESSION_INPUT_SOURCE";
 pub const REALTIME_SESSION_WAV_PATH_ENV_VAR: &str = "QSF_REALTIME_SESSION_WAV_PATH";
 pub const REALTIME_SESSION_MIC_DEVICE_ENV_VAR: &str = "QSF_REALTIME_SESSION_MIC_DEVICE";
 pub const REALTIME_SESSION_MIC_DURATION_MS_ENV_VAR: &str = "QSF_REALTIME_SESSION_MIC_DURATION_MS";
-const OPENAI_REALTIME_VOICE_WEBSOCKET_BASE_URL: &str = "wss://api.openai.com/v1/realtime";
 const DEFAULT_LIVE_MICROPHONE_DURATION_MS: u64 = 4_000;
 const SIMULATED_VOICE_CHUNK_COUNT: u32 = 3;
 
@@ -535,7 +535,7 @@ async fn run_openai_realtime_voice_session(
     use tokio_tungstenite::tungstenite::http::HeaderValue;
 
     let started_at = Instant::now();
-    let websocket_url = format!("{OPENAI_REALTIME_VOICE_WEBSOCKET_BASE_URL}?model={model}");
+    let websocket_url = realtime_voice_websocket_url(model);
     let mut ws_request = websocket_url.into_client_request().map_err(|e| {
         RealtimeSessionProviderError::Unavailable {
             provider: provider_name.to_string(),
@@ -631,6 +631,10 @@ async fn run_openai_realtime_voice_session(
         timeout,
     )
     .await
+}
+
+fn realtime_voice_websocket_url(model: &str) -> String {
+    realtime_protocol::build_openai_realtime_model_ws_url(OPENAI_REALTIME_WS_BASE_URL, model)
 }
 fn build_openai_realtime_response_create(request: &RealtimeSessionRequest) -> serde_json::Value {
     realtime_protocol::build_openai_realtime_response_create(
@@ -1106,6 +1110,19 @@ mod tests {
         assert_eq!(
             update["session"]["audio"]["input"]["transcription"]["model"],
             super::OPENAI_REALTIME_VOICE_INPUT_TRANSCRIPTION_MODEL
+        );
+    }
+
+    #[test]
+    fn voice_provider_uses_the_shared_model_scoped_websocket_url_builder() {
+        let model = "gpt-realtime-test";
+
+        assert_eq!(
+            super::realtime_voice_websocket_url(model),
+            qsf_realtime_protocol::build_openai_realtime_model_ws_url(
+                super::OPENAI_REALTIME_WS_BASE_URL,
+                model,
+            )
         );
     }
 

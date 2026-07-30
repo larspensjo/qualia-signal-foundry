@@ -17,6 +17,7 @@ use serde_json::Value;
 use time::OffsetDateTime;
 
 use crate::diagnostics::DiagnosticRecord;
+use crate::realtime::safety_identifier::{OPENAI_SAFETY_IDENTIFIER_HEADER, hash_session_id};
 use crate::realtime::token_usage::TokenUsageSnapshot;
 use crate::realtime::turn_context::TurnContextCapture;
 use crate::realtime::volition_inspection_capture::VolitionInspectionCapture;
@@ -221,7 +222,7 @@ async fn exchange_sdp_impl(
             format!("Bearer {}", state.openai_api_key()),
         )
         .header(
-            "OpenAI-Safety-Identifier",
+            OPENAI_SAFETY_IDENTIFIER_HEADER,
             hash_session_id(&request.qsf_session_id),
         )
         .multipart(form)
@@ -289,7 +290,7 @@ async fn exchange_sdp_impl(
         guard.sideband = Some(crate::realtime::sideband::SidebandHandle::spawn(
             state.clone(),
             request.qsf_session_id.clone(),
-            call_id.clone(),
+            crate::realtime::sideband_attachment::SidebandAttachment::BrowserCall { call_id },
         ));
     }
 
@@ -1037,19 +1038,6 @@ fn extract_call_id(location: Option<&reqwest::header::HeaderValue>) -> Option<St
         .map(str::to_string)
 }
 
-fn hash_session_id(session_id: &str) -> String {
-    let mut hash = sha2::Sha256::new();
-    use sha2::Digest;
-    hash.update(session_id.as_bytes());
-    let digest = hash.finalize();
-    let mut output = String::with_capacity(digest.len() * 2);
-    use std::fmt::Write as _;
-    for byte in digest {
-        write!(&mut output, "{byte:02x}").expect("writing to a string cannot fail");
-    }
-    output
-}
-
 #[cfg(test)]
 mod tests {
     use std::sync::{Arc, Mutex as StdMutex};
@@ -1630,7 +1618,7 @@ mod tests {
                                 .and_then(|value| value.to_str().ok())
                                 .map(str::to_string),
                             safety_identifier: headers
-                                .get("OpenAI-Safety-Identifier")
+                                .get(OPENAI_SAFETY_IDENTIFIER_HEADER)
                                 .and_then(|value| value.to_str().ok())
                                 .map(str::to_string),
                             body: String::from_utf8_lossy(&body).into_owned(),

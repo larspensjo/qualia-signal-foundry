@@ -24,7 +24,7 @@ async fn live_loop_latency_observations_record_each_stage_once() {
     handle_provider_event(
         &state,
         &allocation.qsf_session_id,
-        "call-latency",
+        &browser_call("call-latency"),
         "response.created",
         &serde_json::json!({
             "type": "response.created",
@@ -43,7 +43,7 @@ async fn live_loop_latency_observations_record_each_stage_once() {
     handle_provider_event(
         &state,
         &allocation.qsf_session_id,
-        "call-latency",
+        &browser_call("call-latency"),
         "response.audio.delta",
         &serde_json::json!({
             "type": "response.audio.delta",
@@ -63,7 +63,7 @@ async fn live_loop_latency_observations_record_each_stage_once() {
     handle_provider_event(
         &state,
         &allocation.qsf_session_id,
-        "call-latency",
+        &browser_call("call-latency"),
         "response.done",
         &serde_json::json!({
             "type": "response.done",
@@ -141,7 +141,7 @@ async fn interrupted_exchange_is_persisted_as_a_trusted_diagnostic() {
     handle_provider_event(
         &state,
         &allocation.qsf_session_id,
-        "call-interrupt",
+        &browser_call("call-interrupt"),
         "conversation.item.input_audio_transcription.completed",
         &serde_json::json!({
             "type": "conversation.item.input_audio_transcription.completed",

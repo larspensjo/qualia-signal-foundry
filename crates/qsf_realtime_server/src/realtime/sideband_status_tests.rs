@@ -46,7 +46,7 @@ async fn session_updated_ack_clears_degraded_after_reconnect() {
     handle_provider_event(
         &state,
         &allocation.qsf_session_id,
-        "call-recovered",
+        &browser_call("call-recovered"),
         "session.updated",
         &serde_json::json!({
             "type": "session.updated",

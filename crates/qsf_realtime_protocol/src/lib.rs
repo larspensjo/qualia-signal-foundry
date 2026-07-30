@@ -3,6 +3,17 @@ use serde_json::Value;
 
 pub const OPENAI_REALTIME_WS_BASE_URL: &str = "wss://api.openai.com/v1/realtime";
 pub const OPENAI_REALTIME_VOICE_MODEL: &str = "gpt-realtime-2.1";
+
+/// Build the websocket URL used to attach a server sideband to a browser-owned call.
+pub fn build_openai_realtime_browser_call_ws_url(base_url: &str, call_id: &str) -> String {
+    format!("{}?call_id={call_id}", base_url.trim_end_matches('/'))
+}
+
+/// Build the websocket URL used to create a server-owned model-scoped realtime session.
+pub fn build_openai_realtime_model_ws_url(base_url: &str, model: &str) -> String {
+    format!("{}?model={model}", base_url.trim_end_matches('/'))
+}
+
 /// Input transcription model for the speech-to-speech voice session. Single source of
 /// truth for both the server-side session default and the app-side provider default.
 ///
@@ -384,6 +395,20 @@ pub fn extract_response_text(event: &Value) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn realtime_websocket_url_builders_use_the_requested_attach_shape() {
+        let base_url = "ws://localhost:9000/v1/realtime/";
+
+        assert_eq!(
+            build_openai_realtime_browser_call_ws_url(base_url, "call-123"),
+            "ws://localhost:9000/v1/realtime?call_id=call-123"
+        );
+        assert_eq!(
+            build_openai_realtime_model_ws_url(base_url, "gpt-realtime"),
+            "ws://localhost:9000/v1/realtime?model=gpt-realtime"
+        );
+    }
 
     #[test]
     fn voice_session_update_includes_requested_transcription_model() {

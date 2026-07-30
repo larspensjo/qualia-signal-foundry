@@ -19,6 +19,7 @@ use crate::realtime::injection::DEFAULT_PCM_RATE_HZ;
 use crate::realtime::sideband::{
     SidebandRuntimeState, ensure_authoritative_exchange, hash_request_sequence, send_json,
 };
+use crate::realtime::sideband_attachment::SidebandAttachment;
 use crate::realtime::sideband_exchange_promotion::promote_completed_trusted_exchanges;
 use crate::realtime::sideband_tool_execution::{
     PendingToolExecution, aborted_tool_resolution, execute_realtime_tool_call,
@@ -53,7 +54,7 @@ fn response_usage_output_tokens(event: &serde_json::Value) -> u32 {
 pub(crate) async fn handle_response_done_event(
     state: &AppState,
     qsf_session_id: &str,
-    call_id: &str,
+    attachment: &SidebandAttachment,
     event: &serde_json::Value,
     session: Arc<tokio::sync::Mutex<SessionRuntime>>,
     mut guard: tokio::sync::MutexGuard<'_, SessionRuntime>,
@@ -196,7 +197,7 @@ pub(crate) async fn handle_response_done_event(
                     event_kind: ProviderEventKind::FunctionCallCompleted,
                     provider_id: "openai_realtime".to_string(),
                     received_at: completed_at,
-                    call_id: Some(call_id.to_string()),
+                    call_id: attachment.call_id().map(str::to_string),
                     event_id: Some(
                         event
                             .get("event_id")
@@ -405,7 +406,7 @@ pub(crate) async fn handle_response_done_event(
             event_kind: ProviderEventKind::ResponseCompleted,
             provider_id: "openai_realtime".to_string(),
             received_at: completed_at,
-            call_id: Some(call_id.to_string()),
+            call_id: attachment.call_id().map(str::to_string),
             event_id: Some(
                 event
                     .get("event_id")
@@ -528,7 +529,14 @@ mod tests {
 
     use super::*;
     use crate::realtime::sideband::SidebandRuntimeState;
+    use crate::realtime::sideband_attachment::SidebandAttachment;
     use crate::state::{AppState, SessionIdMode};
+
+    fn browser_call(call_id: &str) -> SidebandAttachment {
+        SidebandAttachment::BrowserCall {
+            call_id: call_id.to_string(),
+        }
+    }
 
     fn state(tempdir: &TempDir) -> AppState {
         AppState::new_with_realtime_ws_base_url(
@@ -582,7 +590,7 @@ mod tests {
         handle_response_done_event(
             &state,
             &allocation.qsf_session_id,
-            "call-1",
+            &browser_call("call-1"),
             &serde_json::json!({
                 "type": "response.done",
                 "event_id": "evt-stale",
