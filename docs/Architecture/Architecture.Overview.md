@@ -62,8 +62,10 @@ focused architecture documents.
   role-specific assembly strategies are not yet differentiated
 - A volition / goal system exists as the extracted `qsf_volition` crate (fixtures,
   pure lifecycle reducer, context-neutral selection/arbitration, mode bias, bounded
-  internal initiative), exercised through experiments; it is not yet wired into the
-  live loop ([Architecture.VolitionSystem.md](Architecture.VolitionSystem.md))
+  internal initiative) and is wired into the realtime session loop (per-turn
+  selection, arbitration, context injection, live goal formation, and continuity
+  snapshots); semantic activation and richer motivational texture remain future
+  work ([Architecture.VolitionSystem.md](Architecture.VolitionSystem.md))
 - Sleep consolidation does not yet run explicit pruning/maintenance sweeps;
   retrieval-time decay exists, and sleep extracts open questions and candidate
   memories but semantic deduplication and contradiction handling remain shallow
@@ -198,6 +200,28 @@ Detailed discussion belongs in:
 - `Concept.AssociativeMemory.md`
 - `Architecture.MemorySystem.md`
 - `Architecture.ContextManagement.md`
+
+### Volition System
+
+The volition system holds what the simulation cares about: standing tensions,
+concrete goals derived from them, and bounded initiatives proposed on their behalf.
+
+It is the conative counterpart of the memory system, and the two are deliberately
+distinct: memory holds epistemic content (representations that can be true, stale,
+or superseded, selected by relevance), while volition holds conative commitments
+(pressures that can be satisfied, blocked, or retired, selected by arbitration).
+Memory supplies content; volition supplies direction. Cross-system flow happens only
+through two directed interfaces: epistemic material may be proposed as a goal
+candidate through admission, and a goal may request context retrieval.
+
+Volition influence stays bounded: at most one arbitration winner shapes a turn,
+protected tiers keep user intent and safety constraints from being displaced, and
+initiatives never perform external write-capable actions.
+
+Detailed discussion belongs in:
+
+- `Concept.VolitionSystem.md`
+- `Architecture.VolitionSystem.md`
 
 ### Context Management
 
@@ -460,6 +484,7 @@ Concept documents:
 - `Concept.ContextBudget.md`
 - `Concept.MultiModelMind.md`
 - `Concept.ExternalInputs.md`
+- `Concept.VolitionSystem.md`
 
 Architecture documents:
 

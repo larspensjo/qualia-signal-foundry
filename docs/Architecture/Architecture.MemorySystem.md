@@ -200,6 +200,8 @@ This architecture is closely related to:
 - `Concept.SleepPhase.md`
 - `Concept.RealtimePresence.md`
 - `Concept.MultiModelMind.md`
+- `Concept.VolitionSystem.md` — the conative counterpart; defines the committed
+  boundary between memory (epistemic content) and volition (conative commitments)
 
 The concept documents explain why memory matters. This document describes one candidate way the memory system could be structured.
 

@@ -546,6 +546,11 @@ behavior, but reuse memory records, source references, decay, reinforcement, and
 reviewed promotion where a goal becomes durable. This avoids inventing a separate
 long-term persistence path before the memory pipeline has been tested.
 
+> **Superseded 2026-07-30.** Goals are separate volitional state with their own
+> continuity path, linked to memory only by evidence references — see the
+> DecisionLog entry "Memory and volition are distinct subsystems" and
+> `docs/Concepts/Concept.VolitionSystem.md` for the committed boundary.
+
 ## Goal Satisfaction And Reinforcement Signal
 
 The simulator does not need a literal dopamine analogue to explore goal-directed

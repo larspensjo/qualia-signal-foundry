@@ -327,6 +327,8 @@ invariant enforces this). The `volition-continuity` experiment runs the consolid
 
 ## Related Documents
 
+- [Concept.VolitionSystem.md](../Concepts/Concept.VolitionSystem.md) — why volition
+  exists and the committed epistemic/conative boundary with the memory system.
 - [Architecture.ContextManagement.md](Architecture.ContextManagement.md) — context
   assembly that adapters layer on top of volition selections.
 - [Architecture.StateAndObservability.md](Architecture.StateAndObservability.md) — how

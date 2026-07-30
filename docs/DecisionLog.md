@@ -2229,3 +2229,26 @@ under a debugger. The ledger deliberately still skips recording an all-zero read
 the only place that distinguishes an unbilled turn from an unobserved one; any change to that
 skip should keep the distinction visible somewhere. Assumptions about where a provider reports
 usage are expected to be confirmed against a logged live event before being treated as settled.
+
+## 2026-07-30 - Memory and volition are distinct subsystems
+Decision: Memory and volition are separated by an epistemic/conative boundary, not by durability.
+Memory holds epistemic content — representations that can be true, false, stale, or superseded,
+carrying provenance and trust, selected by relevance. Volition holds conative commitments —
+pressures that can be satisfied, blocked, or retired, resolved by arbitration. No item lives in
+both stores: a goal references evidence rather than carrying facts, and a memory may describe a
+commitment without being one. Cross-system flow goes only through two directed interfaces:
+epistemic material may be proposed as a goal candidate through admission, and a goal may request
+context retrieval. Live capture routes mere ideation to memory candidates and expressed pursuit
+to goal candidates. Memory retrieval strength and goal salience remain separate scoring models.
+Frozen personality is expressed as tensions and protected constraints, not as goals.
+Context: Both systems persist across sessions, consolidate during sleep, and inject per-turn
+context, so they risked being understood as overlapping mechanisms. The original exploration
+(`Idea.VolitionGoalSystem.md`, "Goals, Attention, And Memory") left "should goals be memories,
+separate state, or both?" open with a leaning toward "both, carefully"; the implementation has
+since given volition its own continuity path, and the boundary needed to be stated deliberately.
+The full framing lives in `Concept.VolitionSystem.md`.
+Consequences: Supersedes the "both, carefully" leaning — goals are separate state linked to memory
+only by evidence references. Duplicating one conversational item as both a fact and a commitment
+without a linking reference, using goals to carry facts into context, or using memories to carry
+standing instructions are boundary violations. The design brief's open question about a shared
+salience/retrieval scoring model is answered no.
