@@ -146,11 +146,12 @@ pub fn build_volition_context_injection_trace(
     volition_tick_before: u64,
     events_applied: Vec<qsf_volition::VolitionEvent>,
     packet: &VolitionTurnPacket,
-    response_create_event_ref: &str,
+    request_hash: &str,
 ) -> VolitionContextInjectionTrace {
     VolitionContextInjectionTrace {
         qsf_session_id: qsf_session_id.to_string(),
         exchange_index,
+        request_hash: request_hash.to_string(),
         injected_layers: packet.summary.injected_layers.clone(),
         stable_baseline_hash: packet.summary.stable_baseline_hash.clone(),
         input_transcript_ref: input_transcript_ref.to_string(),
@@ -168,7 +169,7 @@ pub fn build_volition_context_injection_trace(
         shaping_intensity_inputs: packet.summary.shaping_intensity_inputs.clone(),
         context_packet_hash: packet.summary.context_packet_hash.clone(),
         context_packet_token_estimate: packet.summary.context_packet_token_estimate,
-        response_create_event_ref: response_create_event_ref.to_string(),
+        response_create_event_ref: request_hash.to_string(),
         declined_candidates_injected: packet
             .summary
             .declined_candidates

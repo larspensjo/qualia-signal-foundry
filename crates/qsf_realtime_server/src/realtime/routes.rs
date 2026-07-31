@@ -18,6 +18,9 @@ use time::OffsetDateTime;
 
 use crate::diagnostics::DiagnosticRecord;
 use crate::realtime::safety_identifier::{OPENAI_SAFETY_IDENTIFIER_HEADER, hash_session_id};
+use crate::realtime::session_lifecycle::{
+    finalize_open_exchange, persist_completed_diagnostic_exchanges,
+};
 use crate::realtime::token_usage::TokenUsageSnapshot;
 use crate::realtime::turn_context::TurnContextCapture;
 use crate::realtime::volition_inspection_capture::VolitionInspectionCapture;
@@ -142,8 +145,13 @@ async fn events_socket(
 }
 
 async fn stop_session(State(state): State<AppState>, Json(request): Json<StopRequest>) -> Response {
-    match stop_session_impl(&state, request.qsf_session_id).await {
-        Ok(response) => Json(response).into_response(),
+    match crate::realtime::session_lifecycle::stop_session(&state, request.qsf_session_id).await {
+        Ok(result) => Json(StopResponse {
+            qsf_session_id: result.qsf_session_id,
+            stopped: true,
+            completed_exchanges: result.completed_exchanges,
+        })
+        .into_response(),
         Err(error) => (
             StatusCode::NOT_FOUND,
             Json(ErrorResponse::from_error(error)),
@@ -297,58 +305,6 @@ async fn exchange_sdp_impl(
     Ok(SdpExchangeResponse {
         qsf_session_id: request.qsf_session_id,
         answer_sdp,
-    })
-}
-
-async fn stop_session_impl(
-    state: &AppState,
-    qsf_session_id: String,
-) -> anyhow::Result<StopResponse> {
-    let session = state
-        .remove_session(&qsf_session_id)
-        .await
-        .ok_or_else(|| anyhow::anyhow!("unknown qsf_session_id `{}`", qsf_session_id))?;
-    let (sideband, stop_session_id, completed) = {
-        let mut guard = session.lock().await;
-        let before = guard.relay_state.completed_exchanges.len();
-        finalize_open_exchange(&mut guard);
-        persist_completed_diagnostic_exchanges(&mut guard)?;
-        let completed = guard
-            .relay_state
-            .completed_exchanges
-            .len()
-            .saturating_sub(before);
-        let stop_session_id = guard.qsf_session_id.clone();
-        let call_invalidated = guard.call_binding.as_mut().map(|binding| {
-            let invalidated_at = OffsetDateTime::now_utc();
-            let call_id = binding.call_id.clone();
-            binding.invalidated_at = Some(invalidated_at);
-            binding.reason = Some("stop".to_string());
-            (call_id, invalidated_at)
-        });
-        if let Some((call_id, invalidated_at)) = call_invalidated {
-            guard
-                .diagnostics
-                .write(&DiagnosticRecord::CallInvalidated {
-                    qsf_session_id: stop_session_id.clone(),
-                    call_id,
-                    invalidated_at,
-                    reason: "stop".to_string(),
-                })?;
-        }
-        guard.call_binding = None;
-        let sideband = guard.sideband.take();
-        (sideband, stop_session_id, completed)
-    };
-
-    if let Some(sideband) = sideband {
-        sideband.stop().await;
-    }
-
-    Ok(StopResponse {
-        qsf_session_id: stop_session_id,
-        stopped: true,
-        completed_exchanges: completed,
     })
 }
 
@@ -972,19 +928,6 @@ async fn process_relay_envelope(
     })
 }
 
-fn finalize_open_exchange(runtime: &mut SessionRuntime) {
-    if let Some(active_exchange) = runtime.relay_state.active_exchange.as_ref() {
-        let exchange_index = active_exchange.index;
-        apply_relay_live_session_event(
-            &mut runtime.relay_state,
-            LiveSessionEvent::ExchangeCompleted {
-                exchange_index,
-                completed_at: SystemTime::now(),
-            },
-        );
-    }
-}
-
 fn ensure_active_exchange(runtime: &mut SessionRuntime) -> usize {
     if let Some(exchange) = runtime.relay_state.active_exchange.as_ref() {
         return exchange.index;
@@ -996,24 +939,6 @@ fn ensure_active_exchange(runtime: &mut SessionRuntime) -> usize {
         LiveSessionEvent::ExchangeStarted(Box::new(exchange)),
     );
     exchange_index
-}
-
-fn persist_completed_diagnostic_exchanges(runtime: &mut SessionRuntime) -> anyhow::Result<()> {
-    while runtime.persisted_exchange_count < runtime.relay_state.completed_exchanges.len() {
-        let exchange =
-            runtime.relay_state.completed_exchanges[runtime.persisted_exchange_count].clone();
-        runtime
-            .diagnostics
-            .write(&DiagnosticRecord::DiagnosticExchangeRecorded {
-                qsf_session_id: runtime.qsf_session_id.clone(),
-                source: "browser_relay".to_string(),
-                trust: runtime.trust,
-                recorded_at: OffsetDateTime::now_utc(),
-                exchange,
-            })?;
-        runtime.persisted_exchange_count += 1;
-    }
-    Ok(())
 }
 
 fn relay_payload_is_oversized(payload: &str) -> bool {

@@ -109,6 +109,10 @@ pub fn default_ambient_exposure() -> AmbientExposure {
 pub struct VolitionContextInjectionTrace {
     pub qsf_session_id: String,
     pub exchange_index: usize,
+    /// Links this injection to the exact provider request captured for the same turn.
+    /// Empty for diagnostics ledgers written before this field was introduced.
+    #[serde(default)]
+    pub request_hash: String,
     pub injected_layers: Vec<VolitionInjectionLayer>,
     pub stable_baseline_hash: String,
     pub input_transcript_ref: String,
@@ -167,5 +171,43 @@ mod tests {
                 .expect("deserialize without visibility");
 
         assert_eq!(parsed.visibility, GoalVisibility::Conscious);
+    }
+
+    #[test]
+    fn injection_trace_defaults_request_hash_for_older_ledgers() {
+        let json = serde_json::json!({
+            "qsf_session_id": "s",
+            "exchange_index": 0,
+            "injected_layers": [],
+            "stable_baseline_hash": "",
+            "input_transcript_ref": "",
+            "volition_tick_before": 0,
+            "events_applied": [],
+            "opportunity_signals": [],
+            "selector_output": {
+                "selected_goal_ids": [],
+                "selected_goal_titles": [],
+                "selected_goal_summaries": [],
+                "selected_count": 0,
+                "omitted_count": 0,
+                "suppressed_cooldown_count": 0,
+                "visible_blocked_count": 0
+            },
+            "omitted_or_suppressed_candidates": [],
+            "arbitration_result": null,
+            "mode_bias_outcomes": [],
+            "protected_tier_active": false,
+            "shaping_intensity": "none",
+            "shaping_intensity_inputs": null,
+            "context_packet_hash": "",
+            "context_packet_token_estimate": 0,
+            "response_create_event_ref": "",
+            "declined_candidates_injected": []
+        });
+
+        let parsed: VolitionContextInjectionTrace =
+            serde_json::from_value(json).expect("deserialize older trace");
+
+        assert!(parsed.request_hash.is_empty());
     }
 }

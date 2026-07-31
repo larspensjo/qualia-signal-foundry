@@ -1,0 +1,31 @@
+{
+  "id": "smoke",
+  "description": "A short synthetic scripted conversation smoke set.",
+  "phrases": [
+    {
+      "text": "Could you help me understand what matters most in this situation?",
+      "expected": {
+        "qualifying_goal_ids": ["serve-the-present-person"],
+        "winner": {
+          "kind": "goal_id",
+          "goal_id": "serve-the-present-person"
+        },
+        "loser_ids": [],
+        "below_threshold_goal_ids": [],
+        "world_consultation_expected": false
+      }
+    },
+    {
+      "text": "What are you focused on right now?",
+      "expected": {
+        "qualifying_goal_ids": [],
+        "winner": {
+          "kind": "none"
+        },
+        "loser_ids": [],
+        "below_threshold_goal_ids": ["serve-the-present-person"],
+        "world_consultation_expected": false
+      }
+    }
+  ]
+}

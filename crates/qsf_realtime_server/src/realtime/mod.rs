@@ -3,6 +3,7 @@ pub(crate) mod live_goal_formation;
 mod memory_store;
 mod routes;
 pub(crate) mod safety_identifier;
+pub(crate) mod session_lifecycle;
 pub(crate) mod sideband;
 pub(crate) mod sideband_attachment;
 pub(crate) mod sideband_connection;

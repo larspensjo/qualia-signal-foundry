@@ -943,13 +943,60 @@ async fn mixed_response_done_answers_function_call_without_finalizing_exchange()
             .expect("text")
             .contains("function_call_output")
     );
+    outbound_rx.recv().await.expect("follow-up response.create");
+    handle_provider_event(
+        &state,
+        &allocation.qsf_session_id,
+        &browser_call("call-tools"),
+        "response.output_audio.delta",
+        &serde_json::json!({
+            "type": "response.output_audio.delta",
+            "response": { "id": "response-tool-follow-up", "status": "in_progress" },
+            "delta": "TQ=="
+        }),
+        &mut runtime_state,
+        &outbound_tx,
+    )
+    .await
+    .expect("follow-up response output audio");
+    handle_provider_event(
+        &state,
+        &allocation.qsf_session_id,
+        &browser_call("call-tools"),
+        "response.done",
+        &serde_json::json!({
+            "type": "response.done",
+            "event_id": "evt-tool-follow-up",
+            "response": {
+                "id": "response-tool-follow-up",
+                "status": "completed",
+                "output": [{
+                    "type": "message",
+                    "content": [{
+                        "type": "output_text",
+                        "text": "completed after tool"
+                    }]
+                }],
+                "usage": {
+                    "input_tokens": 1,
+                    "output_tokens": 1
+                }
+            }
+        }),
+        &mut runtime_state,
+        &outbound_tx,
+    )
+    .await
+    .expect("follow-up response done");
+    assert_eq!(runtime_state.output_audio_delta_count, 0);
+    assert_eq!(runtime_state.output_audio_delta_byte_count, 0);
     let runtime = state
         .session_runtime(&allocation.qsf_session_id)
         .await
         .expect("runtime");
     let guard = runtime.lock().await;
-    assert!(guard.session_state.live.active_exchange.is_some());
-    assert!(guard.session_state.turns.is_empty());
+    assert_eq!(guard.session_output_audio_delta_count, 3);
+    assert_eq!(guard.session_output_audio_delta_byte_count, 4);
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

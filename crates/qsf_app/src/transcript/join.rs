@@ -820,6 +820,7 @@ mod tests {
         VolitionContextInjectionTrace {
             qsf_session_id: "s".to_string(),
             exchange_index: 0,
+            request_hash: String::new(),
             injected_layers: vec![],
             stable_baseline_hash: String::new(),
             input_transcript_ref: String::new(),

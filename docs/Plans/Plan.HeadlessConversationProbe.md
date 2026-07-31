@@ -1,7 +1,7 @@
 # Plan: Headless scripted realtime conversation probe
 
-Status: In progress — Phases 1, 2, 3, and 4 complete (2026-07-31, `feature/headless-conversation`;
-Phases 1 and 2 include their live operator runs); next is Phase 5 (scripted conversation runner)
+Status: In progress — Phases 1, 2, 3, 4, and 5 complete (2026-07-31, `feature/headless-conversation`;
+Phases 1 and 2 include their live operator runs); next is the fixture bundle
 Maturity: Candidate
 Area: Realtime session server / Launcher / Artifact generation
 
@@ -248,8 +248,9 @@ detached_formation_outcome       diagnostics: live_goal_formation_performed | _f
                                  plus the settled/expected counts in run-manifest.json
 dynamic_state_snapshot           initiative trace state snapshots before/after; the explicitly
                                  persisted end-of-run continuity/default/volition-state.json
-artifact_or_report_reference     request_hash linking turn_context_captured to the injection and
-                                 initiative traces; run-manifest.json
+artifact_or_report_reference     request_hash linking turn_context_captured.request_hash to
+                                 volition_context_injected.trace.request_hash and the initiative
+                                 traces; run-manifest.json
 model_use_and_cost               continuity/default/session-state.json turns[].model
                                  (ExchangeModelUse) plus the run manifest's token-ledger snapshot
 ```
@@ -705,6 +706,71 @@ never persisted, and diagnostics can be appended after an end-of-run scan.
 
 ## Phase 5 — Scripted conversation runner: `qsf_realtime_server probe`
 
+**Status: COMPLETE (2026-07-31).**
+
+**What was done**
+
+- Added the scripted-conversation module tree, bundled synthetic smoke phrase set, pure reducer,
+  verdict, trace-contract parser, secret scan, manifest serializer/atomic writer, and rendering.
+- Added the headless probe command with its scripted-run defaults, in-process model-session
+  sideband driver, status/completion waits, finalization path, terminal manifest, and non-zero
+  failing verdict behavior. Auxiliary seed and structure modes intentionally report that their
+  later-owned behavior is not available yet.
+- `VolitionContextInjectionTrace` now persists a backward-compatible `request_hash`, populated
+  from the exact `ContentHash` used for the provider request. The trace-contract parser links it
+  per exchange to `turn_context_captured.request_hash`; missing, mismatched, and cross-wired hashes
+  fail closed.
+- Extracted the neutral shared session stop lifecycle for the HTTP route and probe finalizer. It
+  takes and joins the sideband even when relay persistence fails, so artifact parsing starts only
+  after the final writer is stopped.
+- The always-run finalizer now retains the original run failure separately from finalization
+  errors, snapshots the token ledger and actual promoted indices under the session lock, records
+  the complete manifest provenance contract, scans the terminal manifest for secrets, and leaves
+  a parseable failed manifest for attach and turn timeouts. Session-lifetime output-audio totals
+  survive per-response resets and are included in that snapshot.
+- The pure reducer/verdict/render path now owns infrastructure-error precedence, arbitration-winner
+  progress, expectation differences, formation-barrier output, and structured-partial warnings.
+  Supplied run directories are used exactly as given and rejected when they contain an earlier
+  diagnostics ledger or terminal manifest.
+
+**Verification**
+
+- `cargo build`.
+- `cargo test -p qsf_realtime_server -p qsf_diagnostics`.
+- Unit coverage for every deterministic verdict clause and the structured formation clauses,
+  phrase-set name/path/error loading, complete/missing/mismatched per-turn trace linkage, terminal
+  manifest fields and atomic replacement, secret detection, and session-lifetime audio totals.
+- Effect-layer coverage uses local websocket stubs to prove attach-timeout and turn-timeout runs
+  stop/join their sidebands and leave failed terminal manifests, and that a blocked manifest target
+  still returns the original run failure.
+
+**Deliberate follow-ups**
+
+- The structural-comparison result has an explicit `NoStructuralReferenceConfigured` state;
+  it produces no divergence. The structural builder and reference remain the later artifact work.
+- Seed materialization and structure-only document emission remain deferred to their owning work.
+
+**Operator follow-up — the live smoke run was performed 2026-07-31, verdict `passed`.**
+
+`cargo run -p qsf_realtime_server -- probe --phrase-set smoke`, two turns, run directory
+`state/probe/20260731-073909`. Evidence collected:
+
+- The trace contract parsed complete with `matching_request_hash: true` for both promoted turns,
+  so the per-exchange injection-to-request linkage holds against real artifacts, not only fixtures.
+- The session-lifetime output-audio totals survived the per-response resets: 60 + 10 + 36 deltas
+  logged, `output_audio_delta_count: 106` and 1 980 000 decoded bytes in the manifest.
+- The token ledger was captured for all three provider responses, including the tool-loop response —
+  the accounting Corrections item 6 shows exists nowhere else on disk.
+- The second phrase reproduced the designed script's tool-loop turn: nothing qualified,
+  `arbitration_winner: null`, one `inspect_volition_state` request and one execution.
+- `transcript -StateDir state/probe/20260731-073909 -Full` reported `source.complete == true`,
+  zero skipped lines, zero orphans, two turn lines, and no non-empty `undecodable`.
+
+Three defects the run exposed are folded into the fixture-bundle work below rather than fixed here,
+because that is where the designed script, its expectation blocks, and the corpus-dependent
+world-consultation turn all land: the expectation-diff rendering, the corpus-resolution provenance
+gap, and the smoke set's inaccurate `expected` block.
+
 The smallest viable end-to-end slice, with an always-run finalizer. It ships the phrase-set loader and
 a minimal two-phrase smoke set so the first paid run is cheap and this phase can pass its own human
 test; Phase 6 adds the designed script and the seed bundle and flips the default.
@@ -715,7 +781,8 @@ New module tree `crates/qsf_realtime_server/src/scripted_conversation/` (named f
 not for this plan), with `mod.rs` kept a thin re-export wrapper:
 
 - `script.rs` — the phrase-set document: `id`, `description`, ordered phrases, and per-phrase
-  `expected` metadata (expected qualifying goal ids, the **exact** expected arbitration winner id,
+  `expected` metadata (expected qualifying goal ids, the **explicit tagged expected winner**
+  (`none` or an exact goal id),
   the ordered expected loser ids for contest phrases, the expected below-threshold goal ids, and
   whether a world-consultation record is expected). Pure loading and validation, plus the
   fixture-root resolution: a name resolves against `docs/Experiments/Fixtures/realtime-probe/`, a
@@ -848,7 +915,7 @@ Session stop reuses a shared path: extract today's `routes.rs::stop_session_impl
   serializing null without affecting the verdict.
 - Script-loading tests: bundled-name resolution against the real fixture root, path resolution,
   unknown-name error text, malformed-document error text, and rejection of a phrase whose `expected`
-  block omits the winner id.
+  block omits the tagged winner.
 - CLI parse tests mirroring the existing `sleep`/`ingest-world` patterns: no subcommand still serves;
   `probe` defaults, `--seed-only`, and `--structure-only` resolve as documented.
 - `cargo test -p qsf_realtime_server` green; `cargo clippy --all-targets -- -D warnings`; `cargo fmt`.
@@ -967,6 +1034,33 @@ Notes carried into the fixture README:
 - **`memory-store.json` is not modified by a probe run** — the realtime server only reads it. It
   changes only if the operator runs a follow-on `sleep` over the run dir.
 
+**Work — corrections carried over from the smoke run (2026-07-31)**
+
+All three surfaced in the first live probe run and belong here, where the designed script, its
+expectation blocks, and the corpus-dependent world-consultation turn land together.
+
+- **Render the expectation diff by turn and difference, not by bare index.** The run printed
+  `structured partial: expectation_diff:0`, where `0` is the exchange index of the only differing
+  turn — which reads as "zero differences" and is exactly backwards. Over twelve turns the current
+  form is a row of bare indices indistinguishable from counts. Render the turn number and the
+  difference text, and render an empty failing-clause list as an explicit "none" rather than the
+  trailing empty value in `failures: `.
+- **Record how the world corpus was resolved, not only that it ended `ready`.** `resolve_corpus_path`
+  falls back to the bundled fixture when a configured `QSF_WORLD_CORPUS_PATH` is absent *or*
+  unusable, carrying a `CorpusPathSource` and a `degraded_reason`
+  (`crates/qsf_corpus/src/config.rs:6-46`). The smoke run was launched with that variable set to an
+  empty string, so the configured path was rejected and the bundled fixture silently took over,
+  while the manifest recorded `world_corpus.state: "ready"` with no trace of the fallback. Since
+  turn 8's expected consultation depends on the corpus actually containing the Grok article, the
+  manifest must carry the resolution source and any degradation reason alongside the state.
+  Related provenance hazard worth stating in the fixture README: `bundled_fixture_corpus_path()`
+  bakes `CARGO_MANIFEST_DIR` at compile time, so a binary built in a different working tree resolves
+  its corpus outside the repository.
+- **Correct the smoke set's `expected` block.** Its first phrase puts `learn-what-drives-this-person`
+  below the qualification threshold, which the fixture does not declare; the probe reported the
+  difference and correctly did not fail the run. The phrase-design hard gate below is what keeps the
+  designed script from carrying the same inaccuracy, and it should cover the smoke set too.
+
 **Verification (automated)**
 
 - `cargo build`.
@@ -990,6 +1084,13 @@ Notes carried into the fixture README:
 - Provenance test: every seed record sets `provenance` and `trust_tier` explicitly (parse the raw
   JSON and assert the keys are present, so a future serde default cannot silently take over), and no
   record sets `time_sensitive_decay_half_life_days`.
+- Rendering tests for the carried-over corrections: an expectation diff names its turn and its
+  difference text and cannot be mistaken for a count; a run with no failing clauses renders an
+  explicit "none".
+- Manifest test: a corpus resolved from the bundled fixture after an unusable configured path records
+  the fallback source and the degradation reason, not merely `state: "ready"`.
+- The phrase-design hard gate covers the smoke set as well as the designed script, so neither
+  fixture's `expected` block can drift from what the selector actually produces.
 - `cargo test -p qsf_realtime_server -p qsf_memory -p qsf_volition` green;
   `cargo clippy --all-targets -- -D warnings`; `cargo fmt`.
 

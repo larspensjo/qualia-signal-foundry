@@ -2,6 +2,7 @@ pub mod cli;
 pub mod diagnostics;
 pub mod health;
 pub mod realtime;
+pub mod scripted_conversation;
 pub mod server;
 pub mod state;
 
@@ -18,5 +19,9 @@ pub fn hash_session_id(session_id: &str) -> String {
 }
 
 pub async fn run() -> anyhow::Result<()> {
-    server::serve(cli::Args::parse_from_env()).await
+    let args = cli::Args::parse_from_env();
+    match args.command.clone() {
+        Some(cli::Command::Probe(probe)) => scripted_conversation::runner::run(probe).await,
+        None => server::serve(args).await,
+    }
 }

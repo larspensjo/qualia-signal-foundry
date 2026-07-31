@@ -440,8 +440,10 @@ pub(crate) async fn handle_provider_event(
         event_type if RAW_OUTPUT_AUDIO_DELTA_EVENT_TYPES.contains(&event_type) => {
             let received_at = OffsetDateTime::now_utc();
             runtime_state.output_audio_delta_count += 1;
-            runtime_state.output_audio_delta_byte_count +=
-                decoded_output_audio_delta_byte_count(event);
+            let byte_count = decoded_output_audio_delta_byte_count(event);
+            runtime_state.output_audio_delta_byte_count += byte_count;
+            guard.session_output_audio_delta_count += 1;
+            guard.session_output_audio_delta_byte_count += byte_count;
             if runtime_state.first_output_audio_received_at.is_none() {
                 runtime_state.first_output_audio_received_at = Some(received_at);
             }
