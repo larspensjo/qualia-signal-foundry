@@ -867,6 +867,39 @@ async fn mixed_response_done_answers_function_call_without_finalizing_exchange()
         &state,
         &allocation.qsf_session_id,
         &browser_call("call-tools"),
+        "response.output_audio.delta",
+        &serde_json::json!({
+            "type": "response.output_audio.delta",
+            "response": { "id": "response-tool", "status": "in_progress" },
+            "delta": "AA=="
+        }),
+        &mut runtime_state,
+        &outbound_tx,
+    )
+    .await
+    .expect("mixed response output audio");
+    handle_provider_event(
+        &state,
+        &allocation.qsf_session_id,
+        &browser_call("call-tools"),
+        "response.audio.delta",
+        &serde_json::json!({
+            "type": "response.audio.delta",
+            "response": { "id": "response-tool", "status": "in_progress" },
+            "delta": "TWE="
+        }),
+        &mut runtime_state,
+        &outbound_tx,
+    )
+    .await
+    .expect("mixed response legacy output audio");
+    assert_eq!(runtime_state.output_audio_delta_count, 2);
+    assert_eq!(runtime_state.output_audio_delta_byte_count, 3);
+
+    handle_provider_event(
+        &state,
+        &allocation.qsf_session_id,
+        &browser_call("call-tools"),
         "response.done",
         &serde_json::json!({
             "type": "response.done",
@@ -900,6 +933,8 @@ async fn mixed_response_done_answers_function_call_without_finalizing_exchange()
     )
     .await
     .expect("tool response done");
+    assert_eq!(runtime_state.output_audio_delta_count, 0);
+    assert_eq!(runtime_state.output_audio_delta_byte_count, 0);
 
     let output = outbound_rx.recv().await.expect("function_call_output");
     assert!(

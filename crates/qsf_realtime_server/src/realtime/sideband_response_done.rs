@@ -117,6 +117,15 @@ pub(crate) async fn handle_response_done_event(
         return Ok(());
     }
 
+    engine_logging::engine_info!(
+        "observed {} output-audio delta(s) totaling {} decoded byte(s) for session `{qsf_session_id}` response `{}`",
+        runtime_state.output_audio_delta_count,
+        runtime_state.output_audio_delta_byte_count,
+        response_id.as_deref().unwrap_or("<unknown>")
+    );
+    runtime_state.output_audio_delta_count = 0;
+    runtime_state.output_audio_delta_byte_count = 0;
+
     let exchange_index = ensure_authoritative_exchange(&mut guard);
     let completed_at = SystemTime::now();
     let response_started_at = runtime_state

@@ -29,3 +29,4 @@ pub(crate) mod world_consultation;
 pub(crate) mod world_perception_capture;
 
 pub use routes::router;
+pub use sideband_provider_event::RAW_OUTPUT_AUDIO_DELTA_EVENT_TYPES;

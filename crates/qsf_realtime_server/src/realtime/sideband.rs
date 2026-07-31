@@ -80,6 +80,9 @@ pub(super) struct SidebandRuntimeState {
     pub(super) response_create_sent_at: Option<OffsetDateTime>,
     pub(super) response_created_at: Option<OffsetDateTime>,
     pub(super) first_audio_received_at: Option<OffsetDateTime>,
+    pub(super) first_output_audio_received_at: Option<OffsetDateTime>,
+    pub(super) output_audio_delta_count: u64,
+    pub(super) output_audio_delta_byte_count: u64,
     pub(super) response_started_at: Option<Instant>,
     pub(super) response_id: Option<String>,
     pub(super) current_request_hash: Option<ContentHash>,
@@ -108,6 +111,9 @@ impl SidebandRuntimeState {
         self.response_create_sent_at = None;
         self.response_created_at = None;
         self.first_audio_received_at = None;
+        self.first_output_audio_received_at = None;
+        self.output_audio_delta_count = 0;
+        self.output_audio_delta_byte_count = 0;
         self.response_id = None;
         self.response_started_at = None;
         self.current_request_hash = None;

@@ -30,6 +30,42 @@ use crate::realtime::turn_integrity::{
 };
 use crate::state::AppState;
 
+/// Provider events whose `delta` is raw base64 audio. These are intentionally handled without
+/// constructing a `ProviderEventRecord`, so raw audio cannot enter durable session artifacts.
+pub const RAW_OUTPUT_AUDIO_DELTA_EVENT_TYPES: &[&str] =
+    &["response.output_audio.delta", "response.audio.delta"];
+
+/// Provider events whose `delta` is assistant transcript text and is safe to persist.
+const OUTPUT_AUDIO_TRANSCRIPT_EVENT_TYPES: &[&str] = &[
+    "response.output_audio_transcript.delta",
+    "response.output_audio_transcript.done",
+];
+
+fn decoded_base64_byte_count(encoded: &str) -> u64 {
+    let encoded_len = encoded.len() as u64;
+    let padding_len = encoded
+        .as_bytes()
+        .iter()
+        .rev()
+        .take(2)
+        .take_while(|byte| **byte == b'=')
+        .count() as u64;
+    let remainder_byte_count = match encoded_len % 4 {
+        2 => 1,
+        3 => 2,
+        _ => 0,
+    };
+
+    (encoded_len / 4 * 3 + remainder_byte_count).saturating_sub(padding_len)
+}
+
+fn decoded_output_audio_delta_byte_count(event: &serde_json::Value) -> u64 {
+    event
+        .get("delta")
+        .and_then(serde_json::Value::as_str)
+        .map_or(0, decoded_base64_byte_count)
+}
+
 pub(crate) async fn handle_provider_event(
     state: &AppState,
     qsf_session_id: &str,
@@ -375,6 +411,7 @@ pub(crate) async fn handle_provider_event(
             let response_create_sent_at = runtime_state.response_create_sent_at;
             let response_created_at = runtime_state.response_created_at;
             let first_audio_received_at = runtime_state.first_audio_received_at;
+            let first_output_audio_received_at = runtime_state.first_output_audio_received_at;
             record_latency_observation_if_ready(
                 runtime_state,
                 &diagnostics,
@@ -391,11 +428,35 @@ pub(crate) async fn handle_provider_event(
                 response_created_at,
                 first_audio_received_at,
             )?;
+            record_latency_observation_if_ready(
+                runtime_state,
+                &diagnostics,
+                qsf_session_id,
+                "response_created_to_first_output_audio",
+                response_created_at,
+                first_output_audio_received_at,
+            )?;
         }
-        "response.output_audio.delta"
-        | "response.audio.delta"
-        | "response.output_audio_transcript.delta"
-        | "response.output_audio_transcript.done" => {
+        event_type if RAW_OUTPUT_AUDIO_DELTA_EVENT_TYPES.contains(&event_type) => {
+            let received_at = OffsetDateTime::now_utc();
+            runtime_state.output_audio_delta_count += 1;
+            runtime_state.output_audio_delta_byte_count +=
+                decoded_output_audio_delta_byte_count(event);
+            if runtime_state.first_output_audio_received_at.is_none() {
+                runtime_state.first_output_audio_received_at = Some(received_at);
+            }
+            let response_created_at = runtime_state.response_created_at;
+            let first_output_audio_received_at = runtime_state.first_output_audio_received_at;
+            record_latency_observation_if_ready(
+                runtime_state,
+                &guard.diagnostics,
+                qsf_session_id,
+                "response_created_to_first_output_audio",
+                response_created_at,
+                first_output_audio_received_at,
+            )?;
+        }
+        event_type if OUTPUT_AUDIO_TRANSCRIPT_EVENT_TYPES.contains(&event_type) => {
             let exchange_index = ensure_authoritative_exchange(&mut guard);
             let diagnostics = guard.diagnostics.clone();
             apply_live_session_event(
@@ -536,4 +597,19 @@ fn record_interrupted_exchange_diagnostic(
         recorded_at: OffsetDateTime::now_utc(),
         exchange: exchange.clone(),
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::decoded_base64_byte_count;
+
+    #[test]
+    fn decoded_base64_byte_count_handles_padding_and_unpadded_input() {
+        assert_eq!(decoded_base64_byte_count(""), 0);
+        assert_eq!(decoded_base64_byte_count("TQ=="), 1);
+        assert_eq!(decoded_base64_byte_count("TWE="), 2);
+        assert_eq!(decoded_base64_byte_count("TWFu"), 3);
+        assert_eq!(decoded_base64_byte_count("TQ"), 1);
+        assert_eq!(decoded_base64_byte_count("TWE"), 2);
+    }
 }

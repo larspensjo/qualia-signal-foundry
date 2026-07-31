@@ -5,6 +5,7 @@ pub mod realtime;
 pub mod server;
 pub mod state;
 
+pub use realtime::RAW_OUTPUT_AUDIO_DELTA_EVENT_TYPES;
 pub use realtime::injection::DEFAULT_PCM_RATE_HZ;
 pub use realtime::sideband_attachment::SidebandAttachment;
 pub use realtime::sideband_connection::format_connect_error;

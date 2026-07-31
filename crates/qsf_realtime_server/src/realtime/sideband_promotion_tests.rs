@@ -1,11 +1,145 @@
 use tempfile::TempDir;
 
+use base64::Engine;
 use qsf_realtime_protocol::OPENAI_REALTIME_VOICE_MODEL;
 use qsf_session::{ExchangeModelUse, ExchangeOutput, ResumeMode};
 
 use super::*;
+use crate::RAW_OUTPUT_AUDIO_DELTA_EVENT_TYPES;
 use crate::diagnostics::{DiagnosticRecord, DiagnosticTrust};
 use crate::realtime::sideband_exchange_promotion::promote_completed_trusted_exchanges;
+
+#[tokio::test]
+async fn promoted_session_state_omits_raw_audio_payloads_but_preserves_transcript_deltas() {
+    let tempdir = TempDir::new().expect("tempdir");
+    let state = state(&tempdir);
+    let allocation = state.create_session().await.expect("session");
+    let mut runtime_state = SidebandRuntimeState::default();
+    let (outbound_tx, mut outbound_rx) = tokio::sync::mpsc::unbounded_channel();
+    let payload = base64::engine::general_purpose::STANDARD.encode(b"synthetic audio payload");
+
+    start_test_turn(
+        &state,
+        &allocation.qsf_session_id,
+        &mut runtime_state,
+        &outbound_tx,
+    )
+    .await;
+    drain_outbound_texts(&mut outbound_rx);
+
+    handle_provider_event(
+        &state,
+        &allocation.qsf_session_id,
+        &browser_call("call-audio-artifact"),
+        "response.created",
+        &serde_json::json!({
+            "type": "response.created",
+            "event_id": "evt-response-created",
+            "response": { "id": "response-audio-artifact", "status": "in_progress" }
+        }),
+        &mut runtime_state,
+        &outbound_tx,
+    )
+    .await
+    .expect("response created");
+
+    let attachments = [
+        (
+            "browser-call",
+            SidebandAttachment::BrowserCall {
+                call_id: "call-audio-artifact".to_string(),
+            },
+        ),
+        (
+            "server-model-session",
+            SidebandAttachment::ServerModelSession {
+                model: "test-model".to_string(),
+            },
+        ),
+    ];
+    let mut raw_audio_event_ids = Vec::new();
+    for event_type in RAW_OUTPUT_AUDIO_DELTA_EVENT_TYPES {
+        for (attachment_name, attachment) in &attachments {
+            let event_id = format!("evt-{attachment_name}-{}", event_type.replace('.', "-"));
+            handle_provider_event(
+                &state,
+                &allocation.qsf_session_id,
+                attachment,
+                event_type,
+                &serde_json::json!({
+                    "type": event_type,
+                    "event_id": event_id,
+                    "response": { "id": "response-audio-artifact", "status": "in_progress" },
+                    "delta": payload.clone()
+                }),
+                &mut runtime_state,
+                &outbound_tx,
+            )
+            .await
+            .expect("raw audio delta");
+            raw_audio_event_ids.push(event_id);
+        }
+    }
+
+    handle_provider_event(
+        &state,
+        &allocation.qsf_session_id,
+        &browser_call("call-audio-artifact"),
+        "response.output_audio_transcript.delta",
+        &serde_json::json!({
+            "type": "response.output_audio_transcript.delta",
+            "event_id": "evt-audio-transcript",
+            "response": { "id": "response-audio-artifact", "status": "in_progress" },
+            "delta": "preserved transcript delta"
+        }),
+        &mut runtime_state,
+        &outbound_tx,
+    )
+    .await
+    .expect("transcript delta");
+
+    handle_provider_event(
+        &state,
+        &allocation.qsf_session_id,
+        &browser_call("call-audio-artifact"),
+        "response.done",
+        &serde_json::json!({
+            "type": "response.done",
+            "event_id": "evt-response-done",
+            "response": {
+                "id": "response-audio-artifact",
+                "status": "completed",
+                "output": [{
+                    "type": "message",
+                    "content": [{ "type": "output_text", "text": "completed answer" }]
+                }],
+                "usage": { "input_tokens": 1, "output_tokens": 1 }
+            }
+        }),
+        &mut runtime_state,
+        &outbound_tx,
+    )
+    .await
+    .expect("response done");
+
+    let continuity_dir = state.continuity_session_dir(&allocation.qsf_session_id);
+    let session_state_path = continuity_dir.join("session-state.json");
+    let persisted_json = std::fs::read_to_string(&session_state_path).expect("session state json");
+    let persisted = qsf_session::load_session_state(session_state_path).expect("session state");
+    let provider_events = &persisted.exchanges[0].provider_events;
+
+    assert!(!persisted_json.contains(&payload));
+    assert!(provider_events.iter().all(|provider_event| {
+        !raw_audio_event_ids
+            .iter()
+            .any(|event_id| provider_event.event_id.as_ref() == Some(event_id))
+            && provider_event.text.as_deref() != Some(payload.as_str())
+    }));
+    assert!(provider_events.iter().any(|provider_event| {
+        provider_event.event_id.as_deref() == Some("evt-audio-transcript")
+            && provider_event.text.as_deref() == Some("preserved transcript delta")
+    }));
+}
 
 #[tokio::test]
 async fn promote_trusted_exchange_writes_continuity_state() {

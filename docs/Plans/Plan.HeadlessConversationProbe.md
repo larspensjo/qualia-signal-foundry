@@ -1,7 +1,8 @@
 # Plan: Headless scripted realtime conversation probe
 
-Status: In progress — Phases 1 and 2 complete including the live operator runs (2026-07-30,
-`feature/headless-conversation`); next is Phase 3 (audio-payload suppression, offline)
+Status: In progress — Phases 1, 2, and 3 complete (2026-07-30, `feature/headless-conversation`;
+Phases 1 and 2 include their live operator runs); next is Phase 4 (turn completion, monotonic
+degradation, and the live-goal-formation drain barrier — offline)
 Maturity: Candidate
 Area: Realtime session server / Launcher / Artifact generation
 
@@ -472,6 +473,56 @@ Artifacts: `state/model-scoped-attach-event-shape-inventory.json` (billed turn c
 
 ## Phase 3 — Raw audio payloads never enter the artifact plane; first-audio latency keeps its meaning
 
+**Status: COMPLETE (2026-07-30).** Implemented by Codex GPT-5.6-Terra, reviewed by Claude Opus (six
+findings, all approved and applied by Codex GPT-5.6-Sol), verified green. Work is uncommitted on
+`feature/headless-conversation`.
+
+**What was done**
+
+- `sideband_provider_event.rs`: the four-event arm is split into two guard arms driven by two named
+  constants — `RAW_OUTPUT_AUDIO_DELTA_EVENT_TYPES` (`response.output_audio.delta`,
+  `response.audio.delta`) and `OUTPUT_AUDIO_TRANSCRIPT_EVENT_TYPES`. The raw-audio arm constructs no
+  `ProviderEventRecord` at all; the transcript arm is byte-for-byte today's behavior. Both arms are
+  gated on event type only, so the invariant holds identically for both attach shapes. Match-arm
+  ordering keeps a raw-audio type from reaching the catch-all arm, whose `text` comes from
+  `realtime_event_text` (top-level `text` only, never `delta`).
+- `first_audio_received_at` is now set only in the transcript arm, so `response_created_to_first_audio`
+  and `final_transcript_received_to_first_audio` keep their pre-existing meaning under both shapes.
+  A new `first_output_audio_received_at` drives the separate `response_created_to_first_output_audio`
+  observation, emitted from the raw-audio arm and re-attempted in the `response.created` arm so an
+  early audio delta cannot silently drop the label (the mirror of the pre-existing catch-up for its
+  sibling — added in review). All three new `SidebandRuntimeState` fields reset in
+  `clear_in_flight_response_state`.
+- `sideband_response_done.rs` logs the per-response audio-delta count and decoded byte volume through
+  `engine_logging` with the session and response ids, then resets the counters immediately — log and
+  reset are one operation. Review found the tool-loop path returns without the in-flight reset, so
+  counting on the original "reset with the in-flight state" rule would have double-counted a `Mixed`
+  response's audio; the operator chose per-response, matching this document and the log text.
+- Decoded byte volume is computed arithmetically from the encoded length rather than by decoding, so
+  it is exact, infallible, allocation-free under the session lock, and cannot report a silent zero on
+  a payload variant the decoder rejects. `base64` stays a dev-only dependency.
+- `RAW_OUTPUT_AUDIO_DELTA_EVENT_TYPES` is `pub` and re-exported from `lib.rs`, and the Phase 2 live
+  probe consumes it instead of its own copy (the `DEFAULT_PCM_RATE_HZ` precedent), so the paid
+  reconnaissance run cannot drift from the list production actually suppresses.
+
+**Verification (ran 2026-07-30, all green)**
+
+- `cargo build`; `cargo test --workspace` (all suites pass; the two paid live probes stay ignored);
+  `cargo clippy --all-targets -- -D warnings`; `cargo fmt --check`.
+- Regression coverage: the suppression test is table-driven over all four combinations of the two
+  raw-audio event names and the two attachment variants, asserting no persisted `provider_events`
+  entry exists for those types and no payload string survives, while a transcript delta's text *is*
+  preserved; latency tests pin that the two first-audio labels come from a transcript delta and that
+  the output-audio label appears only when a raw audio delta arrives, including the early-audio
+  ordering; a `Mixed` tool-loop regression test pins the per-response counter reset; a unit test
+  covers the decoded-length helper for padded, unpadded, and empty input.
+
+**Follow-up this phase deliberately did not build:** the audio-delta count and byte volume live only
+in `SidebandRuntimeState`, which the sideband task owns and zeroes at every `response.done`. Nothing
+outside that task can read them, so the run manifest's audio-delta totals need a session-lifetime
+accumulator that does not exist yet. The scripted-conversation runner phase owns adding it (noted
+there); the `engine_logging` line is the only carrier until then.
+
 Offline, gated on Phase 2's evidence. This is the architecture-invariant phase
 (`Architecture.RealtimeSessionServer.md`: "Raw audio is not logged").
 
@@ -696,6 +747,14 @@ Fixed finalization order, which is also what closes Corrections item 12:
 6. parse the artifacts: trace contract, structural comparison, secret scan
 7. atomically write the terminal run-manifest.json and render the verdict
 ```
+
+**Step 4 needs a counter that does not exist yet.** The audio-payload-suppression work counts
+audio deltas and their byte volume in `SidebandRuntimeState`, which the sideband task owns privately
+and zeroes at every `response.done`, so the totals reach only an `engine_logging` line. Before the
+finalizer can snapshot them, add a session-lifetime accumulator — incremented where the per-response
+counters are, never reset for the life of the session — reachable from the finalizer under the
+session lock like the other runtime counters. Without it the manifest's audio-delta totals and the
+trace-completeness contract's corresponding field cannot be filled.
 
 Precedence when finalization itself fails: the **original** failure is retained as the run's cause;
 each finalization error is appended to the manifest's `finalization_errors` and the status becomes

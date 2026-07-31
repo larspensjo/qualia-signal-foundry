@@ -13,8 +13,8 @@ use qsf_realtime_protocol::{
     realtime_event_response_status, realtime_event_type,
 };
 use qsf_realtime_server::{
-    DEFAULT_PCM_RATE_HZ, OPENAI_SAFETY_IDENTIFIER_HEADER, SidebandAttachment, format_connect_error,
-    hash_session_id, state::BrowserSessionConfig,
+    DEFAULT_PCM_RATE_HZ, OPENAI_SAFETY_IDENTIFIER_HEADER, RAW_OUTPUT_AUDIO_DELTA_EVENT_TYPES,
+    SidebandAttachment, format_connect_error, hash_session_id, state::BrowserSessionConfig,
 };
 use serde::Serialize;
 use serde_json::Value;
@@ -34,9 +34,6 @@ const DEFAULT_IDLE_CLOSE_TIMEOUT_SECS: u64 = 900;
 const LONG_STRING_THRESHOLD_BYTES: usize = 128;
 const SMOKE_SESSION_ID: &str = "model-scoped-attach-smoke";
 const SMOKE_PROMPT: &str = "Please say one brief greeting without using tools.";
-const OUTPUT_AUDIO_DELTA_EVENT_TYPES: &[&str] =
-    &["response.output_audio.delta", "response.audio.delta"];
-
 type ProviderWebSocket = WebSocketStream<MaybeTlsStream<TcpStream>>;
 
 #[derive(Debug, Serialize)]
@@ -199,7 +196,7 @@ impl EventShapeInventory {
         }
 
         match realtime_event_type(event) {
-            Some(event_type) if OUTPUT_AUDIO_DELTA_EVENT_TYPES.contains(&event_type) => {
+            Some(event_type) if RAW_OUTPUT_AUDIO_DELTA_EVENT_TYPES.contains(&event_type) => {
                 self.observe_output_audio_delta(event_type, event);
             }
             Some("session.updated") => {
