@@ -1,6 +1,7 @@
 use std::path::{Path, PathBuf};
 
 use anyhow::Context;
+use qsf_session::{ContinuityManifest, ResumeMode, persist_session_state};
 use qsf_volition::{
     REALTIME_SEED_FIXTURE_ID, ReviewedVolitionSeed, VolitionContinuitySnapshot,
     apply_reviewed_seed_in_place, build_state_inspection, load_reviewed_volition_seed,
@@ -9,6 +10,7 @@ use qsf_volition::{
 use time::OffsetDateTime;
 
 use crate::diagnostics::{DiagnosticRecord, DiagnosticWriter};
+use crate::state::{AppState, SessionRuntime};
 
 use super::volition::VolitionRuntimeState;
 
@@ -34,6 +36,46 @@ pub fn persist_snapshot(
     path: impl AsRef<Path>,
 ) -> anyhow::Result<PathBuf> {
     persist_volition_continuity_snapshot(snapshot, path)
+}
+
+/// Persist the canonical session state, volition snapshot, and continuity manifest together.
+/// Promotion and the later end-of-run finalizer share this helper so detached formation results
+/// use exactly the same artifact paths and manifest semantics as promoted turns.
+pub(crate) fn persist_continuity_state_and_volition_snapshot(
+    state: &AppState,
+    runtime: &SessionRuntime,
+) -> anyhow::Result<()> {
+    let continuity_dir = state.continuity_session_dir(&runtime.qsf_session_id);
+    let state_path = persist_session_state(&runtime.session_state, &continuity_dir)?;
+    let snapshot = build_volition_continuity_snapshot(
+        &runtime.qsf_session_id,
+        &runtime.volition,
+        OffsetDateTime::now_utc(),
+    )?;
+    let snapshot_path = persist_snapshot(
+        &snapshot,
+        state.continuity_volition_snapshot_path(&runtime.qsf_session_id),
+    )?;
+    let mut manifest = ContinuityManifest::load_or_default(
+        state.continuity_manifest_path(&runtime.qsf_session_id),
+    )?;
+    manifest.current_session_id = Some(runtime.qsf_session_id.clone());
+    manifest.current_session_state_path = Some(
+        state_path
+            .strip_prefix(&continuity_dir)
+            .unwrap_or(&state_path)
+            .to_path_buf(),
+    );
+    manifest.current_volition_snapshot_path = Some(
+        snapshot_path
+            .strip_prefix(&continuity_dir)
+            .unwrap_or(&snapshot_path)
+            .to_path_buf(),
+    );
+    manifest.sleep_pending = true;
+    manifest.resume_mode = ResumeMode::AwakeContinuation;
+    manifest.persist(state.continuity_manifest_path(&runtime.qsf_session_id))?;
+    Ok(())
 }
 
 pub fn load_reviewed_seed_or_note(

@@ -593,7 +593,7 @@ mod tests {
             guard.next_trusted_exchange_index,
             next_trusted_exchange_index
         );
-        assert!(!guard.sideband_attached);
+        assert!(!guard.is_sideband_attached());
         drop(guard);
         handle.stop().await;
         server.await.expect("stub task");
@@ -639,7 +639,7 @@ mod tests {
                     .all(|identifier| identifier == &expected_safety_identifier)
             );
         }
-        assert!(!runtime.lock().await.sideband_attached);
+        assert!(!runtime.lock().await.is_sideband_attached());
         server.await.expect("stub task");
     }
 }

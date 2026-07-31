@@ -195,7 +195,7 @@ async fn promote_trusted_exchange_writes_continuity_state() {
         guard.session_state.live.completed_exchanges.push(exchange);
         guard.session_state.live.active_exchange = None;
         guard.trusted_promoted_exchange_count = 0;
-        guard.degraded = false;
+        guard.set_sideband_status(false, None);
         promote_completed_trusted_exchanges(&state, &mut guard)
             .await
             .expect("promotion");
@@ -254,7 +254,7 @@ async fn degraded_session_skips_promotion() {
             .await
             .expect("runtime");
         let mut guard = runtime.lock().await;
-        guard.degraded = true;
+        guard.set_sideband_status(true, Some("test degradation".to_string()));
         guard.session_state.live.completed_exchanges.push(
             Exchange::new_text(0, "hello", SystemTime::UNIX_EPOCH)
                 .completed(SystemTime::UNIX_EPOCH),
@@ -272,6 +272,211 @@ async fn degraded_session_skips_promotion() {
                 DiagnosticRecord::DiagnosticExchangeRecorded { source, .. } if source == "sideband_trusted"
             )
         }));
+}
+
+#[tokio::test]
+async fn promotion_publishes_one_completion_for_each_consumed_exchange() {
+    let tempdir = TempDir::new().expect("tempdir");
+    let state = state(&tempdir);
+    let allocation = state.create_session().await.expect("session");
+    let runtime = state
+        .session_runtime(&allocation.qsf_session_id)
+        .await
+        .expect("runtime");
+    let mut completion_rx = runtime.lock().await.subscribe_trusted_turn_completion();
+
+    {
+        let mut guard = runtime.lock().await;
+        guard
+            .session_state
+            .live
+            .completed_exchanges
+            .push(completed_exchange(0, "promote", "answer"));
+        promote_completed_trusted_exchanges(&state, &mut guard)
+            .await
+            .expect("promotion");
+    }
+    completion_rx.changed().await.expect("completion published");
+    let completion = completion_rx.borrow().clone().expect("completion value");
+    assert_eq!(completion.exchange_index, 0);
+    assert!(completion.promoted);
+    assert_eq!(completion.promoted_turn_count, 1);
+    assert!(completion.skipped_reason.is_none());
+
+    {
+        let mut guard = runtime.lock().await;
+        guard
+            .session_state
+            .live
+            .completed_exchanges
+            .push(completed_exchange(1, "skip", "answer"));
+        guard.non_promotable_exchange_indices.insert(1);
+        promote_completed_trusted_exchanges(&state, &mut guard)
+            .await
+            .expect("promotion");
+    }
+    completion_rx.changed().await.expect("skip published");
+    let completion = completion_rx.borrow().clone().expect("completion value");
+    assert_eq!(completion.exchange_index, 1);
+    assert!(!completion.promoted);
+    assert_eq!(
+        completion.skipped_reason.as_deref(),
+        Some("non_promotable_exchange")
+    );
+}
+
+#[tokio::test]
+async fn degraded_and_conversion_failure_exchanges_publish_completion_reasons() {
+    let tempdir = TempDir::new().expect("tempdir");
+    let state = state(&tempdir);
+    let allocation = state.create_session().await.expect("session");
+    let runtime = state
+        .session_runtime(&allocation.qsf_session_id)
+        .await
+        .expect("runtime");
+    let mut completion_rx = runtime.lock().await.subscribe_trusted_turn_completion();
+
+    {
+        let mut guard = runtime.lock().await;
+        guard.set_sideband_status(true, Some("test degradation".to_string()));
+        guard
+            .session_state
+            .live
+            .completed_exchanges
+            .push(completed_exchange(0, "degraded", "answer"));
+        promote_completed_trusted_exchanges(&state, &mut guard)
+            .await
+            .expect("promotion");
+    }
+    completion_rx
+        .changed()
+        .await
+        .expect("first degraded completion");
+    assert_eq!(
+        completion_rx
+            .borrow()
+            .as_ref()
+            .and_then(|completion| completion.skipped_reason.as_deref()),
+        Some("sideband_degraded")
+    );
+
+    {
+        let mut guard = runtime.lock().await;
+        guard
+            .session_state
+            .live
+            .completed_exchanges
+            .push(completed_exchange(1, "also degraded", "answer"));
+        promote_completed_trusted_exchanges(&state, &mut guard)
+            .await
+            .expect("second promotion");
+    }
+    completion_rx
+        .changed()
+        .await
+        .expect("second degraded completion");
+    assert_eq!(
+        completion_rx
+            .borrow()
+            .as_ref()
+            .map(|value| value.exchange_index),
+        Some(1)
+    );
+
+    {
+        let mut guard = runtime.lock().await;
+        guard.set_sideband_status(false, None);
+        guard.session_state.live.completed_exchanges.push(
+            Exchange::new_text(2, "missing durable fields", SystemTime::UNIX_EPOCH)
+                .completed(SystemTime::UNIX_EPOCH),
+        );
+        promote_completed_trusted_exchanges(&state, &mut guard)
+            .await
+            .expect("conversion failure is consumed");
+    }
+    completion_rx
+        .changed()
+        .await
+        .expect("conversion failure published");
+    let completion = completion_rx.borrow().clone().expect("completion value");
+    assert_eq!(completion.exchange_index, 2);
+    assert!(!completion.promoted);
+    assert_eq!(
+        completion.skipped_reason.as_deref(),
+        Some("turn_conversion_failed")
+    );
+}
+
+#[tokio::test]
+async fn late_completion_subscriber_observes_latest_value() {
+    let tempdir = TempDir::new().expect("tempdir");
+    let state = state(&tempdir);
+    let allocation = state.create_session().await.expect("session");
+    let runtime = state
+        .session_runtime(&allocation.qsf_session_id)
+        .await
+        .expect("runtime");
+    {
+        let mut guard = runtime.lock().await;
+        guard
+            .session_state
+            .live
+            .completed_exchanges
+            .push(completed_exchange(0, "late subscriber", "answer"));
+        promote_completed_trusted_exchanges(&state, &mut guard)
+            .await
+            .expect("promotion");
+    }
+    let completion = runtime
+        .lock()
+        .await
+        .subscribe_trusted_turn_completion()
+        .borrow()
+        .clone()
+        .expect("latest completion");
+    assert_eq!(completion.exchange_index, 0);
+    assert!(completion.promoted);
+}
+
+#[tokio::test]
+async fn continuity_failure_reports_the_pre_reduction_promoted_turn_count() {
+    let tempdir = TempDir::new().expect("tempdir");
+    let state = state(&tempdir);
+    let allocation = state.create_session().await.expect("session");
+    let runtime = state
+        .session_runtime(&allocation.qsf_session_id)
+        .await
+        .expect("runtime");
+    let completion_rx = runtime.lock().await.subscribe_trusted_turn_completion();
+    std::fs::create_dir_all(state.continuity_manifest_path(&allocation.qsf_session_id))
+        .expect("manifest path directory");
+
+    let error = {
+        let mut guard = runtime.lock().await;
+        guard
+            .session_state
+            .live
+            .completed_exchanges
+            .push(completed_exchange(0, "persist", "failure"));
+        promote_completed_trusted_exchanges(&state, &mut guard)
+            .await
+            .expect_err("manifest persistence should fail")
+    };
+    assert!(
+        error.to_string().contains("continuity")
+            || error.to_string().contains("directory")
+            || error.to_string().contains("manifest")
+    );
+
+    let guard = runtime.lock().await;
+    assert_eq!(guard.session_state.turns.len(), 1);
+    let completion = completion_rx.borrow().clone().expect("completion value");
+    assert!(!completion.promoted);
+    assert_eq!(completion.promoted_turn_count, 0);
+    assert_eq!(
+        completion.skipped_reason.as_deref(),
+        Some("continuity_persistence_failed")
+    );
 }
 
 #[tokio::test]
@@ -296,7 +501,7 @@ async fn gap_window_exchange_is_consumed_but_next_exchange_promotes_after_recove
             .completed_exchanges
             .push(completed_exchange(1, "next turn", "next answer"));
         guard.non_promotable_exchange_indices.insert(0);
-        guard.degraded = false;
+        guard.set_sideband_status(false, None);
 
         promote_completed_trusted_exchanges(&state, &mut guard)
             .await

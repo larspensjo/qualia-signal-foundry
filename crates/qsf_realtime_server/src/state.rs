@@ -17,7 +17,7 @@ use uuid::Uuid;
 
 use crate::cli::Args;
 use crate::diagnostics::{DiagnosticRecord, DiagnosticTrust, DiagnosticWriter};
-use crate::realtime::live_goal_formation::PendingLiveGoalFormation;
+use crate::realtime::live_goal_formation::{LiveGoalFormationProgress, PendingLiveGoalFormation};
 use crate::realtime::token_usage::{
     INPUT_TRANSCRIPTION_ROLE, TokenClassCounts, TokenUsageSnapshot,
 };
@@ -519,7 +519,27 @@ pub struct SidebandStatus {
     #[serde(default)]
     pub attached: bool,
     #[serde(default)]
+    pub degradation_epoch: u32,
+    #[serde(default)]
     pub terminated: Option<String>,
+}
+
+/// Keep the first degradation reasons because the earliest failure best explains the trust gap;
+/// later reasons are bounded out rather than allowing repeated reconnect failures to grow a
+/// session without limit.
+pub const MAX_DEGRADATION_REASONS: usize = 16;
+
+/// A trusted exchange has left the promotion pipeline. This does not mean that detached
+/// side effects such as live goal formation have finished; callers that need that stronger
+/// guarantee must wait on the live-goal-formation barrier.
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+pub struct TrustedTurnCompletion {
+    pub exchange_index: usize,
+    pub promoted: bool,
+    pub promoted_turn_count: usize,
+    pub skipped_reason: Option<String>,
+    #[serde(with = "time::serde::rfc3339")]
+    pub completed_at: OffsetDateTime,
 }
 
 pub struct SessionRuntime {
@@ -537,9 +557,13 @@ pub struct SessionRuntime {
     pub persisted_exchange_count: usize,
     pub trusted_promoted_exchange_count: usize,
     pub non_promotable_exchange_indices: HashSet<usize>,
-    pub degraded: bool,
-    pub sideband_attached: bool,
-    pub sideband_terminated: Option<String>,
+    degraded: bool,
+    sideband_detail: Option<String>,
+    degradation_epoch: u32,
+    degradation_reasons: Vec<String>,
+    degradation_reasons_truncated: bool,
+    sideband_attached: bool,
+    sideband_terminated: Option<String>,
     pub sideband: Option<crate::realtime::sideband::SidebandHandle>,
     pub volition: crate::realtime::volition::VolitionRuntimeState,
     /// Set while a worker task is draining `live_goal_formation_queue` for this session, so a
@@ -559,6 +583,11 @@ pub struct SessionRuntime {
     volition_inspection_tx: watch::Sender<Option<VolitionInspectionCapture>>,
     world_perception_tx: watch::Sender<Option<WorldPerceptionCapture>>,
     token_usage_tx: watch::Sender<Option<TokenUsageSnapshot>>,
+    trusted_turn_completion_tx: watch::Sender<Option<TrustedTurnCompletion>>,
+    live_goal_formation_progress_tx: watch::Sender<LiveGoalFormationProgress>,
+    pub(crate) live_goal_formation_expected: usize,
+    pub(crate) live_goal_formation_settled: usize,
+    pub(crate) live_goal_formation_failed: usize,
 }
 
 impl SessionRuntime {
@@ -595,6 +624,10 @@ impl SessionRuntime {
             trusted_promoted_exchange_count: 0,
             non_promotable_exchange_indices: HashSet::new(),
             degraded: false,
+            sideband_detail: None,
+            degradation_epoch: 0,
+            degradation_reasons: Vec::new(),
+            degradation_reasons_truncated: false,
             sideband_attached: false,
             sideband_terminated: None,
             sideband: None,
@@ -607,6 +640,11 @@ impl SessionRuntime {
             volition_inspection_tx: watch::channel(None).0,
             world_perception_tx: watch::channel(None).0,
             token_usage_tx: watch::channel(None).0,
+            trusted_turn_completion_tx: watch::channel(None).0,
+            live_goal_formation_progress_tx: watch::channel(LiveGoalFormationProgress::default()).0,
+            live_goal_formation_expected: 0,
+            live_goal_formation_settled: 0,
+            live_goal_formation_failed: 0,
         }
     }
 
@@ -664,6 +702,46 @@ impl SessionRuntime {
         self.token_usage_tx.subscribe()
     }
 
+    /// Subscribe to the latest trusted-turn completion. A late subscriber immediately observes
+    /// the most recent completion, as guaranteed by the watch channel.
+    pub fn subscribe_trusted_turn_completion(
+        &self,
+    ) -> watch::Receiver<Option<TrustedTurnCompletion>> {
+        self.trusted_turn_completion_tx.subscribe()
+    }
+
+    /// Return a trusted-turn completion sender for promotion-path publishers that do not need to
+    /// retain the whole runtime.
+    pub fn trusted_turn_completion_sender(&self) -> watch::Sender<Option<TrustedTurnCompletion>> {
+        self.trusted_turn_completion_tx.clone()
+    }
+
+    /// Subscribe to the latest live-goal-formation progress, including the initial empty state.
+    pub fn subscribe_live_goal_formation_progress(
+        &self,
+    ) -> watch::Receiver<LiveGoalFormationProgress> {
+        self.live_goal_formation_progress_tx.subscribe()
+    }
+
+    pub(crate) fn live_goal_formation_progress(&self) -> LiveGoalFormationProgress {
+        LiveGoalFormationProgress {
+            expected: self.live_goal_formation_expected,
+            settled: self.live_goal_formation_settled,
+            failed: self.live_goal_formation_failed,
+            in_flight: self.live_goal_formation_in_flight,
+        }
+    }
+
+    pub(crate) fn publish_trusted_turn_completion(&self, completion: TrustedTurnCompletion) {
+        self.trusted_turn_completion_tx
+            .send_replace(Some(completion));
+    }
+
+    pub(crate) fn publish_live_goal_formation_progress(&self) {
+        self.live_goal_formation_progress_tx
+            .send_replace(self.live_goal_formation_progress());
+    }
+
     /// Record one completed model call in the session token ledger and publish the
     /// updated snapshot to any events-socket subscribers.
     pub fn record_token_usage(&mut self, role: &str, model_id: &str, counts: TokenClassCounts) {
@@ -676,19 +754,49 @@ impl SessionRuntime {
     /// Keeps `degraded` and the broadcast status in lockstep.
     pub fn set_sideband_status(&mut self, degraded: bool, detail: Option<String>) {
         self.degraded = degraded;
-        self.status_tx.send_replace(SidebandStatus {
-            degraded,
-            detail,
-            attached: self.sideband_attached,
-            terminated: self.sideband_terminated.clone(),
-        });
+        self.sideband_detail = detail;
+        if degraded {
+            self.sideband_attached = false;
+            self.degradation_epoch = self.degradation_epoch.saturating_add(1);
+            if let Some(reason) = self.sideband_detail.as_ref() {
+                if self.degradation_reasons.len() < MAX_DEGRADATION_REASONS {
+                    self.degradation_reasons.push(reason.clone());
+                } else if !self.degradation_reasons_truncated {
+                    log::warn!(
+                        "sideband degradation reasons for session `{}` exceeded the retention limit of {}; later reasons will be omitted",
+                        self.qsf_session_id,
+                        MAX_DEGRADATION_REASONS
+                    );
+                    self.degradation_reasons_truncated = true;
+                }
+            }
+        }
+        self.publish_status();
+    }
+
+    pub fn is_degraded(&self) -> bool {
+        self.degraded
+    }
+
+    pub fn degradation_epoch(&self) -> u32 {
+        self.degradation_epoch
+    }
+
+    pub fn degradation_reasons(&self) -> &[String] {
+        &self.degradation_reasons
+    }
+
+    pub fn is_sideband_attached(&self) -> bool {
+        self.sideband_attached
+    }
+
+    pub fn sideband_termination_reason(&self) -> Option<&str> {
+        self.sideband_terminated.as_deref()
     }
 
     pub fn set_sideband_attached(&mut self, attached: bool) {
         self.sideband_attached = attached;
-        let status = self.status_tx.borrow().clone();
-        self.status_tx
-            .send_replace(SidebandStatus { attached, ..status });
+        self.publish_status();
     }
 
     pub fn terminate_sideband(&mut self, reason: String) {
@@ -697,6 +805,16 @@ impl SessionRuntime {
         }
         self.sideband_attached = false;
         self.set_sideband_status(true, Some(reason));
+    }
+
+    fn publish_status(&self) {
+        self.status_tx.send_replace(SidebandStatus {
+            degraded: self.degraded,
+            detail: self.sideband_detail.clone(),
+            attached: self.sideband_attached,
+            degradation_epoch: self.degradation_epoch,
+            terminated: self.sideband_terminated.clone(),
+        });
     }
 
     pub fn new_exchange_index(&mut self) -> usize {

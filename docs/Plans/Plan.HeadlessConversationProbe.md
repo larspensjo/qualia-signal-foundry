@@ -1,8 +1,7 @@
 # Plan: Headless scripted realtime conversation probe
 
-Status: In progress — Phases 1, 2, and 3 complete (2026-07-30, `feature/headless-conversation`;
-Phases 1 and 2 include their live operator runs); next is Phase 4 (turn completion, monotonic
-degradation, and the live-goal-formation drain barrier — offline)
+Status: In progress — Phases 1, 2, 3, and 4 complete (2026-07-31, `feature/headless-conversation`;
+Phases 1 and 2 include their live operator runs); next is Phase 5 (scripted conversation runner)
 Maturity: Candidate
 Area: Realtime session server / Launcher / Artifact generation
 
@@ -679,6 +678,28 @@ never persisted, and diagnostics can be appended after an end-of-run scan.
 - `cargo test -p qsf_realtime_server` green; `cargo clippy --all-targets -- -D warnings`; `cargo fmt`.
 
 **Human testing**: not required. **Cost**: none.
+
+**Status: COMPLETE (2026-07-31).** Implemented offline on `feature/headless-conversation`.
+
+**What was done**
+
+- Added trusted-turn completion and live-goal-formation progress watch channels, including
+  completion publication for every consumed exchange and monotonic degradation epoch/reasons with
+  unified status publication. Runtime health fields are private behind accessors so status updates
+  cannot bypass the unified publisher; the first omitted degradation reason is logged when bounded
+  retention fills.
+- Split formation enqueue from worker spawning so the drain barrier observes the queue before the
+  response handler releases the session lock. The barrier's first observation now takes that same
+  lock, distinguishes session teardown from timeout, and documents the fresh-session boundary.
+  Abnormal worker exits fail and diagnose only the active exchange, preserve queued work, and start
+  a replacement worker. The shared continuity persistence helper remains the single artifact writer.
+
+**Verification**
+
+- `cargo build`; `cargo test -p qsf_realtime_server`; `cargo clippy --all-targets -- -D warnings`;
+  `cargo fmt`.
+- All new completion, status, barrier, last-result persistence, timeout, channel-closure, and
+  queue-preserving panic-safety tests pass; the two paid live probes remain `#[ignore]`d.
 
 ---
 

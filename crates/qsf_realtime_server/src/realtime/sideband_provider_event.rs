@@ -85,7 +85,7 @@ pub(crate) async fn handle_provider_event(
     match event_type {
         "session.created" | "session.updated" => {
             if event_type == "session.updated" {
-                let was_degraded = guard.degraded;
+                let was_degraded = guard.is_degraded();
                 guard.set_sideband_attached(true);
                 if was_degraded {
                     guard.set_sideband_status(false, None);
@@ -536,11 +536,11 @@ pub(crate) async fn handle_provider_event(
                     reason: SessionEndReason::Eof,
                 },
             );
+            guard.set_sideband_attached(false);
             guard.set_sideband_status(
                 true,
                 Some("provider closed the realtime session".to_string()),
             );
-            guard.set_sideband_attached(false);
             runtime_state.clear_in_flight_response_state();
             runtime_state.active_exchange_index = None;
             runtime_state.pending_response_exchange = None;

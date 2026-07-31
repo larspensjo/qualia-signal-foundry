@@ -61,7 +61,7 @@ impl ToolSessionSnapshot {
                 .as_ref()
                 .map(|exchange| exchange.status),
             trust: runtime.trust,
-            degraded: runtime.degraded,
+            degraded: runtime.is_degraded(),
         }
     }
 }

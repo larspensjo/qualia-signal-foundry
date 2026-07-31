@@ -28,5 +28,6 @@ pub(crate) mod volition_tools;
 pub(crate) mod world_consultation;
 pub(crate) mod world_perception_capture;
 
+pub use live_goal_formation::LiveGoalFormationProgress;
 pub use routes::router;
 pub use sideband_provider_event::RAW_OUTPUT_AUDIO_DELTA_EVENT_TYPES;

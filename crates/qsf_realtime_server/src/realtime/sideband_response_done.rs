@@ -57,10 +57,44 @@ pub(crate) async fn handle_response_done_event(
     attachment: &SidebandAttachment,
     event: &serde_json::Value,
     session: Arc<tokio::sync::Mutex<SessionRuntime>>,
-    mut guard: tokio::sync::MutexGuard<'_, SessionRuntime>,
+    guard: tokio::sync::MutexGuard<'_, SessionRuntime>,
     runtime_state: &mut SidebandRuntimeState,
     outbound_tx: &mpsc::UnboundedSender<Message>,
 ) -> anyhow::Result<()> {
+    handle_response_done_event_with_formation_spawner(
+        state,
+        qsf_session_id,
+        attachment,
+        event,
+        session,
+        guard,
+        runtime_state,
+        outbound_tx,
+        |session, qsf_session_id| {
+            crate::realtime::live_goal_formation::spawn_live_goal_formation_worker(
+                session,
+                qsf_session_id,
+            );
+        },
+    )
+    .await
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn handle_response_done_event_with_formation_spawner<F>(
+    state: &AppState,
+    qsf_session_id: &str,
+    attachment: &SidebandAttachment,
+    event: &serde_json::Value,
+    session: Arc<tokio::sync::Mutex<SessionRuntime>>,
+    mut guard: tokio::sync::MutexGuard<'_, SessionRuntime>,
+    runtime_state: &mut SidebandRuntimeState,
+    outbound_tx: &mpsc::UnboundedSender<Message>,
+    spawn_formation_worker: F,
+) -> anyhow::Result<()>
+where
+    F: FnOnce(Arc<tokio::sync::Mutex<SessionRuntime>>, String),
+{
     let response_id = runtime_state
         .response_id
         .clone()
@@ -349,7 +383,7 @@ pub(crate) async fn handle_response_done_event(
 
             let session_removed = state.session_runtime(qsf_session_id).await.is_none();
             let mut guard = session.lock().await;
-            let aborted = guard.degraded || session_removed;
+            let aborted = guard.is_degraded() || session_removed;
             if aborted {
                 guard.non_promotable_exchange_indices.insert(exchange_index);
             }
@@ -500,7 +534,7 @@ pub(crate) async fn handle_response_done_event(
     // Captured before drop: gates the live-goal-formation spawn below on the same
     // promotability/degraded facts the promotion pipeline itself just used, so formation never
     // runs on a turn the pipeline distrusts (a cancelled/failed response, a degraded session).
-    let session_degraded = guard.degraded;
+    let session_degraded = guard.is_degraded();
     let exchange_promotable = !guard
         .non_promotable_exchange_indices
         .contains(&exchange_index);
@@ -511,22 +545,27 @@ pub(crate) async fn handle_response_done_event(
     let live_goal_formation_user_input = live_goal_formation_eligible
         .then_some(completed_turn_user_input)
         .flatten();
-    drop(guard);
 
     // Off-hot-path: dispatched after the response, never awaited here, so turn latency is
     // unaffected. See crate::realtime::live_goal_formation. Gated on a completed, promotable,
     // non-degraded, non-empty assistant turn - a barge-in mid-answer or a degraded session must
     // not form a durable goal (or a permanently injected declined record) from a half-spoken or
     // untrusted turn.
-    if let Some(user_input) = live_goal_formation_user_input {
+    let should_spawn_formation_worker = if let Some(user_input) = live_goal_formation_user_input {
         let turn_transcript = qsf_models::format_exchange_transcript(&user_input, &response_text);
-        crate::realtime::live_goal_formation::spawn_live_goal_formation(
-            session,
-            qsf_session_id.to_string(),
+        crate::realtime::live_goal_formation::enqueue_live_goal_formation(
+            &mut guard,
             exchange_index,
             turn_transcript,
             response_dispatched_at,
-        );
+        )
+    } else {
+        false
+    };
+    drop(guard);
+
+    if should_spawn_formation_worker {
+        spawn_formation_worker(session, qsf_session_id.to_string());
     }
 
     Ok(())
@@ -534,12 +573,46 @@ pub(crate) async fn handle_response_done_event(
 
 #[cfg(test)]
 mod tests {
+    use std::time::Duration;
+
     use tempfile::TempDir;
 
     use super::*;
+    use crate::realtime::live_goal_formation::{
+        LiveGoalFormationBarrierOutcome, wait_for_live_goal_formation_barrier,
+    };
     use crate::realtime::sideband::SidebandRuntimeState;
     use crate::realtime::sideband_attachment::SidebandAttachment;
     use crate::state::{AppState, SessionIdMode};
+
+    struct BlockingFormationClient {
+        started_tx: std::sync::Mutex<Option<tokio::sync::oneshot::Sender<()>>>,
+        release_rx: std::sync::Mutex<Option<std::sync::mpsc::Receiver<()>>>,
+    }
+
+    impl qsf_models::ModelClient for BlockingFormationClient {
+        fn client_name(&self) -> &str {
+            "blocking-handler-formation-client"
+        }
+
+        fn complete(
+            &self,
+            request: &qsf_models::ModelRequest,
+        ) -> anyhow::Result<qsf_models::ModelResponse> {
+            if let Some(started_tx) = self.started_tx.lock().unwrap().take() {
+                let _ = started_tx.send(());
+            }
+            if let Some(release_rx) = self.release_rx.lock().unwrap().take() {
+                let _ = release_rx.recv();
+            }
+            Ok(qsf_models::ModelResponse::from_text(
+                request,
+                self.client_name(),
+                request.model_name.clone(),
+                serde_json::json!({ "proposed_candidate": null, "contradictions": [] }).to_string(),
+            ))
+        }
+    }
 
     fn browser_call(call_id: &str) -> SidebandAttachment {
         SidebandAttachment::BrowserCall {
@@ -636,5 +709,111 @@ mod tests {
         assert_eq!(row.counts.text_input, 5);
         assert_eq!(row.counts.cached_input, 3);
         assert_eq!(row.counts.text_output, 4);
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn completed_spoken_response_enqueues_formation_before_releasing_the_session_lock() {
+        let tempdir = TempDir::new().expect("tempdir");
+        let state = state(&tempdir);
+        let allocation = state.create_session().await.expect("session");
+        let runtime = state
+            .session_runtime(&allocation.qsf_session_id)
+            .await
+            .expect("runtime");
+        let mut completion_rx = runtime.lock().await.subscribe_trusted_turn_completion();
+        let mut runtime_state = SidebandRuntimeState {
+            active_exchange_index: Some(0),
+            pending_response_exchange: Some(0),
+            response_id: Some("response-completed".to_string()),
+            response_started_at: Some(Instant::now()),
+            ..Default::default()
+        };
+        let guard = {
+            let mut guard = runtime.lock().await;
+            let mut exchange = qsf_session::Exchange::new_text(0, "form a goal", SystemTime::now());
+            exchange.context_assembly = Some(qsf_context::ContextAssembly {
+                budget: qsf_context::ContextBudget::new(1, 16),
+                selected: Vec::new(),
+                omitted: Vec::new(),
+                used_estimated_tokens: 0,
+            });
+            apply_live_session_event(
+                &mut guard.session_state,
+                LiveSessionEvent::ExchangeStarted(Box::new(exchange)),
+            );
+            guard
+        };
+        let (started_tx, started_rx) = tokio::sync::oneshot::channel();
+        let (release_tx, release_rx) = std::sync::mpsc::channel();
+        let client: Arc<dyn qsf_models::ModelClient> = Arc::new(BlockingFormationClient {
+            started_tx: std::sync::Mutex::new(Some(started_tx)),
+            release_rx: std::sync::Mutex::new(Some(release_rx)),
+        });
+        let build_client = {
+            let client = Arc::clone(&client);
+            Arc::new(move || Ok(Arc::clone(&client)))
+        };
+        let (outbound_tx, _outbound_rx) = tokio::sync::mpsc::unbounded_channel();
+
+        handle_response_done_event_with_formation_spawner(
+            &state,
+            &allocation.qsf_session_id,
+            &browser_call("call-completed"),
+            &serde_json::json!({
+                "type": "response.done",
+                "event_id": "evt-completed",
+                "response": {
+                    "id": "response-completed",
+                    "status": "completed",
+                    "output": [{
+                        "type": "message",
+                        "content": [{
+                            "type": "output_text",
+                            "text": "formed response"
+                        }]
+                    }],
+                    "usage": {
+                        "input_tokens": 1,
+                        "output_tokens": 2
+                    }
+                }
+            }),
+            runtime.clone(),
+            guard,
+            &mut runtime_state,
+            &outbound_tx,
+            move |session, qsf_session_id| {
+                crate::realtime::live_goal_formation::spawn_live_goal_formation_worker_with_client_builder(
+                    session,
+                    qsf_session_id,
+                    build_client,
+                );
+            },
+        )
+        .await
+        .expect("completed response");
+
+        completion_rx.changed().await.expect("completion published");
+        assert!(
+            completion_rx
+                .borrow()
+                .as_ref()
+                .is_some_and(|completion| completion.promoted)
+        );
+        started_rx.await.expect("formation call started");
+        let progress = runtime.lock().await.live_goal_formation_progress();
+        assert_eq!(progress.expected, 1);
+        assert_eq!(progress.settled, 0);
+        assert!(progress.in_flight);
+
+        release_tx.send(()).expect("release formation call");
+        assert_eq!(
+            wait_for_live_goal_formation_barrier(runtime, Duration::from_secs(5)).await,
+            LiveGoalFormationBarrierOutcome::Settled {
+                expected: 1,
+                settled: 1,
+                failed: 0,
+            }
+        );
     }
 }

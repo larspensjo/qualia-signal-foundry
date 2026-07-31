@@ -1,14 +1,27 @@
 use std::convert::TryFrom;
 
-use qsf_session::{
-    ContinuityManifest, ResumeMode, SessionEvent, Turn, persist_session_state,
-    reduce_session_in_place,
-};
+use qsf_session::{SessionEvent, Turn, reduce_session_in_place};
 use time::OffsetDateTime;
 
 use crate::diagnostics::{DiagnosticRecord, DiagnosticTrust};
-use crate::realtime::volition_continuity::{build_volition_continuity_snapshot, persist_snapshot};
-use crate::state::{AppState, SessionRuntime};
+use crate::realtime::volition_continuity::persist_continuity_state_and_volition_snapshot;
+use crate::state::{AppState, SessionRuntime, TrustedTurnCompletion};
+
+fn publish_completion(
+    runtime: &SessionRuntime,
+    exchange_index: usize,
+    promoted: bool,
+    promoted_turn_count: usize,
+    skipped_reason: Option<String>,
+) {
+    runtime.publish_trusted_turn_completion(TrustedTurnCompletion {
+        exchange_index,
+        promoted,
+        promoted_turn_count,
+        skipped_reason,
+        completed_at: OffsetDateTime::now_utc(),
+    });
+}
 
 pub(super) async fn promote_completed_trusted_exchanges(
     state: &AppState,
@@ -21,6 +34,7 @@ pub(super) async fn promote_completed_trusted_exchanges(
             [runtime.trusted_promoted_exchange_count]
             .clone();
         runtime.trusted_promoted_exchange_count += 1;
+        let promoted_turn_count_before = runtime.session_state.turns.len();
 
         if runtime
             .non_promotable_exchange_indices
@@ -31,14 +45,28 @@ pub(super) async fn promote_completed_trusted_exchanges(
                 exchange.index,
                 runtime.qsf_session_id
             );
+            publish_completion(
+                runtime,
+                exchange.index,
+                false,
+                promoted_turn_count_before,
+                Some("non_promotable_exchange".to_string()),
+            );
             continue;
         }
 
-        if runtime.degraded {
+        if runtime.is_degraded() {
             log::warn!(
                 "trusted exchange `{}` for session `{}` skipped for continuity promotion because sideband trust is degraded",
                 exchange.index,
                 runtime.qsf_session_id
+            );
+            publish_completion(
+                runtime,
+                exchange.index,
+                false,
+                promoted_turn_count_before,
+                Some("sideband_degraded".to_string()),
             );
             continue;
         }
@@ -52,18 +80,36 @@ pub(super) async fn promote_completed_trusted_exchanges(
             runtime
                 .non_promotable_exchange_indices
                 .insert(exchange.index);
+            publish_completion(
+                runtime,
+                exchange.index,
+                false,
+                promoted_turn_count_before,
+                Some("turn_conversion_failed".to_string()),
+            );
             continue;
         };
 
-        runtime
-            .diagnostics
-            .write(&DiagnosticRecord::DiagnosticExchangeRecorded {
-                qsf_session_id: runtime.qsf_session_id.clone(),
-                source: "sideband_trusted".to_string(),
-                trust: DiagnosticTrust::Trusted,
-                recorded_at: OffsetDateTime::now_utc(),
-                exchange: exchange.clone(),
-            })?;
+        if let Err(error) =
+            runtime
+                .diagnostics
+                .write(&DiagnosticRecord::DiagnosticExchangeRecorded {
+                    qsf_session_id: runtime.qsf_session_id.clone(),
+                    source: "sideband_trusted".to_string(),
+                    trust: DiagnosticTrust::Trusted,
+                    recorded_at: OffsetDateTime::now_utc(),
+                    exchange: exchange.clone(),
+                })
+        {
+            publish_completion(
+                runtime,
+                exchange.index,
+                false,
+                promoted_turn_count_before,
+                Some("diagnostic_persistence_failed".to_string()),
+            );
+            return Err(error);
+        }
         log::info!(
             "trusted exchange `{}` for session `{}` recorded to diagnostics with {} tool request(s) and {} tool execution(s)",
             exchange.index,
@@ -84,36 +130,23 @@ pub(super) async fn promote_completed_trusted_exchanges(
             SessionEvent::TurnCompleted(turn),
         );
 
-        let continuity_dir = state.continuity_session_dir(&runtime.qsf_session_id);
-        let state_path = persist_session_state(&runtime.session_state, &continuity_dir)?;
-        let snapshot = build_volition_continuity_snapshot(
-            &runtime.qsf_session_id,
-            &runtime.volition,
-            OffsetDateTime::now_utc(),
-        )?;
-        let snapshot_path = persist_snapshot(
-            &snapshot,
-            state.continuity_volition_snapshot_path(&runtime.qsf_session_id),
-        )?;
-        let mut manifest = ContinuityManifest::load_or_default(
-            state.continuity_manifest_path(&runtime.qsf_session_id),
-        )?;
-        manifest.current_session_id = Some(runtime.qsf_session_id.clone());
-        manifest.current_session_state_path = Some(
-            state_path
-                .strip_prefix(&continuity_dir)
-                .unwrap_or(&state_path)
-                .to_path_buf(),
+        if let Err(error) = persist_continuity_state_and_volition_snapshot(state, runtime) {
+            publish_completion(
+                runtime,
+                exchange.index,
+                false,
+                promoted_turn_count_before,
+                Some("continuity_persistence_failed".to_string()),
+            );
+            return Err(error);
+        }
+        publish_completion(
+            runtime,
+            exchange.index,
+            true,
+            runtime.session_state.turns.len(),
+            None,
         );
-        manifest.current_volition_snapshot_path = Some(
-            snapshot_path
-                .strip_prefix(&continuity_dir)
-                .unwrap_or(&snapshot_path)
-                .to_path_buf(),
-        );
-        manifest.sleep_pending = true;
-        manifest.resume_mode = ResumeMode::AwakeContinuation;
-        manifest.persist(state.continuity_manifest_path(&runtime.qsf_session_id))?;
     }
 
     Ok(())
