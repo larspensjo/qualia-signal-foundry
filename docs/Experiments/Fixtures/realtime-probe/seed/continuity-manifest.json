@@ -1,0 +1,11 @@
+{
+  "schema_version": 1,
+  "current_session_id": "default",
+  "current_session_state_path": null,
+  "current_volition_snapshot_path": "volition-state.json",
+  "last_sleep_run_id": null,
+  "last_sleep_brief_path": null,
+  "last_sleep_consumed_session_id": null,
+  "sleep_pending": false,
+  "resume_mode": "awake_continuation"
+}

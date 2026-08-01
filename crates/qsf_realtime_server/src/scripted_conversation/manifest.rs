@@ -29,13 +29,16 @@ pub struct WorldCorpusManifest {
     pub state: String,
     pub marker: Option<serde_json::Value>,
     pub detail: Option<String>,
+    pub resolution_source: Option<String>,
+    pub degradation_reason: Option<String>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum SeedMode {
     ColdStart,
-    NoSeedBundleConfigured,
+    WarmStartSeedBundle,
+    WarmStartSeedBundleFailed,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
@@ -174,6 +177,8 @@ mod tests {
                 state: "ready".into(),
                 marker: Some(serde_json::json!({"schema_version": 1})),
                 detail: None,
+                resolution_source: Some("bundled_fixture".into()),
+                degradation_reason: None,
             },
             seed_mode: SeedMode::ColdStart,
         };

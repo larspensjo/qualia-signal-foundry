@@ -1,0 +1,40 @@
+{
+  "schema_version": 4,
+  "recorded_at": "SEED_TIME_REWRITTEN",
+  "qsf_session_id": "SEED_SESSION_REWRITTEN",
+  "seed_fixture_id": "realtime_seed_fixture",
+  "state": {
+    "tick": 42,
+    "goals": {
+      "assemble-world-picture": {"status":"accepted","salience":3,"reinforcement_count":1,"progress_evidence_refs":[],"last_activated_tick":37,"last_satisfied_tick":null,"cooldown_until_tick":null,"last_initiative_output":null,"blocked_count":0,"last_blocked_tick":null,"last_satisfied_evidence_ref":null,"last_initiative_tick":null,"last_rendered_initiative_tick":null,"last_rendered_initiative_ref":null},
+      "grow-the-library": {"status":"active","salience":12,"reinforcement_count":2,"progress_evidence_refs":[],"last_activated_tick":41,"last_satisfied_tick":null,"cooldown_until_tick":null,"last_initiative_output":null,"blocked_count":0,"last_blocked_tick":null,"last_satisfied_evidence_ref":null,"last_initiative_tick":40,"last_rendered_initiative_tick":40,"last_rendered_initiative_ref":null},
+      "keep-theses-distinct-from-fact": {"status":"accepted","salience":4,"reinforcement_count":1,"progress_evidence_refs":[],"last_activated_tick":36,"last_satisfied_tick":null,"cooldown_until_tick":null,"last_initiative_output":null,"blocked_count":0,"last_blocked_tick":null,"last_satisfied_evidence_ref":null,"last_initiative_tick":null,"last_rendered_initiative_tick":null,"last_rendered_initiative_ref":null},
+      "learn-what-drives-this-person": {"status":"active","salience":7,"reinforcement_count":1,"progress_evidence_refs":[],"last_activated_tick":40,"last_satisfied_tick":null,"cooldown_until_tick":null,"last_initiative_output":null,"blocked_count":0,"last_blocked_tick":null,"last_satisfied_evidence_ref":null,"last_initiative_tick":39,"last_rendered_initiative_tick":39,"last_rendered_initiative_ref":null},
+      "respect-persons-boundaries": {"status":"accepted","salience":1,"reinforcement_count":0,"progress_evidence_refs":[],"last_activated_tick":31,"last_satisfied_tick":null,"cooldown_until_tick":null,"last_initiative_output":null,"blocked_count":0,"last_blocked_tick":null,"last_satisfied_evidence_ref":null,"last_initiative_tick":null,"last_rendered_initiative_tick":null,"last_rendered_initiative_ref":null},
+      "serve-the-present-person": {"status":"active","salience":9,"reinforcement_count":2,"progress_evidence_refs":[],"last_activated_tick":42,"last_satisfied_tick":null,"cooldown_until_tick":null,"last_initiative_output":null,"blocked_count":0,"last_blocked_tick":null,"last_satisfied_evidence_ref":null,"last_initiative_tick":42,"last_rendered_initiative_tick":42,"last_rendered_initiative_ref":null},
+      "track-the-ai-transition": {"status":"active","salience":14,"reinforcement_count":3,"progress_evidence_refs":[],"last_activated_tick":41,"last_satisfied_tick":null,"cooldown_until_tick":null,"last_initiative_output":null,"blocked_count":0,"last_blocked_tick":null,"last_satisfied_evidence_ref":null,"last_initiative_tick":41,"last_rendered_initiative_tick":41,"last_rendered_initiative_ref":null}
+    },
+    "pending_candidates": [],
+    "accepted_candidates": {},
+    "mode": "neutral",
+    "declined_candidates": []
+  },
+  "inspection": {
+    "mode": "neutral",
+    "tick": 42,
+    "active_goals": [
+      {"id":"grow-the-library","title":"Grow the library","salience":12,"cooldown_until_tick":null,"last_activated_tick":41,"visibility":"conscious"},
+      {"id":"learn-what-drives-this-person","title":"Learn what drives this person","salience":7,"cooldown_until_tick":null,"last_activated_tick":40,"visibility":"conscious"},
+      {"id":"serve-the-present-person","title":"Serve the present person","salience":9,"cooldown_until_tick":null,"last_activated_tick":42,"visibility":"conscious"},
+      {"id":"track-the-ai-transition","title":"Track the AI transition","salience":14,"cooldown_until_tick":null,"last_activated_tick":41,"visibility":"conscious"}
+    ],
+    "accepted_goals": [
+      {"id":"assemble-world-picture","title":"Assemble a world picture","salience":3,"cooldown_until_tick":null,"last_activated_tick":37,"visibility":"subconscious"},
+      {"id":"keep-theses-distinct-from-fact","title":"Keep theses distinct from fact","salience":4,"cooldown_until_tick":null,"last_activated_tick":36,"visibility":"conscious"},
+      {"id":"respect-persons-boundaries","title":"Respect a person's boundaries","salience":1,"cooldown_until_tick":null,"last_activated_tick":31,"visibility":"conscious"}
+    ],
+    "blocked_goals": [], "cooldown_goals": [], "retired_goals": [],
+    "pending_candidate_count": 0, "accepted_candidate_count": 0,
+    "last_initiative_summaries": []
+  }
+}

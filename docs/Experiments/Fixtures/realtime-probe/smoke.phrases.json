@@ -11,8 +11,8 @@
           "goal_id": "serve-the-present-person"
         },
         "loser_ids": [],
-        "below_threshold_goal_ids": [],
-        "world_consultation_expected": false
+        "below_threshold_goal_ids": ["learn-what-drives-this-person"],
+        "explicit_topic_expected": false
       }
     },
     {
@@ -24,7 +24,7 @@
         },
         "loser_ids": [],
         "below_threshold_goal_ids": ["serve-the-present-person"],
-        "world_consultation_expected": false
+        "explicit_topic_expected": false
       }
     }
   ]

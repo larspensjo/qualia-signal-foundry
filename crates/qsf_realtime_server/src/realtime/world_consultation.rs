@@ -3,8 +3,8 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use qsf_corpus::{
-    CorpusIndex, CorpusMarker, CorpusSchemaDrift, QueryCandidate, frame_untrusted_external,
-    refresh_corpus, resolve_corpus_path,
+    CorpusIndex, CorpusMarker, CorpusPathSource, CorpusSchemaDrift, QueryCandidate,
+    frame_untrusted_external, refresh_corpus, resolve_corpus_path,
 };
 use qsf_realtime_protocol::build_openai_realtime_conversation_item_create;
 use qsf_volition::{
@@ -15,7 +15,8 @@ use serde::{Deserialize, Serialize};
 
 pub use qsf_diagnostics::{
     CandidateEligibility, CorpusMarkerMetadata, SurfacedWorldFact, TopicTermMajorityThreshold,
-    WorldConsultationCandidate, WorldConsultationTrace, WorldEffectBoundary, WorldInjectionPoint,
+    WorldConsultationCandidate, WorldConsultationTrace, WorldConsultationTrigger,
+    WorldEffectBoundary, WorldInjectionPoint,
 };
 
 /// The maximum synchronous corpus-read cost allowed on a user-input turn.
@@ -41,6 +42,8 @@ pub(crate) struct ReadyWorldCorpus {
     pub(crate) schema_drift: CorpusSchemaDrift,
     pub(crate) articles_indexed: usize,
     pub(crate) corpus_path: PathBuf,
+    pub(crate) resolution_source: CorpusPathSource,
+    pub(crate) degraded_reason: Option<String>,
 }
 
 impl WorldCorpus {
@@ -51,7 +54,7 @@ impl WorldCorpus {
         let degradation = resolution.degraded_reason.clone();
         match refresh_corpus(&resolution.corpus_path, None) {
             Ok(refresh) => {
-                if let Some(reason) = degradation {
+                if let Some(ref reason) = degradation {
                     log::warn!("world corpus degraded: {reason}");
                 }
                 if !matches!(refresh.report.schema_drift, CorpusSchemaDrift::None)
@@ -71,6 +74,8 @@ impl WorldCorpus {
                     schema_drift: refresh.report.schema_drift,
                     articles_indexed: refresh.report.articles_indexed,
                     corpus_path: resolution.corpus_path,
+                    resolution_source: resolution.source,
+                    degraded_reason: degradation,
                 })
             }
             Err(error) => {
@@ -92,15 +97,6 @@ pub(crate) enum WorldQueryOrigin {
     AssistantAnswer,
 }
 
-/// Why this bounded consultation was requested. Explicit current topics are admitted only by
-/// the pure volition-domain detector; the adapter remains the external-effect boundary.
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
-#[serde(rename_all = "snake_case")]
-pub(crate) enum WorldConsultationTrigger {
-    GoalActivation,
-    ExplicitCurrentTopic { required_anchors: Vec<String> },
-}
-
 #[derive(Clone, Debug)]
 pub(crate) struct WorldConsultationRequest {
     pub(crate) serving_goal_id: String,
@@ -109,6 +105,7 @@ pub(crate) struct WorldConsultationRequest {
     pub(crate) initiative_output: InitiativeOutput,
     pub(crate) query_terms: Vec<WorldQueryTerm>,
     pub(crate) trigger: WorldConsultationTrigger,
+    pub(crate) explicit_required_anchors: Vec<String>,
     pub(crate) query_origin: WorldQueryOrigin,
 }
 
@@ -132,8 +129,11 @@ pub(crate) fn consult_world(
     request: WorldConsultationRequest,
     previously_surfaced_content_hashes: &mut HashSet<String>,
 ) -> WorldConsultationResult {
-    let (query_terms, relevance_policy) =
-        anchor_aware_query_terms(&request.query_terms, &request.trigger);
+    let (query_terms, relevance_policy) = anchor_aware_query_terms(
+        &request.query_terms,
+        request.trigger,
+        &request.explicit_required_anchors,
+    );
     let query = query_terms
         .iter()
         .map(|term| term.term.as_str())
@@ -246,6 +246,7 @@ fn build_result(
     let drift_warning = (!matches!(corpus.schema_drift, CorpusSchemaDrift::None))
         .then(|| format!("{:?}", corpus.schema_drift));
     let trace = WorldConsultationTrace {
+        trigger: Some(request.trigger),
         serving_goal_id: request.serving_goal_id,
         serving_goal_title: request.serving_goal_title,
         serving_tension_ids: request.serving_tension_ids,
@@ -282,7 +283,8 @@ fn build_result(
 
 fn anchor_aware_query_terms(
     query_terms: &[WorldQueryTerm],
-    trigger: &WorldConsultationTrigger,
+    trigger: WorldConsultationTrigger,
+    explicit_required_anchors: &[String],
 ) -> (Vec<WorldQueryTerm>, CandidateRelevancePolicy) {
     let retained_terms = query_terms
         .iter()
@@ -331,24 +333,22 @@ fn anchor_aware_query_terms(
         }
         // Entity/version signals detected from the original text are the relevance gate. Other
         // retained words still contribute lexical score, but cannot cause a spurious no-match.
-        WorldConsultationTrigger::ExplicitCurrentTopic { required_anchors } => {
-            CandidateRelevancePolicy {
-                required_anchors: unique_terms(
-                    &required_anchors
-                        .iter()
-                        .filter(|anchor| {
-                            !is_current_information_cue(anchor)
-                                && is_meaningful_world_term(anchor)
-                                && retained_terms.iter().any(|term| term.term == **anchor)
-                        })
-                        .cloned()
-                        .collect::<Vec<_>>(),
-                ),
-                goal_derived_required_anchors: Vec::new(),
-                topic_terms: Vec::new(),
-                topic_term_majority_threshold: None,
-            }
-        }
+        WorldConsultationTrigger::ExplicitCurrentTopic => CandidateRelevancePolicy {
+            required_anchors: unique_terms(
+                &explicit_required_anchors
+                    .iter()
+                    .filter(|anchor| {
+                        !is_current_information_cue(anchor)
+                            && is_meaningful_world_term(anchor)
+                            && retained_terms.iter().any(|term| term.term == **anchor)
+                    })
+                    .cloned()
+                    .collect::<Vec<_>>(),
+            ),
+            goal_derived_required_anchors: Vec::new(),
+            topic_terms: Vec::new(),
+            topic_term_majority_threshold: None,
+        },
     };
     (retained_terms, relevance_policy)
 }
@@ -433,6 +433,8 @@ mod tests {
             schema_drift: CorpusSchemaDrift::None,
             articles_indexed: refresh.report.articles_indexed,
             corpus_path: root,
+            resolution_source: CorpusPathSource::BundledFixture,
+            degraded_reason: None,
         }
     }
 
@@ -458,6 +460,7 @@ mod tests {
                 },
             ],
             trigger: WorldConsultationTrigger::GoalActivation,
+            explicit_required_anchors: Vec::new(),
             query_origin: origin,
         }
     }
@@ -514,9 +517,8 @@ mod tests {
             serving_tension_ids: Vec::new(),
             initiative_output: explicit_request.initiative_output,
             query_terms,
-            trigger: WorldConsultationTrigger::ExplicitCurrentTopic {
-                required_anchors: explicit_request.required_anchors,
-            },
+            trigger: WorldConsultationTrigger::ExplicitCurrentTopic,
+            explicit_required_anchors: explicit_request.required_anchors,
             query_origin: WorldQueryOrigin::UserInput,
         }
     }
@@ -530,6 +532,10 @@ mod tests {
             &mut HashSet::new(),
         );
 
+        assert_eq!(
+            result.trace.trigger,
+            Some(WorldConsultationTrigger::ExplicitCurrentTopic)
+        );
         assert_eq!(result.trace.required_anchors, ["grok", "4.5"]);
         assert!(
             result
@@ -552,6 +558,35 @@ mod tests {
                         if reason == "missing_required_anchor"
                 )
         }));
+    }
+
+    /// Ledgers written before the trigger was captured must stay readable: diagnostics artifacts
+    /// are sealed and never migrated in place, so a record without the field parses as `None`
+    /// rather than failing the whole line.
+    #[test]
+    fn a_trace_recorded_without_a_trigger_still_deserializes() {
+        let corpus = corpus();
+        let result = consult_world(
+            &corpus,
+            explicit_request("What do you think about the Grok 4.5 release?"),
+            &mut HashSet::new(),
+        );
+        let mut serialized =
+            serde_json::to_value(&result.trace).expect("serialize a production-shaped trace");
+        assert!(
+            serialized
+                .as_object_mut()
+                .expect("trace object")
+                .remove("trigger")
+                .is_some(),
+            "the trace must carry a trigger before it is removed, or this test proves nothing"
+        );
+
+        let parsed: WorldConsultationTrace = serde_json::from_value(serialized)
+            .expect("a trigger-less trace must still deserialize");
+
+        assert_eq!(parsed.trigger, None);
+        assert_eq!(parsed.required_anchors, ["grok", "4.5"]);
     }
 
     #[test]
@@ -603,6 +638,8 @@ mod tests {
             schema_drift: CorpusSchemaDrift::None,
             articles_indexed: 1,
             corpus_path: PathBuf::from("fixture"),
+            resolution_source: CorpusPathSource::BundledFixture,
+            degraded_reason: None,
         };
         let result = consult_world(
             &corpus,
@@ -722,6 +759,8 @@ mod tests {
             schema_drift: CorpusSchemaDrift::None,
             articles_indexed: 2,
             corpus_path: PathBuf::from("fixture"),
+            resolution_source: CorpusPathSource::BundledFixture,
+            degraded_reason: None,
         };
         let mut hbm_request = request(WorldQueryOrigin::UserInput);
         hbm_request.query_terms = vec![
@@ -852,6 +891,8 @@ mod tests {
             schema_drift: CorpusSchemaDrift::None,
             articles_indexed: 1,
             corpus_path: PathBuf::from("fixture"),
+            resolution_source: CorpusPathSource::BundledFixture,
+            degraded_reason: None,
         };
 
         let result = consult_world(
@@ -891,6 +932,8 @@ mod tests {
             schema_drift: CorpusSchemaDrift::None,
             articles_indexed: 1,
             corpus_path: PathBuf::from("fixture"),
+            resolution_source: CorpusPathSource::BundledFixture,
+            degraded_reason: None,
         };
         let mut poison_request = request(WorldQueryOrigin::UserInput);
         poison_request.query_terms = vec![WorldQueryTerm {
@@ -939,6 +982,10 @@ mod tests {
         };
         assert!(!trace.response_create_event_ref.is_empty());
         assert!(!trace.artifact_or_record_reference.is_empty());
+        assert_eq!(
+            trace.trigger,
+            Some(WorldConsultationTrigger::GoalActivation)
+        );
         assert!(trace.bounded_or_external_output.external_effect_executed);
         assert_eq!(trace.goal_derived_required_anchors, ["ai"]);
         assert_eq!(

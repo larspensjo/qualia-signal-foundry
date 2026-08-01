@@ -21,9 +21,10 @@ use super::{
     ModelIds, PhraseObservation, ProbeEvent, ProbeHeader, ProbeManifestMetadata, ProbeRunState,
     ProbeStatus, RuntimeCounters, SecretScanReport, SeedMode, StructuralComparison,
     TraceContractReport, WorldCorpusManifest, build_run_manifest, compare_phrase_expectation,
-    load_phrase_set, parse_trace_contract, probe_verdict, reduce, render_formation_barrier,
-    render_header, render_structured_partial_warning, render_turn, render_verdict, scan_for_secret,
-    scan_run_dir, serialize_manifest, write_manifest_atomic,
+    compare_world_consultation_expectations, load_phrase_set, materialize_seed_bundle,
+    parse_trace_contract, probe_verdict, reduce, render_formation_barrier, render_header,
+    render_structured_partial_warning, render_turn, render_verdict, scan_for_secret, scan_run_dir,
+    serialize_manifest, write_manifest_atomic,
 };
 
 #[derive(Clone, Debug)]
@@ -46,8 +47,10 @@ impl RunnerEnvironment {
 
 pub async fn run(args: ProbeArgs) -> anyhow::Result<()> {
     engine_logging::initialize();
-    if args.seed_only.is_some() {
-        anyhow::bail!("--seed-only is not available until the scripted seed bundle is supplied");
+    if let Some(seed_only) = &args.seed_only {
+        materialize_seed_bundle(seed_only, OffsetDateTime::now_utc())?;
+        println!("materialized warm seed bundle in {}", seed_only.display());
+        return Ok(());
     }
     if args.structure_only.is_some() {
         anyhow::bail!(
@@ -92,6 +95,24 @@ async fn run_created_directory(
     started_at: &str,
     environment: RunnerEnvironment,
 ) -> anyhow::Result<()> {
+    let seed_mode = if args.cold_start {
+        SeedMode::ColdStart
+    } else if let Err(error) = materialize_seed_bundle(run_dir, OffsetDateTime::now_utc()) {
+        return finalize_without_session(
+            args,
+            phrases,
+            phrase_hash,
+            run_id,
+            run_dir,
+            started_at,
+            default_metadata(SeedMode::WarmStartSeedBundleFailed),
+            format!("failed to materialize warm seed bundle: {error}"),
+            "",
+        )
+        .await;
+    } else {
+        SeedMode::WarmStartSeedBundle
+    };
     let api_key = match environment.api_key {
         Ok(key) => key,
         Err(error) => {
@@ -102,7 +123,7 @@ async fn run_created_directory(
                 run_id,
                 run_dir,
                 started_at,
-                default_metadata(args),
+                default_metadata(seed_mode.clone()),
                 error,
                 "",
             )
@@ -126,7 +147,7 @@ async fn run_created_directory(
                 run_id,
                 run_dir,
                 started_at,
-                default_metadata(args),
+                default_metadata(seed_mode.clone()),
                 error.to_string(),
                 &api_key_for_finalizer,
             )
@@ -145,14 +166,14 @@ async fn run_created_directory(
                 started_at,
                 state.clone(),
                 None,
-                metadata_from_state(args, &state, None),
+                metadata_from_state(seed_mode.clone(), &state, None),
                 ProbeRunState::default(),
                 Some(error.to_string()),
             )
             .await;
         }
     };
-    let metadata = metadata_from_state(args, &state, Some(&allocation.session));
+    let metadata = metadata_from_state(seed_mode, &state, Some(&allocation.session));
     let session_id = allocation.qsf_session_id;
     let session = state
         .session_runtime(&session_id)
@@ -183,13 +204,12 @@ async fn run_created_directory(
             seed_mode: seed_mode_label(&metadata.seed_mode),
         })
     );
-    let (mut status_rx, mut completion_rx, inspection_rx, world_rx) = {
+    let (mut status_rx, mut completion_rx, inspection_rx) = {
         let guard = session.lock().await;
         (
             guard.subscribe_status(),
             guard.subscribe_trusted_turn_completion(),
             guard.subscribe_volition_inspection(),
-            guard.subscribe_world_perception(),
         )
     };
     let mut run_state = ProbeRunState::default();
@@ -246,12 +266,8 @@ async fn run_created_directory(
             {
                 TurnWait::Completed(completion) => {
                     let elapsed = started.elapsed().as_millis() as u64;
-                    let observation = observe_phrase(
-                        &phrase.expected,
-                        completion.exchange_index,
-                        &inspection_rx,
-                        &world_rx,
-                    );
+                    let observation =
+                        observe_phrase(&phrase.expected, completion.exchange_index, &inspection_rx);
                     reduce(
                         &mut run_state,
                         ProbeEvent::TurnCompleted {
@@ -323,19 +339,12 @@ fn observe_phrase(
     inspection_rx: &tokio::sync::watch::Receiver<
         Option<crate::realtime::volition_inspection_capture::VolitionInspectionCapture>,
     >,
-    world_rx: &tokio::sync::watch::Receiver<
-        Option<crate::realtime::world_perception_capture::WorldPerceptionCapture>,
-    >,
 ) -> PhraseObservation {
     let inspection = inspection_rx.borrow().clone();
     let inspection = inspection
         .as_ref()
         .filter(|capture| capture.exchange_index == exchange_index);
-    let world = world_rx.borrow().clone();
-    let world = world
-        .as_ref()
-        .filter(|capture| capture.exchange_index == exchange_index);
-    compare_phrase_expectation(expected, inspection, world)
+    compare_phrase_expectation(expected, inspection)
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -474,9 +483,8 @@ async fn finalize_with_session(
             }
         }
     }
-    reduce(&mut run_state, ProbeEvent::RunFinished);
     println!("{}", render_formation_barrier(run_state.formation.as_ref()));
-    let traces = match diagnostics_path
+    let diagnostics = match diagnostics_path
         .as_deref()
         .ok_or_else(|| anyhow::anyhow!("session diagnostics path was not captured"))
         .and_then(|path| {
@@ -484,16 +492,32 @@ async fn finalize_with_session(
                 .map_err(anyhow::Error::from)
                 .map(|bytes| (path, bytes))
         }) {
-        Ok((_path, bytes)) => parse_trace_contract(&bytes, &counters.promoted_exchange_indices),
+        Ok((_path, bytes)) => Some(bytes),
         Err(error) => {
             finalization_errors.push(format!("read diagnostics: {error}"));
-            TraceContractReport {
-                complete: false,
-                turns: vec![],
-                parse_errors: vec![error.to_string()],
-            }
+            None
         }
     };
+    let traces = diagnostics.as_deref().map_or_else(
+        || TraceContractReport {
+            complete: false,
+            turns: vec![],
+            parse_errors: vec!["diagnostics unavailable".to_string()],
+        },
+        |bytes| parse_trace_contract(bytes, &counters.promoted_exchange_indices),
+    );
+    if let Some(diagnostics) = diagnostics.as_deref() {
+        for difference in compare_world_consultation_expectations(phrases, diagnostics) {
+            reduce(
+                &mut run_state,
+                ProbeEvent::ExpectationDifferencesObserved {
+                    index: difference.phrase_index,
+                    differences: difference.differences,
+                },
+            );
+        }
+    }
+    reduce(&mut run_state, ProbeEvent::RunFinished);
     let secret = state.openai_api_key();
     let secrets = match scan_run_dir(run_dir, secret) {
         Ok(report) => report,
@@ -618,7 +642,7 @@ async fn finalize_manifest(
     Ok(())
 }
 
-fn default_metadata(args: &ProbeArgs) -> ProbeManifestMetadata {
+fn default_metadata(seed_mode: SeedMode) -> ProbeManifestMetadata {
     ProbeManifestMetadata {
         attachment_shape: "server_model_session".to_string(),
         reconnect_policy: "fail_closed_after_first_attach".to_string(),
@@ -632,26 +656,31 @@ fn default_metadata(args: &ProbeArgs) -> ProbeManifestMetadata {
             state: "not_loaded".to_string(),
             marker: None,
             detail: Some("application state was not initialized".to_string()),
+            resolution_source: None,
+            degradation_reason: None,
         },
-        seed_mode: if args.cold_start {
-            SeedMode::ColdStart
-        } else {
-            SeedMode::NoSeedBundleConfigured
-        },
+        seed_mode,
     }
 }
 
 fn metadata_from_state(
-    args: &ProbeArgs,
+    seed_mode: SeedMode,
     state: &AppState,
     session: Option<&crate::state::BrowserSessionConfig>,
 ) -> ProbeManifestMetadata {
-    let mut metadata = default_metadata(args);
+    let mut metadata = default_metadata(seed_mode);
     if let Some(session) = session {
         metadata.model_ids.realtime_voice = session.model.clone();
         metadata.model_ids.input_transcription = session.input_transcription_model.clone();
     }
-    metadata.world_corpus = match state.world_corpus() {
+    metadata.world_corpus = world_corpus_manifest(state.world_corpus());
+    metadata
+}
+
+fn world_corpus_manifest(
+    world_corpus: &crate::realtime::world_consultation::WorldCorpus,
+) -> WorldCorpusManifest {
+    match world_corpus {
         crate::realtime::world_consultation::WorldCorpus::Ready(corpus) => WorldCorpusManifest {
             state: "ready".to_string(),
             marker: serde_json::to_value(&corpus.marker).ok(),
@@ -661,22 +690,26 @@ fn metadata_from_state(
                 corpus.corpus_path.display(),
                 corpus.schema_drift
             )),
+            resolution_source: Some(corpus.resolution_source.to_string()),
+            degradation_reason: corpus.degraded_reason.clone(),
         },
         crate::realtime::world_consultation::WorldCorpus::Unavailable { reason } => {
             WorldCorpusManifest {
                 state: "unavailable".to_string(),
                 marker: None,
                 detail: Some(reason.clone()),
+                resolution_source: None,
+                degradation_reason: None,
             }
         }
-    };
-    metadata
+    }
 }
 
 fn seed_mode_label(seed_mode: &SeedMode) -> &'static str {
     match seed_mode {
         SeedMode::ColdStart => "cold-start",
-        SeedMode::NoSeedBundleConfigured => "no-seed-bundle-configured",
+        SeedMode::WarmStartSeedBundle => "warm-start-seed-bundle",
+        SeedMode::WarmStartSeedBundleFailed => "warm-start-seed-bundle-failed",
     }
 }
 
@@ -1016,6 +1049,28 @@ mod tests {
         assert!(manifest.finalization_errors.is_empty());
     }
 
+    #[tokio::test]
+    async fn failed_warm_seed_materialization_is_recorded_as_failed_provenance() {
+        let tempdir = TempDir::new().expect("tempdir");
+        let run_dir = tempdir.path().join("run");
+        std::fs::create_dir_all(&run_dir).expect("run dir");
+        std::fs::write(run_dir.join("continuity"), "blocks seed directory").expect("blocking file");
+        let mut args = probe_args(&run_dir);
+        args.cold_start = false;
+
+        let error = run_test_probe(&args, test_environment("unused".to_string()))
+            .await
+            .expect_err("seed failure");
+
+        assert!(
+            error
+                .to_string()
+                .contains("failed to materialize warm seed bundle")
+        );
+        let manifest = read_manifest(&run_dir);
+        assert_eq!(manifest.seed_mode, SeedMode::WarmStartSeedBundleFailed);
+    }
+
     #[test]
     fn existing_probe_artifacts_make_run_directory_non_fresh() {
         let tempdir = TempDir::new().expect("tempdir");
@@ -1035,5 +1090,60 @@ mod tests {
         let args = probe_args(&supplied);
 
         assert_eq!(collision_root(&args), tempdir.path().join("custom"));
+    }
+
+    #[tokio::test]
+    async fn seed_only_materializes_the_shared_warm_start_bundle_without_credentials() {
+        let destination = TempDir::new().expect("destination");
+        let mut args = probe_args(destination.path());
+        args.seed_only = Some(destination.path().to_path_buf());
+
+        run(args).await.expect("seed only");
+
+        let continuity = destination.path().join("continuity/default");
+        assert!(continuity.join("memory-store.json").is_file());
+        assert!(continuity.join("volition-state.json").is_file());
+        assert!(continuity.join("continuity-manifest.json").is_file());
+        assert!(!continuity.join("session-state.json").exists());
+    }
+
+    #[test]
+    fn manifest_records_bundled_fallback_provenance_after_bad_configuration() {
+        use std::sync::Arc;
+
+        use qsf_corpus::{CorpusIndex, CorpusMarker, CorpusSchemaDrift, resolve_corpus_path};
+
+        let resolution =
+            resolve_corpus_path(Some(std::path::PathBuf::from("definitely-missing-corpus")));
+
+        let corpus = crate::realtime::world_consultation::WorldCorpus::Ready(
+            crate::realtime::world_consultation::ReadyWorldCorpus {
+                index: Arc::new(CorpusIndex::new(vec![])),
+                marker: CorpusMarker {
+                    schema_version: 1,
+                    producer: "test".to_string(),
+                    article_patterns: vec![],
+                    generated_artifacts: vec![],
+                    internal_state: vec![],
+                },
+                schema_drift: CorpusSchemaDrift::None,
+                articles_indexed: 0,
+                corpus_path: resolution.corpus_path,
+                resolution_source: resolution.source,
+                degraded_reason: resolution.degraded_reason,
+            },
+        );
+
+        let manifest = world_corpus_manifest(&corpus);
+
+        assert_eq!(manifest.state, "ready");
+        assert_eq!(
+            manifest.resolution_source.as_deref(),
+            Some("bundled_fixture_after_missing_configured_path")
+        );
+        assert_eq!(
+            manifest.degradation_reason.as_deref(),
+            Some("configured world corpus path is unavailable: definitely-missing-corpus")
+        );
     }
 }

@@ -1,3 +1,4 @@
+use std::fmt;
 use std::path::PathBuf;
 
 /// Environment variable that points at a producer-owned corpus output directory.
@@ -12,6 +13,18 @@ pub enum CorpusPathSource {
     BundledFixture,
     /// A configured path did not exist, so the bundled fixture is active with a degradation.
     BundledFixtureAfterMissingConfiguredPath,
+}
+
+impl fmt::Display for CorpusPathSource {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str(match self {
+            Self::Configured => "configured",
+            Self::BundledFixture => "bundled_fixture",
+            Self::BundledFixtureAfterMissingConfiguredPath => {
+                "bundled_fixture_after_missing_configured_path"
+            }
+        })
+    }
 }
 
 /// A selected corpus path and any non-fatal degradation that led to it.

@@ -103,7 +103,11 @@ pub fn probe_verdict(
     }
     for turn in &state.turns {
         if !turn.expectation_differences.is_empty() {
-            structured.push(format!("expectation_diff:{}", turn.index));
+            structured.push(format!(
+                "expectation diff at turn {}: {}",
+                turn.index + 1,
+                turn.expectation_differences.join("; ")
+            ));
         }
     }
     let status = if !failing.is_empty() {
@@ -240,6 +244,27 @@ mod tests {
         assert_eq!(
             verdict.structured_clauses,
             ["formation_timed_out", "formation_failed:1"]
+        );
+    }
+
+    #[test]
+    fn expectation_diff_identifies_a_one_based_turn_and_its_text() {
+        let (mut state, counters, traces, secrets) = clean();
+        reduce(
+            &mut state,
+            ProbeEvent::TurnCompleted {
+                index: 0,
+                promoted: true,
+                elapsed_ms: 1,
+                inspection_captured: true,
+                arbitration_winner: None,
+                expectation_differences: vec!["winner expected x, observed y".to_string()],
+            },
+        );
+        let verdict = verdict(&state, &counters, &traces, &secrets);
+        assert_eq!(
+            verdict.structured_clauses,
+            ["expectation diff at turn 1: winner expected x, observed y"]
         );
     }
 

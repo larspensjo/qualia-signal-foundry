@@ -6,7 +6,7 @@ use clap::{Parser, Subcommand};
 pub const DEFAULT_HOST: IpAddr = IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1));
 pub const DEFAULT_PORT: u16 = 3940;
 pub const DEFAULT_STATE_DIR: &str = "state/realtime";
-pub const DEFAULT_PROBE_PHRASE_SET: &str = "smoke";
+pub const DEFAULT_PROBE_PHRASE_SET: &str = "designed";
 pub const DEFAULT_TURN_DELAY_MS: u64 = 250;
 pub const DEFAULT_TURN_TIMEOUT_MS: u64 = 120_000;
 pub const DEFAULT_ATTACH_TIMEOUT_MS: u64 = 30_000;
@@ -92,6 +92,7 @@ mod tests {
         let args = Args::try_parse_from(["qsf_realtime_server", "probe"]).expect("parse");
         let Command::Probe(probe) = args.command.expect("probe command");
         assert_eq!(probe.phrase_set, DEFAULT_PROBE_PHRASE_SET);
+        assert_eq!(DEFAULT_PROBE_PHRASE_SET, "designed");
         assert_eq!(probe.turn_delay_ms, DEFAULT_TURN_DELAY_MS);
         let seed = Args::try_parse_from(["qsf_realtime_server", "probe", "--seed-only", "x"])
             .expect("seed parse");

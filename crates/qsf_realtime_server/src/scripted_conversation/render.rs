@@ -70,9 +70,17 @@ pub fn render_verdict(verdict: &ProbeVerdict) -> String {
     format!(
         "probe {:?}; failures: {}; structured partials: {}",
         verdict.status,
-        verdict.failing_clauses.join(", "),
-        verdict.structured_clauses.join(", ")
+        render_clause_list(&verdict.failing_clauses),
+        render_clause_list(&verdict.structured_clauses)
     )
+}
+
+fn render_clause_list(clauses: &[String]) -> String {
+    if clauses.is_empty() {
+        "none".to_string()
+    } else {
+        clauses.join(", ")
+    }
 }
 
 #[cfg(test)]
@@ -91,5 +99,15 @@ mod tests {
 
         assert!(render_formation_barrier(Some(&formation)).starts_with("WARNING:"));
         assert!(render_structured_partial_warning("formation_timed_out").starts_with("WARNING:"));
+    }
+
+    #[test]
+    fn empty_failing_clauses_render_as_none() {
+        let verdict = ProbeVerdict {
+            status: super::super::ProbeStatus::Passed,
+            failing_clauses: vec![],
+            structured_clauses: vec![],
+        };
+        assert!(render_verdict(&verdict).contains("failures: none"));
     }
 }

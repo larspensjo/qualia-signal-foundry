@@ -1,0 +1,46 @@
+{
+  "records": [
+    {
+      "schema_version": 1,
+      "id": "invented-procrastination-pattern",
+      "kind": "observation",
+      "title": "Putting-off pattern around uncertain work",
+      "summary": "The invented logistics worker notices that uncertain planning tasks are often put off until a deadline creates clarity.",
+      "tags": ["procrastination", "putting-off", "thesis", "planning"],
+      "created_days_ago": 18,
+      "last_reinforced_days_ago": 2,
+      "importance": 0.9,
+      "reinforcement_count": 3,
+      "source_reference": "synthetic realtime probe seed",
+      "estimated_tokens": 34,
+      "provenance": "first_party_internal",
+      "trust_tier": "trusted"
+    },
+    {
+      "schema_version": 1,
+      "id": "invented-logistics-transition-context",
+      "kind": "concept",
+      "title": "Warehouse scheduling transition",
+      "summary": "The invented person recently began work around warehouse scheduling automation.",
+      "tags": ["logistics", "warehouse", "automation"],
+      "created_days_ago": 12,
+      "importance": 0.6,
+      "reinforcement_count": 1,
+      "source_reference": "synthetic realtime probe seed",
+      "estimated_tokens": 22,
+      "provenance": "first_party_internal",
+      "trust_tier": "trusted"
+    }
+  ],
+  "associations": [
+    {
+      "schema_version": 1,
+      "from_memory_id": "invented-procrastination-pattern",
+      "to_memory_id": "invented-logistics-transition-context",
+      "weight": 0.45,
+      "reason": "The observed putting-off pattern occurred in the invented logistics-work context.",
+      "last_reinforced_days_ago": 2
+    }
+  ],
+  "processed_ranges": []
+}

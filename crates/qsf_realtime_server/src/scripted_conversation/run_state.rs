@@ -18,6 +18,10 @@ pub enum ProbeEvent {
     TurnTimedOut {
         index: usize,
     },
+    ExpectationDifferencesObserved {
+        index: usize,
+        differences: Vec<String>,
+    },
     SidebandTerminated {
         reason: String,
     },
@@ -88,6 +92,11 @@ pub fn reduce(state: &mut ProbeRunState, event: ProbeEvent) {
             turn.expectation_differences = expectation_differences;
         }
         ProbeEvent::TurnTimedOut { index } => ensure_turn(state, index).timed_out = true,
+        ProbeEvent::ExpectationDifferencesObserved { index, differences } => {
+            ensure_turn(state, index)
+                .expectation_differences
+                .extend(differences)
+        }
         ProbeEvent::SidebandTerminated { reason } => state.terminated_reason = Some(reason),
         ProbeEvent::FormationBarrierSettled {
             expected,
@@ -170,6 +179,13 @@ mod tests {
         );
         reduce(
             &mut state,
+            ProbeEvent::ExpectationDifferencesObserved {
+                index: 2,
+                differences: vec!["consultation".to_string()],
+            },
+        );
+        reduce(
+            &mut state,
             ProbeEvent::TurnCompleted {
                 index: 0,
                 promoted: false,
@@ -182,6 +198,9 @@ mod tests {
 
         assert_eq!(state.promoted_exchange_indices(), [2]);
         assert_eq!(state.turns[0].arbitration_winner.as_deref(), Some("goal"));
-        assert_eq!(state.turns[0].expectation_differences, ["winner"]);
+        assert_eq!(
+            state.turns[0].expectation_differences,
+            ["winner", "consultation"]
+        );
     }
 }

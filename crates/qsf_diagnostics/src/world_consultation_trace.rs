@@ -52,6 +52,14 @@ pub struct WorldEffectBoundary {
     pub external_effect_executed: bool,
 }
 
+/// Why the runtime crossed the bounded world-consultation effect boundary.
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum WorldConsultationTrigger {
+    GoalActivation,
+    ExplicitCurrentTopic,
+}
+
 /// The topic-term requirement applied to a goal-activation lookup. `required_matches` is
 /// calculated from `total_terms` using `WORLD_CONSULT_TOPIC_TERM_MINIMUM_MATCH_PERCENT`.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -62,6 +70,10 @@ pub struct TopicTermMajorityThreshold {
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct WorldConsultationTrace {
+    /// `None` in ledgers written before the trigger was captured. Sealed artifacts are never
+    /// migrated in place, so the absence is preserved rather than backfilled with a guess.
+    #[serde(default)]
+    pub trigger: Option<WorldConsultationTrigger>,
     pub serving_goal_id: String,
     pub serving_goal_title: String,
     pub serving_tension_ids: Vec<String>,

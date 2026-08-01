@@ -1,7 +1,7 @@
 # Plan: Headless scripted realtime conversation probe
 
-Status: In progress — Phases 1, 2, 3, 4, and 5 complete (2026-07-31, `feature/headless-conversation`;
-Phases 1 and 2 include their live operator runs); next is the fixture bundle
+Status: In progress — Phases 1, 2, 3, 4, 5, and 6 complete (2026-07-31, `feature/headless-conversation`;
+Phases 1 and 2 include their live operator runs); next is launcher integration
 Maturity: Candidate
 Area: Realtime session server / Launcher / Artifact generation
 
@@ -1005,16 +1005,16 @@ same-tier tie.
 | # | Phrase | Qualifies (strength) | Expected winner → ordered losers | What it targets |
 |---|---|---|---|---|
 | 1 | "I've just started a new job at a logistics company, and my main project is the automation of warehouse scheduling." | `track-the-ai-transition` 12 (`job`,`automation`); `learn-what-drives-this-person` 10 (`i`,`my`,`job`,`project`) | **`track-the-ai-transition`** → `learn-what-drives-this-person` | Opens both the person thread and the AI-transition thread. Both are tier 5, so base priority decides: 94 beats 92. Uses `automation`, the exact fixture term — `automating` would not match, since activation has no stemming. |
-| 2 | "Half the planners there are worried that AI will replace the jobs they have within a couple of years." | `track-the-ai-transition` 16 (`ai`,`replace`,`jobs`); below threshold: `respect-persons-boundaries` 1 (`they`) | **`track-the-ai-transition`** → none | Goal-activation `ConsultWorld` path, and a real below-threshold record. `they` is the fixture term (`their` would not match), and a lone Weak hit deliberately stays under the threshold. |
-| 3 | "Hang on — is that something you actually read somewhere, or is it a guess? What evidence would prove it either way?" | `keep-theses-distinct-from-fact` 17 (`actually`,`evidence`,`prove`) | **`keep-theses-distinct-from-fact`** → none | The two Strong epistemic keywords. Protected-tier winner, surfaced only on a genuine opportunity signal. Also the landing turn for a deferred turn-2 consultation. |
-| 4 | "There's something else. A colleague of mine is going through a divorce — it's personal, and she hasn't told me herself, so I don't want to pry." | `respect-persons-boundaries` 9 (`colleague`,`personal`,`she`) | **`respect-persons-boundaries`** → none | The explicit boundary decline. Verified free of accidental qualifiers: `want` alone scores `serve-the-present-person` 1, and `I`/`me` score `learn-what-drives-this-person` only 2. |
-| 5 | "Enough about AI and the economy — what I really want is help figuring out my own next step." | `serve-the-present-person` 6 (`what`,`want`,`help`); `track-the-ai-transition` 16 (`ai`,`economy`) | **`serve-the-present-person`** → `track-the-ai-transition` | The tier-3-beats-tier-5 arbitration probe. `help` (Normal, 4) is what lifts the service goal over the threshold at all (Corrections item 1). Reproduces the "generic service goal crowds out the topical goal" pattern recorded in `Experiment.WorldConsultation.md`. |
-| 6 | "Could you keep an eye on how my sleep is affecting my focus? I'd like us to notice that pattern over time." | `grow-the-library` 8 (`notice`,`pattern`) | **`grow-the-library`** → none | Uses `notice`, the fixture term (`noticed` would not match). `RetrieveContext` is an allowed effect, so a context-retrieval hint may be stashed for the next turn. |
-| 7 | "Remember that thesis you had about me putting things off? I think it happened again this week." | `grow-the-library` 12 (`remember`,`thesis`) | **`grow-the-library`** → none | Memory recall against the seeded procrastination record; consumes any turn-6 retrieval hint; a repeat winner exercises the anti-nag suppression path when turn 6 surfaced. |
+| 2 | "Half the planners there are worried that AI will replace the jobs they have within a couple of years." | `track-the-ai-transition` 16 (`ai`,`replace`,`jobs`); below threshold: `respect-persons-boundaries` 1 (`they`) | **`track-the-ai-transition`** → none | The three distinct non-Weak matches select `ProposeExperiment`, not `ConsultWorld`, and the turn also carries a real below-threshold record. `they` is the fixture term (`their` would not match), and a lone Weak hit deliberately stays under the threshold. |
+| 3 | "Hang on — is that something you actually read somewhere, or is it a guess? What evidence would prove it either way?" | `keep-theses-distinct-from-fact` 17 (`actually`,`evidence`,`prove`); below threshold: `serve-the-present-person` 1 (`what`) | **`keep-theses-distinct-from-fact`** → none | The two Strong epistemic keywords. Protected-tier winner, surfaced only on a genuine opportunity signal. |
+| 4 | "There's something else. A colleague of mine is going through a divorce — it's personal, and she hasn't told me herself, so I don't want to pry." | `respect-persons-boundaries` 9 (`colleague`,`personal`,`she`); below threshold: `learn-what-drives-this-person` 2, then `serve-the-present-person` 1 | **`respect-persons-boundaries`** → none | The explicit boundary decline. |
+| 5 | "Enough about AI and the economy — what I really want is help figuring out my own next step." | `serve-the-present-person` 6 (`what`,`want`,`help`); `track-the-ai-transition` 16 (`ai`,`economy`); below threshold: `learn-what-drives-this-person` 2, then `keep-theses-distinct-from-fact` 1 | **`serve-the-present-person`** → `track-the-ai-transition` | The tier-3-beats-tier-5 arbitration probe. `help` (Normal, 4) is what lifts the service goal over the threshold at all (Corrections item 1). Reproduces the "generic service goal crowds out the topical goal" pattern recorded in `Experiment.WorldConsultation.md`. |
+| 6 | "Could you keep an eye on how my sleep is affecting my focus? I'd like us to notice that pattern over time." | `grow-the-library` 8 (`notice`,`pattern`); below threshold: `learn-what-drives-this-person` 2, then `serve-the-present-person` 1 | **`grow-the-library`** → none | Uses `notice`, the fixture term (`noticed` would not match). `RetrieveContext` is an allowed effect, so a context-retrieval hint may be stashed for the next turn. |
+| 7 | "Can you remember that thesis you had about me putting things off? I think it happened again this week." | `grow-the-library` 12 (`remember`,`thesis`); below threshold: `learn-what-drives-this-person` 2, then `serve-the-present-person` 1 | **`grow-the-library`** → none | Memory recall against the seeded procrastination record; consumes any turn-6 retrieval hint; a repeat winner exercises the anti-nag suppression path when turn 6 surfaced. The stoplisted initial `Can` prevents the capitalization detector from treating this as a world-topic query. |
 | 8 | "Can you find the latest on Grok, since the planners keep bringing it up?" | nothing qualifies (`can` 1) | none — explicit-topic path, consultation **expected** | Capitalized-entity world consultation. Cues `find`/`latest`; anchor `grok`; the bundled fixture corpus contains a Grok article, so the default run injects a real match. |
 | 9 | "Can you find the latest on grok, since the planners keep bringing it up?" | nothing qualifies | none — consultation **not expected** | The STT-lowercased twin. `Can` is stoplisted, `grok` is lowercase, and there is no dotted version, so the explicit-topic detector returns `None` (Corrections item 7). Byte-identical to turn 8 except one capital letter. |
-| 10 | "Never mind — you got it the first time. What are you focused on right now, and what's pulling at your attention?" | nothing qualifies (`what` 1) | none — `below_qualification_threshold` | The read-only tool-loop turn: the session instructions direct `inspect_volition_state` for current-focus questions. Also the deliberate no-qualifier suppression class. |
-| 11 | "So where is all of this heading for society — the whole world, not just warehouses?" | `assemble-world-picture` 8 (`society`,`world`) | **`assemble-world-picture`** → none | `heading` matches nothing; `world` and `society` are the fixture terms. Exercises the subconscious reduced-ambient-exposure path and a second goal-activation `ConsultWorld`. |
+| 10 | "Never mind — you got it the first time. What are you focused on right now, and what's pulling at your attention?" | nothing qualifies; below threshold: `serve-the-present-person` 1 (`what`) | none — `below_qualification_threshold` | The read-only tool-loop turn: the session instructions direct `inspect_volition_state` for current-focus questions. Also the deliberate no-qualifier suppression class. |
+| 11 | "So where is all of this heading for society — the whole world, not just warehouses?" | `assemble-world-picture` 8 (`society`,`world`) | **`assemble-world-picture`** → none | `heading` matches nothing; `world` and `society` are the fixture terms. Exercises the subconscious reduced-ambient-exposure path and the script's goal-activation `ConsultWorld`. |
 | 12 | "That's a lot to sit with. I need to plan my next month around it — can you help me name the one thing to learn first?" | `serve-the-present-person` 6 (`need`,`can`,`help`); `learn-what-drives-this-person` 7 (`i`,`my`,`me`,`plan`) | **`serve-the-present-person`** → `learn-what-drives-this-person` | Natural close and the landing turn for a deferred turn-11 consultation. Note `learn` does **not** match `grow-the-library`'s `learned`, so that goal stays out of the contest. |
 
 Notes carried into the fixture README:
@@ -1075,12 +1075,18 @@ expectation blocks, and the corpus-dependent world-consultation turn land togeth
   the declared offsets, asserted on the **`last_reinforced_at`-derived age** for records that carry
   one (that is the timestamp decay actually reads) and on `created_at` for those that do not;
   retrieving with the turn-7 phrase through `retrieve_memories` (`AssociationWeighted`, the
-  sideband's strategy) ranks the intended procrastination record first; the same test with `now` set
-  years in the future produces the identical ranking.
+  sideband's strategy) ranks the intended procrastination record ahead of its associated logistics
+  context and asserts the full two-record order. One render uses `OffsetDateTime::now_utc()` so
+  retrieval's ambient clock exercises real recency decay; a future render preserves that order.
 - Snapshot tests: the seeded `volition-state.json` loads through
   `VolitionContinuitySnapshot::load_or_upgrade` and passes `snapshot_is_fixture_compatible`; a
   deliberately incompatible variant is *discarded with a `VolitionContinuityNote`* and does not
-  panic; a malformed file likewise produces a note.
+  panic; a malformed file likewise produces a note. The checked-in `inspection` is pinned to
+  `build_state_inspection(&state, &fixture)`.
+- Seed schema and persistence tests: the continuity template is deserialized as a typed
+  `ContinuityManifest` and rejects unknown schema versions or resume modes; materialization uses the
+  memory, volition, and manifest types' atomic persistence helpers. A failed warm materialization is
+  recorded as failed seed provenance rather than claiming a successful warm start.
 - Provenance test: every seed record sets `provenance` and `trust_tier` explicitly (parse the raw
   JSON and assert the keys are present, so a future serde default cannot silently take over), and no
   record sets `time_sensitive_decay_half_life_days`.
@@ -1091,6 +1097,9 @@ expectation blocks, and the corpus-dependent world-consultation turn land togeth
   the fallback source and the degradation reason, not merely `state: "ready"`.
 - The phrase-design hard gate covers the smoke set as well as the designed script, so neither
   fixture's `expected` block can drift from what the selector actually produces.
+- Diagnostics expectation tests separate the offline explicit-topic verdict from live consultation
+  effects, match the authoritative trigger and anchors across deferred landing turns, and report an
+  unexpected goal-activation lookup without shifting the expected matches.
 - `cargo test -p qsf_realtime_server -p qsf_memory -p qsf_volition` green;
   `cargo clippy --all-targets -- -D warnings`; `cargo fmt`.
 
@@ -1099,8 +1108,9 @@ expectation blocks, and the corpus-dependent world-consultation turn land togeth
 realtime responses (the tool-loop turn can add up to three more provider responses before the spoken
 answer) plus roughly twelve off-hot-path goal-formation calls. Audio output tokens dominate; this is
 the most expensive step in the plan. Evidence to collect: status `passed`; the expectation diff empty
-or explained; the world-consultation pair shows exactly one `world_consultation_performed` record for
-turn 8 and none for turn 9; turn 7's turn context contains the seeded memory; the tool-loop turn
+or explained; across the turn-8/9 pair there is exactly one `world_consultation_performed` record
+with trigger `explicit_current_topic` and required anchor `grok` (its exchange index may be 8 or 9
+because an over-budget lookup defers); turn 7's turn context contains the seeded memory; the tool-loop turn
 shows a `ToolExecutionRecord` for `inspect_volition_state`; the formation clause shows
 `settled == expected`.
 
@@ -1108,6 +1118,31 @@ shows a `ToolExecutionRecord` for `inspect_volition_state`; the formation clause
 legitimately changes later turns' activation. Therefore the offline phrase-design test is the hard
 gate, while the live run reports per-turn expectation differences as a **diff recorded in the
 manifest**, never as a verdict failure. The verdict's failing clauses stay strictly deterministic.
+
+**Status: COMPLETE (2026-07-31).**
+
+**What was done**
+
+- Added the designed synthetic twelve-turn phrase set, corrected smoke expectations, and the
+  checked-in relative-time continuity seed bundle. The default probe now uses the designed set and
+  warm materialization; `--cold-start` skips it and `--seed-only` materializes the same bundle.
+- Added the warm-state phrase gate, memory-age and retrieval checks, snapshot compatibility and
+  degradation coverage, explicit seed provenance checks, plus the capitalization control pair.
+- Corrected expectation-diff and empty-clause rendering, and carried corpus-resolution source and
+  fallback degradation provenance into run manifests.
+- Split the offline explicit-topic declaration from live world-consultation expectations. Live
+  comparison now uses the authoritative diagnostics trigger and anchors across the full run, so
+  deferred records do not invert the capitalization control and the goal-activation consultation is
+  declared independently.
+- Validated and atomically persisted typed seed artifacts, strengthened association-weighted
+  retrieval into a two-record contest under the ambient clock, pinned snapshot inspection, and made
+  failed seed materialization explicit in manifest provenance.
+
+**Verification**
+
+- Offline selector, diagnostics-expectation, seed-materialization, retrieval, snapshot, rendering,
+  seed/corpus-provenance, and typed-persistence tests run without OpenAI credentials or network
+  access. The paid full-script run remains an operator step.
 
 ---
 

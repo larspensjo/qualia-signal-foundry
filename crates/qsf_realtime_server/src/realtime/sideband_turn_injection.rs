@@ -253,6 +253,7 @@ pub(crate) async fn inject_trusted_turn_context_and_response(
                             initiative_output: output.clone(),
                             query_terms: combined_query_terms,
                             trigger: WorldConsultationTrigger::GoalActivation,
+                            explicit_required_anchors: Vec::new(),
                             // This path is entered only from a trusted final input transcript.
                             // Keep the answer-derived alternative explicit for future producers.
                             query_origin: WorldQueryOrigin::UserInput,
@@ -361,9 +362,8 @@ pub(crate) async fn inject_trusted_turn_context_and_response(
                             serving_tension_ids: Vec::new(),
                             initiative_output: request.initiative_output,
                             query_terms,
-                            trigger: WorldConsultationTrigger::ExplicitCurrentTopic {
-                                required_anchors: request.required_anchors,
-                            },
+                            trigger: WorldConsultationTrigger::ExplicitCurrentTopic,
+                            explicit_required_anchors: request.required_anchors,
                             query_origin: WorldQueryOrigin::UserInput,
                         },
                         &mut runtime_state.surfaced_world_content_hashes,
