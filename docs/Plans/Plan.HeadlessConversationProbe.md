@@ -1,7 +1,7 @@
 # Plan: Headless scripted realtime conversation probe
 
-Status: In progress — Phases 1, 2, 3, 4, 5, and 6 complete (2026-07-31, `feature/headless-conversation`;
-Phases 1 and 2 include their live operator runs); next is launcher integration
+Status: In progress — Phases 1, 2, 3, 4, 5, and 6 complete (2026-08-01, `feature/headless-conversation`;
+Phases 1, 2, 5, and 6 include their live operator runs); next is launcher integration
 Maturity: Candidate
 Area: Realtime session server / Launcher / Artifact generation
 
@@ -1137,12 +1137,73 @@ manifest**, never as a verdict failure. The verdict's failing clauses stay stric
 - Validated and atomically persisted typed seed artifacts, strengthened association-weighted
   retrieval into a two-record contest under the ambient clock, pinned snapshot inspection, and made
   failed seed materialization explicit in manifest provenance.
+- The consultation trigger recorded on a world-consultation trace is **optional**. Introducing it as
+  a required field made every previously written ledger unreadable — `transcript` reported the
+  affected lines as skipped, which would have broken both the `source.complete` acceptance criterion
+  and the structural-reference work that parses an earlier run. Diagnostics artifacts are sealed and
+  never migrated in place, so absence is preserved rather than backfilled with a guess, and a
+  regression test pins that a trigger-less trace still deserializes.
 
-**Verification**
+**Offline verification**
 
 - Offline selector, diagnostics-expectation, seed-materialization, retrieval, snapshot, rendering,
   seed/corpus-provenance, and typed-persistence tests run without OpenAI credentials or network
-  access. The paid full-script run remains an operator step.
+  access.
+- `cargo build`; `cargo test --workspace` (0 failures; the two paid live probes stay `#[ignore]`d);
+  `cargo clippy --all-targets -- -D warnings`; `cargo fmt --check`.
+
+**Phrase-table corrections.** The table above is hand-computed, and running it against the real
+selector was its first check. Eight rows were wrong — the smoke set's first phrase and the designed
+script's below-threshold lists for turns 3–7 and 10, plus empty lists for turns 11–12 — and the
+table has been corrected to match the shipped fixture. One phrase was also reworded: the
+memory-recall turn originally opened with `Remember`, a capitalized non-stoplisted word that acted
+as a world-consultation anchor while `happened` supplied the current-information cue, so the turn
+fired an external lookup instead of staying a recall probe. It now opens with the already-stoplisted
+`Can`, which is the remedy Corrections item 7 anticipated.
+
+**Operator follow-up — the full-script live run was performed 2026-08-01, verdict `passed`.**
+
+`cargo run -p qsf_realtime_server -- probe`, twelve turns, run directory `state/probe/20260801-064555`.
+A two-turn smoke run (`state/probe/20260801-061721`) preceded it to exercise the warm-seed path
+live for a sixth of the cost. Evidence collected:
+
+- **The capitalization control resolved cleanly.** Exchange 7 (turn 8, `Grok`) recorded exactly one
+  `world_consultation_performed` with trigger `explicit_current_topic`, required anchor `grok`, and
+  one surfaced fact; exchange 8 (turn 9, `grok`) recorded none. The pair differs by one capital
+  letter, so this is the designed measurement landing as intended. Turn 11's goal-activation
+  consultation was recorded separately with anchors `world`, `society` and no surfaced facts.
+- **The warm seed was consumed, not discarded.** Both runs wrote the continuity note `restored
+  volition state from continuity snapshot (tick=42)`, so the seeded snapshot passed
+  `snapshot_is_fixture_compatible`. This is the check that distinguishes a genuine warm start from a
+  silent cold start behind a passing verdict.
+- **The corpus-resolution provenance fix caught a real degradation on its first live use.** The
+  smoke run was launched with `QSF_WORLD_CORPUS_PATH` set to an empty string; the manifest recorded
+  source `bundled_fixture_after_missing_configured_path` with the degradation reason, where the
+  earlier run of the smoke set had recorded only `state: "ready"`.
+- **Detached formation results reached disk.** The end-of-run volition state holds three live-formed
+  goals (`help-clarify-users-next-step` active, `track-sleep-focus-pattern-over-time` accepted,
+  `understand-warehouse-scheduling-automation-project` retired) at tick 54 from a seed tick of 42 —
+  the outcome the drain barrier and the finalizer's explicit snapshot exist to guarantee. One
+  formation result took the stale-goal-set path (`the goal set changed during formation`) and
+  counted as settled rather than failed; the barrier reported 12/12 settled, 0 failed.
+- **One expectation difference, at turn 12**, reporting `help-clarify-users-next-step` as an extra
+  qualifying goal and loser. It was formed live at turn 5 from the user's redirection toward their
+  own next step and admitted at tick 47, so this is the designed non-failing behavior, not fixture
+  drift. It must not be encoded into the fixture: the goal is absent from the seeded state, so the
+  offline gate would fail, and it does not reproduce across runs.
+- Turn 7's model-visible context carried the seeded procrastination memory, and the turn also
+  invoked `search_memory`. The tool-loop turn (turn 10) recorded one `inspect_volition_state`
+  request and one execution.
+- `transcript --state-dir state/probe/20260801-064555 --full` reported `source.complete == true`,
+  twelve turn lines, zero skipped lines, and zero orphans; `goals` printed a non-empty listing
+  including the live-formed goals.
+
+**Observation for separate work, outside this plan.** Live-formed goals carry no parent tension, so
+they resolve to effective tier 255 and sort last in arbitration regardless of base priority —
+`help-clarify-users-next-step` holds `base_priority: 220`, more than double any fixture goal, and
+still lost to a tier-3 and a tier-5 goal. A goal the simulation forms about the person in front of
+it therefore cannot win a turn under the current tier assignment. This may be the intended
+conservatism for unreviewed goals; the run is simply the first concrete evidence of it.
 
 ---
 
