@@ -27,6 +27,7 @@ Describe "qsf.ps1 argument completion" {
         $completions | Should -Contain "ui"
         $completions | Should -Contain "workbench"
         $completions | Should -Contain "realtime"
+        $completions | Should -Contain "probe"
         $completions | Should -Contain "sleep"
         $completions | Should -Contain "world-ingest"
         $completions | Should -Contain "doctor"
@@ -121,6 +122,37 @@ Describe "qsf.ps1 argument completion" {
 
         $completions | Should -Contain "openai"
         $completions | Should -Contain "mock"
+    }
+
+    It "completes probe flags" {
+        $completions = Complete-QsfInput -InputText ".\scripts\qsf.ps1 probe -"
+
+        $completions | Should -Contain "-PhraseSet"
+        $completions | Should -Contain "-StateDir"
+        $completions | Should -Contain "-WorldCorpusPath"
+        $completions | Should -Contain "-ColdStart"
+        $completions | Should -Contain "-TurnDelayMs"
+    }
+
+    It "completes bundled probe phrase set names and paths" {
+        $completions = Complete-QsfInput -InputText ".\scripts\qsf.ps1 probe -PhraseSet "
+
+        $completions | Should -Contain "smoke"
+        $completions | Should -Contain "designed"
+        $completions | Should -Contain "docs/Experiments/Fixtures/realtime-probe/smoke.phrases.json"
+        $completions | Should -Contain "docs/Experiments/Fixtures/realtime-probe/designed.phrases.json"
+    }
+
+    It "completes sleep -NoBackup" {
+        $completions = Complete-QsfInput -InputText ".\scripts\qsf.ps1 sleep -N"
+
+        $completions | Should -Contain "-NoBackup"
+    }
+
+    It "completes the sleep world corpus path flag" {
+        $completions = Complete-QsfInput -InputText ".\scripts\qsf.ps1 sleep -W"
+
+        $completions | Should -Contain "-WorldCorpusPath"
     }
 
     It "completes sleep state directories" {
@@ -236,6 +268,54 @@ Describe "qsf.ps1 argument completion" {
 
             $completions | Should -Contain "state/realtime"
             $completions | Should -Not -Contain "state/backups"
+        }
+    }
+
+    Context "with concrete probe run directories" {
+        BeforeEach {
+            $script:OriginalCompletionRoot = $script:QsfCompletionProjectRoot
+            $script:QsfCompletionProjectRoot = "$TestDrive"
+            New-Item -ItemType Directory -Force (Join-Path $TestDrive "state/probe/20260803-101010") | Out-Null
+            New-Item -ItemType Directory -Force (Join-Path $TestDrive "state/probe/20260803-101011") | Out-Null
+            New-Item -ItemType Directory -Force (Join-Path $TestDrive "state/backups") | Out-Null
+        }
+
+        AfterEach {
+            $script:QsfCompletionProjectRoot = $script:OriginalCompletionRoot
+            Remove-Item -LiteralPath (Join-Path $TestDrive "state") -Recurse -Force -ErrorAction SilentlyContinue
+        }
+
+        It "offers probe run directories but not the backups root" {
+            $completions = Complete-QsfInput -InputText ".\scripts\qsf.ps1 sleep -StateDir "
+
+            $completions | Should -Contain "state/probe"
+            $completions | Should -Contain "state/probe/20260803-101010"
+            $completions | Should -Contain "state/probe/20260803-101011"
+            $completions | Should -Not -Contain "state/backups"
+        }
+    }
+
+    Context "with nested probe phrase sets" {
+        BeforeEach {
+            $script:OriginalCompletionRoot = $script:QsfCompletionProjectRoot
+            $script:QsfCompletionProjectRoot = "$TestDrive"
+            $phraseRoot = Join-Path $TestDrive "docs/Experiments/Fixtures/realtime-probe"
+            New-Item -ItemType Directory -Force (Join-Path $phraseRoot "sub") | Out-Null
+            Set-Content -LiteralPath (Join-Path $phraseRoot "root.phrases.json") -Value "{}"
+            Set-Content -LiteralPath (Join-Path $phraseRoot "sub/nested.phrases.json") -Value "{}"
+        }
+
+        AfterEach {
+            $script:QsfCompletionProjectRoot = $script:OriginalCompletionRoot
+            Remove-Item -LiteralPath (Join-Path $TestDrive "docs") -Recurse -Force -ErrorAction SilentlyContinue
+        }
+
+        It "offers bare names only for phrase sets directly under the fixture root" {
+            $completions = Complete-QsfInput -InputText ".\scripts\qsf.ps1 probe -PhraseSet "
+
+            $completions | Should -Contain "root"
+            $completions | Should -Contain "docs/Experiments/Fixtures/realtime-probe/sub/nested.phrases.json"
+            $completions | Should -Not -Contain "nested"
         }
     }
 

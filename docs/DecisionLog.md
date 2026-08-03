@@ -2253,6 +2253,31 @@ without a linking reference, using goals to carry facts into context, or using m
 standing instructions are boundary violations. The design brief's open question about a shared
 salience/retrieval scoring model is answered no.
 
+## 2026-08-03 - `probe` is the first-class headless scripted-conversation launcher command
+Decision: The headless scripted-conversation operator surface is `qsf.ps1 probe`, mirroring
+`qsf.ps1 realtime` as the live-conversation surface. It requires `OPENAI_API_KEY` without printing
+it, applies a managed environment delta that pins `QSF_MODEL_PROVIDER=openai` and clears every
+other non-secret `QSF_*` value, mints one run id that it passes to the server as both the run
+directory `state/probe/<run-id>` and the manifest run id, and refuses an existing target directory
+rather than reusing it. Alongside it, `sleep` accepts `-NoBackup` and `realtime` accepts
+`-StateDir`. The launcher and its completion script are extended together, and completion offers
+individual probe run directories rather than only their parent.
+Context: The probe is inherently OpenAI-backed, and the live goal-formation judge silently no-ops
+against the mock client when the provider is unset — the same failure that motivated the realtime
+launcher's environment delta. The run directory and the manifest run id must agree or a run cannot
+be cited, and the diagnostics writer opens its ledger in append mode, so a reused directory would
+silently merge two runs. `sleep` prunes backups per state-directory leaf while the `restore`
+listing has no leaf filter, so a unique run-id leaf per probe run would accumulate backups forever
+and crowd that listing; the documented probe follow-on therefore uses `-NoBackup`. The
+`realtime -StateDir` passthrough is what lets a manual typed session be captured in isolation from
+the appended ledger of earlier runs.
+Consequences: Default `sleep` backup behavior and default `realtime` behavior are unchanged; both
+new switches are opt-in. Generated probe corpora stay under the gitignored `state/` boundary. A
+probe run directory is a normal continuity state directory, so `transcript`, `goals`, and `sleep`
+read it with `-StateDir` and no special casing. Extends the 2026-06-14 `realtime` launcher decision
+and the 2026-07-03 launcher-managed-environment decision, and inherits the 2026-06-08 rule that the
+launcher owns all non-secret `QSF_*` variables and never touches secret-like ones.
+
 ## 2026-09-20 - Memory look-up errs generous; goal activation stays conservative
 Decision: When a relevance judgment decides which stored memories reach the conversation context,
 its cut-off favors recall: a missed relevant memory is the worse error, and an admitted memory that

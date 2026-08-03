@@ -281,6 +281,130 @@ Describe "qsf.ps1 realtime launcher" {
             $listener.Stop()
         }
     }
+
+    It "passes the default realtime state directory to the server" {
+        $script:CapturedRealtimeArguments = @()
+        Mock -CommandName Start-Process -MockWith {
+            $script:CapturedRealtimeArguments = @($ArgumentList)
+            [pscustomobject]@{ Id = 42 }
+        }
+
+        . $script:LauncherScript -Command "help"
+        Start-RealtimeServerProcess | Out-Null
+
+        ($script:CapturedRealtimeArguments -join "|") | Should -Be "run|-p|qsf_realtime_server|--|--state-dir|state/realtime"
+    }
+
+    It "passes an explicit realtime state directory with random session id" {
+        $script:CapturedRealtimeArguments = @()
+        Mock -CommandName Start-Process -MockWith {
+            $script:CapturedRealtimeArguments = @($ArgumentList)
+            [pscustomobject]@{ Id = 42 }
+        }
+
+        . $script:LauncherScript -Command "help" -StateDir "state/realtime-isolated" -RandomSessionId
+        Start-RealtimeServerProcess | Out-Null
+
+        ($script:CapturedRealtimeArguments -join "|") | Should -Be "run|-p|qsf_realtime_server|--|--state-dir|state/realtime-isolated|--random-session-id"
+    }
+}
+
+Describe "qsf.ps1 probe launcher" {
+    BeforeAll {
+        $script:QsfSkipAutoRun = $true
+        . $script:LauncherScript -Command "help"
+    }
+
+    BeforeEach {
+        [System.Environment]::SetEnvironmentVariable("OPENAI_API_KEY", "test-key", "Process")
+    }
+
+    AfterEach {
+        [System.Environment]::SetEnvironmentVariable("OPENAI_API_KEY", $null, "Process")
+        . $script:LauncherScript -Command "help"
+    }
+
+    It "defaults to a state/probe run directory whose leaf is the run id" {
+        . $script:LauncherScript -Command "help"
+
+        $launchPlan = Get-ProbeLaunchPlan
+
+        ($launchPlan.StateDir -replace '\\', '/') | Should -Match '^state/probe/\d{8}-\d{6}$'
+        (Split-Path -Leaf $launchPlan.StateDir) | Should -Be $launchPlan.RunId
+    }
+
+    It "uses an explicit state directory and derives the matching run id" {
+        $explicitStateDir = Join-Path $TestDrive "probe/custom-run"
+        . $script:LauncherScript -Command "help" -StateDir $explicitStateDir
+
+        $launchPlan = Get-ProbeLaunchPlan
+
+        $launchPlan.StateDir | Should -Be $explicitStateDir
+        $launchPlan.RunId | Should -Be "custom-run"
+    }
+
+    It "rejects an existing probe state directory instead of reusing it" {
+        $explicitStateDir = Join-Path $TestDrive "probe/existing-run"
+        New-Item -ItemType Directory -Force $explicitStateDir | Out-Null
+        . $script:LauncherScript -Command "help" -StateDir $explicitStateDir
+
+        { Get-ProbeLaunchPlan } | Should -Throw "*already exists*"
+    }
+
+    It "maps probe options to the cargo command line" {
+        $explicitStateDir = Join-Path $TestDrive "probe/options-run"
+        . $script:LauncherScript `
+            -Command "help" `
+            -StateDir $explicitStateDir `
+            -PhraseSet "smoke" `
+            -ColdStart `
+            -TurnDelayMs 500
+        $launchPlan = Get-ProbeLaunchPlan
+
+        $script:CapturedCargoArguments = @()
+        Mock -CommandName Invoke-WithEnvironmentDelta -MockWith { & $ScriptBlock }
+        Mock -CommandName Invoke-LoggedCommand -MockWith {
+            $script:CapturedCargoArguments = @($Arguments)
+        }
+
+        Invoke-Probe
+
+        $script:CapturedCargoArguments | Should -Contain "probe"
+        $script:CapturedCargoArguments | Should -Contain "--cold-start"
+        $stateDirArgumentIndex = [Array]::IndexOf($script:CapturedCargoArguments, "--state-dir")
+        $stateDirArgumentIndex | Should -BeGreaterOrEqual 0
+        $script:CapturedCargoArguments[$stateDirArgumentIndex + 1] | Should -Be $launchPlan.StateDir
+        $runIdArgumentIndex = [Array]::IndexOf($script:CapturedCargoArguments, "--run-id")
+        $runIdArgumentIndex | Should -BeGreaterOrEqual 0
+        $script:CapturedCargoArguments[$runIdArgumentIndex + 1] | Should -Be $launchPlan.RunId
+        $phraseSetArgumentIndex = [Array]::IndexOf($script:CapturedCargoArguments, "--phrase-set")
+        $phraseSetArgumentIndex | Should -BeGreaterOrEqual 0
+        $script:CapturedCargoArguments[$phraseSetArgumentIndex + 1] | Should -Be "smoke"
+        $turnDelayArgumentIndex = [Array]::IndexOf($script:CapturedCargoArguments, "--turn-delay-ms")
+        $turnDelayArgumentIndex | Should -BeGreaterOrEqual 0
+        $script:CapturedCargoArguments[$turnDelayArgumentIndex + 1] | Should -Be "500"
+    }
+
+    It "pins the probe provider and clears managed variables" {
+        . $script:LauncherScript -Command "help"
+
+        $delta = Get-ProbeEnvironmentDelta
+
+        $delta.Sets["QSF_MODEL_PROVIDER"] | Should -Be "openai"
+        $delta.Sets.Contains("QSF_WORLD_CORPUS_PATH") | Should -BeFalse
+        $delta.Clears | Should -Contain "QSF_SESSION_MAX_TURNS"
+        $delta.Clears | Should -Contain "QSF_STATE_DIR"
+    }
+
+    It "sets the probe world corpus path only when supplied" {
+        $worldCorpusPath = Join-Path $TestDrive "world-corpus"
+        . $script:LauncherScript -Command "help" -WorldCorpusPath $worldCorpusPath
+
+        $delta = Get-ProbeEnvironmentDelta
+
+        $delta.Sets["QSF_WORLD_CORPUS_PATH"] | Should -Be $worldCorpusPath
+        $delta.Clears | Should -Not -Contain "QSF_WORLD_CORPUS_PATH"
+    }
 }
 
 Describe "qsf.ps1 sleep launcher" {
@@ -404,6 +528,27 @@ Describe "qsf.ps1 sleep launcher" {
 
             # The backup must exist by the time cargo is invoked, not after.
             $script:BackupPresentAtRun | Should -BeTrue
+            Should -Invoke Invoke-LoggedCommand -Times 1
+        }
+        finally {
+            Remove-Item -LiteralPath (Join-Path $TestDrive "state") -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
+
+    It "skips the state backup when -NoBackup is supplied" {
+        try {
+            New-Item -ItemType Directory -Force (Join-Path $TestDrive "state/realtime") | Out-Null
+            . $script:LauncherScript -Command "help" -Provider "mock" -StateDir "state/realtime" -NoBackup
+            $projectRoot = "$TestDrive"
+
+            Mock -CommandName New-QsfStateBackup -MockWith { throw "backup should be skipped" }
+            Mock -CommandName Invoke-WithEnvironmentDelta -MockWith { & $ScriptBlock }
+            Mock -CommandName Invoke-LoggedCommand -MockWith { }
+
+            $output = @(Invoke-Sleep 6>&1 | ForEach-Object { $_.ToString() })
+
+            ($output -join "`n") | Should -Match "State backup: skipped \(-NoBackup\)"
+            Should -Invoke New-QsfStateBackup -Times 0
             Should -Invoke Invoke-LoggedCommand -Times 1
         }
         finally {

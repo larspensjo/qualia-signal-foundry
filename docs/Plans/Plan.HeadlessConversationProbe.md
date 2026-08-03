@@ -1,7 +1,8 @@
 # Plan: Headless scripted realtime conversation probe
 
-Status: In progress — Phases 1, 2, 3, 4, 5, and 6 complete (2026-08-01, `feature/headless-conversation`;
-Phases 1, 2, 5, and 6 include their live operator runs); next is launcher integration
+Status: In progress — Phases 1, 2, 3, 4, 5, 6, and 7 complete (2026-08-03,
+`feature/headless-conversation`; Phases 1, 2, 5, and 6 include their live operator runs); next is
+structural comparison
 Maturity: Candidate
 Area: Realtime session server / Launcher / Artifact generation
 
@@ -1276,6 +1277,10 @@ Offline.
 `.\scripts\qsf.ps1 probe -PhraseSet smoke` invocation reviewed for the printed environment delta and
 command line before the paid run.
 
+**Status (2026-08-03):** Implemented the launcher and completion integration, including isolated
+probe run IDs, realtime state-directory passthrough, `sleep -NoBackup`, and the specified Pester
+coverage. No live probe was run.
+
 ---
 
 ## Phase 8 — Making the equivalence claim falsifiable
@@ -1389,9 +1394,10 @@ an itemized change view over the run dir without touching `state/realtime` or `s
   artifact and its fields; the latency-label semantics; and the fact that `volition-state.json` is
   now persisted at an explicit end-of-run boundary as well as inside promotion, so a detached
   formation result is durable. Refresh its Implementation Status and `Last reviewed:`.
-- **`README.md`** — the `probe` command alongside `realtime`/`sleep`/`transcript`/`goals`, the
-  documented follow-on (`transcript`/`goals`/`sleep -StateDir state/probe/<run-id>`), the
-  `sleep -NoBackup` switch, and `realtime -StateDir`.
+- **`README.md`** — **DONE 2026-08-03, alongside the launcher work**: the `probe` command alongside
+  `realtime`/`sleep`/`transcript`/`goals`, the documented follow-on
+  (`transcript`/`goals`/`sleep -StateDir state/probe/<run-id>`), the `sleep -NoBackup` switch, and
+  `realtime -StateDir`. Revisit only if later work changes the operator surface.
 - **`docs/Experiments/Fixtures/README.md`** — add a bundle entry for `realtime-probe/`, and while
   there add the missing entry for `volition-seed.reviewed.draft.json`, which sits in that folder
   undocumented.
@@ -1447,8 +1453,9 @@ an itemized change view over the run dir without touching `state/realtime` or `s
    experiment or report is **copied by hand** into `evaluation/frozen/realtime-probe/<run-id>/` after
    the no-secret check. No freeze command is built. Safety coupling: the phrase script stays entirely
    synthetic.
-6. **"`probe` is the first-class headless scripted-conversation launcher command; `sleep` accepts
-   `-NoBackup` and `realtime` accepts `-StateDir`."** Mirrors *"`realtime` is the first-class
+6. **RECORDED 2026-08-03, alongside the launcher work.** "`probe` is the first-class headless
+   scripted-conversation launcher command; `sleep` accepts
+   `-NoBackup` and `realtime` accepts `-StateDir`." Mirrors *"`realtime` is the first-class
    live-conversation launcher command"* and *"`realtime` launcher manages the server environment and
    pins `QSF_MODEL_PROVIDER=openai`"*; records that probe backups would otherwise accumulate per
    unique run-id leaf and pollute the `restore` listing, that default `sleep` backup behavior is

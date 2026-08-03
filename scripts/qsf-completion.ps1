@@ -13,6 +13,7 @@ $script:QsfCompletionCommands = @(
     "ui",
     "workbench",
     "realtime",
+    "probe",
     "sleep",
     "goals",
     "transcript",
@@ -57,6 +58,22 @@ $script:QsfCompletionTranscriptFlags = @(
     "-Pretty",
     "-Full",
     "-Out"
+)
+
+$script:QsfCompletionProbeFlags = @(
+    "-PhraseSet",
+    "-StateDir",
+    "-WorldCorpusPath",
+    "-ColdStart",
+    "-TurnDelayMs"
+)
+
+$script:QsfCompletionSleepFlags = @(
+    "-StateDir",
+    "-Provider",
+    "-WorldCorpusPath",
+    "-WorldCorpusLedger",
+    "-NoBackup"
 )
 
 $script:QsfCompletionWorldCorpusLedgers = @(
@@ -180,9 +197,38 @@ function Get-QsfCompletionStateDirs {
                 $relativePath = [System.IO.Path]::GetRelativePath($script:QsfCompletionProjectRoot, $_.FullName)
                 $paths.Add(($relativePath -replace '\\', '/'))
             }
+
+        $probeRoot = Join-Path $stateRoot "probe"
+        if (Test-Path -LiteralPath $probeRoot -PathType Container) {
+            Get-ChildItem -LiteralPath $probeRoot -Directory -ErrorAction SilentlyContinue |
+                ForEach-Object {
+                    $relativePath = [System.IO.Path]::GetRelativePath($script:QsfCompletionProjectRoot, $_.FullName)
+                    $paths.Add(($relativePath -replace '\\', '/'))
+                }
+        }
     }
 
     return @($paths | Where-Object { $_ -ne "state/backups" } | Sort-Object -Unique)
+}
+
+function Get-QsfCompletionPhraseSets {
+    $phraseRoot = Join-Path $script:QsfCompletionProjectRoot "docs/Experiments/Fixtures/realtime-probe"
+    if (-not (Test-Path -LiteralPath $phraseRoot -PathType Container)) {
+        return @()
+    }
+
+    $values = [System.Collections.Generic.List[string]]::new()
+    Get-ChildItem -LiteralPath $phraseRoot -File -Filter "*.phrases.json" -ErrorAction SilentlyContinue |
+        ForEach-Object {
+            $values.Add(($_.Name -replace '\.phrases\.json$', ''))
+        }
+    Get-ChildItem -LiteralPath $phraseRoot -Recurse -File -Filter "*.phrases.json" -ErrorAction SilentlyContinue |
+        ForEach-Object {
+            $relativePath = [System.IO.Path]::GetRelativePath($script:QsfCompletionProjectRoot, $_.FullName)
+            $values.Add(($relativePath -replace '\\', '/'))
+        }
+
+    return @($values | Sort-Object -Unique)
 }
 
 function Get-QsfCompletionWorldCorpusPaths {
@@ -399,6 +445,10 @@ $qsfCompleter = {
                 Select-QsfCompletionMatches -Values $script:QsfCompletionExperiments -WordToComplete $wordToComplete
                 return
             }
+            "-PhraseSet" {
+                Select-QsfCompletionMatches -Values (Get-QsfCompletionPhraseSets) -WordToComplete $wordToComplete
+                return
+            }
             "-Store" {
                 Select-QsfCompletionMatches -Values (Get-QsfCompletionStorePaths) -WordToComplete $wordToComplete
                 return
@@ -466,6 +516,22 @@ $qsfCompleter = {
             $goalsContext = Get-QsfCompletionGoalsContext -Arguments $nativeContext.Arguments
             if ($goalsContext.PositionalCount -eq 0) {
                 Select-QsfCompletionMatches -Values (Get-QsfCompletionContinuitySessionIds -StateDir $goalsContext.StateDir) -WordToComplete $wordToComplete
+            }
+            return
+        }
+
+        if ($nativeContext.Arguments.Count -ge 1 -and $nativeContext.Arguments[0] -eq "probe") {
+            if ($wordToComplete -like "-*" ) {
+                Select-QsfCompletionMatches -Values $script:QsfCompletionProbeFlags -WordToComplete $wordToComplete
+                return
+            }
+            return
+        }
+
+        if ($nativeContext.Arguments.Count -ge 1 -and $nativeContext.Arguments[0] -eq "sleep") {
+            if ($wordToComplete -like "-*" ) {
+                Select-QsfCompletionMatches -Values $script:QsfCompletionSleepFlags -WordToComplete $wordToComplete
+                return
             }
             return
         }

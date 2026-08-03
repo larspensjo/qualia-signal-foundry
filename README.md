@@ -270,6 +270,7 @@ together — in one command:
 ```powershell
 .\scripts\qsf.ps1 realtime
 .\scripts\qsf.ps1 realtime -RandomSessionId
+.\scripts\qsf.ps1 realtime -StateDir state/realtime-isolated
 ```
 
 `realtime` verifies `OPENAI_API_KEY` is present (the server requires it and the value
@@ -281,6 +282,38 @@ window. The realtime server and UI ports are fixed at `3940` and `5174` because 
 Vite dev proxy is pinned to the server, so `realtime` does not take `-Port`/`-BindHost`.
 By default it uses the stable `default` QSF session id (reusing local memory and
 continuity); pass `-RandomSessionId` to allocate a fresh session id per run.
+`-StateDir` selects the server's state directory (default `state/realtime`), which
+is what lets a session be captured in isolation from earlier runs — the diagnostics
+ledger is opened in append mode, so sessions sharing a state directory share a file.
+
+Run a scripted conversation headlessly, with no browser and no microphone:
+
+```powershell
+.\scripts\qsf.ps1 probe
+.\scripts\qsf.ps1 probe -PhraseSet smoke
+.\scripts\qsf.ps1 probe -PhraseSet smoke -ColdStart -TurnDelayMs 500
+```
+
+`probe` runs a checked-in phrase script end to end against the live OpenAI Realtime
+API and leaves a realtime-shaped artifact tree, so an analysis corpus can be produced
+on demand instead of by holding a voice conversation. **It spends real money**: the
+default `designed` phrase set is a twelve-turn live run, including audio-modality
+output tokens. Use `-PhraseSet smoke` for the short set. It verifies `OPENAI_API_KEY`
+is present (never printing it), pins `QSF_MODEL_PROVIDER=openai` while clearing the
+other non-secret `QSF_*` values, and writes an isolated run directory
+`state/probe/<run-id>` — the launcher refuses an existing directory rather than
+reusing one. Every run ends with a terminal `run-manifest.json` carrying its verdict;
+a failed run exits non-zero. Pass `-ColdStart` to skip the warm-start seed state and
+`-WorldCorpusPath` to point world consultation at a local corpus.
+
+A probe run directory is a normal continuity state directory, so the inspection
+commands read it unchanged:
+
+```powershell
+.\scripts\qsf.ps1 transcript -StateDir state/probe/<run-id> -Full
+.\scripts\qsf.ps1 goals -StateDir state/probe/<run-id>
+.\scripts\qsf.ps1 sleep -StateDir state/probe/<run-id> -NoBackup
+```
 
 After a realtime session ends, run a first-class sleep/consolidation update over
 the realtime state:
@@ -295,7 +328,10 @@ the realtime state:
 normal realtime workflow. It verifies `OPENAI_API_KEY` for OpenAI-backed runs,
 then calls `qsf_app sleep` to produce reviewable sleep artifacts, update the
 consolidated brief and memory store, and mark the consumed session in the
-continuity manifest. The direct Cargo form is:
+continuity manifest. It backs the state directory up first; `-NoBackup` skips that
+backup, which is the documented form for a probe follow-on, since a unique run-id
+leaf per run would otherwise accumulate backups that crowd the `restore` listing.
+The direct Cargo form is:
 
 ```powershell
 cargo run -p qsf_app -- sleep --state-dir state/realtime --provider openai
@@ -340,10 +376,14 @@ can contain floating point because `qsf_corpus::QueryCandidate.score` is `f64`.
   appear occupied. For the browser server, stop the existing process or launch with
   another port, for example `.\scripts\qsf.ps1 browser -Port 3950`. The realtime
   server's port is fixed at `3940`; free it before running `realtime`.
-- **Missing API key:** OpenAI-backed profiles and the `realtime` command require
-  `OPENAI_API_KEY` in the current shell before launch. The launcher checks presence
-  but never prints the value. The default `sleep` command is also OpenAI-backed;
-  use `.\scripts\qsf.ps1 sleep -Provider mock` for a deterministic local smoke run.
+- **Missing API key:** OpenAI-backed profiles and the `realtime` and `probe` commands
+  require `OPENAI_API_KEY` in the current shell before launch. The launcher checks
+  presence but never prints the value. The default `sleep` command is also
+  OpenAI-backed; use `.\scripts\qsf.ps1 sleep -Provider mock` for a deterministic
+  local smoke run.
+- **Probe state directory already exists:** `probe` refuses to write into an existing
+  directory so two runs cannot be conflated in one appended diagnostics ledger. Pass a
+  different `-StateDir`, or let the launcher mint a fresh `state/probe/<run-id>`.
 - **Missing UI dependencies:** If `ui` or `workbench` reports missing dependencies,
   run `cd crates/qsf_browser_server/ui; npm install`. For `realtime` (or `ui
   realtime`), run `cd crates/qsf_realtime_server/ui; npm install`.

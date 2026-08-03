@@ -24,6 +24,10 @@ param(
     [int]$Port = 3939,
     [switch]$Workbench,
     [switch]$RandomSessionId,
+    [string]$PhraseSet = "",
+    [switch]$ColdStart,
+    [int]$TurnDelayMs = 0,
+    [switch]$NoBackup,
     [switch]$All,
     [switch]$Pretty,
     [switch]$Full,
@@ -371,8 +375,16 @@ function Get-ProfileEnvironmentDelta {
 }
 
 function Get-RealtimeEnvironmentDelta {
-    # The realtime server is OpenAI-backed (the command already requires OPENAI_API_KEY), so
-    # the launcher pins QSF_MODEL_PROVIDER instead of letting sideband model roles (e.g. the
+    return Get-OpenAiServerEnvironmentDelta
+}
+
+function Get-ProbeEnvironmentDelta {
+    return Get-OpenAiServerEnvironmentDelta
+}
+
+function Get-OpenAiServerEnvironmentDelta {
+    # The realtime server and probe are OpenAI-backed (both commands require OPENAI_API_KEY),
+    # so the launcher pins QSF_MODEL_PROVIDER instead of letting sideband model roles (e.g. the
     # live goal-formation judge) silently fall back to the mock client when it is unset.
     $envSets = [ordered]@{
         "QSF_MODEL_PROVIDER" = "openai"
@@ -548,8 +560,9 @@ Usage:
   .\scripts\qsf.ps1 browser [<store>] [-Store <path>] [-BindHost <ip>] [-Port <port>]
   .\scripts\qsf.ps1 ui [browser|realtime]
   .\scripts\qsf.ps1 workbench [<store>] [-Store <path>] [-BindHost <ip>] [-Port <port>]
-  .\scripts\qsf.ps1 realtime [-RandomSessionId] [-WorldCorpusPath <path>]
-  .\scripts\qsf.ps1 sleep [-StateDir <path>] [-Provider <openai|mock>] [-WorldCorpusPath <path>] [-WorldCorpusLedger <path>]
+  .\scripts\qsf.ps1 realtime [-StateDir <path>] [-RandomSessionId] [-WorldCorpusPath <path>]
+  .\scripts\qsf.ps1 probe [-PhraseSet <name|path>] [-StateDir <path>] [-WorldCorpusPath <path>] [-ColdStart] [-TurnDelayMs <ms>]
+  .\scripts\qsf.ps1 sleep [-StateDir <path>] [-Provider <openai|mock>] [-WorldCorpusPath <path>] [-WorldCorpusLedger <path>] [-NoBackup]
   .\scripts\qsf.ps1 goals [<session-id>] [-StateDir <path>] [-Pretty] [-Out <path>]
   .\scripts\qsf.ps1 transcript [<session-id>] [-StateDir <path>] [-All] [-Pretty] [-Full] [-Out <path>]
   .\scripts\qsf.ps1 world-ingest [-WorldCorpusPath <path>] [-WorldCorpusLedger <path>]
@@ -568,13 +581,18 @@ Defaults:
   Text-loop session memory through launcher: empty file source; persisted store wins
   Text-loop session limit through launcher: allow over limit
   UI directory:  crates/qsf_browser_server/ui
-  Realtime server: 127.0.0.1:$realtimeServerPort (state/realtime); requires OPENAI_API_KEY
+  Realtime server: 127.0.0.1:$realtimeServerPort (state/realtime by default); requires OPENAI_API_KEY
     Realtime environment: sets QSF_MODEL_PROVIDER=openai, optionally sets QSF_WORLD_CORPUS_PATH,
                           and clears other non-secret QSF_* values
   Browser UI:      crates/qsf_browser_server/ui (Vite on first free port >= $browserUiPort)
   Realtime UI:     crates/qsf_realtime_server/ui (Vite on $realtimeUiUrl)
   Sleep update:    state/realtime through the $Provider provider; openai requires OPENAI_API_KEY
                    backs up the state dir to state/backups/<name>-<timestamp> first (keeps last 5)
+                   -NoBackup skips that backup for probe follow-ons
+  Probe:           designed phrase set by default (12-turn paid live run); requires OPENAI_API_KEY
+                   writes an isolated run under state/probe/<run-id>
+    Probe environment: sets QSF_MODEL_PROVIDER=openai, optionally sets QSF_WORLD_CORPUS_PATH,
+                       and clears other non-secret QSF_* values
   Goals:           prints full read-only volition goal detail as JSONL from state/realtime; -Pretty restores the console view and -Out writes the result to a file
   Transcript:      prints the newest run in state/realtime/diagnostics as JSONL, one line per turn with its
                    volition traces; an optional session id bypasses ledger auto-selection; -All emits every run
@@ -591,10 +609,14 @@ Examples:
   .\scripts\qsf.ps1 ui
   .\scripts\qsf.ps1 ui realtime
   .\scripts\qsf.ps1 realtime
+  .\scripts\qsf.ps1 realtime -StateDir state/realtime-isolated
   .\scripts\qsf.ps1 realtime -RandomSessionId
   .\scripts\qsf.ps1 realtime -WorldCorpusPath C:\data\web_page_filet_mignon\output
+  .\scripts\qsf.ps1 probe
+  .\scripts\qsf.ps1 probe -PhraseSet smoke -ColdStart -TurnDelayMs 500
   .\scripts\qsf.ps1 sleep
   .\scripts\qsf.ps1 sleep -Provider mock
+  .\scripts\qsf.ps1 sleep -StateDir state/probe/<run-id> -NoBackup
   .\scripts\qsf.ps1 goals
   .\scripts\qsf.ps1 goals 01JSESSION
   .\scripts\qsf.ps1 world-ingest
@@ -1194,11 +1216,109 @@ function Test-RequiredSecret {
     }
 }
 
+function Get-ProbeRunId {
+    return (Get-Date).ToUniversalTime().ToString("yyyyMMdd-HHmmss", [System.Globalization.CultureInfo]::InvariantCulture)
+}
+
+function Get-ProbeLaunchPlan {
+    $stateDirWasProvided = $script:QsfScriptBoundParameters.ContainsKey("StateDir")
+    if ($stateDirWasProvided) {
+        if ([string]::IsNullOrWhiteSpace($StateDir)) {
+            Write-Error "-StateDir must not be empty for probe."
+        }
+
+        $runId = Split-Path -Leaf $StateDir.TrimEnd([char[]]@('\', '/'))
+        if ([string]::IsNullOrWhiteSpace($runId) -or $runId -in @('.', '..')) {
+            Write-Error "-StateDir '$StateDir' must identify a concrete probe run directory."
+        }
+        $resolvedStateDir = $StateDir
+    }
+    else {
+        $runId = Get-ProbeRunId
+        $resolvedStateDir = "state/probe/$runId"
+    }
+
+    $statePath = if ([System.IO.Path]::IsPathRooted($resolvedStateDir)) {
+        [System.IO.Path]::GetFullPath($resolvedStateDir)
+    }
+    else {
+        [System.IO.Path]::GetFullPath((Join-Path $projectRoot $resolvedStateDir))
+    }
+    # Deliberately stricter than the server's populated-output check: the launcher refuses any
+    # existing directory, including a seed-only directory, to prevent accidental run reuse.
+    if (Test-Path -LiteralPath $statePath) {
+        Write-Error "Probe state directory '$resolvedStateDir' already exists; choose another state directory."
+    }
+
+    return [pscustomobject]@{
+        RunId    = $runId
+        StateDir = $resolvedStateDir
+    }
+}
+
+function Get-QsfGitCommit {
+    $git = Get-Command "git" -ErrorAction SilentlyContinue
+    if ($null -eq $git) {
+        return ""
+    }
+
+    Push-Location $projectRoot
+    try {
+        $commit = (& $git.Source rev-parse HEAD 2>$null | Select-Object -First 1)
+        if ($null -ne $commit) {
+            return ([string]$commit).Trim()
+        }
+    }
+    finally {
+        Pop-Location
+    }
+
+    return ""
+}
+
+function Invoke-Probe {
+    Test-RequiredSecret -Name "OPENAI_API_KEY"
+    $launchPlan = Get-ProbeLaunchPlan
+    $gitCommit = Get-QsfGitCommit
+
+    Write-Host "Probe run id: $($launchPlan.RunId)"
+    Write-Host "Probe state directory: $($launchPlan.StateDir)"
+    Write-Host "OPENAI_API_KEY: present in environment; value not shown"
+
+    $arguments = @(
+        "run",
+        "-p",
+        "qsf_realtime_server",
+        "--",
+        "probe",
+        "--state-dir",
+        $launchPlan.StateDir,
+        "--run-id",
+        $launchPlan.RunId
+    )
+    if (-not [string]::IsNullOrWhiteSpace($PhraseSet)) {
+        $arguments += @("--phrase-set", $PhraseSet)
+    }
+    if ($ColdStart) {
+        $arguments += "--cold-start"
+    }
+    if ($script:QsfScriptBoundParameters.ContainsKey("TurnDelayMs")) {
+        $arguments += @("--turn-delay-ms", $TurnDelayMs.ToString([System.Globalization.CultureInfo]::InvariantCulture))
+    }
+    if (-not [string]::IsNullOrWhiteSpace($gitCommit)) {
+        $arguments += @("--git-commit", $gitCommit)
+    }
+
+    Invoke-WithEnvironmentDelta -Delta (Get-ProbeEnvironmentDelta) -ScriptBlock {
+        Invoke-LoggedCommand -Executable "cargo" -Arguments $arguments
+    }
+}
+
 function Start-RealtimeServerProcess {
     $cargo = (Get-Command "cargo" -ErrorAction Stop).Source
-    $arguments = @("run", "-p", "qsf_realtime_server")
+    $arguments = @("run", "-p", "qsf_realtime_server", "--", "--state-dir", $StateDir)
     if ($RandomSessionId) {
-        $arguments += @("--", "--random-session-id")
+        $arguments += "--random-session-id"
     }
     Write-Host "Starting realtime server: $(Format-Command -Executable $cargo -Arguments $arguments)"
     # -NoNewWindow streams the server's cargo build and runtime logs into this console so
@@ -1241,6 +1361,7 @@ function Invoke-Realtime {
     $uiPort = Get-AvailablePort -PreferredPort $realtimeUiPort
     $uiUrl = "http://localhost:$uiPort"
 
+    Write-Host "Realtime state directory: $StateDir"
     Write-Host "Realtime server API: http://127.0.0.1:$realtimeServerPort"
     Write-Host "Realtime UI (open this in your browser): $uiUrl"
     if ($uiPort -ne $realtimeUiPort) {
@@ -1499,16 +1620,21 @@ function Invoke-Sleep {
         Write-Host "OPENAI_API_KEY: present in environment; value not shown"
     }
 
-    $backupPath = New-QsfStateBackup `
-        -StateDirPath (Join-Path $projectRoot $StateDir) `
-        -BackupRootPath (Join-Path $projectRoot $backupRootRelative) `
-        -KeepCount $sleepBackupKeepCount
-    if ($null -ne $backupPath) {
-        $relativeBackup = [System.IO.Path]::GetRelativePath($projectRoot, $backupPath) -replace '\\', '/'
-        Write-Host "State backup: $relativeBackup (keeping last $sleepBackupKeepCount)"
+    if ($NoBackup) {
+        Write-Host "State backup: skipped (-NoBackup)"
     }
     else {
-        Write-Host "State backup: skipped ($StateDir does not exist yet)"
+        $backupPath = New-QsfStateBackup `
+            -StateDirPath (Join-Path $projectRoot $StateDir) `
+            -BackupRootPath (Join-Path $projectRoot $backupRootRelative) `
+            -KeepCount $sleepBackupKeepCount
+        if ($null -ne $backupPath) {
+            $relativeBackup = [System.IO.Path]::GetRelativePath($projectRoot, $backupPath) -replace '\\', '/'
+            Write-Host "State backup: $relativeBackup (keeping last $sleepBackupKeepCount)"
+        }
+        else {
+            Write-Host "State backup: skipped ($StateDir does not exist yet)"
+        }
     }
 
     Invoke-WithEnvironmentDelta -Delta (Get-SleepEnvironmentDelta) -ScriptBlock {
@@ -1626,6 +1752,9 @@ if (Test-QsfAutoRunEnabled) {
         }
         "realtime" {
             Invoke-Realtime
+        }
+        "probe" {
+            Invoke-Probe
         }
         "sleep" {
             Invoke-Sleep
