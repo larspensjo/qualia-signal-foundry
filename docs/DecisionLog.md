@@ -2252,3 +2252,61 @@ only by evidence references. Duplicating one conversational item as both a fact 
 without a linking reference, using goals to carry facts into context, or using memories to carry
 standing instructions are boundary violations. The design brief's open question about a shared
 salience/retrieval scoring model is answered no.
+
+## 2026-09-20 - Memory look-up errs generous; goal activation stays conservative
+Decision: When a relevance judgment decides which stored memories reach the conversation context,
+its cut-off favors recall: a missed relevant memory is the worse error, and an admitted memory that
+turns out to be irrelevant is the cheaper one. The judgment's job for memory is to keep out the
+clearly unrelated, not to pick the best few. Goal activation keeps the conservative direction
+committed on 2026-07-26. The two directions are set per subsystem and are written down before any
+measurement of a candidate judge.
+Context: Fast language-based decision models make a per-turn semantic relevance judgment affordable
+in the live path, which forces the question of which error to prefer. For memory, the downstream
+conversational model can ignore an irrelevant memory but cannot use one it never saw, so the cost
+of an extra memory is context size only. For goals, a wrongly qualified goal changes what the
+assistant tries to do, so the cost argument does not carry over. This follows from, and is
+consistent with, memory retrieval strength and goal salience being separate scoring models
+(2026-07-30).
+Consequences: The binding constraint on live memory injection becomes the context allowance rather
+than the selector, so that allowance is expected to be raised and its effect on cost, latency, and
+answer quality measured. A candidate judge cannot pass evaluation by admitting nearly everything:
+admitted volume relative to the allowance remains a stated evaluation factor. Changing the goal
+direction requires its own entry referencing 2026-07-26.
+
+## 2026-09-20 - Judge-influenced memory selections do not shape durable memory structure
+Decision: A live memory selection that a relevance judgment influenced in any way — admitted by it,
+or promoted by it past a limit a lexical match alone would not have cleared — is marked as such and
+is ineligible for association building and reinforcement. Only selections that lexical retrieval
+alone would also have made may shape durable structure. Enabling judge-influenced selections to
+count is a separate, deliberate later decision made on live evidence.
+Context: Memories selected together in a conversation are later linked and strengthened during
+sleep, and association is the strongest term in retrieval scoring. A per-turn judge built on
+days-old models would therefore reshape long-term memory through its mistakes, the effect would
+persist after the judge is disabled, and nothing would record which links it caused. A verdict
+carried over to a later turn would additionally link memories to an utterance they were not judged
+against.
+Consequences: The judge improves what the assistant can say in the moment without leaving permanent
+traces, lexical retrieval stays a stable baseline to measure against, and seeded test conversations
+stay repeatable. Genuinely good finds do not strengthen memory until the rule is deliberately
+relaxed; the mark is what makes that later change safe. Eligibility is decided by what lexical
+retrieval alone would have selected, not by the recorded reason for admission.
+
+## 2026-09-20 - The relevance-judgment gate is an operator judgment, and a failed gate halts rather than scraps
+Decision: Whether a candidate relevance judge earns live integration is decided by the operator from
+an evaluation report that presents three factors side by side: how long judging takes, what it
+actually costs, and how good its results are against lexical retrieval on invented data. Reference
+numbers are written down before any result exists and may be revised, with the reason recorded,
+only until the sealed held-out part of the scoring set is first consulted. Tuning happens on the
+development part only; the sealed part is consulted once per candidate model and each look is
+logged. A failed gate halts the work and keeps the judge seam, the scoring set, and the
+measurements; a newer model re-opens it by passing the same gate. The acceptable added time before
+the assistant starts speaking is fixed independently of any judge measurement — initially 300 ms —
+and each revision is recorded with its reason.
+Context: The candidate models are days old, their published numbers are vendor claims, and better
+ones are expected soon, so neither unconditional integration nor abandonment on a first
+disappointing result is appropriate. An exact pass/fail threshold is hard to define in advance and
+some tuning is expected, but numbers chosen after seeing sealed results would make the evaluation
+uninterpretable. A latency criterion derived from the judge's own measured speed would be circular.
+Consequences: Live integration work is conditional on the gate outcome. Model volatility is absorbed
+by re-running a fixed evaluation rather than by redesign. The sealed split's value depends on the
+look discipline being kept. The gate outcome itself is recorded as its own entry when it is made.
