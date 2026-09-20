@@ -166,12 +166,7 @@ pub(super) async fn handle_text_turn(
     runtime_state.active_exchange_index = Some(exchange_index);
     runtime_state.pending_response_exchange = None;
     runtime_state.turn_phase = TurnPhase::Idle;
-    let volition_tick_before = guard.volition.state.tick;
-    let events_applied = apply_trusted_transcript_to_volition(&mut guard, transcript);
-    let volition_snapshot = VolitionStateSnapshot {
-        state: guard.volition.state.clone(),
-        fixture: guard.volition.fixture.clone(),
-    };
+    let volition = advance_volition_for_trusted_turn(&mut guard, transcript);
     drop(guard);
     let input_transcript_ref = format!(
         "exchange:{exchange_index}/transcript:{}",
@@ -189,9 +184,9 @@ pub(super) async fn handle_text_turn(
             "user", transcript,
         )),
         exchange_index,
-        &volition_snapshot,
-        events_applied,
-        volition_tick_before,
+        &volition.snapshot,
+        volition.events_applied,
+        volition.tick_before,
         input_transcript_ref,
     )
     .await
@@ -287,7 +282,7 @@ pub(super) fn record_latency_observation_if_ready(
 
 /// Map a trusted user transcript to volition events and apply them to the session's
 /// in-memory volition state. Called once per trusted turn boundary (StartTurn or Interrupt
-/// disposition). Pure mapping — no external side effects, no diagnostics in Phase 2.
+/// disposition). Pure mapping — no external side effects and no diagnostics.
 pub(super) fn apply_trusted_transcript_to_volition(
     guard: &mut SessionRuntime,
     transcript: &str,
@@ -301,6 +296,33 @@ pub(super) fn apply_trusted_transcript_to_volition(
     );
     guard.volition.apply_events(events.clone());
     events
+}
+
+/// What a trusted turn boundary's volition advance leaves behind: the tick observed before
+/// the advance, the events it applied, and the state snapshot afterwards. Turn-context
+/// injection needs all three, so they are captured together.
+pub(super) struct TrustedTurnVolitionAdvance {
+    pub tick_before: u64,
+    pub events_applied: Vec<qsf_volition::VolitionEvent>,
+    pub snapshot: VolitionStateSnapshot,
+}
+
+/// Advance volition for a trusted turn boundary and capture what the following turn-context
+/// injection reports about it.
+pub(super) fn advance_volition_for_trusted_turn(
+    guard: &mut SessionRuntime,
+    transcript: &str,
+) -> TrustedTurnVolitionAdvance {
+    let tick_before = guard.volition.state.tick;
+    let events_applied = apply_trusted_transcript_to_volition(guard, transcript);
+    TrustedTurnVolitionAdvance {
+        tick_before,
+        events_applied,
+        snapshot: VolitionStateSnapshot {
+            state: guard.volition.state.clone(),
+            fixture: guard.volition.fixture.clone(),
+        },
+    }
 }
 
 #[cfg(test)]

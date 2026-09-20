@@ -199,13 +199,11 @@ pub fn cluster_scenario_directive(cluster_id: &str) -> Option<&'static ClusterSc
         .or_else(|| cluster_id.strip_prefix("pool-a-"))
     {
         (0, cluster_name)
-    } else if let Some(cluster_name) = cluster_id
-        .strip_prefix("test-")
-        .or_else(|| cluster_id.strip_prefix("pool-b-"))
-    {
-        (5, cluster_name)
     } else {
-        return None;
+        let cluster_name = cluster_id
+            .strip_prefix("test-")
+            .or_else(|| cluster_id.strip_prefix("pool-b-"))?;
+        (5, cluster_name)
     };
     let index = if cluster_name == "hard-cluster" {
         4

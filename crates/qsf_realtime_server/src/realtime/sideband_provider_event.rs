@@ -14,7 +14,7 @@ use tokio_tungstenite::tungstenite::Message;
 
 use crate::diagnostics::{DiagnosticRecord, DiagnosticTrust};
 use crate::realtime::sideband::{
-    SidebandRuntimeState, apply_trusted_transcript_to_volition, ensure_authoritative_exchange,
+    SidebandRuntimeState, advance_volition_for_trusted_turn, ensure_authoritative_exchange,
     hash_text, record_latency_observation_if_ready, send_json,
 };
 use crate::realtime::sideband_attachment::SidebandAttachment;
@@ -24,7 +24,6 @@ use crate::realtime::token_usage::{
     INPUT_TRANSCRIPTION_ROLE, TokenClassCounts, log_observed_usage, transcription_token_counts,
     transcription_usage,
 };
-use crate::realtime::tools::VolitionStateSnapshot;
 use crate::realtime::turn_integrity::{
     TranscriptDisposition, TurnPhase, classify_final_transcript,
 };
@@ -158,10 +157,7 @@ pub(crate) async fn handle_provider_event(
                 );
                 return Ok(());
             }
-            let volition_tick_before;
-            let volition_events_applied;
-            let volition_snapshot;
-            match classify_final_transcript(runtime_state.turn_phase, &transcript) {
+            let volition = match classify_final_transcript(runtime_state.turn_phase, &transcript) {
                 TranscriptDisposition::IgnoreAsNoise => {
                     guard
                         .diagnostics
@@ -267,13 +263,7 @@ pub(crate) async fn handle_provider_event(
                             &exchange,
                         )?;
                     }
-                    volition_tick_before = guard.volition.state.tick;
-                    volition_events_applied =
-                        apply_trusted_transcript_to_volition(&mut guard, &transcript);
-                    volition_snapshot = VolitionStateSnapshot {
-                        state: guard.volition.state.clone(),
-                        fixture: guard.volition.fixture.clone(),
-                    };
+                    advance_volition_for_trusted_turn(&mut guard, &transcript)
                 }
                 TranscriptDisposition::StartTurn => {
                     let exchange_index = ensure_authoritative_exchange(&mut guard);
@@ -300,15 +290,9 @@ pub(crate) async fn handle_provider_event(
                     runtime_state.active_exchange_index = Some(exchange_index);
                     runtime_state.pending_response_exchange = None;
                     runtime_state.turn_phase = TurnPhase::Idle;
-                    volition_tick_before = guard.volition.state.tick;
-                    volition_events_applied =
-                        apply_trusted_transcript_to_volition(&mut guard, &transcript);
-                    volition_snapshot = VolitionStateSnapshot {
-                        state: guard.volition.state.clone(),
-                        fixture: guard.volition.fixture.clone(),
-                    };
+                    advance_volition_for_trusted_turn(&mut guard, &transcript)
                 }
-            }
+            };
             drop(guard);
             let input_transcript_ref = format!(
                 "exchange:{}/transcript:{}",
@@ -325,9 +309,9 @@ pub(crate) async fn handle_provider_event(
                 outbound_tx,
                 None,
                 runtime_state.active_exchange_index.unwrap_or_default(),
-                &volition_snapshot,
-                volition_events_applied,
-                volition_tick_before,
+                &volition.snapshot,
+                volition.events_applied,
+                volition.tick_before,
                 input_transcript_ref,
             )
             .await?;
