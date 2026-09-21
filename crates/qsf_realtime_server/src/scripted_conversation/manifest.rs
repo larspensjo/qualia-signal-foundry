@@ -3,10 +3,7 @@ use std::path::Path;
 
 use serde::{Deserialize, Serialize};
 
-use super::{
-    ProbeRunState, ProbeVerdict, RuntimeCounters, SecretScanReport, StructuralComparison,
-    TraceContractReport,
-};
+use super::{ProbeRunState, ProbeVerdict, RuntimeCounters, SecretScanReport, TraceContractReport};
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 pub struct ProbeManifestMetadata {
@@ -66,7 +63,6 @@ pub struct RunManifest {
     pub run_state: ProbeRunState,
     pub runtime_counters: RuntimeCounters,
     pub trace_contract: TraceContractReport,
-    pub structural_comparison: StructuralComparison,
     pub secret_scan: SecretScanReport,
     pub failing_clauses: Vec<String>,
     pub structured_clauses: Vec<String>,
@@ -88,7 +84,6 @@ pub fn build_run_manifest(
     run_state: ProbeRunState,
     runtime_counters: RuntimeCounters,
     trace_contract: TraceContractReport,
-    structural_comparison: StructuralComparison,
     secret_scan: SecretScanReport,
     verdict: ProbeVerdict,
     original_failure: Option<String>,
@@ -121,7 +116,6 @@ pub fn build_run_manifest(
         run_state,
         runtime_counters,
         trace_contract,
-        structural_comparison,
         secret_scan,
         failing_clauses: verdict.failing_clauses,
         structured_clauses: verdict.structured_clauses,
@@ -154,7 +148,7 @@ mod tests {
     use super::*;
     use crate::scripted_conversation::{
         ProbeRunState, ProbeStatus, ProbeVerdict, RuntimeCounters, SecretScanReport,
-        StructuralComparison, TraceContractReport,
+        TraceContractReport,
     };
     #[test]
     fn atomic_write_replaces_terminal_document() {
@@ -194,7 +188,6 @@ mod tests {
             ProbeRunState::default(),
             RuntimeCounters::default(),
             TraceContractReport::default(),
-            StructuralComparison::default(),
             SecretScanReport::default(),
             verdict.clone(),
             Some("first failure".into()),
@@ -213,7 +206,6 @@ mod tests {
             ProbeRunState::default(),
             RuntimeCounters::default(),
             TraceContractReport::default(),
-            StructuralComparison::default(),
             SecretScanReport::default(),
             verdict,
             None,

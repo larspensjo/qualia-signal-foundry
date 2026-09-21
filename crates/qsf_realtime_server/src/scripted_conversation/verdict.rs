@@ -4,18 +4,6 @@ use crate::realtime::token_usage::TokenUsageSnapshot;
 
 use super::{ProbeRunState, SecretScanReport, TraceContractReport};
 
-/// Placeholder for the later artifact-structure builder. It deliberately says why no comparison
-/// was made, so adding a real reference does not change the verdict API.
-#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, Eq)]
-pub enum StructuralComparison {
-    #[default]
-    NoStructuralReferenceConfigured,
-    Matches,
-    Divergence {
-        details: Vec<String>,
-    },
-}
-
 #[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, Eq)]
 pub struct RuntimeCounters {
     pub phrase_count: usize,
@@ -50,7 +38,6 @@ pub fn probe_verdict(
     state: &ProbeRunState,
     counters: &RuntimeCounters,
     traces: &TraceContractReport,
-    structure: &StructuralComparison,
     secrets: &SecretScanReport,
     finalization_errors: &[String],
     original_failure: Option<&str>,
@@ -85,9 +72,6 @@ pub fn probe_verdict(
     }
     if !traces.complete {
         failing.push("trace_contract".to_string());
-    }
-    if matches!(structure, StructuralComparison::Divergence { .. }) {
-        failing.push("structural_divergence".to_string());
     }
     if secrets.found {
         failing.push("secret_detected".to_string());
@@ -154,15 +138,7 @@ mod tests {
         traces: &TraceContractReport,
         secrets: &SecretScanReport,
     ) -> ProbeVerdict {
-        probe_verdict(
-            state,
-            counters,
-            traces,
-            &StructuralComparison::default(),
-            secrets,
-            &[],
-            None,
-        )
+        probe_verdict(state, counters, traces, secrets, &[], None)
     }
 
     #[test]
@@ -275,7 +251,6 @@ mod tests {
             &state,
             &counters,
             &traces,
-            &StructuralComparison::default(),
             &secrets,
             &["manifest precursor failed".to_string()],
             None,
@@ -288,7 +263,6 @@ mod tests {
             &failed_state,
             &counters,
             &traces,
-            &StructuralComparison::default(),
             &secrets,
             &["also failed".to_string()],
             None,
@@ -304,7 +278,6 @@ mod tests {
             &state,
             &counters,
             &traces,
-            &StructuralComparison::default(),
             &secrets,
             &[],
             Some("OPENAI_API_KEY is required"),

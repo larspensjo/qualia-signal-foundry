@@ -2335,3 +2335,35 @@ uninterpretable. A latency criterion derived from the judge's own measured speed
 Consequences: Live integration work is conditional on the gate outcome. Model volatility is absorbed
 by re-running a fixed evaluation rather than by redesign. The sealed split's value depends on the
 look discipline being kept. The gate outcome itself is recorded as its own entry when it is made.
+
+## 2026-09-21 - Headless probe runs generate a corpus; they do not judge its shape
+Decision: A headless scripted-conversation run executes its pre-defined phrases, saves its artifact
+tree, and makes no claim about whether the result matches a live browser session. There is no
+checked-in reference capture of a manual session, no record-kind or field-level comparison against
+one, and no accepted-gaps document enforcing the known fidelity differences; those differences are
+documented in the fixture README as prose. What an artifact corpus must contain is decided by the
+analysis that consumes it, not by the run that produced it. The probe's terminal verdict is retained
+but is strictly about run health — attach and turn timeouts, sideband termination, promoted-turn
+count against phrase count, non-promotable exchanges, a non-zero degradation epoch, an incomplete
+per-turn trace contract, and any secret found in the terminal manifest — never about model behavior
+or artifact shape.
+Context: An artifact-shape comparison was specified, implemented, and reviewed before being
+withdrawn, and two findings from that review are why the reversal is durable rather than a
+preference. First, a value-free shape description was not achievable as specified: volition state
+keys goals by id and live goal formation derives those ids from what was said, so extracted field
+paths carried verbatim conversation content into a document intended for the repository. Second, a
+reference derived from one captured session records what that session happened to contain, so every
+optional or conversation-dependent field becomes mandatory; replaying the comparison across two runs
+of the same twelve-turn script produced 206 differences, none of them regressions. More fundamentally,
+model output legitimately varies between runs, so there is no defensible definition of a passing run
+at the level of artifact content — which also means a headless run cannot serve as a pass/fail
+integration test, and the earlier framing of it as one is withdrawn.
+Consequences: No paid reference-capture session is needed, and the probe's cost is only its own runs.
+`run-manifest.json` carries no structural-comparison field and the verdict has no structural clause.
+The accepted fidelity gaps are documentary, so a new divergence from a live session will not announce
+itself — an analysis that depends on a particular record kind being present must check for it. If an
+equivalence claim is ever needed again, it should be derived from the program's own data definitions
+rather than from a captured conversation, and should compare which kinds of information appear rather
+than individual fields. `probe --seed-only` is retained for preparing a manual session with the same
+warm-start store as a probe run. Narrows the 2026-08-03 `probe` launcher decision, which assumed a
+structural comparison would exist.

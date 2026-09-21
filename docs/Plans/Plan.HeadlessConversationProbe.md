@@ -1,8 +1,9 @@
 # Plan: Headless scripted realtime conversation probe
 
 Status: In progress — Phases 1, 2, 3, 4, 5, 6, and 7 complete (2026-08-03,
-`feature/headless-conversation`; Phases 1, 2, 5, and 6 include their live operator runs); next is
-structural comparison
+`feature/headless-conversation`; Phases 1, 2, 5, and 6 include their live operator runs); Phase 8
+(artifact-shape comparison) withdrawn by operator decision 2026-09-21; next is the documentation and
+decision-log pass
 Maturity: Candidate
 Area: Realtime session server / Launcher / Artifact generation
 
@@ -195,8 +196,9 @@ references elsewhere in this document point at the numbers here.
    exact-term matching with no stemming (`qsf_volition::normalize_terms`), so phrases must hit real
    keywords in `qsf_volition::realtime_seed_fixture()`.
 5. **Document track: this plan, no experiment document.**
-6. **Accepted fidelity gaps**, restated in the fixture README and encoded machine-readably in the
-   structural comparison's accepted-gaps file:
+6. **Accepted fidelity gaps**, restated in the fixture README. These were to have been encoded
+   machine-readably for an automated shape comparison; that comparison was withdrawn (Phase 8), so
+   the README is now their only home and they are documentary, not enforced:
    - No browser-relayed envelopes, and therefore no untrusted diagnostic exchanges and no
      `SpeechPlaybackCompleted` (Corrections item 3).
    - No `call_bound` and no `sdp_rendezvous` latency observation, because the model-scoped attach
@@ -283,8 +285,8 @@ state/probe/<run-id>/run-manifest.json
   timings, promoted turn count, non-promotable indices, degradation epoch and every recorded
   degradation reason, sideband termination reason, formation clause (expected / settled / failed /
   timed_out / timeout_ms), token-ledger snapshot, audio-delta counts and byte volume, world-corpus
-  state and marker, seed mode, expectation diff, structural-comparison result, no-secret scan
-  result, finalization errors.
+  state and marker, seed mode, expectation diff, no-secret scan result, finalization errors.
+  (A `structural_comparison` field was specified and built; it was removed with Phase 8.)
 ```
 
 **Automated artifact-parsing verification** (not merely run status):
@@ -297,8 +299,10 @@ state/probe/<run-id>/run-manifest.json
 - `.\scripts\qsf.ps1 transcript -StateDir state/probe/<run-id> -Full -Out <path>` must emit
   `source.complete == true`, exactly one `turn` line per phrase, and no non-empty `undecodable`.
 - `.\scripts\qsf.ps1 goals -StateDir state/probe/<run-id>` must emit a non-empty goal listing.
-- The structural comparison parses the run and a checked-in structural reference and asserts record
-  kinds, `(field path, JSON type)` pairs, and required-file presence — never values.
+- ~~The structural comparison parses the run and a checked-in structural reference and asserts
+  record kinds, `(field path, JSON type)` pairs, and required-file presence — never values.~~
+  Withdrawn with Phase 8. The three checks above are the whole artifact-parsing contract; no check
+  compares a run against a reference session.
 
 ---
 
@@ -747,9 +751,11 @@ never persisted, and diagnostics can be appended after an end-of-run scan.
 
 **Deliberate follow-ups**
 
-- The structural-comparison result has an explicit `NoStructuralReferenceConfigured` state;
-  it produces no divergence. The structural builder and reference remain the later artifact work.
-- Seed materialization and structure-only document emission remain deferred to their owning work.
+- ~~The structural-comparison result has an explicit `NoStructuralReferenceConfigured` state.~~
+  The placeholder and the whole comparison concept were removed with Phase 8; the verdict no longer
+  has a structural clause.
+- Seed materialization landed as `probe --seed-only`. Structure-only document emission was built and
+  then removed with Phase 8.
 
 **Operator follow-up — the live smoke run was performed 2026-07-31, verdict `passed`.**
 
@@ -797,11 +803,12 @@ not for this plan), with `mod.rs` kept a thin re-export wrapper:
   SidebandTerminated{reason}, FormationBarrierSettled{expected, settled, failed},
   FormationBarrierTimedOut{..}, RunFinished }` applied to `ProbeRunState`. Unit-testable with no I/O.
 - `verdict.rs` — pure `probe_verdict(&ProbeRunState, &RuntimeCounters, &TraceContractReport,
-  &StructuralComparison, &SecretScanReport) -> ProbeVerdict`, producing a terminal
+  &SecretScanReport) -> ProbeVerdict` (the `&StructuralComparison` parameter was removed with
+  Phase 8), producing a terminal
   `status: passed | failed | infrastructure_error`.
   **Failing clauses (all deterministic):** promoted turn count != phrase count; any non-promotable
   exchange index; `degradation_epoch > 0`; `terminated` set; attach timeout; any turn timeout; any
-  missing required trace field; a structural divergence outside the accepted-gaps list; any secret
+  missing required trace field; any secret
   found under the run dir.
   **Non-failing structured clauses:** formation timeout, formation failures, and per-turn expectation
   differences. These are recorded prominently and never fail the corpus (operator decision).
@@ -822,7 +829,7 @@ not for this plan), with `mod.rs` kept a thin re-export wrapper:
 run-directory creation. Ordinary `?` propagation past that point is forbidden; every fallible step
 funnels through it: seed materialization, `AppState`/session creation, attach timeout, turn timeout,
 sideband task failure or fail-closed termination, formation-barrier errors, trace parse failure,
-structural comparison failure, secret detection.
+secret detection.
 
 Fixed finalization order, which is also what closes Corrections item 12:
 
@@ -833,7 +840,7 @@ Fixed finalization order, which is also what closes Corrections item 12:
 4. snapshot the token ledger and the runtime counters (degradation epoch and reasons,
    non-promotable indices, terminated reason, audio-delta totals)
 5. stop and JOIN the sideband and remove the session, so nothing can append afterwards
-6. parse the artifacts: trace contract, structural comparison, secret scan
+6. parse the artifacts: trace contract, secret scan
 7. atomically write the terminal run-manifest.json and render the verdict
 ```
 
@@ -877,8 +884,8 @@ Session stop reuses a shared path: extract today's `routes.rs::stop_session_impl
   **120000**), `--attach-timeout-ms` (default **30000**), `--formation-timeout-ms` (default
   **60000**), `--git-commit` (optional metadata). Two auxiliary modes on the same subcommand:
   `--seed-only <dir>` materializes the seed bundle into a directory without running anything (a
-  no-op until Phase 6 supplies the bundle), and `--structure-only <dir>` emits an artifact-structure
-  document from an existing run (Phase 8).
+  no-op until Phase 6 supplies the bundle). A second auxiliary mode, `--structure-only <dir>`, was
+  specified and built and then removed with Phase 8.
 - **No HTTP listener.** Justification from the code: the probe drives `SidebandHandle` in-process;
   the HTTP routes exist only for the browser. Binding would collide with a running
   `qsf.ps1 realtime` on the fixed port 3940 (pinned across `cli.rs:7`, the Vite proxy in
@@ -918,7 +925,8 @@ Session stop reuses a shared path: extract today's `routes.rs::stop_session_impl
   unknown-name error text, malformed-document error text, and rejection of a phrase whose `expected`
   block omits the tagged winner.
 - CLI parse tests mirroring the existing `sleep`/`ingest-world` patterns: no subcommand still serves;
-  `probe` defaults, `--seed-only`, and `--structure-only` resolve as documented.
+  `probe` defaults and `--seed-only` resolve as documented (`--structure-only` was removed with
+  Phase 8).
 - `cargo test -p qsf_realtime_server` green; `cargo clippy --all-targets -- -D warnings`; `cargo fmt`.
 
 **Operator / human testing required (paid)**: first end-to-end live run with the two-phrase smoke
@@ -956,8 +964,7 @@ docs/Experiments/Fixtures/realtime-probe/designed.phrases.json                 P
 docs/Experiments/Fixtures/realtime-probe/seed/memory-store.seed.json           Phase 6
 docs/Experiments/Fixtures/realtime-probe/seed/volition-state.json              Phase 6
 docs/Experiments/Fixtures/realtime-probe/seed/continuity-manifest.json         Phase 6
-docs/Experiments/Fixtures/realtime-probe/artifact-structure.reference.json     Phase 8
-docs/Experiments/Fixtures/realtime-probe/artifact-structure.accepted-gaps.json Phase 8
+(no artifact-structure documents — those two files belonged to the withdrawn Phase 8)
 ```
 
 **Seeding behavior**
@@ -989,8 +996,9 @@ docs/Experiments/Fixtures/realtime-probe/artifact-structure.accepted-gaps.json P
 - **`session-state.json` is deliberately not seeded** — Corrections item 2.
 - `--cold-start` skips seeding entirely, preserving the empty-seed path. Warm is the default, so the
   default exercises the compatible-snapshot restore path that no automated run covers today.
-- The same materializer backs `probe --seed-only <dir>`, which Phase 8 uses to give the manual
-  structural-reference session an identical starting store.
+- The same materializer backs `probe --seed-only <dir>`. Its original caller was the withdrawn
+  Phase 8 reference capture; it is retained because giving a manual realtime session the same
+  starting store as a probe run is independently useful for comparison by eye.
 
 **The designed phrase script**
 
@@ -1141,7 +1149,8 @@ manifest**, never as a verdict failure. The verdict's failing clauses stay stric
 - The consultation trigger recorded on a world-consultation trace is **optional**. Introducing it as
   a required field made every previously written ledger unreadable — `transcript` reported the
   affected lines as skipped, which would have broken both the `source.complete` acceptance criterion
-  and the structural-reference work that parses an earlier run. Diagnostics artifacts are sealed and
+  and (at the time) the structural-reference work that parses an earlier run. Diagnostics artifacts
+  are sealed and
   never migrated in place, so absence is preserved rather than backfilled with a guess, and a
   regression test pins that a trigger-less trace still deserializes.
 
@@ -1232,8 +1241,10 @@ Offline.
   `state/realtime`, so behavior is unchanged by default) alongside the existing optional
   `--random-session-id`, and print the resolved state dir in `Invoke-Realtime`. The server CLI
   already accepts the flag with the same default (`crates/qsf_realtime_server/src/cli.rs:16-17`), so
-  this is a pure launcher change with no server work. It is what makes an isolated typed structural
-  reference possible in Phase 8, given the append-mode diagnostics ledger (Corrections item 15).
+  this is a pure launcher change with no server work. Its original motivation was making an isolated
+  typed structural reference possible given the append-mode diagnostics ledger (Corrections item 15);
+  that capture is cancelled with Phase 8, but per-session state-dir isolation remains worth having on
+  its own.
 - `sleep -NoBackup`: skip `New-QsfStateBackup` and print `State backup: skipped (-NoBackup)`. Default
   backup behavior for normal `sleep` is unchanged. Reason: `New-QsfStateBackup` prunes per state-dir
   leaf (`"$leaf-*"`, keep 5) and `Show-QsfStateBackups` lists every directory under `state/backups`
@@ -1283,84 +1294,61 @@ coverage. No live probe was run.
 
 ---
 
-## Phase 8 — Making the equivalence claim falsifiable
+## Phase 8 — Artifact-shape comparison: built, then removed by operator decision (2026-09-21)
 
-"Filesystem result equivalent to a manual typed-turn realtime session" is the acceptance criterion,
-and today there is neither a reference to diff against nor a field-level definition of "equivalent".
-This phase supplies both.
+**Status: WITHDRAWN.** This phase was implemented in full, reviewed, and then reverted on the
+operator's decision. Nothing from it remains in the tree, and the paid typed-reference capture it
+was building toward is cancelled. The record below exists so the work is not rebuilt.
 
-**Work**
+**What the phase was for.** "Filesystem result equivalent to a manual typed-turn realtime session"
+is this plan's acceptance criterion, and there was neither a reference to diff against nor a
+field-level definition of "equivalent". The phase proposed capturing one isolated typed browser
+session, extracting a value-free description of its artifact shape — record kinds, `(field path,
+JSON type)` pairs, required-file presence — and failing any later probe run whose shape diverged
+outside a checked-in accepted-gaps list.
 
-- New pure module `crates/qsf_realtime_server/src/scripted_conversation/artifact_structure.rs`:
-  `build_artifact_structure(run_dir, exchange_range) -> ArtifactStructure`, recording
-  **`(field path, JSON type)` pairs including array element shapes** — not paths alone, because a
-  string-to-object schema regression preserves the path while breaking readers. Covered:
-  - `diagnostics/*.jsonl`: the set of record `kind`s and, per kind, the typed field-path set;
-  - `continuity/default/session-state.json`, `volition-state.json`, `continuity-manifest.json`, and
-    **`memory-store.json`**: typed field-path sets, including per-turn, per-exchange, and per-record
-    element shapes;
-  - **required-file presence**: the set of files that must exist under a conforming run dir.
-  Kinds, paths, and JSON types only — never values.
-- **Contamination guard.** The builder refuses to produce a *reference* from a diagnostics ledger
-  containing more than one `session_allocated` record. The ledger is opened in append mode
-  (Corrections item 15), so a reused `default`-id state dir accumulates earlier sessions and would
-  let historical or voice-only record kinds silently define the reference. The builder also takes an
-  explicit exchange-index range and records it.
-- `compare_artifact_structure(reference, observed, accepted_gaps) -> StructuralComparison`: every
-  required file, record kind, and typed field path in the reference must be present in the observed
-  run unless it appears in the explicit `accepted_gaps` document; a type mismatch on a shared path is
-  a failure; kinds or fields present only in the observed run are reported as additive, not fatal.
-  The comparison result is a **failing** verdict clause.
-- `artifact-structure.accepted-gaps.json` is checked in beside the reference and is exactly the
-  fidelity-gap list from "Settled design" item 6, so any *new* divergence fails loudly while the
-  known ones live in one machine-readable place. It must record `call_invalidated` as expected in the
-  reference but absent from a probe run **because a model-scoped session has no `call_binding` for
-  the stop path to invalidate** — while `call_bound` and `sdp_rendezvous` are absent for the separate
-  reason that the SDP route never runs (Corrections item 4).
-- `artifact-structure.reference.json` carries a provenance header: capture date, git commit, the
-  **isolated state directory**, **input modality (typed only)**, session id, and the exact exchange
-  index range.
-- `probe --structure-only <dir>` produces the document from an existing run without a live call, and
-  `probe --seed-only <dir>` prepares the reference directory with the same seed bundle the probe uses
-  so the manual session retrieves memory the same way (without it a fresh reference dir would have no
-  `memory-store.json` at all, since the realtime server only ever reads that file).
+**Why it was withdrawn.** The operator's decision, in their own framing: *a headless run consists of
+a number of turns with pre-defined input phrases; nothing is required, we just save the result for
+analysis, and what the analysis does with it depends on the task.* The probe generates a corpus; it
+does not judge one. The integration-test framing that motivated a pass/fail shape verdict was
+explicitly stepped back from, because there is no way to define what a passing run would mean when
+the model's output legitimately varies between runs.
 
-**Reference capture procedure (isolated, typed-only)**
+Two findings from the implementation review are worth keeping, because they are evidence that the
+withdrawn design was not merely unwanted but unsound as specified:
 
-```powershell
-cargo run -p qsf_realtime_server -- probe --seed-only state/reference-typed
-.\scripts\qsf.ps1 realtime -StateDir state\reference-typed     # type four turns; microphone OFF
-cargo run -p qsf_realtime_server -- probe --structure-only state/reference-typed
-```
+1. **The extracted description carried conversation content.** Volition state keys goals by id, and
+   live goal formation derives those ids from what was said, so extracted field paths included
+   segments like `understand-warehouse-scheduling-automation-project` — a verbatim restatement of
+   the persona's words. The document was to be committed to the repository, so the "never values"
+   invariant did not hold as specified. The spec enumerated array element shapes and omitted object
+   map keys, which is where the leak occurred.
+2. **The comparison could not distinguish regression from ordinary variation.** The reference
+   recorded "what this one run happened to contain", so any optional or conversation-dependent field
+   became mandatory forever. Replaying the comparison across `state/probe/20260801-064555` and
+   `state/probe/20260801-061721` — two runs of the same twelve-turn script — produced **206
+   failures** (183 missing fields, 21 type mismatches, 2 missing kinds), none of them regressions.
+   A four-turn human reference against a twelve-turn scripted run would have been worse.
 
-The directory must not previously exist. The operator types four turns into the browser UI and does
-not enable the microphone.
+**What this leaves in place.** The probe still fails loudly and exits non-zero on conditions that
+make a corpus *unusable* rather than merely different: attach and turn timeouts, sideband
+termination, a promoted-turn count that does not match the phrase count, non-promotable exchanges, a
+non-zero degradation epoch, an incomplete per-turn trace contract, and any secret detected in the
+terminal manifest. Those are health checks on the run, not judgments of model behavior, and the
+operator decision does not touch them. `run-manifest.json` no longer carries a
+`structural_comparison` field and `structural_divergence` is no longer a verdict clause.
 
-**Relationship to the outstanding manual acceptance run in `docs/Handoff.md`.** The current *Now*
-item is a live four-or-more-turn **voice** conversation followed by `transcript` acceptance. This
-probe **does not supersede it**: the probe has no voice input, so it cannot exercise the STT path,
-`ignored_continuation_transcript`, interruptions, or the `input_transcription` token class. Nor is
-this plan gated by it. The two sessions must **not** be combined into one browser session, tempting
-though it is: a mixed spoken-then-typed session contains voice-only event shapes that cannot
-establish typed-turn equivalence, and both would share one append-mode ledger. The structural
-reference is its own short, isolated, typed-only session. If reuse ever becomes important it would
-need an explicit extractor selecting the typed exchange range and its linked diagnostics — out of
-scope here.
+`probe --seed-only <dir>` is **retained**, though its original caller is gone: it prepares a state
+directory with the same warm-start seed bundle the probe uses, which is independently useful for
+starting a manual realtime session from the same memory and volition state for eyeball comparison.
 
-**Verification (automated)**
+**Relationship to the outstanding manual acceptance run in `docs/Handoff.md`.** Unchanged by this
+withdrawal, and still worth stating. The current *Now* item is a live four-or-more-turn **voice**
+conversation followed by `transcript` acceptance. This probe **does not supersede it**: the probe
+has no voice input, so it cannot exercise the STT path, `ignored_continuation_transcript`,
+interruptions, or the `input_transcription` token class. Nor is this plan gated by it.
 
-- Structure-builder tests over checked-in miniature run trees: kinds, typed paths, and required files
-  are extracted; values never appear in the output; a run missing a kind or a required file fails
-  comparison; a run with an extra kind passes with an additive note; a gap listed in
-  `accepted_gaps` does not fail; **a scalar-to-object type change on an otherwise identical path
-  fails**; **a ledger carrying unrelated pre-existing records (two `session_allocated` records) is
-  rejected as a reference source**.
-- `cargo test -p qsf_realtime_server` green; `cargo clippy --all-targets -- -D warnings`; `cargo fmt`.
-
-**Operator / human testing required (paid)**: the isolated typed reference capture above. Cost:
-**one session, four typed turns**, plus roughly four goal-formation calls. Not combinable with the
-voice acceptance run. The emitted document is reviewed and committed; then re-run the full-script
-probe and confirm the structural-comparison clause passes.
+**Cost avoided**: one paid session of four typed turns plus roughly four goal-formation calls.
 
 **Full acceptance for the plan** (operator, after this phase):
 
@@ -1404,16 +1392,17 @@ an itemized change view over the run dir without touching `state/realtime` or `s
 - **`docs/Experiments/Fixtures/realtime-probe/README.md`** — grow the Phase 5 stub into the full
   document: purpose, per-turn intent table with exact winners and losers, the fidelity-gap list, the
   "not evidence for the spoken world trigger" caveat, the invented-persona / no-real-personal-data
-  rule, the deliberate turn-8/turn-9 pair, the isolated reference-capture procedure, and the
-  hand-freeze convention.
+  rule, the deliberate turn-8/turn-9 pair, and the hand-freeze convention. The fidelity-gap list is
+  now documentary only, since no automated comparison enforces it. Drop the reference-capture
+  procedure — that capture is cancelled.
 - **`docs/ProjectFrame/ProjectWorkflow.md`** — line 67 cites `Plan.RealtimeVoiceConversation.md` as
   "the established pattern" for a phased plan validated by experiment scaffolds, but that file was
   deleted on 2026-07-05 (commit `9efd97c`), so the reference dangles. Repoint it to
   `Plan.WorldPerception.md`, which carries the same phased structure. Pre-existing, cheap, and inside
   this work's blast radius.
 - **`docs/Handoff.md`** — update only if landing a phase changes a Now/Next/Horizon recommendation
-  (pointer, not content). Note that the structural reference is a separate short typed session and
-  does **not** fold into the voice acceptance run.
+  (pointer, not content). The voice acceptance run stands on its own; the typed structural-reference
+  session that was once planned alongside it is cancelled.
 - **Do not** cite this plan's phase labels from any durable document; name the behavior. This plan is
   itself ephemeral and is deleted after the work lands, so every durable rule it produced must be in
   the decision log by then.
@@ -1461,7 +1450,11 @@ an itemized change view over the run dir without touching `state/realtime` or `s
    unique run-id leaf and pollute the `restore` listing, that default `sleep` backup behavior is
    unchanged, and that a state-dir passthrough is what lets a manual session be captured in
    isolation from the append-mode ledger of earlier runs.
-7. **"Probe artifacts are not evidence about the spoken world-perception trigger."** A durable rule
+7. **RECORDED 2026-09-21.** "Headless probe runs generate a corpus; they do not judge its shape."
+   See `docs/DecisionLog.md`. Recorded ahead of the rest of this pass because the decision reversed
+   work already built and reviewed, and the reasoning would otherwise be lost with this ephemeral
+   plan.
+8. **"Probe artifacts are not evidence about the spoken world-perception trigger."** A durable rule
    preventing future misuse of the corpus: typed input always preserves capitalization, spoken input
    does so unreliably, and the corpus therefore says nothing about the spoken trigger path either
    way.
@@ -1505,9 +1498,11 @@ an itemized change view over the run dir without touching `state/realtime` or `s
   `state/probe/<run-id>` discovery, and Pester coverage; `sleep -NoBackup` and `realtime -StateDir`
   exist with default behavior unchanged, and the realtime server's command line finally has
   argument-list coverage.
-- A typed-only structural reference captured in a fresh isolated state directory, with a
+- ~~A typed-only structural reference captured in a fresh isolated state directory, with a
   contamination guard, `(path, JSON type)` comparison, required-file presence, and
-  `memory-store.json` included — plus an automated comparison that fails on any unlisted divergence.
+  `memory-store.json` included — plus an automated comparison that fails on any unlisted
+  divergence.~~ **Withdrawn 2026-09-21** (Phase 8): the probe generates a corpus and does not judge
+  it. The accepted fidelity gaps are documented in the fixture README instead of enforced.
 - `transcript` reports `source.complete == true` over a probe run, `goals` is non-empty, and `sleep`
   succeeds over the run dir.
 - Architecture, README, fixture READMEs, the stale `ProjectWorkflow.md` plan reference, and the

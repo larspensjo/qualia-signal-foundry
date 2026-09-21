@@ -64,10 +64,11 @@ pub struct ProbeArgs {
     pub formation_timeout_ms: u64,
     #[arg(long)]
     pub git_commit: Option<String>,
+    /// Materialize only the warm-start seed bundle into `DIR`, without running a conversation.
+    /// Prepares a state directory for a manual realtime session that should start from the same
+    /// memory and volition state the probe uses.
     #[arg(long, value_name = "DIR")]
     pub seed_only: Option<PathBuf>,
-    #[arg(long, value_name = "DIR")]
-    pub structure_only: Option<PathBuf>,
 }
 
 impl Args {
@@ -88,7 +89,7 @@ mod tests {
     }
 
     #[test]
-    fn probe_defaults_and_auxiliary_modes_parse() {
+    fn probe_defaults_and_seed_only_mode_parse() {
         let args = Args::try_parse_from(["qsf_realtime_server", "probe"]).expect("parse");
         let Command::Probe(probe) = args.command.expect("probe command");
         assert_eq!(probe.phrase_set, DEFAULT_PROBE_PHRASE_SET);
@@ -98,16 +99,5 @@ mod tests {
             .expect("seed parse");
         let Command::Probe(seed) = seed.command.expect("seed command");
         assert_eq!(seed.seed_only.expect("seed path").to_string_lossy(), "x");
-        let structure =
-            Args::try_parse_from(["qsf_realtime_server", "probe", "--structure-only", "x"])
-                .expect("structure parse");
-        let Command::Probe(structure) = structure.command.expect("structure command");
-        assert_eq!(
-            structure
-                .structure_only
-                .expect("structure path")
-                .to_string_lossy(),
-            "x"
-        );
     }
 }

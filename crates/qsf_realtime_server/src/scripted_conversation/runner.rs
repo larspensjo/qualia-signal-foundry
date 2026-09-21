@@ -19,8 +19,8 @@ use crate::state::{AppState, SessionIdMode};
 
 use super::{
     ModelIds, PhraseObservation, ProbeEvent, ProbeHeader, ProbeManifestMetadata, ProbeRunState,
-    ProbeStatus, RuntimeCounters, SecretScanReport, SeedMode, StructuralComparison,
-    TraceContractReport, WorldCorpusManifest, build_run_manifest, compare_phrase_expectation,
+    ProbeStatus, RuntimeCounters, SecretScanReport, SeedMode, TraceContractReport,
+    WorldCorpusManifest, build_run_manifest, compare_phrase_expectation,
     compare_world_consultation_expectations, load_phrase_set, materialize_seed_bundle,
     parse_trace_contract, probe_verdict, reduce, render_formation_barrier, render_header,
     render_structured_partial_warning, render_turn, render_verdict, scan_for_secret, scan_run_dir,
@@ -51,11 +51,6 @@ pub async fn run(args: ProbeArgs) -> anyhow::Result<()> {
         materialize_seed_bundle(seed_only, OffsetDateTime::now_utc())?;
         println!("materialized warm seed bundle in {}", seed_only.display());
         return Ok(());
-    }
-    if args.structure_only.is_some() {
-        anyhow::bail!(
-            "--structure-only is not available until structural artifact emission is supplied"
-        );
     }
     let phrases = load_phrase_set(&args.phrase_set)?;
     let phrase_hash = phrases.content_hash()?;
@@ -562,13 +557,11 @@ async fn finalize_manifest(
     finalization_errors: Vec<String>,
     secret: &str,
 ) -> anyhow::Result<()> {
-    let structure = StructuralComparison::NoStructuralReferenceConfigured;
     let build = |secrets: SecretScanReport| {
         let verdict = probe_verdict(
             &run_state,
             &counters,
             &traces,
-            &structure,
             &secrets,
             &finalization_errors,
             original_failure.as_deref(),
@@ -585,7 +578,6 @@ async fn finalize_manifest(
             run_state.clone(),
             counters.clone(),
             traces.clone(),
-            structure.clone(),
             secrets,
             verdict.clone(),
             original_failure.clone(),
@@ -862,7 +854,6 @@ mod tests {
             formation_timeout_ms: 30,
             git_commit: None,
             seed_only: None,
-            structure_only: None,
         }
     }
 
