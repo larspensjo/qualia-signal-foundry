@@ -36,6 +36,9 @@ three turns' `user`/`assistant`/`volition.fired` against the realtime debug UI.*
 README's transcript section (the ephemeral plan has been deleted).
 Why: the implementation and automated gates are complete; this human acceptance run is the remaining
 evidence for the tool.
+Pointer: the capitalized-entity world-trigger corpus is now producible headlessly with
+`.\scripts\qsf.ps1 probe`; the remaining live-session need is specifically the speech/STT path
+([Experiment.WorldConsultation](Experiments/Experiment.WorldConsultation.md)).
 Alternate: repeat the live real-corpus probe using turns the current triggers can catch — a capitalized
 proper-name entity plus a search cue ("Can you find the latest information about Nvidia?") and
 a turn that names "AI" explicitly

@@ -63,9 +63,8 @@ Rule of thumb:
 
 - A single self-contained, testable slice that probes a simulation mechanism →
   an `Experiment.*.md`.
-- A multi-phase effort → a `Plan.*.md` that sequences the phases, with each phase
-  validated by an `Experiment.*.md` scaffold. See `Plan.RealtimeVoiceConversation.md`
-  for the established pattern.
+- A multi-phase effort → a `Plan.*.md`. The plan sequences the phases. Each
+  phase names the `Experiment.*.md` scaffold that validates it.
 - Ordinary engineering with no mechanism question → no experiment; let the code, tests,
   and commit carry it.
 

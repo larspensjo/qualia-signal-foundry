@@ -26,6 +26,12 @@ mode, not a one-off experiment server.
   `call_id`, injects memory before `response.create`, promotes trusted
   completed exchanges into the shared continuity root, and treats the browser
   relay as diagnostic-only.
+- The sideband attachment is a `SidebandAttachment` with two supported shapes:
+  `BrowserCall { call_id }`, which may reattach to its owning call, and
+  `ServerModelSession { model }`, which retries only until its first successful
+  attach and then fails closed on disconnect. Both websocket URLs come from
+  `qsf_realtime_protocol`, and both handshakes carry bearer authentication and
+  the `OpenAI-Safety-Identifier` header.
 - The same sideband now carries a stable volition baseline in the shared
   session instructions, phrased as Ari's first-person volition stance, and injects a bounded per-turn volition context packet
   before the initial `response.create`, while recording a
@@ -129,6 +135,27 @@ mode, not a one-off experiment server.
   new session allocation. The view renders the verdict, quoted untrusted external block, source
   cards, inline/deferred latency, and collapsed anchor/candidate retrieval detail; it does not
   perform a lookup or influence response generation.
+- The in-process scripted-conversation driver uses the model-scoped sideband
+  with a synthetic phrase fixture. The default launcher gives each run a fresh
+  `state/probe/<run-id>/` directory with this artifact tree:
+  `diagnostics/default.jsonl`,
+  `continuity/default/{session-state.json,volition-state.json,memory-store.json,continuity-manifest.json}`,
+  and `run-manifest.json`; the same tree is used by the transcript, goals, and
+  sleep follow-on commands. The terminal manifest contract is owned by
+  [Architecture.StateAndObservability](Architecture.StateAndObservability.md).
+- Raw provider audio is suppressed by the event-type gate in
+  `realtime/sideband_provider_event.rs`: `response.output_audio.delta` and
+  `response.audio.delta` update latency and byte counters without constructing
+  a durable `ProviderEventRecord`. Assistant transcript deltas and raw
+  output-audio deltas remain distinct timing signals; their concrete latency
+  labels and retained measurements are documented in
+  [Architecture.StateAndObservability](Architecture.StateAndObservability.md).
+- Trusted turn completion is published from the promotion path through the
+  per-session watch channel. `SessionRuntime` exposes `attached` and a
+  never-cleared `degradation_epoch`; detached live-goal-formation work is
+  drained through its own barrier before the scripted run finishes. The
+  terminal persistence boundary is documented in
+  [Architecture.StateAndObservability](Architecture.StateAndObservability.md).
 
 **Partial:**
 
@@ -141,10 +168,10 @@ mode, not a one-off experiment server.
 
 - Full `qsf_app` tool exposure to the live realtime model.
 
-Last reviewed: 2026-07-18 against the Ari identity reframe, the
-compatible-snapshot restore / incompatible-snapshot discard resume path, the
-live volition inspection capture surface, the persisted turn-context capture,
-and the browser "What volition did this turn" panel reframe.
+Last reviewed: 2026-09-21 against the server-owned model-session attachment
+path, scripted-conversation runner, raw-audio suppression and split latency
+accounting, trusted-turn completion and live-goal-formation drain boundary, and
+terminal continuity persistence.
 
 ## Purpose
 
@@ -213,9 +240,19 @@ Browser
 QSF server
   -> Authoritative sideband WebSocket with call_id
      -> authoritative provider events, context injection, tool results
+
+QSF in-process scripted-conversation driver
+  -> creates a server-owned model session
+  -> submits synthetic typed phrases through the same authoritative sideband
+  -> waits for trusted promotion and the detached formation drain barrier
 ```
 
-Raw audio is not logged. `OPENAI_API_KEY` never reaches the browser.
+Input audio never reaches the server: browser WebRTC media flows directly to
+OpenAI, while the headless driver submits typed text. Raw provider output audio
+is not persisted: the sideband's event-type-gated
+`RAW_OUTPUT_AUDIO_DELTA_EVENT_TYPES` path counts raw output deltas for
+observability and latency but does not create `ProviderEventRecord` artifacts.
+`OPENAI_API_KEY` never reaches the browser.
 
 ## Tool Loop
 

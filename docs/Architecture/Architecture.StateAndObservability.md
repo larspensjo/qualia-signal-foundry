@@ -64,6 +64,36 @@ candidate categories listed below still have no shared module.
   reviewed-seed loading degrades. The continuity root layout is:
   `continuity/<qsf_session_id>/{session-state.json,continuity-manifest.json,memory-store.json,volition-state.json,volition-seed.reviewed.json}` with
   diagnostics in `diagnostics/<qsf_session_id>.jsonl`.
+- Sideband degradation history keeps a monotonically increasing epoch for the
+  session lifetime and retains the earliest 16 reason strings. Later reasons are
+  omitted rather than allowing a long-lived degraded session to grow without bound.
+  ([state.rs](../../crates/qsf_realtime_server/src/state.rs))
+- Headless scripted conversation runs write a terminal `run-manifest.json` in
+  their fresh per-run state directory. The manifest records run identity and
+  `passed`/`failed`/`infrastructure_error` status,
+  phrase-set hash, attachment and reconnect policy, model ids, corpus and seed
+  state, per-turn run state, promoted and non-promotable exchange indices,
+  degradation epoch and reasons, termination and output-audio counters, the
+  token-ledger snapshot, trace-contract and secret-scan reports, failing and
+  structured clauses, expectation differences, original failure, and
+  finalization errors. It is written by the finalizer for successful runs and
+  for failures after run-directory creation.
+  ([scripted_conversation/manifest.rs](../../crates/qsf_realtime_server/src/scripted_conversation/manifest.rs),
+  [scripted_conversation/runner.rs](../../crates/qsf_realtime_server/src/scripted_conversation/runner.rs))
+- Realtime latency records distinguish `response_created_to_first_audio`,
+  whose first-audio timestamp comes from the first safe assistant transcript
+  delta, from `response_created_to_first_output_audio`, whose timestamp comes
+  from the first raw provider output-audio delta. The latter payload is not
+  persisted; only its timing and byte/count measurements are retained.
+  ([realtime/sideband_provider_event.rs](../../crates/qsf_realtime_server/src/realtime/sideband_provider_event.rs))
+- The live-goal-formation barrier is an explicit end-of-run observability
+  boundary. After the barrier settles or reports an accepted structured partial,
+  the finalizer persists `volition-state.json` through the same continuity
+  helper used by promotion, so detached formation results are durable even
+  when no later promoted turn writes another snapshot.
+  ([realtime/live_goal_formation.rs](../../crates/qsf_realtime_server/src/realtime/live_goal_formation.rs),
+  [realtime/volition_continuity.rs](../../crates/qsf_realtime_server/src/realtime/volition_continuity.rs),
+  [scripted_conversation/runner.rs](../../crates/qsf_realtime_server/src/scripted_conversation/runner.rs))
 - Live-loop latency diagnostics extend the realtime observability surface with
   observations and durable diagnostics for interrupted trusted exchanges.
 - Volition context injection now records `VolitionContextInjected` diagnostics
@@ -148,11 +178,10 @@ candidate categories listed below still have no shared module.
   memory-graph view, no cost dashboard)
 - `experiment_id` and `memory_update_id` correlation across runs
 
-Last reviewed: 2026-06-30 against explicit remember-this capture observability,
-retrieval skip reasons, the implemented sideband promotion path, the realtime
-diagnostic surface, realtime tool execution records, the live-loop
-latency/interruption diagnostics, volition tool trace persistence, and the live
-literal turn-context plus volition inspection capture surfaces.
+Last reviewed: 2026-09-21 against the headless scripted-conversation manifest
+and finalization path, raw-output-audio retention boundary and split latency
+observations, bounded monotonic degradation history, live-goal-formation drain
+boundary, and the persisted diagnostic and continuity schemas.
 
 ## Summary
 

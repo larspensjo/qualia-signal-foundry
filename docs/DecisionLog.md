@@ -2367,3 +2367,69 @@ rather than from a captured conversation, and should compare which kinds of info
 than individual fields. `probe --seed-only` is retained for preparing a manual session with the same
 warm-start store as a probe run. Narrows the 2026-08-03 `probe` launcher decision, which assumed a
 structural comparison would exist.
+
+## 2026-09-21 - Realtime sideband attaches either by browser call id or by server-owned model session, and only the browser call may reattach
+Decision: Realtime sideband attachment uses either the browser's captured call id or a server-owned
+model session. Both websocket shapes come from one realtime-protocol source of truth and carry the
+documented `OpenAI-Safety-Identifier` header. The browser call may reattach after a disconnect; a
+model-scoped websocket is the stateful provider session and fails closed after its first successful
+attach.
+Context: Extends "Sideband uses the server-captured call_id websocket with bearer auth" (2026-06-10)
+to cover the headless path without replacing the browser path. A model-scoped reconnect could start
+a second provider conversation while local continuity still describes the first, so recovery is
+safe only before the first attach.
+Consequences: Browser calls retain transient recovery, while headless sessions preserve conversation
+identity by stopping rather than silently replaying or branching after a post-attach disconnect.
+
+## 2026-09-21 - Raw provider audio payloads never reach the artifact plane, and first-audio latency is measured from the transcript delta
+Decision: Raw provider audio payloads are excluded from durable artifacts by event type, while
+first-audio latency means the interval to the first assistant transcript delta. First-output-audio
+latency remains a separate measurement based on the raw output-audio event.
+Context: Refines "Authoritative realtime sideband supersedes the browser relay" (2026-06-10): the
+trusted sideband may observe raw audio for bounded counters and timing, but artifact readers must
+not receive the payload. The transcript-derived label preserves the existing meaning of first
+assistant output when the probe has no browser playback path.
+Consequences: Artifact retention stays independent of audio volume, and consumers must not treat the
+two latency labels as interchangeable.
+
+## 2026-09-21 - Trusted turn completion is published from the promotion path; detached side effects have their own drain barrier
+Decision: Trusted turn completion is published only from the promotion path. Detached side effects
+have a separate drain barrier; the terminal run boundary waits on that barrier and persists the
+end-of-run volition snapshot explicitly.
+Context: Refines "Live goal formation and off-hot-path coherence: cache boundary is an application-level marker, model layer moves to a new `qsf_models` crate, `ModelInvoker` decouples callers from RunContext" (2026-07-01) and "Realtime per-turn injection disables automatic response creation" (2026-06-10). Injection starts a turn, but only promotion establishes trusted completion; formation can still be settling after the response is complete.
+Consequences: A completed turn cannot be mistaken for completion of its follow-on work, and the
+last detached result remains durable without requiring another conversation turn.
+
+## 2026-09-21 - Sideband degradation is recorded monotonically for the life of a session
+Decision: Sideband degradation retains a monotonically increasing epoch for the life of a session.
+The current `degraded` health flag may clear after verified recovery, but the epoch does not; the
+bounded set of earliest recorded reasons is retained.
+Context: Refines "Sideband gaps degrade transport trust until verified recovery" (2026-06-10),
+which correctly allows recovery to restore current health but cannot by itself describe whether a
+whole run ever crossed a trust gap.
+Consequences: A recovered session can continue serving fresh turns, while run-level correctness
+checks still see that degradation occurred.
+
+## 2026-09-21 - Headless scripted probe runs use a stable session id and always write a terminal manifest
+Decision: Extends the 2026-08-03 `probe` launcher decision: headless scripted probe runs use the
+stable `default` session id and always write a terminal manifest after run-directory creation. A
+cited run is copied by hand to `evaluation/frozen/realtime-probe/<run-id>/` only after its terminal
+manifest reports that the automatic secret scan found no secret; no freeze command exists. The
+phrase script remains entirely synthetic.
+Context: Also extends "Realtime voice uses a stable default session id" (2026-06-11) and "Durable
+evaluation artifacts live in the top-level evaluation tree" (2026-07-19). A stable session id keeps
+the continuity bundle addressable, a terminal manifest makes failures self-describing, and the
+hand-copy step deliberately promotes cited evidence into the durable evaluation tree.
+Consequences: Failed and successful runs remain inspectable, cited runs become deliberate frozen
+artifacts, and synthetic inputs remain the safety boundary for this workflow.
+
+## 2026-09-21 - Probe artifacts are not evidence about the spoken world-perception trigger
+Decision: Headless probe artifacts do not establish whether the spoken world-perception trigger
+works. Typed input preserves the fixture's capitalization, while spoken input may not, so the
+probe corpus cannot validate the spoken trigger path in either direction.
+Context: Refines "ConsultWorld is the narrow read-only external-effect boundary" (2026-07-09) by
+separating the trusted consultation boundary from evidence about how spoken input reaches it. The
+fixture's capitalization pair is useful instrumentation for typed input only, not a voice
+transcription result.
+Consequences: Trigger claims require voice evidence or a separately designed transcription test;
+probe runs may document consultation records but must not be cited as spoken-world acceptance.

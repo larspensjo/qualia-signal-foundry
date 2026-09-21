@@ -49,3 +49,28 @@ resolution source and any fallback degradation reason.
 
 `trace-contract.complete.jsonl` is the miniature, synthetic diagnostics ledger used to verify
 per-turn request-hash linkage and required trusted trace presence without making a live call.
+
+## Accepted fidelity gaps
+
+This list is documentary only. No probe run is compared with a manual browser capture, and no
+reference capture, accepted-gaps machine format, or structural verdict exists.
+
+- A probe has no browser-relayed envelopes, so it has no untrusted diagnostic exchanges and no
+  `SpeechPlaybackCompleted` records.
+- A model-scoped attach does not run the browser SDP route: it has no `call_bound` or
+  `sdp_rendezvous` latency observation, and it has no `call_invalidated` stop-path record because
+  it has no browser `call_binding` to invalidate.
+- The typed-turn `provider_id` is session-scoped (`<model>:typed` for the model session), rather
+  than the browser-call label `{call_id}:typed`.
+- There is no audio input, so the probe does not cover barge-in or interruption and does not emit
+  `ignored_continuation_transcript`.
+- The `input_transcription` token class is declared in the session configuration but is never
+  billed by a typed-only probe; its token accounting is therefore not directly comparable with a
+  voice run.
+
+These differences are documented so consumers understand the corpus boundary; they are not
+enforced against a reference artifact. If a run is cited by an experiment or report, keep the
+generated run under `state/` during execution, confirm `secret_scan.found == false` in the run's
+`run-manifest.json`, and copy it by hand to `evaluation/frozen/realtime-probe/<run-id>/`. There is
+no freeze command. The phrase script and seed remain entirely synthetic and must never contain
+real personal data.
