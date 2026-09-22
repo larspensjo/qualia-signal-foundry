@@ -1,6 +1,6 @@
 # Plan: Per-turn relevance judgment for memory and goal look-up
 
-Status: Proposed — not started
+Status: In progress — pair-scoring foundation landed
 Maturity: Candidate
 Area: Memory retrieval / Volition (goal activation) / Realtime live path / Evaluation infrastructure
 
@@ -279,6 +279,9 @@ but is constrained by it: injection deadline + candidate assembly + context asse
 inside 300 ms added at p95. The injection deadline is distinct from the **request timeout** (C12).
 Both live in `qsf_semantics` as single sources of truth, following the
 `WORLD_CONSULT_INLINE_BUDGET_MS` relocation precedent, and are overridable through configuration.
+The hosted retry count, initial and maximum backoff, and maximum concurrency defaults also live in
+`budgets.rs` and have explicit `QSF_RELEVANCE_JUDGE_*` overrides; malformed overrides are typed
+configuration errors rather than silent fallback.
 
 **C11. The pinned model version and the question wording are part of the operating point.**
 `jev-latest` is a moving alias and the vendor documents that probability thresholds do not transfer
@@ -342,8 +345,9 @@ on both barriers before it stops and joins the sideband.
 ## Repository placement
 
 - **`crates/qsf_semantics`** (new, lean) — `pair_scoring` (the C1 contract and both traits),
-  `trace` (`Traced<T>`, `SemanticTraceRecord`, `SemanticFailure`), `backends/fixture.rs`,
-  `backends/remote_http.rs`, `config.rs`, `budgets.rs` (C10), `bench.rs`; a binary with
+  `trace` (`Traced<T>`, `SemanticTraceRecord`, `SemanticFailure`, and the three lifecycle record
+  types), `backends/fixture.rs`, `backends/remote_http.rs`, `config.rs`, `budgets.rs` (C10),
+  `bench.rs`; a binary with
   `score` (one-shot), `bench`, and read-only `verify` subcommands. Depends only on
   `engine_logging` plus third-party crates; a dependency-boundary test forbids `qsf_app`,
   `qsf_realtime_server`, `qsf_volition`, `qsf_memory`, `qsf_semantic_eval`.
@@ -353,7 +357,8 @@ on both barriers before it stops and joins the sideband.
 - **`crates/qsf_context`** — `ContextFragment.admission_basis` and `.associable`,
   `ContextAssembly::associable_retrieval_source_ids()`, and the explicit ordering input the
   reserved-slot policy needs.
-- **`crates/qsf_diagnostics`** — the new persisted record kinds (2026-07-27).
+- **`crates/qsf_diagnostics`** — persistence, writer integration, and diagnostic-ledger wiring for
+  the lifecycle record types defined by `qsf_semantics` (2026-07-27, narrowed 2026-09-22).
 - **`crates/qsf_realtime_server`** — `realtime/relevance_judgment.rs` (pure reducer),
   candidate assembly, the effect, the pending-injection slot, the carry-over slot, the ledger role.
 - **`crates/qsf_volition`** — judge qualification at selection **and** at the arbitration partition,
@@ -570,6 +575,10 @@ All are added to `docs/Experiments/Experiment.Backlog.md` when named.
 # Part A — Foundations (gate-independent; all offline, no paid calls except Phase 4)
 
 ## Phase 1 — The pair-scoring contract, the lifecycle records, and both backends
+
+**Status: Landed (2026-09-22).** `crates/qsf_semantics` now provides the isolated pair-scoring
+contract, fixture and hosted HTTP backends, lifecycle records, timing budgets, generated-artifact
+coverage, and the dependency boundary. It intentionally has no diagnostics or live-path wiring.
 
 **Work**
 
@@ -823,6 +832,10 @@ latency evidence, and an honest look at what it would have admitted on real conv
   the spawned deadline timer, `PendingInjection` on `SidebandRuntimeState`, identity-based stale
   rejection, cancellation on interruption / stop / attachment termination / input-revision change,
   and the bounded shutdown drain.
+- **Drive-to-completion constraint (C12 follow-up):** the wiring must spawn every
+  `PairScoringService::score_pairs` future and race the injection deadline against its task handle.
+  It must never race and drop the bare future, because doing so cancels the request and destroys the
+  late verdict needed for carry-over.
 - Injection splits into a planning step (candidate assembly and effect start) and a completion step
   (context assembly, `session.update`, `conversation.item.create`, `response.create`). In shadow
   mode the completion step runs immediately on the lexical result and the verdict only records what
@@ -1172,14 +1185,12 @@ probe's secret scan. The fixture backend is never presented as relevance evidenc
 
 ## Dependencies and branch coordination
 
-- **`feature/headless-conversation`** (active; `docs/Plans/Plan.HeadlessConversationProbe.md`).
-  Phase 7's probe extension depends on it landing. Beyond adding probe modules, that branch changes
-  **attachment, shutdown and promotion behavior**, so the judge drain barrier, the cancellation
-  rules and the attachment-epoch component of the invocation identity must be reconciled with its
-  fail-closed attachment policy and its live-goal-formation drain barrier — one finalization order,
-  not two. Every branch-dependent step is tracked as a named follow-up with an explicit completion
-  state, so the interim manual-verification fallback cannot quietly become permanent. The seeded
-  memory-store fixture stays a stable control: judged runs get a new phrase set or a new expectation
+- **`feature/headless-conversation`** has landed on `main`; its headless scripted conversation probe
+  and decision-log entries dated 2026-09-21 are available to the later probe extension. The judge
+  drain barrier, cancellation rules, and attachment-epoch identity still need reconciliation with
+  the landed fail-closed attachment policy and live-goal-formation drain barrier — one finalization
+  order, not two — but no branch wait or interim manual-verification fallback applies. The seeded
+  memory-store fixture remains a stable control: judged runs get a new phrase set or expectation
   block, never a change to the existing seed.
 - **`feature/sleep-world-study`** (active; own worktree). Its substantive changes are the staged
   persistence path and sleep update orchestration; the co-retrieval proposer itself is unchanged on

@@ -39,6 +39,12 @@ External or informal wording -> project vocabulary -> verify status against code
 | Implementation Status | The section that says what is implemented, partial, or not yet implemented. | This section scopes the rest of an architecture doc. |
 | Artifact | A persisted output used as evidence: logs, reports, state JSON, diagnostic JSONL, traces, or run files. | Artifacts are stronger evidence than plans but still need source/trust context. |
 | Trace | Structured evidence explaining why something happened. | A trace should carry enough identifiers to link back to inputs, records, or artifacts. |
+| Relevance judge | A backend implementing the domain-neutral pair-scoring contract: it scores whether candidate text is about an utterance. | `qsf_semantics` provides the contract; domain code owns how scores are used. |
+| Verdict | A pair-scoring result for one candidate, expressed with a score kind and (for probabilities) basis points. | A verdict alone does not decide admission or selection. |
+| Injection deadline / request timeout | The injection deadline is when a caller stops waiting to affect the current turn; the request timeout is the longer ceiling for the backend call itself. | A missed injection deadline must not cancel the request, allowing a later result to be carried by future work. |
+| Fixture backend | The deterministic, no-cost `qsf_semantics` backend selected explicitly as the default. | Its outputs exercise the seam but are never relevance evidence. |
+| Score kind | The interpretation attached to a pair score: `Probability` or `Similarity`. | The hosted judge emits `Probability`; local encoders may later emit `Similarity`. |
+| Basis points | Integer probability units from 0 through 10,000. | Persisted relevance probabilities use these rather than floating point. |
 
 ## Runtime And State Terms
 

@@ -83,28 +83,21 @@ CPU-only, manifest-based assets, fixture-scoped heads + committed interchange fo
 following are the concrete design commitments this plan adds. They become project commitments
 only when the corresponding Decision Log entries land (see "Documents to create or update").
 
-1. **Crate name and boundary: `crates/qsf_semantics`, a lean crate.** It owns normalization,
-   embedding, n-gram features, pair scoring, classifier-head execution, calibration, the
-   trace record types, and manifest/registry parsing. It depends only on `engine_logging`
-   and third-party crates (serde, sha2, thiserror, the chosen inference runtime, `tokenizers`
-   as applicable). It must **not** depend on `qsf_app`, `qsf_realtime_server`, `qsf_volition`,
-   or `qsf_semantic_eval` — domain crates own policy adapters and call `qsf_semantics`, never
-   the reverse (DecisionLog 2026-06-10, 2026-07-09, 2026-07-19). The crate owns no runtime
-   state and no policy: learned inference is an effect-layer concern producing data for pure
-   reducers/selectors, and deterministic policy (thresholds acted on, arbitration, fallback
-   *decisions*) stays in the caller.
-2. **Trace seam: the crate returns trace-record values; callers own persistence.** Every
-   inference API returns a **`Traced<T>` outcome** — a serde-serializable
-   `SemanticTraceRecord` paired with a `Result<T, SemanticFailure>` — so the trace carrier
-   is defined for failures exactly as for successes; an `Err` can never be traceless. The
-   crate never writes into `RunContext`/`TraceRecord` or
-   `DiagnosticWriter`/`DiagnosticRecord`; consumers embed the record value into their own
-   backend, mirroring how `ModelInvoker` (DecisionLog 2026-07-01) kept `qsf_models` free of
-   both. Rationale over a writer trait: every semantic call is synchronous and already
-   returns a value; a record-in-the-result keeps the crate pure-data at the boundary, keeps
-   the unidirectional flow (effects produce data), and gives the artifact-parsing test a
-   well-defined canonical serialization. The crate's own harness and tests write the records
-   as `semantic-trace.jsonl` — the authoritative artifact for this plan's trace contract.
+1. **Crate name and boundary: `crates/qsf_semantics`, a lean crate.** This boundary now exists:
+   it owns the canonical pair-scoring contract, synchronous-to-asynchronous adapter, shared
+   failure enum, backend trace value, relevance lifecycle records, timing budgets, and fixture and
+   hosted HTTP backends. It depends only on `engine_logging` and third-party crates and is tested
+   not to depend on `qsf_app`, `qsf_realtime_server`, `qsf_volition`, `qsf_memory`, or
+   `qsf_semantic_eval`. This plan still owns the local inference runtime, asset manifests,
+   normalizer, n-gram features, head execution, and calibration. Domain crates continue to own
+   policy adapters and call `qsf_semantics`, never the reverse.
+2. **Trace seam: the crate returns trace-record values; callers own persistence.** The implemented
+   `qsf_semantics::trace::Traced<T>` pairs a `SemanticTraceRecord` with
+   `Result<T, SemanticFailure>`, including a complete record for failures. The record has a backend
+   discriminator and optional service/local payloads; the three relevance lifecycle record types
+   are also defined there for offline and future live callers. The crate writes no diagnostics or
+   runtime state. Its tests generate and parse `semantic-trace.jsonl`; callers later persist these
+   values in their own artifacts.
 3. **The immutable model artifact hash joins the trace/replay compatibility contract — and
    has one canonical definition.** `model_artifact_hash` is the versioned canonical
    **artifact digest** (`artifact_digest_v1`): sha256 over a canonical serialization
@@ -227,6 +220,11 @@ fine).
 
 Mirroring the brief's Section 4.1 traits, adapted to the commitments above:
 
+The definitions of `PairScorer`, `PairScoreRequest`, `PairScore`, `Traced<T>`,
+`SemanticTraceRecord`, and `SemanticFailure` are now the public definitions in
+`crates/qsf_semantics`; this section specifies only the additional local-runtime behavior that will
+use them. It does not introduce a parallel contract or trace/failure schema.
+
 - `SemanticRuntime::configure(manifest_path, model_id) -> SemanticRuntimeHandle` — cheap,
   I/O-free construction (manifest parse only). Loading is decoupled from construction:
   `handle.ensure_loaded()` or lazy first-use load, so the consuming realtime server can load
@@ -234,16 +232,17 @@ Mirroring the brief's Section 4.1 traits, adapted to the commitments above:
   Horizon, must not be repeated). The handle is `Send + Sync` with synchronous inference.
   Guidance to consumers (stated here, wired in the pilot): the realtime server loads in a
   background task after port bind; offline `qsf_app` runs load on first use.
-- `Traced<T>`: the universal inference outcome — `{ record: SemanticTraceRecord,
-  result: Result<T, SemanticFailure> }` (commitment 2). Every inference API below returns
-  it, so failures carry their trace record by construction.
+- `Traced<T>`: the implemented universal pair-scoring outcome — `{ trace: SemanticTraceRecord,
+  outcome: Result<T, SemanticFailure> }` from `qsf_semantics::trace`; failures carry their trace
+  record by construction. Future local inference APIs consume this same carrier.
 - `EmbeddingProvider`: `embed(&self, text) -> Traced<Embedding>` and
   `embed_batch(&self, texts) -> Traced<Vec<Embedding>>`.
 - `NgramFeaturizer`: deterministic hashed character n-gram vectors (default n = 3..=5,
   2^18 dims, fixed seed — defaults exercise the path via the fixture head and unit tests).
-- `PairScorer`: `score_pairs(task, utterance, candidates) -> Traced<Vec<PairScore>>` where
-  a candidate is `{ id, description_text }` — never a fixture-bound persona structure
-  (persona-as-data, DecisionLog 2026-07-19).
+- `PairScorer` / `PairScoringService`: the implemented `qsf_semantics::pair_scoring` contract
+  accepts `PairScoreRequest` containing an utterance and domain-neutral candidates, and returns
+  `Traced<Vec<PairScore>>`. `BlockingPairScorerService` presents synchronous local scorers through
+  the async contract, so the local runtime adds no competing seam.
 - `TaskClassifier` + `ConfidenceCalibrator`: execute a loaded head artifact over features
   assembled by `PairFeatureBuilder` strictly per the artifact's `pair_feature_spec` (see
   the pair-feature contract below); calibrate raw scores; apply the artifact's abstention
@@ -291,8 +290,11 @@ Normalization per ladder rung (commitment 6):
 ## Trace completeness contract — `semantic_inference` trace contract
 
 Named by behavior; the pilot and any durable document refer to this contract, never to a plan
-phase. Every `SemanticTraceRecord` is produced via the `Traced<T>` carrier (commitment 2),
-so a failed call yields a record exactly like a successful one. Required fields:
+phase. `SemanticTraceRecord` and `SemanticFailure` are the existing `qsf_semantics` definitions;
+the trace already carries the required core `task` and `operation` fields, and the later local
+runtime extends its local-backend payload without adding another record type.
+Every local inference outcome is produced through `Traced<T>`, so a failed call yields a record
+exactly like a successful one. Required local-runtime fields:
 
 - `operation` — the discriminator: `embed | embed_batch | pair_score | classify`
 - `task` (stable behavior name, e.g. `goal_relevance`; benchmark runs use `runtime_benchmark`)
@@ -306,7 +308,8 @@ so a failed call yields a record exactly like a successful one. Required fields:
   ambiguous single input. (Consumers may drop raw texts at persistence per their own
   privacy rules; the content hashes always survive.)
 - operation-specific payload: embedding dimension + L2-norm flag for embed calls; per
-  candidate for pair scoring: `embedding_score`, `candidate_embedding_source`
+  candidate for pair scoring: signed `embedding_score_basis_points`,
+  `candidate_embedding_source`
   (`precomputed | computed_now | unavailable` + reason); for classification: label scores,
   `selected`, `calibrated_confidence`, `abstained`, `threshold_artifact_version`, and the
   `pair_feature_spec` version in force

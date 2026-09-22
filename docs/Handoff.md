@@ -1,11 +1,10 @@
 # Handoff — Resume Here
 
-**Updated:** 2026-07-27 — Transcript CLI implementation is complete through the launcher and awaits
+**Updated:** 2026-09-22 — Transcript CLI implementation is complete through the launcher and awaits
 its live-session acceptance run. The goal_relevance pipeline machinery and v1 lineage rescue are complete;
 the eighteen replay/evidence artifacts are committed under
-`evaluation/frozen/goal-relevance/lineage/`, and the remaining work is the panel labeling and
-freeze campaign; see
-[Plan.GoalRelevancePanelLabeling](Plans/Plan.GoalRelevancePanelLabeling.md). World perception is
+`evaluation/frozen/goal-relevance/lineage/`, while the current active plan is the isolated per-turn
+relevance-judgment foundation. World perception is
 unchanged since 2026-07-22: all of
 [Plan.WorldPerception](Plans/Plan.WorldPerception.md) is implemented, but the second
 real-corpus live session requested no consultation — blockers moved to the trigger layer
@@ -49,13 +48,13 @@ Alternate: run a first real-corpus sleep consolidation and a recall probe
 tunes the provisional eligibility rule and 7-day half-life with real evidence.
 
 ## Next — active plan or plans
-### Semantic evaluation (goal relevance)
-**Execute the weighted panel labeling, audit, and freeze campaign in
-[Plan.GoalRelevancePanelLabeling](Plans/Plan.GoalRelevancePanelLabeling.md).**
-Why: the machinery, availability smoke, and committed v1 lineage are ready; the remaining
-work is operator-driven labeling and its gated replay.
-Alternate: close [Plan.WorldPerception](Plans/Plan.WorldPerception.md) once both live probes
-have evidence, then delete the plan per workflow.
+### Per-turn relevance judgment
+**Continue the isolated relevance-judge foundation with deterministic retrieval and domain adapters in
+[Plan.PerTurnRelevanceJudgment](Plans/Plan.PerTurnRelevanceJudgment.md).**
+Why: the pair-scoring contract and backends now exist, while live-path behavior remains deliberately
+unwired.
+Alternate: continue the panel labeling and freeze campaign
+([Plan.GoalRelevancePanelLabeling](Plans/Plan.GoalRelevancePanelLabeling.md)).
 
 ## Horizon — direction
 

@@ -2433,3 +2433,17 @@ fixture's capitalization pair is useful instrumentation for typed input only, no
 transcription result.
 Consequences: Trigger claims require voice evidence or a separately designed transcription test;
 probe runs may document consultation records but must not be cited as spoken-world acceptance.
+
+## 2026-09-22 - Semantic relevance lifecycle contracts live with the scoring seam
+Decision: The three persisted relevance-judgment lifecycle record types — requested, completed, and
+selection recorded — are defined in `qsf_semantics`. `qsf_diagnostics` continues to own persistence,
+the diagnostic writer, and live ledger integration.
+Context: This narrows the 2026-07-27 decision "The persisted diagnostics schema owns its own crate."
+The records are shared by offline semantic evaluation and the realtime writer, and they describe the
+canonical scoring seam rather than diagnostics policy. Dependency direction makes the placement
+decisive: `qsf_diagnostics` already depends on `qsf_volition`, so placing the shared lifecycle types
+there would prevent the lean semantic contract from being consumed without pulling domain and
+diagnostics dependencies inward; `qsf_diagnostics -> qsf_semantics` is the legal direction.
+Consequences: Offline and live callers serialize one lifecycle schema from `qsf_semantics`, while
+`qsf_semantics` owns no files, runtime state, or writer. The broader 2026-07-27 rule still applies to
+diagnostic-ledger persistence and writer behavior, which remain in `qsf_diagnostics`.
