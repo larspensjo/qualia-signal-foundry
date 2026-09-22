@@ -2,6 +2,7 @@ use std::time::{Instant, SystemTime};
 
 use anyhow::Context;
 use serde_json::json;
+use time::OffsetDateTime;
 
 use crate::audio::{
     AudioRuntimeEntryPoint, AudioSafetyMarkers, SpeechOutputProvider, SpeechOutputRequest,
@@ -196,11 +197,13 @@ impl TextOwnedVoiceLoopExperiment {
 
         let memory_snapshot = memory_source.load()?;
         write_voice_memory_source_snapshot(context, &memory_snapshot)?;
+        let evaluation_time = OffsetDateTime::now_utc();
         let memory_retrieval = retrieve_voice_memories(
             context,
             &state.session_id,
             &final_transcript,
             &memory_snapshot,
+            evaluation_time,
         )?;
 
         let context_assembly =

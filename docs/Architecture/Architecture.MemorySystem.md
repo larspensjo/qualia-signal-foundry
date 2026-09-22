@@ -23,6 +23,8 @@ future retrieval backends.
 - Retrieval scoring now lives in `qsf_memory`, and the context-assembly domain
   now lives in `qsf_context`; the realtime server can use both without depending
   on the full app runtime.
+- Retrieval is pure with respect to time: callers own and explicitly pass the
+  evaluation time used for scoring.
 - Relevance-gated keyword/tag retrieval with explicit skip reasons for omitted
   candidates, plus a narrow identity/profile allowance for name-shaped queries
   ([memory/retrieval.rs](../../crates/qsf_app/src/memory/retrieval.rs))

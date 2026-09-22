@@ -670,6 +670,9 @@ selection can exist.
   selected and omitted candidates with scores, matched terms, association paths, skip reasons,
   strategy, numeric limit in force, `evaluation_time`, and retrieval latency. (Once the judge is
   live this record is subsumed by `relevance_selection_recorded`; both share field names.)
+- **Single-time-per-turn follow-up:** when adding `evaluation_time` to the selection record, capture
+  one turn-owned wall-clock value and thread it through all per-turn work that currently reads the
+  clock separately.
 - Persist `admission_basis` and `associable` through `ContextFragment` into `session-state.json`.
 - `ContextAssembly::associable_retrieval_source_ids()`; sleep's co-retrieval proposer switches to
   it; `apply_live_memory_reinforcement` filters on `RetrievedMemory.selection_eligibility`

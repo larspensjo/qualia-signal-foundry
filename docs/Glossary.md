@@ -71,6 +71,7 @@ External or informal wording -> project vocabulary -> verify status against code
 | Association | A weighted relationship between memories. | Used for associative retrieval and reinforcement. |
 | MemoryStore | The durable store for memory records and associations. | Different loops can resolve to different state roots. |
 | Retrieval | Selecting relevant memory records for a query or current turn. | Retrieval can omit candidates with explicit skip reasons. |
+| Evaluation time | The explicit time value retrieval scores records against, distinct from wall-clock time. | Live orchestration supplies it; frozen evaluation can supply a fixed value for deterministic selections. |
 | Reinforcement | Updating memory/association strength from live use or sleep-side evidence. | Reinforcement is evidence-backed, not mystical reward. |
 | Promotion | Moving a candidate observation or summary into durable memory. | Some paths require manual review; some routine candidates can be auto-promoted. |
 | ContextFragment | A bounded piece of context that can be assembled into model-visible prompt context. | Lives in `qsf_context`, not `qsf_volition`. |

@@ -1,4 +1,7 @@
-use qsf_memory::{MemoryStore, RetrievalResult, RetrievalStrategy, retrieve_memories};
+use qsf_memory::{
+    MemoryStore, RetrievalRequest, RetrievalResult, RetrievalStrategy, retrieve_memories,
+};
+use time::OffsetDateTime;
 
 use crate::state::AppState;
 
@@ -15,15 +18,18 @@ pub fn retrieve_session_memories(
     query: &str,
     strategy: RetrievalStrategy,
     limit: usize,
+    evaluation_time: OffsetDateTime,
 ) -> anyhow::Result<RetrievalResult> {
     let store = load_session_memory_store(state, qsf_session_id)?;
-    retrieve_memories(
+    let request = RetrievalRequest::new(
         &store.contents().records,
         &store.contents().associations,
         query,
         strategy,
         limit,
-    )
+        evaluation_time,
+    );
+    retrieve_memories(&request)
 }
 
 #[cfg(test)]
@@ -110,6 +116,7 @@ mod tests {
             "memory query",
             RetrievalStrategy::AssociationWeighted,
             4,
+            OffsetDateTime::UNIX_EPOCH,
         )
         .expect("result");
 

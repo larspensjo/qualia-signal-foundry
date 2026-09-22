@@ -243,13 +243,14 @@ fn live_loop_does_not_reinforce_relevance_skipped_memory() {
     ];
     store.append_records(records.clone());
     store.persist().unwrap();
-    let retrieval = retrieve_memories(
+    let retrieval = retrieve_memories(&RetrievalRequest::new(
         &records,
         &[],
         "tell me about volition goals",
         RetrievalStrategy::KeywordTag,
         8,
-    )
+        time::OffsetDateTime::now_utc(),
+    ))
     .unwrap();
     assert_eq!(
         crate::memory::retrieved_memory_ids(&retrieval.selected),
@@ -437,35 +438,38 @@ fn live_loop_captures_remembered_topic_and_retrieves_it_end_to_end() {
     assert!(remembered.tags.iter().any(|tag| tag == "volition_system"));
     assert!(remembered.source_reference.contains("source-turn-002"));
 
-    let assistant = retrieve_memories(
+    let assistant = retrieve_memories(&RetrievalRequest::new(
         &store.contents().records,
         &store.contents().associations,
         "What is your name?",
         RetrievalStrategy::KeywordTag,
         8,
-    )
+        time::OffsetDateTime::now_utc(),
+    ))
     .unwrap();
     assert_eq!(assistant.selected.len(), 1);
     assert_eq!(assistant.selected[0].memory.id, ari.id);
 
-    let user = retrieve_memories(
+    let user = retrieve_memories(&RetrievalRequest::new(
         &store.contents().records,
         &store.contents().associations,
         "What is my name?",
         RetrievalStrategy::KeywordTag,
         8,
-    )
+        time::OffsetDateTime::now_utc(),
+    ))
     .unwrap();
     assert_eq!(user.selected.len(), 1);
     assert_eq!(user.selected[0].memory.id, lars.id);
 
-    let volition = retrieve_memories(
+    let volition = retrieve_memories(&RetrievalRequest::new(
         &store.contents().records,
         &store.contents().associations,
         "What did I ask you to remember about volition?",
         RetrievalStrategy::KeywordTag,
         8,
-    )
+        time::OffsetDateTime::now_utc(),
+    ))
     .unwrap();
     assert!(
         volition

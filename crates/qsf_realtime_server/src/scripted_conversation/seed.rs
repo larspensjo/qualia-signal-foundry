@@ -174,7 +174,7 @@ fn rfc3339(value: OffsetDateTime) -> anyhow::Result<String> {
 
 #[cfg(test)]
 mod tests {
-    use qsf_memory::{RetrievalStrategy, retrieve_memories};
+    use qsf_memory::{RetrievalRequest, RetrievalStrategy, retrieve_memories};
     use time::macros::datetime;
 
     use super::*;
@@ -197,13 +197,14 @@ mod tests {
                 .expect("offset");
             assert_eq!((now - reference).whole_days(), expected);
         }
-        let result = retrieve_memories(
+        let result = retrieve_memories(&RetrievalRequest::new(
             &contents.records,
             &contents.associations,
             "Can you remember that thesis you had about me putting things off?",
             RetrievalStrategy::AssociationWeighted,
             2,
-        )
+            now,
+        ))
         .expect("retrieve");
         let expected_ids = [
             "invented-procrastination-pattern".to_string(),
@@ -215,16 +216,18 @@ mod tests {
         );
         assert!(result.selected[1].score.association > 0.0);
 
-        let future = render_seed_bundle(&templates, now + time::Duration::days(3_650))
+        let future_evaluation_time = now + time::Duration::days(3_650);
+        let future = render_seed_bundle(&templates, future_evaluation_time)
             .expect("future render")
             .memory_store;
-        let future_result = retrieve_memories(
+        let future_result = retrieve_memories(&RetrievalRequest::new(
             &future.records,
             &future.associations,
             "Can you remember that thesis you had about me putting things off?",
             RetrievalStrategy::AssociationWeighted,
             2,
-        )
+            future_evaluation_time,
+        ))
         .expect("future retrieve");
         assert_eq!(
             qsf_memory::retrieved_memory_ids(&future_result.selected),

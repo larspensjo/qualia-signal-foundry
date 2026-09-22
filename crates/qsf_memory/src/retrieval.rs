@@ -25,6 +25,38 @@ pub enum RetrievalStrategy {
     AssociationWeighted,
 }
 
+/// Extension rule: `new` takes only always-required inputs; optional signals arrive through `with_*` methods.
+#[non_exhaustive]
+#[derive(Clone, Debug)]
+pub struct RetrievalRequest<'a> {
+    pub records: &'a [MemoryRecord],
+    pub associations: &'a [Association],
+    pub query: &'a str,
+    pub strategy: RetrievalStrategy,
+    pub limit: usize,
+    pub evaluation_time: OffsetDateTime,
+}
+
+impl<'a> RetrievalRequest<'a> {
+    pub fn new(
+        records: &'a [MemoryRecord],
+        associations: &'a [Association],
+        query: &'a str,
+        strategy: RetrievalStrategy,
+        limit: usize,
+        evaluation_time: OffsetDateTime,
+    ) -> Self {
+        Self {
+            records,
+            associations,
+            query,
+            strategy,
+            limit,
+            evaluation_time,
+        }
+    }
+}
+
 impl fmt::Display for RetrievalStrategy {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
@@ -68,29 +100,24 @@ pub struct RetrievedMemory {
 pub struct RetrievalResult {
     pub query: String,
     pub strategy: RetrievalStrategy,
+    pub evaluation_time: OffsetDateTime,
     pub selected: Vec<RetrievedMemory>,
     pub omitted: Vec<RetrievedMemory>,
     pub latency_ms: u64,
     pub latency_ns: u64,
 }
 
-pub fn retrieve_memories(
-    records: &[MemoryRecord],
-    associations: &[Association],
-    query: &str,
-    strategy: RetrievalStrategy,
-    limit: usize,
-) -> anyhow::Result<RetrievalResult> {
-    ensure_current_memory_schema(records)?;
-    ensure_current_association_schema(associations)?;
+pub fn retrieve_memories(request: &RetrievalRequest<'_>) -> anyhow::Result<RetrievalResult> {
+    ensure_current_memory_schema(request.records)?;
+    ensure_current_association_schema(request.associations)?;
 
     let started_at = Instant::now();
-    let query_terms = tokenize(query);
-    let now = OffsetDateTime::now_utc();
-    let seed_ids = keyword_seed_ids(records, &query_terms);
-    let association_paths = association_paths_by_target(associations, &seed_ids);
+    let query_terms = tokenize(request.query);
+    let seed_ids = keyword_seed_ids(request.records, &query_terms);
+    let association_paths = association_paths_by_target(request.associations, &seed_ids);
 
-    let mut candidates = records
+    let mut candidates = request
+        .records
         .iter()
         .map(|record| {
             let matched_terms = matched_terms(record, &query_terms);
@@ -98,11 +125,17 @@ pub fn retrieve_memories(
                 .get(&record.id)
                 .cloned()
                 .unwrap_or_default();
-            let score = score_record(record, strategy, now, &matched_terms, &paths);
+            let score = score_record(
+                record,
+                request.strategy,
+                request.evaluation_time,
+                &matched_terms,
+                &paths,
+            );
 
             RetrievedMemory {
                 memory: record.clone(),
-                strategy,
+                strategy: request.strategy,
                 score,
                 matched_terms,
                 association_paths: paths,
@@ -131,11 +164,11 @@ pub fn retrieve_memories(
 
         if !is_relevant_for_strategy(
             &candidate.memory,
-            strategy,
+            request.strategy,
             &candidate.score,
             &candidate.matched_terms,
             &candidate.association_paths,
-            query,
+            request.query,
             &query_terms,
         ) {
             candidate.skip_reason = Some(RELEVANCE_GATE_SKIP_REASON.to_string());
@@ -143,7 +176,7 @@ pub fn retrieve_memories(
             continue;
         }
 
-        if selected.len() < limit {
+        if selected.len() < request.limit {
             candidate.skip_reason = None;
             selected.push(candidate);
         } else {
@@ -155,8 +188,9 @@ pub fn retrieve_memories(
     let elapsed = started_at.elapsed();
 
     Ok(RetrievalResult {
-        query: query.to_string(),
-        strategy,
+        query: request.query.to_string(),
+        strategy: request.strategy,
+        evaluation_time: request.evaluation_time,
         selected,
         omitted,
         latency_ms: duration_ms(elapsed),
@@ -174,11 +208,11 @@ pub fn retrieved_memory_ids(memories: &[RetrievedMemory]) -> Vec<String> {
 fn score_record(
     record: &MemoryRecord,
     strategy: RetrievalStrategy,
-    now: OffsetDateTime,
+    evaluation_time: OffsetDateTime,
     matched_terms: &[String],
     association_paths: &[AssociationPath],
 ) -> RetrievalScore {
-    let recency = compute_recency_decay(record, now);
+    let recency = compute_recency_decay(record, evaluation_time);
     let keyword = matched_terms_in_text(record, matched_terms) as f64;
     let tag = matched_terms_in_tags(record, matched_terms) as f64;
     let association = association_paths
@@ -389,9 +423,9 @@ fn normalize_query_for_phrase_match(query: &str) -> String {
     format!(" {collapsed} ")
 }
 
-pub(crate) fn compute_recency_decay(record: &MemoryRecord, now: OffsetDateTime) -> f64 {
+pub(crate) fn compute_recency_decay(record: &MemoryRecord, evaluation_time: OffsetDateTime) -> f64 {
     let reference = record.last_reinforced_at.unwrap_or(record.created_at);
-    let age_seconds = (now - reference).whole_seconds().max(0) as f64;
+    let age_seconds = (evaluation_time - reference).whole_seconds().max(0) as f64;
     let age_days = age_seconds / 86_400.0;
     (-std::f64::consts::LN_2 * age_days / effective_decay_halflife_days(record)).exp()
 }
@@ -510,7 +544,10 @@ fn duration_ns(elapsed: std::time::Duration) -> u64 {
 
 #[cfg(test)]
 mod tests {
-    use super::{RetrievalStrategy, SUPERSEDED_WORLD_OBSERVATION_SKIP_REASON, retrieve_memories};
+    use super::{
+        RetrievalRequest, RetrievalStrategy, SUPERSEDED_WORLD_OBSERVATION_SKIP_REASON,
+        retrieve_memories,
+    };
     use crate::Association;
     use crate::record::{MemoryProvenance, MemoryRecord, MemoryRecordKind, MemoryTrustTier};
     use time::OffsetDateTime;
@@ -535,13 +572,14 @@ mod tests {
             ),
         ];
 
-        let result = retrieve_memories(
+        let result = retrieve_memories(&RetrievalRequest::new(
             &records,
             &[],
             "context memory",
             RetrievalStrategy::RecencyOnly,
             1,
-        )
+            evaluation_time(),
+        ))
         .unwrap();
 
         assert_eq!(result.selected[0].memory.id, "memory.one");
@@ -566,9 +604,15 @@ mod tests {
             ),
         ];
 
-        let result =
-            retrieve_memories(&records, &[], "retrieval", RetrievalStrategy::KeywordTag, 1)
-                .unwrap();
+        let result = retrieve_memories(&RetrievalRequest::new(
+            &records,
+            &[],
+            "retrieval",
+            RetrievalStrategy::KeywordTag,
+            1,
+            evaluation_time(),
+        ))
+        .unwrap();
 
         assert_eq!(result.selected.len(), 1);
         assert_eq!(result.selected[0].memory.id, "memory.retrieval");
@@ -600,13 +644,14 @@ mod tests {
             OffsetDateTime::parse("2026-05-26T00:00:00Z", &Rfc3339).unwrap(),
         )];
 
-        let result = retrieve_memories(
+        let result = retrieve_memories(&RetrievalRequest::new(
             &records,
             &associations,
             "context budget",
             RetrievalStrategy::AssociationWeighted,
             3,
-        )
+            evaluation_time(),
+        ))
         .unwrap();
 
         assert!(
@@ -636,21 +681,23 @@ mod tests {
             ),
         ];
 
-        let assistant = retrieve_memories(
+        let assistant = retrieve_memories(&RetrievalRequest::new(
             &records,
             &[],
             "What's your name?",
             RetrievalStrategy::KeywordTag,
             8,
-        )
+            evaluation_time(),
+        ))
         .unwrap();
-        let user = retrieve_memories(
+        let user = retrieve_memories(&RetrievalRequest::new(
             &records,
             &[],
             "What's my name?",
             RetrievalStrategy::KeywordTag,
             8,
-        )
+            evaluation_time(),
+        ))
         .unwrap();
 
         assert_eq!(assistant.selected[0].memory.id, "memory.ari");
@@ -704,6 +751,73 @@ mod tests {
     }
 
     #[test]
+    fn frozen_evaluation_time_keeps_selection_deterministic_across_clock_changes() {
+        let records = recency_ordering_records();
+        let early = evaluation_time();
+        let late = early + time::Duration::days(183);
+
+        let first = retrieve_memories(&RetrievalRequest::new(
+            &records,
+            &[],
+            "topic",
+            RetrievalStrategy::KeywordTag,
+            1,
+            early,
+        ))
+        .unwrap();
+        let simulated_clock_change = retrieve_memories(&RetrievalRequest::new(
+            &records,
+            &[],
+            "topic",
+            RetrievalStrategy::KeywordTag,
+            1,
+            late,
+        ))
+        .unwrap();
+        let repeated = retrieve_memories(&RetrievalRequest::new(
+            &records,
+            &[],
+            "topic",
+            RetrievalStrategy::KeywordTag,
+            1,
+            early,
+        ))
+        .unwrap();
+
+        assert_eq!(first.evaluation_time, early);
+        assert_eq!(first.selected, repeated.selected);
+        assert_eq!(first.omitted, repeated.omitted);
+        assert_ne!(first.selected, simulated_clock_change.selected);
+    }
+
+    #[test]
+    fn different_evaluation_time_changes_recency_driven_ordering() {
+        let records = recency_ordering_records();
+        let early = retrieve_memories(&RetrievalRequest::new(
+            &records,
+            &[],
+            "topic",
+            RetrievalStrategy::KeywordTag,
+            1,
+            evaluation_time(),
+        ))
+        .unwrap();
+        let late = retrieve_memories(&RetrievalRequest::new(
+            &records,
+            &[],
+            "topic",
+            RetrievalStrategy::KeywordTag,
+            1,
+            evaluation_time() + time::Duration::days(183),
+        ))
+        .unwrap();
+
+        assert_eq!(early.selected[0].memory.id, "memory.newer");
+        assert_eq!(late.selected[0].memory.id, "memory.older");
+        assert_ne!(early.selected, late.selected);
+    }
+
+    #[test]
     fn superseded_world_observation_is_omitted_while_successor_is_retrieved() {
         let now = OffsetDateTime::parse("2026-06-01T00:00:00Z", &Rfc3339).unwrap();
         let superseded = test_record(
@@ -724,13 +838,14 @@ mod tests {
         )
         .with_world_observation();
 
-        let result = retrieve_memories(
+        let result = retrieve_memories(&RetrievalRequest::new(
             &[superseded, successor],
             &[],
             "AI release",
             RetrievalStrategy::KeywordTag,
             2,
-        )
+            now,
+        ))
         .unwrap();
 
         assert_eq!(result.selected.len(), 1);
@@ -761,8 +876,15 @@ mod tests {
         let record: MemoryRecord = serde_json::from_str(legacy_json).unwrap();
         assert!(record.ensure_current_schema().is_ok());
 
-        let result =
-            retrieve_memories(&[record], &[], "legacy", RetrievalStrategy::KeywordTag, 1).unwrap();
+        let result = retrieve_memories(&RetrievalRequest::new(
+            &[record],
+            &[],
+            "legacy",
+            RetrievalStrategy::KeywordTag,
+            1,
+            evaluation_time(),
+        ))
+        .unwrap();
 
         assert_eq!(result.selected.len(), 1);
         assert_eq!(result.selected[0].memory.id, "memory.legacy");
@@ -794,13 +916,14 @@ mod tests {
         )
         .with_superseded_by("memory.unrelated");
 
-        let result = retrieve_memories(
+        let result = retrieve_memories(&RetrievalRequest::new(
             &[record],
             &[],
             "project direction",
             RetrievalStrategy::KeywordTag,
             1,
-        )
+            evaluation_time(),
+        ))
         .unwrap();
 
         assert_eq!(result.selected.len(), 1);
@@ -826,5 +949,31 @@ mod tests {
             "tests",
             10,
         )
+    }
+
+    fn evaluation_time() -> OffsetDateTime {
+        OffsetDateTime::parse("2026-06-01T00:00:00Z", &Rfc3339).unwrap()
+    }
+
+    fn recency_ordering_records() -> Vec<MemoryRecord> {
+        let mut older = test_record(
+            "memory.older",
+            "Older topic",
+            "The topic is older.",
+            vec![],
+            evaluation_time() - time::Duration::days(31),
+        );
+        older.importance = 0.2;
+
+        let mut newer = test_record(
+            "memory.newer",
+            "Newer topic",
+            "The topic is newer.",
+            vec![],
+            evaluation_time(),
+        );
+        newer.importance = 0.0;
+
+        vec![older, newer]
     }
 }

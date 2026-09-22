@@ -79,6 +79,7 @@ pub(crate) async fn inject_trusted_turn_context_and_response(
         &retrieval_query,
         RetrievalStrategy::AssociationWeighted,
         DEFAULT_INJECTION_FRAGMENT_LIMIT,
+        OffsetDateTime::now_utc(),
     ) {
         Ok(result) => result.selected,
         Err(error) => {

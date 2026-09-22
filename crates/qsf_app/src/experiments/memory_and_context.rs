@@ -4,11 +4,12 @@ use std::time::Instant;
 use anyhow::Context;
 use serde::Serialize;
 use serde_json::json;
+use time::OffsetDateTime;
 
 use crate::context::{ContextBudget, ContextFragment, assemble_context};
 use crate::memory::{
-    MemoryFixture, RetrievalResult, RetrievalStrategy, phase_four_fixture, retrieve_memories,
-    retrieved_memory_ids,
+    MemoryFixture, RetrievalRequest, RetrievalResult, RetrievalStrategy, phase_four_fixture,
+    retrieve_memories, retrieved_memory_ids,
 };
 use crate::observability::event_log::EventType;
 use crate::observability::trace::{TraceRecord, duration_ms, duration_ns};
@@ -47,6 +48,7 @@ impl Experiment for AssociativeMemoryToyModelExperiment {
         )?;
 
         let budget = ContextBudget::new(3, 115);
+        let evaluation_time = OffsetDateTime::now_utc();
         let mut runs = Vec::new();
 
         for strategy in [
@@ -54,8 +56,15 @@ impl Experiment for AssociativeMemoryToyModelExperiment {
             RetrievalStrategy::KeywordTag,
             RetrievalStrategy::AssociationWeighted,
         ] {
-            let run =
-                run_retrieval_and_context(context, &fixture, MEMORY_QUERY, strategy, 5, budget)?;
+            let run = run_retrieval_and_context(
+                context,
+                &fixture,
+                MEMORY_QUERY,
+                strategy,
+                5,
+                budget,
+                evaluation_time,
+            )?;
             runs.push(run);
         }
 
@@ -114,6 +123,7 @@ impl Experiment for ContextBudgetRetrievalTestExperiment {
         )?;
 
         let budget = ContextBudget::new(2, 70);
+        let evaluation_time = OffsetDateTime::now_utc();
         let mut runs = Vec::new();
 
         for strategy in [
@@ -121,8 +131,15 @@ impl Experiment for ContextBudgetRetrievalTestExperiment {
             RetrievalStrategy::KeywordTag,
             RetrievalStrategy::AssociationWeighted,
         ] {
-            let run =
-                run_retrieval_and_context(context, &fixture, CONTEXT_QUERY, strategy, 6, budget)?;
+            let run = run_retrieval_and_context(
+                context,
+                &fixture,
+                CONTEXT_QUERY,
+                strategy,
+                6,
+                budget,
+                evaluation_time,
+            )?;
             runs.push(run);
         }
 
@@ -171,6 +188,7 @@ fn run_retrieval_and_context(
     strategy: RetrievalStrategy,
     retrieval_limit: usize,
     budget: ContextBudget,
+    evaluation_time: OffsetDateTime,
 ) -> anyhow::Result<StrategyRunSummary> {
     context.record_event(
         EventType::MemoryRetrievalRequested,
@@ -182,13 +200,15 @@ fn run_retrieval_and_context(
         None,
     )?;
 
-    let retrieval = retrieve_memories(
+    let request = RetrievalRequest::new(
         &fixture.records,
         &fixture.associations,
         query,
         strategy,
         retrieval_limit,
-    )?;
+        evaluation_time,
+    );
+    let retrieval = retrieve_memories(&request)?;
     let retrieval_trace = retrieval_trace(context.experiment_id(), &retrieval);
     let retrieval_trace_id = retrieval_trace.trace_id;
     context.record_trace(retrieval_trace)?;
@@ -344,6 +364,7 @@ mod tests {
     use crate::context::ContextBudget;
     use crate::memory::{RetrievalStrategy, phase_four_fixture};
     use crate::runtime::run_context::RunContext;
+    use time::OffsetDateTime;
 
     #[test]
     fn phase_four_run_records_memory_and_context_events() {
@@ -358,6 +379,7 @@ mod tests {
             RetrievalStrategy::AssociationWeighted,
             5,
             ContextBudget::new(2, 80),
+            OffsetDateTime::now_utc(),
         )
         .unwrap();
 

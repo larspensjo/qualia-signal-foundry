@@ -24,9 +24,9 @@ pub use record::{
     MemoryTrustTier, WorldObservationSource, ensure_current_memory_schema,
 };
 pub use retrieval::{
-    AssociationPath, RetrievalResult, RetrievalScore, RetrievalStrategy, RetrievedMemory,
-    SUPERSEDED_WORLD_OBSERVATION_SKIP_REASON, WORLD_OBSERVATION_DECAY_HALFLIFE_DAYS,
-    retrieve_memories, retrieved_memory_ids,
+    AssociationPath, RetrievalRequest, RetrievalResult, RetrievalScore, RetrievalStrategy,
+    RetrievedMemory, SUPERSEDED_WORLD_OBSERVATION_SKIP_REASON,
+    WORLD_OBSERVATION_DECAY_HALFLIFE_DAYS, retrieve_memories, retrieved_memory_ids,
 };
 pub use store::{
     LoadedStore, MemoryStore, MemoryStoreContents, dangling_association_ids, load_existing,

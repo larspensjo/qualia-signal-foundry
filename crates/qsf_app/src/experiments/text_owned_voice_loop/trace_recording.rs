@@ -1,4 +1,5 @@
 use serde_json::json;
+use time::OffsetDateTime;
 
 use crate::audio::{
     AudioRuntimeBoundary, AudioRuntimeEntryPoint, AudioSafetyMarkers, SpeechOutputProviderError,
@@ -6,7 +7,7 @@ use crate::audio::{
     transcript_provider_to_input_boundary,
 };
 use crate::context::ContextAssembly;
-use crate::memory::{RetrievalResult, retrieve_memories, retrieved_memory_ids};
+use crate::memory::{RetrievalRequest, RetrievalResult, retrieve_memories, retrieved_memory_ids};
 use crate::observability::event_log::EventType;
 use crate::observability::trace::TraceRecord;
 use crate::runtime::run_context::RunContext;
@@ -83,6 +84,7 @@ pub(super) fn retrieve_voice_memories(
     session_id: &str,
     query: &str,
     memory_snapshot: &VoiceMemorySourceSnapshot,
+    evaluation_time: OffsetDateTime,
 ) -> anyhow::Result<RetrievalResult> {
     context.record_event(
         EventType::MemoryRetrievalRequested,
@@ -99,13 +101,15 @@ pub(super) fn retrieve_voice_memories(
         None,
     )?;
 
-    let retrieval = retrieve_memories(
+    let request = RetrievalRequest::new(
         &memory_snapshot.records,
         &memory_snapshot.associations,
         query,
         VOICE_MEMORY_RETRIEVAL_STRATEGY,
         VOICE_MEMORY_RETRIEVAL_LIMIT,
-    )?;
+        evaluation_time,
+    );
+    let retrieval = retrieve_memories(&request)?;
     let trace = TraceRecord::new(
         context.experiment_id(),
         "voice-memory-retrieval",

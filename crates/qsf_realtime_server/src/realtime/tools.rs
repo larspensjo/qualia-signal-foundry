@@ -13,6 +13,7 @@ use qsf_tools::{
 };
 use qsf_volition::{VolitionFixture, VolitionState};
 use serde::Serialize;
+use time::OffsetDateTime;
 
 use crate::diagnostics::DiagnosticTrust;
 use crate::realtime::memory_store::load_session_memory_store;
@@ -295,6 +296,7 @@ impl Tool for SearchMemoryTool {
             query,
             RetrievalStrategy::AssociationWeighted,
             limit,
+            OffsetDateTime::now_utc(),
         )?;
         let mut used_tokens = 0usize;
         let mut selected = Vec::new();

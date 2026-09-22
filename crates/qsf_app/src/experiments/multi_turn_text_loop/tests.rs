@@ -23,7 +23,8 @@ use crate::conversation::prompt::{
 use crate::experiments::text_owned_voice_loop::SharedVoiceMemorySource;
 use crate::memory::{
     Association, LiveCaptureInput, MemoryFixture, MemoryRecord, MemoryRecordKind, MemoryStore,
-    RetrievalStrategy, capture_live_memory_candidates, phase_four_fixture, retrieve_memories,
+    RetrievalRequest, RetrievalStrategy, capture_live_memory_candidates, phase_four_fixture,
+    retrieve_memories,
 };
 use crate::observability::event_log::{EventRecord, EventType};
 use crate::observability::trace::TraceRecord;

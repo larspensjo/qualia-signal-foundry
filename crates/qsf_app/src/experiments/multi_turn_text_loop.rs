@@ -5,13 +5,14 @@ use std::path::Path;
 use anyhow::Context;
 use serde::Serialize;
 use serde_json::json;
+use time::OffsetDateTime;
 
 use crate::console::styling::ColorMode;
 use crate::context::ContextAssembly;
 use crate::conversation::prompt::{self, PromptTurn};
 use crate::conversation::{PromptAssembly, PromptTurnSummary};
 use crate::memory::{
-    Association, MemoryFixture, MemoryRecord, RetrievalResult, RetrievalStrategy,
+    Association, MemoryFixture, MemoryRecord, RetrievalRequest, RetrievalResult, RetrievalStrategy,
     retrieve_memories, retrieved_memory_ids,
 };
 use crate::observability::event_log::EventType;
@@ -542,6 +543,7 @@ fn retrieve_session_memories(
     state: &SessionState,
     memory_snapshot: &SessionMemorySourceSnapshot,
     query: &str,
+    evaluation_time: OffsetDateTime,
 ) -> anyhow::Result<RetrievalResult> {
     context.record_event(
         EventType::MemoryRetrievalRequested,
@@ -556,13 +558,15 @@ fn retrieve_session_memories(
         }),
         None,
     )?;
-    let retrieval = retrieve_memories(
+    let request = RetrievalRequest::new(
         &memory_snapshot.records,
         &memory_snapshot.associations,
         query,
         SESSION_RETRIEVAL_STRATEGY,
         SESSION_RETRIEVAL_LIMIT,
-    )?;
+        evaluation_time,
+    );
+    let retrieval = retrieve_memories(&request)?;
     let trace = TraceRecord::new(
         context.experiment_id(),
         "session-memory-retrieval",

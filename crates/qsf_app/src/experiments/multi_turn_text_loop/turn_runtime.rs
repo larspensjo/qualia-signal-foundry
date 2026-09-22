@@ -5,6 +5,7 @@ use std::time::{Instant, SystemTime};
 
 use anyhow::Context;
 use serde_json::json;
+use time::OffsetDateTime;
 
 use crate::console::styling::ColorMode;
 use crate::context::{ContextAssembly, ContextFragment, ContextSourceKind, assemble_context};
@@ -72,6 +73,7 @@ pub(crate) fn run_one_turn<W: Write>(
 ) -> anyhow::Result<String> {
     let TurnConsole { output, color_mode } = console;
     let turn_started_at = SystemTime::now();
+    let evaluation_time = OffsetDateTime::now_utc();
     let user_input = request.user_input;
     let turn_index = completed_turn_count(state);
     apply_live_session_event(
@@ -89,6 +91,7 @@ pub(crate) fn run_one_turn<W: Write>(
         memory_snapshot,
         user_input,
         request.boot_brief_fragment,
+        evaluation_time,
     )?;
     print_memory_blocks(output, &turn_context.assembly, color_mode)?;
 
@@ -130,9 +133,11 @@ fn assemble_turn_context(
     memory_snapshot: &SessionMemorySourceSnapshot,
     user_input: &str,
     boot_brief_fragment: Option<String>,
+    evaluation_time: OffsetDateTime,
 ) -> anyhow::Result<TurnContextAssembly> {
     let turn_index = completed_turn_count(state);
-    let retrieval = retrieve_session_memories(context, state, memory_snapshot, user_input)?;
+    let retrieval =
+        retrieve_session_memories(context, state, memory_snapshot, user_input, evaluation_time)?;
     let fragments = retrieval
         .selected
         .iter()

@@ -20,8 +20,8 @@ pub use live_capture::{
 };
 pub use memory_record::{MEMORY_RECORD_SCHEMA_VERSION, MemoryRecord, MemoryRecordKind};
 pub use qsf_memory::retrieval::{
-    AssociationPath, RetrievalResult, RetrievalScore, RetrievalStrategy, RetrievedMemory,
-    retrieve_memories, retrieved_memory_ids,
+    AssociationPath, RetrievalRequest, RetrievalResult, RetrievalScore, RetrievalStrategy,
+    RetrievedMemory, retrieve_memories, retrieved_memory_ids,
 };
 pub use reviewed_memory_draft::{
     DEFAULT_DRAFT_IMPORTANCE, REVIEWED_MEMORY_DRAFT_JSON, REVIEWED_MEMORY_DRAFT_MARKDOWN,
