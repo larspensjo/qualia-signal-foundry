@@ -206,8 +206,7 @@ impl TextOwnedVoiceLoopExperiment {
             evaluation_time,
         )?;
 
-        let context_assembly =
-            assemble_voice_context(&final_transcript, &memory_retrieval.selected);
+        let context_assembly = assemble_voice_context(&final_transcript, &memory_retrieval);
         let context_trace_id =
             record_context_assembly(context, &state.session_id, &context_assembly)?;
         record_context_events(

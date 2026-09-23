@@ -73,7 +73,7 @@ pub(crate) async fn inject_trusted_turn_context_and_response(
         transcript.to_string()
     };
 
-    let retrieved_memories = match retrieve_session_memories(
+    let retrieval = match retrieve_session_memories(
         state,
         qsf_session_id,
         &retrieval_query,
@@ -81,12 +81,12 @@ pub(crate) async fn inject_trusted_turn_context_and_response(
         DEFAULT_INJECTION_FRAGMENT_LIMIT,
         OffsetDateTime::now_utc(),
     ) {
-        Ok(result) => result.selected,
+        Ok(result) => Some(result),
         Err(error) => {
             log::warn!(
                 "memory retrieval failed for trusted turn in session `{qsf_session_id}`: {error}"
             );
-            Vec::new()
+            None
         }
     };
 
@@ -102,7 +102,7 @@ pub(crate) async fn inject_trusted_turn_context_and_response(
         session_identity: qsf_session_id,
         tone: &tone,
         user_transcript: transcript,
-        retrieved_memories: &retrieved_memories,
+        retrieval: retrieval.as_ref(),
         budget: ContextBudget::new(
             DEFAULT_INJECTION_FRAGMENT_LIMIT,
             DEFAULT_INJECTION_TOKEN_LIMIT,

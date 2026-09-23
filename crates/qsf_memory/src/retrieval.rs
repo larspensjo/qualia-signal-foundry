@@ -1,4 +1,4 @@
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::fmt;
 use std::time::Instant;
 
@@ -6,6 +6,9 @@ use serde::Serialize;
 use time::OffsetDateTime;
 
 use super::association::{Association, ensure_current_association_schema};
+use super::judge_admission::{
+    AdmissionBasis, JudgeVerdict, MAX_JUDGE_VERDICT_BASIS_POINTS, SelectionEligibility,
+};
 use super::record::{MemoryProvenance, MemoryRecord, ensure_current_memory_schema};
 
 pub const DECAY_HALFLIFE_DAYS: f64 = 30.0;
@@ -14,8 +17,36 @@ pub const DECAY_HALFLIFE_DAYS: f64 = 30.0;
 pub const WORLD_OBSERVATION_DECAY_HALFLIFE_DAYS: f64 = 7.0;
 pub const RELEVANCE_GATE_SKIP_REASON: &str =
     "relevance gate: no keyword, tag, association, or profile signal";
+pub const JUDGE_VERDICT_BELOW_ADMISSION_THRESHOLD_SKIP_REASON: &str =
+    "judge verdict below admission threshold";
 pub const RETRIEVAL_LIMIT_SKIP_REASON: &str = "retrieval limit exceeded";
 pub const SUPERSEDED_WORLD_OBSERVATION_SKIP_REASON: &str = "superseded by newer world observation";
+/// Starting recall-leaning memory admission threshold; tune on the development split.
+/// A model-version or question-wording change invalidates this operating point.
+pub const MEMORY_JUDGE_ADMISSION_THRESHOLD_BASIS_POINTS: u16 = 3_000;
+/// Maximum judge addition to a retrieval total for an admitted verdict, reached at 10000 basis points.
+/// Below-threshold verdicts, abstentions, and missing verdicts add nothing.
+pub const MAX_JUDGE_SCORE_ADDITION: f64 = 2.0;
+/// Reserved policy share of the retrieval limit filled from judge-ranked candidates first.
+/// Fractional slot counts round up to the next whole retrieval slot.
+pub const RESERVED_JUDGE_SLOT_SHARE: f64 = 0.25;
+
+/// How a judged candidate's selection priority is combined with lexical retrieval.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AdmissionCombinationPolicy {
+    /// Adds a bounded judge component only for verdicts at or above the admission threshold.
+    /// This is the provisional code default; the development split chooses the winner.
+    #[default]
+    BoundedAdditive,
+    /// Fills lexical slots first, then reserves a share for judge-admitted candidates
+    /// outside those slots; unused reserved slots return to lexical order.
+    ReservedSlots,
+}
+
+/// Provisional combination-policy default, pending the development-split comparison.
+pub const DEFAULT_ADMISSION_COMBINATION_POLICY: AdmissionCombinationPolicy =
+    AdmissionCombinationPolicy::BoundedAdditive;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -35,6 +66,9 @@ pub struct RetrievalRequest<'a> {
     pub strategy: RetrievalStrategy,
     pub limit: usize,
     pub evaluation_time: OffsetDateTime,
+    judge_verdicts: Option<BTreeMap<String, JudgeVerdict>>,
+    admission_threshold_basis_points: u16,
+    combination_policy: AdmissionCombinationPolicy,
 }
 
 impl<'a> RetrievalRequest<'a> {
@@ -53,7 +87,33 @@ impl<'a> RetrievalRequest<'a> {
             strategy,
             limit,
             evaluation_time,
+            judge_verdicts: None,
+            admission_threshold_basis_points: MEMORY_JUDGE_ADMISSION_THRESHOLD_BASIS_POINTS,
+            combination_policy: DEFAULT_ADMISSION_COMBINATION_POLICY,
         }
+    }
+
+    /// Adds optional memory-keyed judge verdicts to this retrieval request.
+    pub fn with_judge_verdicts(mut self, verdicts: BTreeMap<String, JudgeVerdict>) -> Self {
+        self.judge_verdicts = Some(verdicts);
+        self
+    }
+
+    /// Returns judge verdicts and their backend identity for caller-side recording.
+    pub fn judge_verdicts(&self) -> Option<&BTreeMap<String, JudgeVerdict>> {
+        self.judge_verdicts.as_ref()
+    }
+
+    /// Overrides the per-request judge admission threshold in basis points.
+    pub fn with_admission_threshold_basis_points(mut self, threshold: u16) -> Self {
+        self.admission_threshold_basis_points = threshold;
+        self
+    }
+
+    /// Selects how judge influence is combined with lexical ordering.
+    pub fn with_combination_policy(mut self, policy: AdmissionCombinationPolicy) -> Self {
+        self.combination_policy = policy;
+        self
     }
 }
 
@@ -76,6 +136,7 @@ pub struct RetrievalScore {
     pub association: f64,
     pub importance: f64,
     pub reinforcement: f64,
+    pub judge: f64,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize)]
@@ -91,6 +152,10 @@ pub struct RetrievedMemory {
     pub memory: MemoryRecord,
     pub strategy: RetrievalStrategy,
     pub score: RetrievalScore,
+    /// Original verdict probability, including below-threshold scores and reserved-slot runs.
+    pub judge_verdict_basis_points: Option<u16>,
+    pub admission_basis: AdmissionBasis,
+    pub selection_eligibility: SelectionEligibility,
     pub matched_terms: Vec<String>,
     pub association_paths: Vec<AssociationPath>,
     pub skip_reason: Option<String>,
@@ -101,21 +166,137 @@ pub struct RetrievalResult {
     pub query: String,
     pub strategy: RetrievalStrategy,
     pub evaluation_time: OffsetDateTime,
+    pub combination_policy: AdmissionCombinationPolicy,
+    pub judge_verdicts_supplied: bool,
+    pub lexical_only_selected_ids: Vec<String>,
     pub selected: Vec<RetrievedMemory>,
     pub omitted: Vec<RetrievedMemory>,
     pub latency_ms: u64,
     pub latency_ns: u64,
 }
 
+impl RetrievalResult {
+    /// Returns the retrieval ordering when assembly must preserve reserved judge slots.
+    pub fn context_ordering(&self) -> Option<Vec<String>> {
+        (self.combination_policy == AdmissionCombinationPolicy::ReservedSlots
+            && self.judge_verdicts_supplied)
+            .then(|| retrieved_memory_ids(&self.selected))
+    }
+}
+
 pub fn retrieve_memories(request: &RetrievalRequest<'_>) -> anyhow::Result<RetrievalResult> {
+    anyhow::ensure!(
+        request.admission_threshold_basis_points <= MAX_JUDGE_VERDICT_BASIS_POINTS,
+        "admission threshold must be in 0..=10000 basis points"
+    );
+    if let Some(verdicts) = &request.judge_verdicts {
+        let mut identity = None;
+        for (memory_id, verdict) in verdicts {
+            anyhow::ensure!(
+                verdict.score_basis_points <= MAX_JUDGE_VERDICT_BASIS_POINTS,
+                "judge verdict for `{memory_id}` is outside 0..=10000 basis points"
+            );
+            anyhow::ensure!(
+                verdict.model_identity.backend == verdict.backend_kind,
+                "judge verdict for `{memory_id}` has inconsistent backend identity"
+            );
+            let operating_point = (
+                &verdict.model_identity,
+                &verdict.question_wording_version,
+                verdict.backend_kind,
+            );
+            if let Some(first) = identity {
+                anyhow::ensure!(
+                    first == operating_point,
+                    "judge verdicts mix operating-point identities"
+                );
+            } else {
+                identity = Some(operating_point);
+            }
+        }
+    }
     ensure_current_memory_schema(request.records)?;
     ensure_current_association_schema(request.associations)?;
 
     let started_at = Instant::now();
+    let has_judge_verdicts = request
+        .judge_verdicts
+        .as_ref()
+        .is_some_and(|verdicts| !verdicts.is_empty());
+    let lexical_only = if has_judge_verdicts {
+        Some(retrieve_selection(request, false))
+    } else {
+        None
+    };
+    let judged_selection = retrieve_selection(request, has_judge_verdicts);
+    let mut selected = judged_selection.selected;
+    let omitted = judged_selection.omitted;
+    let lexical_only_selected_ids = lexical_only
+        .as_ref()
+        .map(|selection| retrieved_memory_ids(&selection.selected))
+        .unwrap_or_else(|| retrieved_memory_ids(&selected));
+    let lexical_ids = lexical_only_selected_ids
+        .iter()
+        .cloned()
+        .collect::<HashSet<_>>();
+    for memory in &mut selected {
+        memory.selection_eligibility = if lexical_ids.contains(&memory.memory.id) {
+            SelectionEligibility::Associable
+        } else {
+            SelectionEligibility::JudgeInfluenced
+        };
+    }
+    // Eligibility describes a selected memory only. Omitted entries never enter
+    // the durable-structure consumer path.
+
+    let elapsed = started_at.elapsed();
+
+    Ok(RetrievalResult {
+        query: request.query.to_string(),
+        strategy: request.strategy,
+        evaluation_time: request.evaluation_time,
+        combination_policy: request.combination_policy,
+        judge_verdicts_supplied: has_judge_verdicts,
+        lexical_only_selected_ids,
+        selected,
+        omitted,
+        latency_ms: duration_ms(elapsed),
+        latency_ns: duration_ns(elapsed),
+    })
+}
+
+struct CandidateForSelection {
+    retrieved: RetrievedMemory,
+    lexical_total: f64,
+    judge_basis_points: Option<u16>,
+}
+
+struct RetrievalSelection {
+    selected: Vec<RetrievedMemory>,
+    omitted: Vec<RetrievedMemory>,
+}
+
+struct RelevanceSignals<'a> {
+    score: &'a RetrievalScore,
+    matched_terms: &'a [String],
+    association_paths: &'a [AssociationPath],
+    query: &'a str,
+    query_terms: &'a HashSet<String>,
+    judge_basis_points: Option<u16>,
+    admission_threshold_basis_points: u16,
+}
+
+#[derive(Clone, Copy)]
+struct JudgeScoring {
+    basis_points: Option<u16>,
+    admission_threshold_basis_points: u16,
+    combination_policy: AdmissionCombinationPolicy,
+}
+
+fn retrieve_selection(request: &RetrievalRequest<'_>, include_judge: bool) -> RetrievalSelection {
     let query_terms = tokenize(request.query);
     let seed_ids = keyword_seed_ids(request.records, &query_terms);
     let association_paths = association_paths_by_target(request.associations, &seed_ids);
-
     let mut candidates = request
         .records
         .iter()
@@ -125,77 +306,224 @@ pub fn retrieve_memories(request: &RetrievalRequest<'_>) -> anyhow::Result<Retri
                 .get(&record.id)
                 .cloned()
                 .unwrap_or_default();
-            let score = score_record(
+            let verdict = include_judge
+                .then(|| {
+                    request
+                        .judge_verdicts
+                        .as_ref()
+                        .and_then(|verdicts| verdicts.get(&record.id))
+                })
+                .flatten();
+            let judge_basis_points = verdict.map(|verdict| verdict.score_basis_points);
+            let (score, lexical_total) = score_record(
                 record,
                 request.strategy,
                 request.evaluation_time,
                 &matched_terms,
                 &paths,
+                JudgeScoring {
+                    basis_points: judge_basis_points,
+                    admission_threshold_basis_points: request.admission_threshold_basis_points,
+                    combination_policy: request.combination_policy,
+                },
             );
-
-            RetrievedMemory {
-                memory: record.clone(),
-                strategy: request.strategy,
-                score,
-                matched_terms,
-                association_paths: paths,
-                skip_reason: None,
+            CandidateForSelection {
+                retrieved: RetrievedMemory {
+                    memory: record.clone(),
+                    strategy: request.strategy,
+                    score,
+                    judge_verdict_basis_points: judge_basis_points,
+                    admission_basis: AdmissionBasis::Lexical,
+                    selection_eligibility: SelectionEligibility::NotSelected,
+                    matched_terms,
+                    association_paths: paths,
+                    skip_reason: None,
+                },
+                lexical_total,
+                judge_basis_points,
             }
         })
         .collect::<Vec<_>>();
 
-    candidates.sort_by(|left, right| {
-        right
-            .score
-            .total
-            .total_cmp(&left.score.total)
-            .then_with(|| right.memory.created_at.cmp(&left.memory.created_at))
-            .then_with(|| left.memory.id.cmp(&right.memory.id))
-    });
+    candidates.sort_by(compare_candidates_by_total);
 
     let mut selected = Vec::new();
     let mut omitted = Vec::new();
-    for mut candidate in candidates {
-        if is_superseded_world_observation(&candidate.memory) {
-            candidate.skip_reason = Some(SUPERSEDED_WORLD_OBSERVATION_SKIP_REASON.to_string());
-            omitted.push(candidate);
-            continue;
+    if include_judge && request.combination_policy == AdmissionCombinationPolicy::ReservedSlots {
+        let mut eligible = Vec::new();
+        for mut candidate in candidates {
+            if admit_candidate(&mut candidate, request, &query_terms, true) {
+                eligible.push(candidate);
+            } else {
+                omitted.push(candidate.retrieved);
+            }
         }
-
-        if !is_relevant_for_strategy(
-            &candidate.memory,
-            request.strategy,
-            &candidate.score,
-            &candidate.matched_terms,
-            &candidate.association_paths,
-            request.query,
-            &query_terms,
-        ) {
-            candidate.skip_reason = Some(RELEVANCE_GATE_SKIP_REASON.to_string());
-            omitted.push(candidate);
-            continue;
-        }
-
-        if selected.len() < request.limit {
-            candidate.skip_reason = None;
-            selected.push(candidate);
-        } else {
-            candidate.skip_reason = Some(RETRIEVAL_LIMIT_SKIP_REASON.to_string());
-            omitted.push(candidate);
+        order_reserved_candidates(
+            &mut eligible,
+            request.limit,
+            request.admission_threshold_basis_points,
+        );
+        apply_retrieval_limit(eligible, request.limit, &mut selected, &mut omitted);
+    } else {
+        for mut candidate in candidates {
+            if !admit_candidate(&mut candidate, request, &query_terms, include_judge) {
+                omitted.push(candidate.retrieved);
+                continue;
+            }
+            if selected.len() < request.limit {
+                candidate.retrieved.skip_reason = None;
+                selected.push(candidate.retrieved);
+            } else {
+                candidate.retrieved.skip_reason = Some(RETRIEVAL_LIMIT_SKIP_REASON.to_string());
+                omitted.push(candidate.retrieved);
+            }
         }
     }
 
-    let elapsed = started_at.elapsed();
+    RetrievalSelection { selected, omitted }
+}
 
-    Ok(RetrievalResult {
-        query: request.query.to_string(),
-        strategy: request.strategy,
-        evaluation_time: request.evaluation_time,
-        selected,
-        omitted,
-        latency_ms: duration_ms(elapsed),
-        latency_ns: duration_ns(elapsed),
-    })
+fn admit_candidate(
+    candidate: &mut CandidateForSelection,
+    request: &RetrievalRequest<'_>,
+    query_terms: &HashSet<String>,
+    include_judge: bool,
+) -> bool {
+    if is_superseded_world_observation(&candidate.retrieved.memory) {
+        candidate.retrieved.skip_reason =
+            Some(SUPERSEDED_WORLD_OBSERVATION_SKIP_REASON.to_string());
+        return false;
+    }
+
+    let judge_basis_points = include_judge
+        .then_some(candidate.judge_basis_points)
+        .flatten();
+    let (lexical_admitted, judge_admitted) = is_relevant_for_strategy(
+        &candidate.retrieved.memory,
+        request.strategy,
+        RelevanceSignals {
+            score: &candidate.retrieved.score,
+            matched_terms: &candidate.retrieved.matched_terms,
+            association_paths: &candidate.retrieved.association_paths,
+            query: request.query,
+            query_terms,
+            judge_basis_points,
+            admission_threshold_basis_points: request.admission_threshold_basis_points,
+        },
+    );
+    candidate.retrieved.admission_basis = match (lexical_admitted, judge_admitted) {
+        (true, true) => AdmissionBasis::LexicalAndJudge,
+        (false, true) => AdmissionBasis::Judge,
+        _ => AdmissionBasis::Lexical,
+    };
+    if !lexical_admitted && !judge_admitted {
+        candidate.retrieved.skip_reason =
+            Some(if include_judge && candidate.judge_basis_points.is_some() {
+                JUDGE_VERDICT_BELOW_ADMISSION_THRESHOLD_SKIP_REASON.to_string()
+            } else {
+                RELEVANCE_GATE_SKIP_REASON.to_string()
+            });
+        return false;
+    }
+
+    true
+}
+
+fn apply_retrieval_limit(
+    eligible: Vec<CandidateForSelection>,
+    limit: usize,
+    selected: &mut Vec<RetrievedMemory>,
+    omitted: &mut Vec<RetrievedMemory>,
+) {
+    for mut candidate in eligible {
+        if selected.len() < limit {
+            candidate.retrieved.skip_reason = None;
+            selected.push(candidate.retrieved);
+        } else {
+            candidate.retrieved.skip_reason = Some(RETRIEVAL_LIMIT_SKIP_REASON.to_string());
+            omitted.push(candidate.retrieved);
+        }
+    }
+}
+
+fn compare_candidates_by_total(
+    left: &CandidateForSelection,
+    right: &CandidateForSelection,
+) -> std::cmp::Ordering {
+    right
+        .retrieved
+        .score
+        .total
+        .total_cmp(&left.retrieved.score.total)
+        .then_with(|| compare_candidates_by_lexical_total(left, right))
+}
+
+fn compare_candidates_by_lexical_total(
+    left: &CandidateForSelection,
+    right: &CandidateForSelection,
+) -> std::cmp::Ordering {
+    right
+        .lexical_total
+        .total_cmp(&left.lexical_total)
+        .then_with(|| {
+            right
+                .retrieved
+                .memory
+                .created_at
+                .cmp(&left.retrieved.memory.created_at)
+        })
+        .then_with(|| left.retrieved.memory.id.cmp(&right.retrieved.memory.id))
+}
+
+fn order_reserved_candidates(
+    candidates: &mut Vec<CandidateForSelection>,
+    limit: usize,
+    admission_threshold_basis_points: u16,
+) {
+    let reserved_slots = ((limit as f64) * RESERVED_JUDGE_SLOT_SHARE).ceil() as usize;
+    let lexical_slots = limit.saturating_sub(reserved_slots);
+    let mut lexical_order = (0..candidates.len()).collect::<Vec<_>>();
+    lexical_order.sort_by(|left, right| {
+        compare_candidates_by_lexical_total(&candidates[*left], &candidates[*right])
+    });
+    let mut ordered_indices = lexical_order
+        .iter()
+        .take(lexical_slots)
+        .copied()
+        .collect::<Vec<_>>();
+    let mut selected = ordered_indices.iter().copied().collect::<HashSet<_>>();
+    let mut judge_ranked = (0..candidates.len())
+        .filter(|index| {
+            !selected.contains(index)
+                && candidates[*index]
+                    .judge_basis_points
+                    .is_some_and(|points| points >= admission_threshold_basis_points)
+        })
+        .collect::<Vec<_>>();
+    judge_ranked.sort_by(|left, right| {
+        candidates[*right]
+            .judge_basis_points
+            .cmp(&candidates[*left].judge_basis_points)
+            .then_with(|| {
+                compare_candidates_by_lexical_total(&candidates[*left], &candidates[*right])
+            })
+    });
+
+    for index in judge_ranked.into_iter().take(reserved_slots) {
+        selected.insert(index);
+        ordered_indices.push(index);
+    }
+    ordered_indices.extend(
+        lexical_order
+            .into_iter()
+            .filter(|index| !selected.contains(index)),
+    );
+
+    let mut indexed = candidates.drain(..).map(Some).collect::<Vec<_>>();
+    *candidates = ordered_indices
+        .into_iter()
+        .map(|index| indexed[index].take().expect("candidate index is unique"))
+        .collect();
 }
 
 pub fn retrieved_memory_ids(memories: &[RetrievedMemory]) -> Vec<String> {
@@ -211,7 +539,8 @@ fn score_record(
     evaluation_time: OffsetDateTime,
     matched_terms: &[String],
     association_paths: &[AssociationPath],
-) -> RetrievalScore {
+    judge_scoring: JudgeScoring,
+) -> (RetrievalScore, f64) {
     let recency = compute_recency_decay(record, evaluation_time);
     let keyword = matched_terms_in_text(record, matched_terms) as f64;
     let tag = matched_terms_in_tags(record, matched_terms) as f64;
@@ -223,7 +552,7 @@ fn score_record(
     let importance = record.importance;
     let reinforcement = f64::from(record.reinforcement_count).min(5.0) / 5.0;
 
-    let total = match strategy {
+    let lexical_total = match strategy {
         RetrievalStrategy::RecencyOnly => recency,
         RetrievalStrategy::KeywordTag => {
             (keyword * 0.8) + (tag * 1.4) + (importance * 0.35) + (recency * 0.2)
@@ -237,39 +566,63 @@ fn score_record(
                 + (reinforcement * 0.25)
         }
     };
+    let judge = match (judge_scoring.combination_policy, judge_scoring.basis_points) {
+        (AdmissionCombinationPolicy::BoundedAdditive, Some(points))
+            if points >= judge_scoring.admission_threshold_basis_points =>
+        {
+            (f64::from(points) / f64::from(MAX_JUDGE_VERDICT_BASIS_POINTS))
+                * MAX_JUDGE_SCORE_ADDITION
+        }
+        _ => 0.0,
+    };
+    let total = lexical_total + judge;
 
-    RetrievalScore {
-        total,
-        recency,
-        keyword,
-        tag,
-        association,
-        importance,
-        reinforcement,
-    }
+    (
+        RetrievalScore {
+            total,
+            recency,
+            keyword,
+            tag,
+            association,
+            importance,
+            reinforcement,
+            judge,
+        },
+        lexical_total,
+    )
 }
 
 fn is_relevant_for_strategy(
     record: &MemoryRecord,
     strategy: RetrievalStrategy,
-    score: &RetrievalScore,
-    matched_terms: &[String],
-    association_paths: &[AssociationPath],
-    query: &str,
-    query_terms: &HashSet<String>,
-) -> bool {
-    match strategy {
+    signals: RelevanceSignals<'_>,
+) -> (bool, bool) {
+    let lexical = match strategy {
         RetrievalStrategy::RecencyOnly => true,
         RetrievalStrategy::KeywordTag => {
-            has_direct_relevance(record, score, matched_terms, query, query_terms)
-                || profile_identity_allowed(record, query, query_terms)
+            has_direct_relevance(
+                record,
+                signals.score,
+                signals.matched_terms,
+                signals.query,
+                signals.query_terms,
+            ) || profile_identity_allowed(record, signals.query, signals.query_terms)
         }
         RetrievalStrategy::AssociationWeighted => {
-            has_direct_relevance(record, score, matched_terms, query, query_terms)
-                || !association_paths.is_empty()
-                || profile_identity_allowed(record, query, query_terms)
+            has_direct_relevance(
+                record,
+                signals.score,
+                signals.matched_terms,
+                signals.query,
+                signals.query_terms,
+            ) || !signals.association_paths.is_empty()
+                || profile_identity_allowed(record, signals.query, signals.query_terms)
         }
-    }
+    };
+    let judge = signals
+        .judge_basis_points
+        .is_some_and(|score| score >= signals.admission_threshold_basis_points);
+    (lexical, judge)
 }
 
 fn has_direct_relevance(
@@ -544,12 +897,18 @@ fn duration_ns(elapsed: std::time::Duration) -> u64 {
 
 #[cfg(test)]
 mod tests {
+    use std::collections::BTreeMap;
+
     use super::{
-        RetrievalRequest, RetrievalStrategy, SUPERSEDED_WORLD_OBSERVATION_SKIP_REASON,
-        retrieve_memories,
+        AdmissionCombinationPolicy, JUDGE_VERDICT_BELOW_ADMISSION_THRESHOLD_SKIP_REASON,
+        RELEVANCE_GATE_SKIP_REASON, RetrievalRequest, RetrievalStrategy,
+        SUPERSEDED_WORLD_OBSERVATION_SKIP_REASON, retrieve_memories,
     };
-    use crate::Association;
     use crate::record::{MemoryProvenance, MemoryRecord, MemoryRecordKind, MemoryTrustTier};
+    use crate::{
+        AdmissionBasis, Association, JudgeVerdict, MEMORY_JUDGE_ADMISSION_THRESHOLD_BASIS_POINTS,
+        SelectionEligibility,
+    };
     use time::OffsetDateTime;
     use time::format_description::well_known::Rfc3339;
 
@@ -928,6 +1287,490 @@ mod tests {
 
         assert_eq!(result.selected.len(), 1);
         assert!(result.omitted.is_empty());
+    }
+
+    #[test]
+    fn judge_admits_zero_signal_memories_and_reports_below_threshold_omissions() {
+        let record = test_record(
+            "memory.zero-signal",
+            "Seed starting indoors",
+            "A note about growing seedlings.",
+            vec![],
+            evaluation_time(),
+        );
+        let records = [record];
+        let high = retrieve_memories(
+            &RetrievalRequest::new(
+                &records,
+                &[],
+                "the meaning of quiet winter light",
+                RetrievalStrategy::KeywordTag,
+                1,
+                evaluation_time(),
+            )
+            .with_judge_verdicts(verdicts(&[("memory.zero-signal", 8_500)])),
+        )
+        .unwrap();
+
+        assert_eq!(high.selected.len(), 1);
+        assert_eq!(high.selected[0].memory.id, "memory.zero-signal");
+        assert_eq!(high.selected[0].admission_basis, AdmissionBasis::Judge);
+        assert!(high.selected[0].score.judge > 0.0);
+
+        let low = retrieve_memories(
+            &RetrievalRequest::new(
+                &records,
+                &[],
+                "the meaning of quiet winter light",
+                RetrievalStrategy::KeywordTag,
+                1,
+                evaluation_time(),
+            )
+            .with_judge_verdicts(verdicts(&[("memory.zero-signal", 2_999)])),
+        )
+        .unwrap();
+
+        assert!(low.selected.is_empty());
+        assert_eq!(
+            low.omitted[0].skip_reason.as_deref(),
+            Some(JUDGE_VERDICT_BELOW_ADMISSION_THRESHOLD_SKIP_REASON)
+        );
+        assert_eq!(MEMORY_JUDGE_ADMISSION_THRESHOLD_BASIS_POINTS, 3_000);
+    }
+
+    #[test]
+    fn high_judge_verdict_does_not_resurrect_a_superseded_world_observation() {
+        let record = test_record(
+            "memory.superseded-world",
+            "An old unrelated report",
+            "An old external observation.",
+            vec![],
+            evaluation_time(),
+        )
+        .with_world_observation()
+        .with_superseded_by("memory.world-successor");
+
+        let result = retrieve_memories(
+            &RetrievalRequest::new(
+                &[record],
+                &[],
+                "quiet winter light",
+                RetrievalStrategy::KeywordTag,
+                1,
+                evaluation_time(),
+            )
+            .with_judge_verdicts(verdicts(&[("memory.superseded-world", 10_000)])),
+        )
+        .unwrap();
+
+        assert!(result.selected.is_empty());
+        assert_eq!(
+            result.omitted[0].skip_reason.as_deref(),
+            Some(SUPERSEDED_WORLD_OBSERVATION_SKIP_REASON)
+        );
+    }
+
+    #[test]
+    fn abstained_pair_score_does_not_admit_a_zero_signal_memory() {
+        use qsf_semantics::Traced;
+        use qsf_semantics::trace::{SemanticFailure, SemanticOperation, SemanticTraceRecord};
+        use qsf_semantics::{PairScore, RelevanceTask, ScoreKind};
+
+        let record = test_record(
+            "memory.abstained",
+            "Seed starting indoors",
+            "A note about growing seedlings.",
+            vec![],
+            evaluation_time(),
+        );
+        let pair_score = PairScore {
+            candidate_id: "candidate.seed".to_owned(),
+            candidate_content_hash: "seed-hash".to_owned(),
+            score_basis_points: 10_000,
+            score_kind: ScoreKind::Probability,
+            abstained: true,
+            abstain_reason: Some("uncertain".to_owned()),
+        };
+        let mut trace = SemanticTraceRecord::unavailable(
+            RelevanceTask::MemoryRelevance,
+            SemanticOperation::PairScore,
+            SemanticFailure::BackendUnavailable {
+                detail: "adapter fixture".to_owned(),
+            },
+        );
+        trace.failure = None;
+        trace.invocation_id = "fixture-success".to_owned();
+        trace.model_identity.model_id = "fixture-judge".to_owned();
+        trace.question_wording_version = "memory-relevance-v1".to_owned();
+        let verdicts = crate::adapt_pair_scores_to_judge_verdicts(
+            &Traced::success(trace, vec![pair_score]),
+            &BTreeMap::from([("candidate.seed".to_owned(), "memory.abstained".to_owned())]),
+        )
+        .unwrap();
+        let result = retrieve_memories(
+            &RetrievalRequest::new(
+                &[record],
+                &[],
+                "quiet winter light",
+                RetrievalStrategy::KeywordTag,
+                1,
+                evaluation_time(),
+            )
+            .with_judge_verdicts(verdicts),
+        )
+        .unwrap();
+
+        assert!(result.selected.is_empty());
+        assert_eq!(
+            result.omitted[0].skip_reason.as_deref(),
+            Some(RELEVANCE_GATE_SKIP_REASON)
+        );
+    }
+
+    #[test]
+    fn no_verdict_selection_scores_and_omissions_match_under_both_policies() {
+        let mut a = test_record("a", "orchid one", "", vec![], evaluation_time());
+        let mut b = test_record("b", "orchid two", "", vec![], evaluation_time());
+        let mut c = test_record("c", "orchid three", "", vec![], evaluation_time());
+        let mut z = test_record("z", "unrelated", "", vec![], evaluation_time());
+        a.importance = 0.0;
+        b.importance = 0.0;
+        c.importance = 0.0;
+        z.importance = 1.0;
+        let records = [a, b, c, z];
+        let default_result = retrieve_memories(&RetrievalRequest::new(
+            &records,
+            &[],
+            "orchid",
+            RetrievalStrategy::KeywordTag,
+            2,
+            evaluation_time(),
+        ))
+        .unwrap();
+        assert_eq!(
+            super::retrieved_memory_ids(&default_result.selected),
+            ["a", "b"]
+        );
+        assert_eq!(
+            super::retrieved_memory_ids(&default_result.omitted),
+            ["c", "z"]
+        );
+        let default_selection =
+            serde_json::to_vec(&(&default_result.selected, &default_result.omitted)).unwrap();
+        let mut serialized_selection = None;
+
+        for policy in [
+            AdmissionCombinationPolicy::BoundedAdditive,
+            AdmissionCombinationPolicy::ReservedSlots,
+        ] {
+            let result = retrieve_memories(
+                &RetrievalRequest::new(
+                    &records,
+                    &[],
+                    "orchid",
+                    RetrievalStrategy::KeywordTag,
+                    2,
+                    evaluation_time(),
+                )
+                .with_combination_policy(policy),
+            )
+            .unwrap();
+            let selected_ids = super::retrieved_memory_ids(&result.selected);
+            let omitted_ids = super::retrieved_memory_ids(&result.omitted);
+            assert_eq!(result.combination_policy, policy);
+            assert!(!result.judge_verdicts_supplied);
+            assert!(result.context_ordering().is_none());
+            assert_eq!(selected_ids, ["a", "b"]);
+            assert_eq!(omitted_ids, ["c", "z"]);
+            assert_eq!(result.selected[0].score.total, 1.0);
+            assert_eq!(result.selected[0].score.judge, 0.0);
+            assert_eq!(
+                result.omitted[0].skip_reason.as_deref(),
+                Some(super::RETRIEVAL_LIMIT_SKIP_REASON)
+            );
+            assert_eq!(
+                result.omitted[1].skip_reason.as_deref(),
+                Some(RELEVANCE_GATE_SKIP_REASON)
+            );
+            let bytes = serde_json::to_vec(&(&result.selected, &result.omitted)).unwrap();
+            assert_eq!(bytes, default_selection);
+            if let Some(expected) = &serialized_selection {
+                assert_eq!(&bytes, expected);
+            } else {
+                serialized_selection = Some(bytes);
+            }
+        }
+    }
+
+    #[test]
+    fn reserved_slots_exclude_below_threshold_verdicts() {
+        let records = ["a", "b", "c", "d", "e"].map(|id| {
+            let mut record = test_record(id, "orchid", "", vec![], evaluation_time());
+            record.importance = 0.0;
+            record
+        });
+        let result = retrieve_memories(
+            &RetrievalRequest::new(
+                &records,
+                &[],
+                "orchid",
+                RetrievalStrategy::KeywordTag,
+                4,
+                evaluation_time(),
+            )
+            .with_judge_verdicts(verdicts(&[("e", 1_000)]))
+            .with_combination_policy(AdmissionCombinationPolicy::ReservedSlots),
+        )
+        .unwrap();
+        assert_eq!(
+            super::retrieved_memory_ids(&result.selected),
+            ["a", "b", "c", "d"]
+        );
+        assert_eq!(result.lexical_only_selected_ids, ["a", "b", "c", "d"]);
+        assert_eq!(
+            result
+                .omitted
+                .iter()
+                .find(|memory| memory.memory.id == "e")
+                .unwrap()
+                .judge_verdict_basis_points,
+            Some(1_000)
+        );
+    }
+
+    #[test]
+    fn reserved_slot_goes_to_judge_admitted_candidate_outside_lexical_slots() {
+        let mut records = ["a", "b", "c", "d"]
+            .map(|id| {
+                let mut record = test_record(id, "orchid", "", vec![], evaluation_time());
+                record.importance = 0.0;
+                record
+            })
+            .to_vec();
+        let mut z = test_record("z", "unrelated", "", vec![], evaluation_time());
+        z.importance = 0.0;
+        records.push(z);
+        let result = retrieve_memories(
+            &RetrievalRequest::new(
+                &records,
+                &[],
+                "orchid",
+                RetrievalStrategy::KeywordTag,
+                4,
+                evaluation_time(),
+            )
+            .with_judge_verdicts(verdicts(&[("a", 9_500), ("z", 9_000)]))
+            .with_combination_policy(AdmissionCombinationPolicy::ReservedSlots),
+        )
+        .unwrap();
+        assert_eq!(
+            super::retrieved_memory_ids(&result.selected),
+            ["a", "b", "c", "z"]
+        );
+        assert_eq!(result.lexical_only_selected_ids, ["a", "b", "c", "d"]);
+        let z = result
+            .selected
+            .iter()
+            .find(|memory| memory.memory.id == "z")
+            .unwrap();
+        assert_eq!(z.score.total, 0.2);
+        assert_eq!(z.score.judge, 0.0);
+        assert_eq!(z.judge_verdict_basis_points, Some(9_000));
+        assert_eq!(
+            z.selection_eligibility,
+            SelectionEligibility::JudgeInfluenced
+        );
+    }
+
+    #[test]
+    fn below_threshold_verdict_adds_no_score_or_priority() {
+        let records = ["a", "b"].map(|id| {
+            let mut record = test_record(id, "orchid", "", vec![], evaluation_time());
+            record.importance = 0.0;
+            record
+        });
+        let result = retrieve_memories(
+            &RetrievalRequest::new(
+                &records,
+                &[],
+                "orchid",
+                RetrievalStrategy::KeywordTag,
+                1,
+                evaluation_time(),
+            )
+            .with_judge_verdicts(verdicts(&[("b", 1_000)])),
+        )
+        .unwrap();
+        assert_eq!(super::retrieved_memory_ids(&result.selected), ["a"]);
+        assert_eq!(result.omitted[0].score.judge, 0.0);
+    }
+
+    #[test]
+    fn retrieval_rejects_invalid_threshold_verdict_and_mixed_identity() {
+        let records = [test_record("a", "orchid", "", vec![], evaluation_time())];
+        let request = || {
+            RetrievalRequest::new(
+                &records,
+                &[],
+                "orchid",
+                RetrievalStrategy::KeywordTag,
+                1,
+                evaluation_time(),
+            )
+        };
+        assert!(
+            retrieve_memories(&request().with_admission_threshold_basis_points(10_001)).is_err()
+        );
+        assert!(
+            retrieve_memories(&request().with_judge_verdicts(verdicts(&[("a", 10_001)]))).is_err()
+        );
+        let mut mixed = verdicts(&[("a", 9_000), ("b", 8_000)]);
+        mixed.get_mut("b").unwrap().question_wording_version = "another-wording".to_owned();
+        assert!(retrieve_memories(&request().with_judge_verdicts(mixed.clone())).is_err());
+        mixed.get_mut("b").unwrap().question_wording_version = "memory-relevance-v1".to_owned();
+        mixed.get_mut("b").unwrap().model_identity.identity_value = "other-model".to_owned();
+        assert!(retrieve_memories(&request().with_judge_verdicts(mixed)).is_err());
+        let mut inconsistent = verdicts(&[("a", 9_000)]);
+        inconsistent.get_mut("a").unwrap().backend_kind =
+            qsf_semantics::trace::BackendKind::RemoteHttp;
+        assert!(retrieve_memories(&request().with_judge_verdicts(inconsistent)).is_err());
+    }
+
+    #[test]
+    fn judged_selection_is_deterministic_and_tracks_the_lexical_counterfactual() {
+        let records = judgment_fixture_records();
+        for policy in [
+            AdmissionCombinationPolicy::BoundedAdditive,
+            AdmissionCombinationPolicy::ReservedSlots,
+        ] {
+            let run = || {
+                retrieve_memories(
+                    &RetrievalRequest::new(
+                        &records,
+                        &[],
+                        "orchid",
+                        RetrievalStrategy::KeywordTag,
+                        2,
+                        evaluation_time(),
+                    )
+                    .with_judge_verdicts(judged_fixture_verdicts())
+                    .with_combination_policy(policy),
+                )
+                .unwrap()
+            };
+            let first = run();
+            let repeated = run();
+            let lexical = retrieve_memories(&RetrievalRequest::new(
+                &records,
+                &[],
+                "orchid",
+                RetrievalStrategy::KeywordTag,
+                2,
+                evaluation_time(),
+            ))
+            .unwrap();
+
+            assert_eq!(
+                first.lexical_only_selected_ids,
+                super::retrieved_memory_ids(&lexical.selected)
+            );
+            assert_eq!(
+                first.lexical_only_selected_ids,
+                ["memory.orchid-top", "memory.orchid-second"]
+            );
+            assert_eq!(first.selected, repeated.selected);
+            assert_eq!(first.omitted, repeated.omitted);
+            assert_eq!(
+                first
+                    .selected
+                    .iter()
+                    .find(|memory| memory.memory.id == "memory.orchid-top")
+                    .unwrap()
+                    .selection_eligibility,
+                SelectionEligibility::Associable
+            );
+            assert_eq!(
+                first
+                    .selected
+                    .iter()
+                    .find(|memory| memory.memory.id == "memory.orchid-weak")
+                    .unwrap()
+                    .selection_eligibility,
+                SelectionEligibility::JudgeInfluenced
+            );
+            assert!(first.selected.iter().any(|memory| {
+                memory.memory.id == "memory.orchid-top"
+                    && memory.admission_basis == AdmissionBasis::LexicalAndJudge
+            }));
+        }
+    }
+
+    fn verdicts(pairs: &[(&str, u16)]) -> BTreeMap<String, JudgeVerdict> {
+        use qsf_semantics::trace::{BackendKind, ModelIdentity, ModelIdentityKind};
+
+        pairs
+            .iter()
+            .map(|(memory_id, score_basis_points)| {
+                (
+                    (*memory_id).to_owned(),
+                    JudgeVerdict {
+                        score_basis_points: *score_basis_points,
+                        model_identity: ModelIdentity {
+                            backend: BackendKind::Fixture,
+                            model_id: "fixture-memory-judge".to_owned(),
+                            identity_kind: ModelIdentityKind::Fixture,
+                            identity_value: "fixture-v1".to_owned(),
+                        },
+                        question_wording_version: "memory-relevance-v1".to_owned(),
+                        backend_kind: BackendKind::Fixture,
+                    },
+                )
+            })
+            .collect()
+    }
+
+    fn judged_fixture_verdicts() -> BTreeMap<String, JudgeVerdict> {
+        verdicts(&[
+            ("memory.orchid-top", 4_000),
+            ("memory.orchid-weak", 10_000),
+            ("memory.zero-signal", 9_000),
+        ])
+    }
+
+    fn judgment_fixture_records() -> Vec<MemoryRecord> {
+        let mut top = test_record(
+            "memory.orchid-top",
+            "orchid archive",
+            "A strong lexical orchid match.",
+            vec!["orchid"],
+            evaluation_time(),
+        );
+        let mut second = test_record(
+            "memory.orchid-second",
+            "orchid note",
+            "A second lexical orchid match.",
+            vec![],
+            evaluation_time(),
+        );
+        let mut weak = test_record(
+            "memory.orchid-weak",
+            "orchid trace",
+            "An old, weak lexical match.",
+            vec![],
+            evaluation_time() - time::Duration::days(3_650),
+        );
+        let mut zero_signal = test_record(
+            "memory.zero-signal",
+            "botanical practice",
+            "Notes about tending plants.",
+            vec![],
+            evaluation_time(),
+        );
+        top.importance = 0.8;
+        second.importance = 0.5;
+        weak.importance = 0.0;
+        zero_signal.importance = 0.8;
+        vec![top, second, weak, zero_signal]
     }
 
     fn test_record(

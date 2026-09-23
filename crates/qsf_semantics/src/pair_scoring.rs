@@ -1,10 +1,15 @@
 //! The backend-independent contract for scoring an utterance against candidates.
 
-use std::{future::Future, pin::Pin, sync::Arc, time::Duration};
+use std::{future::Future, pin::Pin, time::Duration};
+
+#[cfg(feature = "remote-http")]
+use std::sync::Arc;
 
 use serde::{Deserialize, Serialize};
 
-use crate::trace::{SemanticFailure, SemanticOperation, Traced};
+use crate::trace::Traced;
+#[cfg(feature = "remote-http")]
+use crate::trace::{SemanticFailure, SemanticOperation};
 
 /// The family of relevance question being asked.
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -144,10 +149,12 @@ pub trait PairScoringService: Send + Sync {
 
 /// Adapts a synchronous scorer to the asynchronous service contract.
 #[derive(Clone)]
+#[cfg(feature = "remote-http")]
 pub struct BlockingPairScorerService<S> {
     scorer: Arc<S>,
 }
 
+#[cfg(feature = "remote-http")]
 impl<S> BlockingPairScorerService<S> {
     /// Wraps a synchronous scorer.
     pub fn new(scorer: S) -> Self {
@@ -157,6 +164,7 @@ impl<S> BlockingPairScorerService<S> {
     }
 }
 
+#[cfg(feature = "remote-http")]
 impl<S> PairScoringService for BlockingPairScorerService<S>
 where
     S: PairScorer,

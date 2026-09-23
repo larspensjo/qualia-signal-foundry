@@ -1,5 +1,5 @@
-use qsf_context::{ContextAssembly, ContextBudget, ContextFragment, assemble_context};
-use qsf_memory::{MemoryProvenance, RetrievedMemory};
+use qsf_context::{ContextAssembly, ContextBudget, assemble_retrieval_context};
+use qsf_memory::{MemoryProvenance, RetrievalResult};
 use qsf_realtime_protocol::{
     build_openai_realtime_conversation_item_create,
     build_openai_realtime_conversation_session_update,
@@ -24,7 +24,7 @@ pub struct MemoryInjectionRequest<'a> {
     pub session_identity: &'a str,
     pub tone: &'a str,
     pub user_transcript: &'a str,
-    pub retrieved_memories: &'a [RetrievedMemory],
+    pub retrieval: Option<&'a RetrievalResult>,
     pub budget: ContextBudget,
     pub pcm_rate_hz: u32,
     pub input_transcription_model: Option<&'a str>,
@@ -64,12 +64,10 @@ pub fn build_memory_injection_packet(
 }
 
 pub fn assemble_memory_context(request: &MemoryInjectionRequest<'_>) -> ContextAssembly {
-    let fragments = request
-        .retrieved_memories
-        .iter()
-        .map(ContextFragment::from)
-        .collect::<Vec<_>>();
-    assemble_context(fragments, request.budget)
+    request.retrieval.map_or_else(
+        || qsf_context::assemble_context(Vec::new(), request.budget),
+        |retrieval| assemble_retrieval_context(retrieval, request.budget),
+    )
 }
 
 fn build_memory_block(request: &MemoryInjectionRequest<'_>, assembly: &ContextAssembly) -> String {
@@ -85,7 +83,9 @@ fn build_memory_block(request: &MemoryInjectionRequest<'_>, assembly: &ContextAs
     lines.push("Relevant memory:".to_string());
     for selection in &assembly.selected {
         let memory = request
-            .retrieved_memories
+            .retrieval
+            .expect("selected context requires retrieval")
+            .selected
             .iter()
             .find(|memory| memory.memory.id == selection.fragment.fragment_id)
             .expect("context selections are derived from retrieved memories");
@@ -132,7 +132,10 @@ mod tests {
     use qsf_memory::retrieval::{
         AssociationPath, RetrievalScore, RetrievalStrategy, RetrievedMemory,
     };
-    use qsf_memory::{MemoryRecord, MemoryRecordKind};
+    use qsf_memory::{
+        AdmissionBasis, AdmissionCombinationPolicy, MemoryRecord, MemoryRecordKind,
+        SelectionEligibility,
+    };
     use qsf_realtime_protocol::OPENAI_REALTIME_VOICE_MODEL;
     use time::OffsetDateTime;
 
@@ -155,6 +158,7 @@ mod tests {
             strategy: RetrievalStrategy::AssociationWeighted,
             score: RetrievalScore {
                 total: 1.0,
+                judge: 0.0,
                 recency: 0.2,
                 keyword: 0.2,
                 tag: 0.2,
@@ -162,6 +166,9 @@ mod tests {
                 importance: 0.1,
                 reinforcement: 0.1,
             },
+            judge_verdict_basis_points: None,
+            admission_basis: AdmissionBasis::Lexical,
+            selection_eligibility: SelectionEligibility::Associable,
             matched_terms: vec!["test".to_string()],
             association_paths: vec![AssociationPath {
                 from_memory_id: "seed".to_string(),
@@ -170,6 +177,24 @@ mod tests {
                 reason: "fixture".to_string(),
             }],
             skip_reason: None,
+        }
+    }
+
+    fn retrieval(memories: Vec<RetrievedMemory>) -> RetrievalResult {
+        RetrievalResult {
+            query: "test".to_owned(),
+            strategy: RetrievalStrategy::AssociationWeighted,
+            evaluation_time: OffsetDateTime::UNIX_EPOCH,
+            combination_policy: AdmissionCombinationPolicy::BoundedAdditive,
+            judge_verdicts_supplied: false,
+            lexical_only_selected_ids: memories
+                .iter()
+                .map(|memory| memory.memory.id.clone())
+                .collect(),
+            selected: memories,
+            omitted: Vec::new(),
+            latency_ms: 0,
+            latency_ns: 0,
         }
     }
 
@@ -184,7 +209,7 @@ mod tests {
             session_identity: "session-1",
             tone: "calm",
             user_transcript: "hello",
-            retrieved_memories: &[],
+            retrieval: None,
             budget: ContextBudget::new(2, 40),
             pcm_rate_hz: DEFAULT_PCM_RATE_HZ,
             input_transcription_model: Some("gpt-transcribe"),
@@ -204,6 +229,7 @@ mod tests {
             retrieved_memory("memory-c", "Third memory", 30),
         ];
         let output_modalities = vec!["audio".to_string()];
+        let retrieval = retrieval(memories);
         let request = MemoryInjectionRequest {
             model: OPENAI_REALTIME_VOICE_MODEL,
             voice: "marin",
@@ -212,7 +238,7 @@ mod tests {
             session_identity: "session-1",
             tone: "focused",
             user_transcript: "remember the earlier bit",
-            retrieved_memories: &memories,
+            retrieval: Some(&retrieval),
             budget: ContextBudget::new(1, 35),
             pcm_rate_hz: DEFAULT_PCM_RATE_HZ,
             input_transcription_model: Some("gpt-transcribe"),
@@ -245,6 +271,7 @@ mod tests {
     fn returned_context_assembly_matches_injected_content() {
         let memories = vec![retrieved_memory("memory-a", "Only memory", 18)];
         let output_modalities = vec!["audio".to_string()];
+        let retrieval = retrieval(memories);
         let request = MemoryInjectionRequest {
             model: OPENAI_REALTIME_VOICE_MODEL,
             voice: "marin",
@@ -253,7 +280,7 @@ mod tests {
             session_identity: "session-1",
             tone: "warm",
             user_transcript: "what do you remember?",
-            retrieved_memories: &memories,
+            retrieval: Some(&retrieval),
             budget: ContextBudget::new(2, 40),
             pcm_rate_hz: DEFAULT_PCM_RATE_HZ,
             input_transcription_model: Some("gpt-transcribe"),
@@ -288,6 +315,7 @@ mod tests {
                 fetched_utc: OffsetDateTime::UNIX_EPOCH,
             });
         let output_modalities = vec!["audio".to_string()];
+        let retrieval = retrieval(vec![memory]);
         let packet = build_memory_injection_packet(&MemoryInjectionRequest {
             model: OPENAI_REALTIME_VOICE_MODEL,
             voice: "marin",
@@ -296,7 +324,7 @@ mod tests {
             session_identity: "session-1",
             tone: "careful",
             user_transcript: "what do you recall?",
-            retrieved_memories: &[memory],
+            retrieval: Some(&retrieval),
             budget: ContextBudget::new(2, 40),
             pcm_rate_hz: DEFAULT_PCM_RATE_HZ,
             input_transcription_model: None,

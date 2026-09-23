@@ -1,14 +1,15 @@
 use crate::audio::TranscriptProviderSession;
 use crate::context::{
-    ContextAssembly, ContextBudget, ContextFragment, ContextSourceKind, assemble_context,
+    ContextAssembly, ContextBudget, ContextFragment, ContextSourceKind,
+    assemble_context_with_ordering,
 };
 use crate::conversation::prompt;
-use crate::memory::RetrievedMemory;
+use crate::memory::RetrievalResult;
 use qsf_models::{ModelMessage, ModelRequest, ModelRole, ModelRoleId};
 
 pub(super) fn assemble_voice_context(
     final_transcript: &str,
-    retrieved_memories: &[RetrievedMemory],
+    retrieval: &RetrievalResult,
 ) -> ContextAssembly {
     let mut fragments = vec![
         ContextFragment {
@@ -21,6 +22,8 @@ pub(super) fn assemble_voice_context(
             source_reference: "runtime/audio-loop".to_string(),
             selection_reason: "required to answer through the QSF-owned runtime boundary"
                 .to_string(),
+            admission_basis: qsf_context::AdmissionBasis::Lexical,
+            associable: true,
         },
         ContextFragment {
             fragment_id: "voice-loop-output-boundary".to_string(),
@@ -32,6 +35,8 @@ pub(super) fn assemble_voice_context(
             source_reference: "runtime/audio-loop".to_string(),
             selection_reason: "keeps response ownership separate from speech rendering"
                 .to_string(),
+            admission_basis: qsf_context::AdmissionBasis::Lexical,
+            associable: true,
         },
         ContextFragment {
             fragment_id: "voice-loop-user-turn".to_string(),
@@ -42,11 +47,18 @@ pub(super) fn assemble_voice_context(
             estimated_tokens: 52,
             source_reference: "audio-final-transcript".to_string(),
             selection_reason: "current turn input anchors the spoken response".to_string(),
+            admission_basis: qsf_context::AdmissionBasis::Lexical,
+            associable: true,
         },
     ];
-    fragments.extend(retrieved_memories.iter().map(ContextFragment::from));
+    fragments.extend(retrieval.selected.iter().map(ContextFragment::from));
 
-    assemble_context(fragments, ContextBudget::new(4, 600))
+    let context_ordering = retrieval.context_ordering();
+    assemble_context_with_ordering(
+        fragments,
+        ContextBudget::new(4, 600),
+        context_ordering.as_deref(),
+    )
 }
 
 pub(super) fn retrieved_memory_block_with_boot_brief(

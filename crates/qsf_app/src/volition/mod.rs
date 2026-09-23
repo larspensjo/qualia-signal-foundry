@@ -279,6 +279,8 @@ fn build_fragment(goal: &Goal, relevance_score: f64, matched_terms: &[String]) -
             goal.tension_ids.join(", "),
             goal.scope
         ),
+        admission_basis: qsf_context::AdmissionBasis::Lexical,
+        associable: true,
     }
 }
 

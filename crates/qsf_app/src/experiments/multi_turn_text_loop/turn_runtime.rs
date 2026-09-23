@@ -8,7 +8,9 @@ use serde_json::json;
 use time::OffsetDateTime;
 
 use crate::console::styling::ColorMode;
-use crate::context::{ContextAssembly, ContextFragment, ContextSourceKind, assemble_context};
+use crate::context::{
+    ContextAssembly, ContextFragment, ContextSourceKind, assemble_context_with_ordering,
+};
 use crate::conversation::PromptAssembly;
 use crate::conversation::prompt;
 use crate::memory::RetrievalResult;
@@ -165,13 +167,17 @@ fn assemble_turn_context(
             estimated_tokens: hint.memory.estimated_tokens,
             source_reference: hint.memory.source_reference.clone(),
             selection_reason: format!("via {} - {}", hint.via_direct_id, hint.association_reason),
+            admission_basis: qsf_context::AdmissionBasis::Lexical,
+            associable: true,
         });
     }
     apply_session_event(context, state, SessionEvent::MemoryRetrieved)?;
 
-    let assembly = assemble_context(
+    let context_ordering = retrieval.context_ordering();
+    let assembly = assemble_context_with_ordering(
         all_fragments,
         ModelRole::predefined(ModelRoleId::ConversationalResponder).context_budget,
+        context_ordering.as_deref(),
     );
     let context_trace_id = record_context_assembly(context, state, &assembly)?;
     context.record_event(

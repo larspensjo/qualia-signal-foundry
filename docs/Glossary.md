@@ -41,6 +41,8 @@ External or informal wording -> project vocabulary -> verify status against code
 | Trace | Structured evidence explaining why something happened. | A trace should carry enough identifiers to link back to inputs, records, or artifacts. |
 | Relevance judge | A backend implementing the domain-neutral pair-scoring contract: it scores whether candidate text is about an utterance. | `qsf_semantics` provides the contract; domain code owns how scores are used. |
 | Verdict | A pair-scoring result for one candidate, expressed with a score kind and (for probabilities) basis points. | A verdict alone does not decide admission or selection. |
+| Admission basis | Whether existing lexical retrieval signals, a qualifying judge verdict, or both admitted a memory. | Explains passage through the relevance gate, independent of selection under the limit. |
+| Selection eligibility | For a selected memory, whether lexical-only retrieval at the same time and limit would also select it. | Only a selected memory marked associable may later shape durable memory structure. |
 | Injection deadline / request timeout | The injection deadline is when a caller stops waiting to affect the current turn; the request timeout is the longer ceiling for the backend call itself. | A missed injection deadline must not cancel the request, allowing a later result to be carried by future work. |
 | Fixture backend | The deterministic, no-cost `qsf_semantics` backend selected explicitly as the default. | Its outputs exercise the seam but are never relevance evidence. |
 | Score kind | The interpretation attached to a pair score: `Probability` or `Similarity`. | The hosted judge emits `Probability`; local encoders may later emit `Similarity`. |

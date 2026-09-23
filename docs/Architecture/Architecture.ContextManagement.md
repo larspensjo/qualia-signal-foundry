@@ -18,6 +18,17 @@ fragment-count budget, but ranking and role-specific assembly are still simple.
   ([context/context_budget.rs](../../crates/qsf_app/src/context/context_budget.rs))
 - `ContextFragment` carrying source and selection metadata
   ([context/context_fragment.rs](../../crates/qsf_app/src/context/context_fragment.rs))
+- Context fragments carry serde-defaulted retrieval admission basis and
+  associability metadata, preserving old persisted session-state files.
+- The assembler accepts an optional explicit ordering preference. When supplied,
+  source-kind priority stays primary and the provided order wins within a source
+  kind; without it, the existing score, token-size, and id sort remains in force.
+- The reserved-slot memory retrieval policy passes its selected order into
+  assembly, so score sorting does not discard judge-reserved selections. The
+  realtime injection request passes the retrieval result as a unit, keeping
+  selected memories and their ordering together.
+- A memory fragment's selection reason names a qualifying judge verdict when
+  the judge admitted it; lexical-only reason text stays as before.
 - Memory retrieval before context assembly in both voice and text loops
 - Prompt assembly with cache-stable byte-identical prefixes across turns, including
   warm-summary ageing and tool-recall paths
@@ -40,7 +51,8 @@ fragment-count budget, but ranking and role-specific assembly are still simple.
 - Attention-driven context selection (no `AttentionState` exists)
 - Inspectable omitted-fragment lists beyond the existing reports
 
-Last reviewed: 2026-05-18 against the code on `main`.
+Last reviewed: 2026-09-22 against the shared `qsf_context` implementation and
+memory retrieval ordering path.
 
 ## Summary
 

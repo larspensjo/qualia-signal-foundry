@@ -2447,3 +2447,19 @@ diagnostics dependencies inward; `qsf_diagnostics -> qsf_semantics` is the legal
 Consequences: Offline and live callers serialize one lifecycle schema from `qsf_semantics`, while
 `qsf_semantics` owns no files, runtime state, or writer. The broader 2026-07-27 rule still applies to
 diagnostic-ledger persistence and writer behavior, which remain in `qsf_diagnostics`.
+
+## 2026-09-23 - Memory retrieval takes evaluation time from its caller
+Decision: Memory retrieval is pure with respect to time. Its caller supplies the evaluation time;
+the orchestration layer that owns a turn reads the clock and passes that value through retrieval.
+Context: A clock read inside retrieval makes the same records and query yield different results
+across replay and evaluation runs.
+Consequences: Retrieval and its lexical-only counterfactual use the same explicit time. New callers
+must supply a turn-owned or dataset-frozen value rather than reading the clock inside scoring.
+
+## 2026-09-23 - Memory judge thresholds belong to a pinned operating point
+Decision: The pinned judge model version and versioned question wording jointly define the memory
+admission operating point. Changing either invalidates the admission threshold.
+Context: Probability scores from different model versions or wordings are not interchangeable, and
+a mixed verdict set cannot be evaluated against one threshold.
+Consequences: A retrieval request rejects verdicts from mixed identities. Any model or wording
+change requires threshold evaluation on the development split before use.

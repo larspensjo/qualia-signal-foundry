@@ -36,6 +36,8 @@ impl ToolResult {
                 side_effect_label(self.side_effect_level),
                 self.input
             ),
+            admission_basis: qsf_context::AdmissionBasis::Lexical,
+            associable: true,
         }
     }
 }

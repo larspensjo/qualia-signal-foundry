@@ -1592,8 +1592,10 @@ name = "qsf_context"
 version = "0.1.0"
 dependencies = [
  "qsf_memory",
+ "qsf_semantics",
  "serde",
  "serde_json",
+ "time",
 ]
 
 [[package]]
@@ -1630,6 +1632,7 @@ name = "qsf_memory"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "qsf_semantics",
  "serde",
  "serde_json",
  "tempfile",

@@ -198,6 +198,8 @@ mod tests {
                                 estimated_tokens: 10,
                                 source_reference: "tests".to_string(),
                                 selection_reason: "tests".to_string(),
+                                admission_basis: qsf_context::AdmissionBasis::Lexical,
+                                associable: true,
                             },
                             cumulative_estimated_tokens: 10,
                         })
@@ -292,6 +294,8 @@ mod tests {
                         estimated_tokens: 10,
                         source_reference: "tests".to_string(),
                         selection_reason: "tests".to_string(),
+                        admission_basis: qsf_context::AdmissionBasis::Lexical,
+                        associable: true,
                     },
                     cumulative_estimated_tokens: 10,
                 }],

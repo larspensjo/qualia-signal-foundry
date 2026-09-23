@@ -1,4 +1,5 @@
 use std::fs;
+use std::process::Command;
 
 #[test]
 fn manifest_excludes_domain_crates() {
@@ -19,6 +20,27 @@ fn manifest_excludes_domain_crates() {
         assert!(
             !manifest.contains(forbidden),
             "forbidden dependency {forbidden}"
+        );
+    }
+}
+
+#[test]
+fn memory_normal_dependencies_exclude_http_runtime() {
+    let output = Command::new("cargo")
+        .args(["tree", "-p", "qsf_memory", "-e", "normal", "-f", "{p}"])
+        .current_dir(concat!(env!("CARGO_MANIFEST_DIR"), "/../.."))
+        .output()
+        .expect("cargo tree");
+    assert!(
+        output.status.success(),
+        "cargo tree failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let tree = String::from_utf8(output.stdout).expect("UTF-8 dependency tree");
+    for forbidden in ["reqwest v", "tokio v", "futures-util v"] {
+        assert!(
+            !tree.contains(forbidden),
+            "memory normal dependency tree contains {forbidden}"
         );
     }
 }

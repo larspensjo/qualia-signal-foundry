@@ -1,6 +1,6 @@
 # Plan: Per-turn relevance judgment for memory and goal look-up
 
-Status: In progress — pair-scoring foundation landed
+Status: In progress — pair-scoring foundation and deterministic memory retrieval landed
 Maturity: Candidate
 Area: Memory retrieval / Volition (goal activation) / Realtime live path / Evaluation infrastructure
 
@@ -224,17 +224,25 @@ superseded-world-observation omission keeps running first. Admission alone is in
 lexically disjoint memory scores near zero, so it would be admitted and then lost at the limit cut.
 Two combination policies are therefore implemented behind one named policy enum and chosen on the
 development split: **(a) a bounded additive judge term** in the retrieval total (`RetrievalScore`
-gains a `judge` component so the total stays one explainable sum), and **(b) reserved slots**, where
-a fixed share of the budget is filled from judge-ranked admitted candidates before the lexical order
-fills the rest. Because `assemble_context` re-sorts by fragment score (Verified item 6), policy (a)
+gains a `judge` component so the total stays one explainable sum); only verdicts at or above the
+admission threshold earn the bonus, while below-threshold verdicts, abstentions, and missing verdicts
+contribute zero. **(b) reserved slots**: lexical order fills `limit − reserved` slots, then the
+highest-verdict judge-admitted candidates not already selected take the reserved slots; unused
+reserved slots return to lexical order. Under this policy the score total stays lexical and the
+verdict basis points remain visible separately. Because `assemble_context` re-sorts by fragment score (Verified item 6), policy (a)
 survives assembly naturally through the existing score mapping, while policy (b) requires an
 explicit ordering input to assembly; both are verified **through the whole path**
 retrieval → assembly → injected set, never at retrieval alone.
+`qsf_semantics` keeps the remote HTTP implementation and its reqwest, Tokio, and futures
+dependencies behind a default-on `remote-http` feature; `qsf_memory` opts out and consumes only
+the lean score and trace contracts. The hosted judge's `noul` probability is both judgment and
+confidence in one number; vendor wire types retain `deny_unknown_fields`.
 
 **C6. Eligibility for durable structure is decided by a lexical-only counterfactual, not by
-admission basis.** Any judge influence makes a selection ineligible for association building and
-reinforcement — including a `lexical_and_judge` match and a weak lexical match promoted across the
-limit by judge ordering or a reserved slot. Admission basis cannot answer "would this have been
+admission basis.** A selected memory is ineligible for association building and reinforcement only
+when the lexical-only selection would not have picked it. A `lexical_and_judge` match remains
+associable when the lexical-only selection picked it; a weak lexical match promoted across the limit
+by judge ordering or a reserved slot is ineligible. Admission basis cannot answer "would this have been
 selected anyway", so pure retrieval computes the **lexical-only selection** (same records, same
 evaluation time, same limit, no verdicts) alongside the judged one, and a candidate is
 `associable` only if it appears in that lexical-only selection. `RetrievedMemory` carries
@@ -622,33 +630,30 @@ functionality the gate's comparison needs (review issue 3), so it lands **before
 
 **Work**
 
-- `RetrievalRequest` per C4, including `evaluation_time`; `retrieve_memories` no longer reads the
-  clock; every caller (`qsf_app` text loop, `realtime/tools.rs`, `realtime/memory_store.rs`) passes
-  a clock value. Behavior-preserving for live callers by construction.
-- The judge admission path in `is_relevant_for_strategy` (C5) with its own skip reason, ordered
-  after the superseded-world-observation omission.
-- `RetrievalScore.judge`; both combination policies behind one policy enum; the policy in force is
-  recorded.
-- The lexical-only counterfactual and `RetrievedMemory.selection_eligibility` /
+- **Landed in `1a1c645`:** `RetrievalRequest` per C4, including `evaluation_time`;
+  `retrieve_memories` no longer reads the clock; every caller (`qsf_app` text loop,
+  `realtime/tools.rs`, `realtime/memory_store.rs`) passes a clock value.
+- **Landed:** memory-keyed judge verdicts and their qsf_semantics identity adapter; the
+  `is_relevant_for_strategy` admission path (C5) with its distinct below-threshold skip reason,
+  after superseded-world-observation omission.
+- **Landed:** `RetrievalScore.judge`; bounded-additive and reserved-slot combination policies
+  behind one request enum; bounded-additive is the documented provisional default and the policy
+  in force is recorded.
+- **Landed:** the lexical-only counterfactual and `RetrievedMemory.selection_eligibility` /
   `RetrievalResult.lexical_only_selected_ids` (C6).
-- `ContextFragment.admission_basis` and `.associable` (optional, serde-defaulted to `lexical` /
-  `true`), and the explicit ordering input `assemble_context` needs for the reserved-slot policy
-  (Verified item 6).
-- Generalize `qsf_semantic_eval`: `PairResult.goal_ref` → `candidate_ref` + `task_family`; a scorer
+- **Landed:** `ContextFragment.admission_basis` and `.associable` (serde-defaulted to `lexical` /
+  `true`), plus the explicit ordering input used by reserved-slot assembly (Verified item 6).
+- **Not landed in this slice:** generalize `qsf_semantic_eval`: `PairResult.goal_ref` →
+  `candidate_ref` + `task_family`; a scorer
   abstraction admitting production lexical memory retrieval through its public API, the production
   goal scorer, and any `PairScoringService` backend. Existing goal-relevance artifacts either keep
   working through a compatibility path or are deliberately re-versioned; the choice is recorded.
 
-**Verification (automated)**: `cargo build`; `cargo test -p qsf_memory -p qsf_context
--p qsf_semantic_eval -p qsf_app -p qsf_realtime_server`; determinism test — the same frozen store
-and `evaluation_time` produce byte-identical selections across runs and across a simulated clock
-change; admission tests — a zero-signal memory with a high verdict is admitted and one with a low
-verdict is not, each with its skip reason; **whole-path ordering tests** — for each combination
-policy, retrieval → `assemble_context` → injected fragment ids match the expected set, with an
-explicit case proving the reserved-slot policy is *not* undone by assembly's re-sort; eligibility
-tests — a weak lexical match promoted across the limit by the judge is `associable: false`;
-fidelity test — the eval runner's memory selections equal `retrieve_memories` output for the same
-request (one scoring function, not two); clippy; fmt.
+**Verification (automated)**: the landed retrieval/context slice passes `cargo build` and
+`cargo test -p qsf_memory -p qsf_context -p qsf_semantics -p qsf_session -p qsf_app
+-p qsf_realtime_server`; determinism, admission, compatibility, eligibility, and whole-path ordering
+are covered through public retrieval and assembly contracts. The `qsf_semantic_eval` fidelity test
+remains with its later scorer-generalization work; clippy; fmt.
 
 **Experiment scaffold**: none (pure production code, outcome not in doubt).
 **Human testing**: none. **Cost**: none.
@@ -670,6 +675,8 @@ selection can exist.
   selected and omitted candidates with scores, matched terms, association paths, skip reasons,
   strategy, numeric limit in force, `evaluation_time`, and retrieval latency. (Once the judge is
   live this record is subsumed by `relevance_selection_recorded`; both share field names.)
+- Count both lexical relevance-gate skips and judge-verdict-below-threshold skips in the
+  relevance-skipped selection record; the current live counter sees only the lexical reason.
 - **Single-time-per-turn follow-up:** when adding `evaluation_time` to the selection record, capture
   one turn-owned wall-clock value and thread it through all per-turn work that currently reads the
   clock separately.
@@ -846,7 +853,8 @@ latency evidence, and an honest look at what it would have admitted on real conv
 - `QSF_RELEVANCE_JUDGE_MODE` defaults to `shadow` in this phase (the default exercises this phase's
   new path).
 - Candidate assembly renders store records to `candidate_text` through a named adapter, pinned by
-  content hash.
+  `candidate_content_hash`; verify returned pair-score hashes against those assembled candidates
+  before adapting verdicts (the pure verdict adapter does not own candidate assembly).
 - Ledger: `RELEVANCE_JUDGE_ROLE`, a declared zero-count row at session start carrying the pinned
   model id (DecisionLog 2026-07-29), usage recorded per call, raw `usage` logged at the boundary
   through the existing shared helper (DecisionLog 2026-07-30).

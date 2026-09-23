@@ -6,7 +6,7 @@ use serde::Serialize;
 use serde_json::json;
 use time::OffsetDateTime;
 
-use crate::context::{ContextBudget, ContextFragment, assemble_context};
+use crate::context::{ContextBudget, ContextFragment, assemble_context_with_ordering};
 use crate::memory::{
     MemoryFixture, RetrievalRequest, RetrievalResult, RetrievalStrategy, phase_four_fixture,
     retrieve_memories, retrieved_memory_ids,
@@ -241,7 +241,8 @@ fn run_retrieval_and_context(
     )?;
 
     let started_at = Instant::now();
-    let assembly = assemble_context(fragments, budget);
+    let context_ordering = retrieval.context_ordering();
+    let assembly = assemble_context_with_ordering(fragments, budget, context_ordering.as_deref());
     let elapsed = started_at.elapsed();
     let elapsed_ms = duration_ms(elapsed);
     let elapsed_ns = duration_ns(elapsed);

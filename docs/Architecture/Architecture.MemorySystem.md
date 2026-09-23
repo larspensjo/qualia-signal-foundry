@@ -23,8 +23,29 @@ future retrieval backends.
 - Retrieval scoring now lives in `qsf_memory`, and the context-assembly domain
   now lives in `qsf_context`; the realtime server can use both without depending
   on the full app runtime.
+- `qsf_semantics` keeps its pair-scoring and trace contracts available without
+  HTTP runtime dependencies. Its default `remote-http` feature builds the hosted
+  backend; `qsf_memory` opts out of that feature and uses only the contract types.
 - Retrieval is pure with respect to time: callers own and explicitly pass the
   evaluation time used for scoring.
+- Retrieval accepts optional memory-keyed judge verdicts with their model,
+  backend, and question-wording identity. A recall-leaning 3000 basis-point
+  admission threshold is the starting operating point; it must be tuned on the
+  development split and is invalidated by a model-version or wording change.
+- Judge-qualified memories pass the relevance gate only after superseded world
+  observations are omitted. Below-threshold verdicts on otherwise signal-free
+  memories have a distinct skip reason. The bounded-additive and reserved-slot
+  combination policies are both available; bounded-additive is the provisional
+  default pending the development-split comparison. Its bounded bonus applies
+  only at or above the admission threshold; lower verdicts, abstentions, and
+  missing verdicts add zero. Reserved slots first leave room for lexical picks,
+  then select the highest qualifying verdicts outside those picks and return
+  unused slots to lexical order. Its recorded score remains the lexical score;
+  the original verdict basis points are carried separately.
+- Retrieval reports the lexical-only selected ids and marks each result's
+  selection eligibility from that counterfactual. The memory-to-context mapping
+  carries admission basis and associability; reinforcement and sleep consumers
+  do not yet filter on that metadata.
 - Relevance-gated keyword/tag retrieval with explicit skip reasons for omitted
   candidates, plus a narrow identity/profile allowance for name-shaped queries
   ([memory/retrieval.rs](../../crates/qsf_app/src/memory/retrieval.rs))

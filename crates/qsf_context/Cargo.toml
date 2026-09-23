@@ -11,3 +11,6 @@ qsf_memory = { path = "../qsf_memory" }
 serde.workspace = true
 serde_json.workspace = true
 
+[dev-dependencies]
+qsf_semantics = { path = "../qsf_semantics" }
+time.workspace = true
