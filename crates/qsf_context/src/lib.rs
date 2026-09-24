@@ -89,6 +89,18 @@ impl ContextAssembly {
             .map(|selection| selection.fragment.fragment_id.clone())
             .collect()
     }
+
+    /// Returns only selected memory sources eligible to shape durable associations.
+    pub fn associable_retrieval_source_ids(&self) -> Vec<String> {
+        self.selected
+            .iter()
+            .filter(|selection| {
+                selection.fragment.source_kind == ContextSourceKind::Memory
+                    && selection.fragment.associable
+            })
+            .map(|selection| selection.fragment.fragment_id.clone())
+            .collect()
+    }
 }
 
 pub fn assemble_context(fragments: Vec<ContextFragment>, budget: ContextBudget) -> ContextAssembly {
@@ -366,6 +378,45 @@ mod tests {
         let fragment: ContextFragment = serde_json::from_value(json).unwrap();
         assert_eq!(fragment.admission_basis, AdmissionBasis::Lexical);
         assert!(fragment.associable);
+    }
+
+    #[test]
+    fn associable_retrieval_source_ids_excludes_judge_influenced_memory_fragments() {
+        let assembly = assemble_context(
+            vec![
+                ContextFragment {
+                    fragment_id: "lexical".to_string(),
+                    source_kind: ContextSourceKind::Memory,
+                    summary: "lexical selection".to_string(),
+                    tags: vec![],
+                    score: 1.0,
+                    estimated_tokens: 10,
+                    source_reference: "tests".to_string(),
+                    selection_reason: "lexical".to_string(),
+                    admission_basis: AdmissionBasis::Lexical,
+                    associable: true,
+                },
+                ContextFragment {
+                    fragment_id: "judge-influenced".to_string(),
+                    source_kind: ContextSourceKind::Memory,
+                    summary: "judge-only selection".to_string(),
+                    tags: vec![],
+                    score: 0.5,
+                    estimated_tokens: 10,
+                    source_reference: "tests".to_string(),
+                    selection_reason: "judge".to_string(),
+                    admission_basis: AdmissionBasis::Judge,
+                    associable: false,
+                },
+            ],
+            ContextBudget::new(4, 600),
+        );
+
+        assert_eq!(
+            assembly.retrieved_memory_ids(),
+            vec!["lexical", "judge-influenced"]
+        );
+        assert_eq!(assembly.associable_retrieval_source_ids(), vec!["lexical"]);
     }
 
     #[test]

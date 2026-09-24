@@ -1,4 +1,4 @@
-//! Schema of the realtime diagnostics ledger (`state/realtime/diagnostics/<session>.jsonl`).
+//! Schema of the realtime diagnostics ledger (`state/<root>/diagnostics/<session>.jsonl`).
 //!
 //! These types are the persisted wire format, separated from the runtime that emits them so
 //! readers (the sleep phase, the transcript command) share one definition instead of
@@ -9,6 +9,9 @@ pub use initiative_trace::*;
 
 mod live_goal_formation_trace;
 pub use live_goal_formation_trace::*;
+
+mod memory_selection_record;
+pub use memory_selection_record::*;
 
 mod record;
 pub use record::*;

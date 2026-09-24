@@ -51,8 +51,9 @@ tunes the provisional eligibility rule and 7-day half-life with real evidence.
 ### Per-turn relevance judgment
 **Continue the isolated relevance-judge foundation with deterministic retrieval and domain adapters in
 [Plan.PerTurnRelevanceJudgment](Plans/Plan.PerTurnRelevanceJudgment.md).**
-Why: the pair-scoring contract and backends now exist, while live-path behavior remains deliberately
-unwired.
+Why: pair-scoring contracts and backends exist; trusted realtime turns now record memory selection
+provenance and exclude judge-influenced selections from reinforcement and sleep co-retrieval. The
+live judge invocation remains unwired, and the operator ledger check remains open.
 Alternate: continue the panel labeling and freeze campaign
 ([Plan.GoalRelevancePanelLabeling](Plans/Plan.GoalRelevancePanelLabeling.md)).
 

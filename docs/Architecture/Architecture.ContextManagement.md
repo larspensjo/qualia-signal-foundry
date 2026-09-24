@@ -19,7 +19,11 @@ fragment-count budget, but ranking and role-specific assembly are still simple.
 - `ContextFragment` carrying source and selection metadata
   ([context/context_fragment.rs](../../crates/qsf_app/src/context/context_fragment.rs))
 - Context fragments carry serde-defaulted retrieval admission basis and
-  associability metadata, preserving old persisted session-state files.
+  associability metadata through session-state persistence, preserving old
+  persisted session-state files with `lexical` / `true` defaults.
+- `ContextAssembly::associable_retrieval_source_ids()` keeps display retrieval
+  reporting intact while exposing only selected memory fragments eligible to
+  shape durable associations; sleep co-retrieval uses this filtered view.
 - The assembler accepts an optional explicit ordering preference. When supplied,
   source-kind priority stays primary and the provided order wins within a source
   kind; without it, the existing score, token-size, and id sort remains in force.
@@ -29,6 +33,9 @@ fragment-count budget, but ranking and role-specific assembly are still simple.
   selected memories and their ordering together.
 - A memory fragment's selection reason names a qualifying judge verdict when
   the judge admitted it; lexical-only reason text stays as before.
+- The selection ledger distinguishes relevance-gate admission from selection under
+  the retrieval limit. A limit-cut memory passed admission but is not injected;
+  a gate-rejected memory has no admission basis.
 - Memory retrieval before context assembly in both voice and text loops
 - Prompt assembly with cache-stable byte-identical prefixes across turns, including
   warm-summary ageing and tool-recall paths
@@ -51,8 +58,8 @@ fragment-count budget, but ranking and role-specific assembly are still simple.
 - Attention-driven context selection (no `AttentionState` exists)
 - Inspectable omitted-fragment lists beyond the existing reports
 
-Last reviewed: 2026-09-22 against the shared `qsf_context` implementation and
-memory retrieval ordering path.
+Last reviewed: 2026-09-23 against the shared `qsf_context` implementation,
+memory retrieval ordering path, and persisted selection-eligibility metadata.
 
 ## Summary
 

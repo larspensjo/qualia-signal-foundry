@@ -33,5 +33,6 @@ uuid.workspace = true
 
 [dev-dependencies]
 base64.workspace = true
+qsf_semantics = { path = "../qsf_semantics", default-features = false }
 tempfile = "3"
 tower = "0.5"

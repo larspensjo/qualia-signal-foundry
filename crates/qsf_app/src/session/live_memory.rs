@@ -18,12 +18,25 @@ pub(crate) fn apply_live_memory_reinforcement(
     state: &SessionState,
     state_dir: &Path,
     retrieval: &RetrievalResult,
+    now: time::OffsetDateTime,
 ) -> anyhow::Result<()> {
     let turn_index = completed_turn_count(state);
     let memory_store_path = state_dir.join("memory-store.json");
+    let requested_ids = retrieval
+        .selected
+        .iter()
+        .map(|memory| memory.memory.id.clone())
+        .collect::<Vec<_>>();
+    let selection_eligibility_skipped_ids = retrieval
+        .selected
+        .iter()
+        .filter(|memory| !memory.selection_eligibility.is_associable())
+        .map(|memory| memory.memory.id.clone())
+        .collect::<Vec<_>>();
     let retrieved_pairs = retrieval
         .selected
         .iter()
+        .filter(|memory| memory.selection_eligibility.is_associable())
         .map(|memory| (memory.memory.id.clone(), memory.score.total))
         .collect::<Vec<_>>();
     let retrieved_ids = retrieved_pairs
@@ -34,7 +47,9 @@ pub(crate) fn apply_live_memory_reinforcement(
     let mut over_limit_skipped_ids = Vec::new();
     for memory in &retrieval.omitted {
         match memory.skip_reason.as_deref() {
-            Some(crate::memory::retrieval::RELEVANCE_GATE_SKIP_REASON) => {
+            Some(crate::memory::retrieval::RELEVANCE_GATE_SKIP_REASON)
+            | Some(crate::memory::retrieval::JUDGE_VERDICT_BELOW_ADMISSION_THRESHOLD_SKIP_REASON) =>
+            {
                 relevance_skipped_ids.push(memory.memory.id.clone());
             }
             Some(crate::memory::retrieval::RETRIEVAL_LIMIT_SKIP_REASON) => {
@@ -45,6 +60,7 @@ pub(crate) fn apply_live_memory_reinforcement(
     }
     let relevance_skipped_count = relevance_skipped_ids.len();
     let over_limit_skipped_count = over_limit_skipped_ids.len();
+    let selection_eligibility_skipped_count = selection_eligibility_skipped_ids.len();
     let no_store_skipped_count = retrieved_ids.len();
 
     if !memory_store_path.exists() {
@@ -53,15 +69,17 @@ pub(crate) fn apply_live_memory_reinforcement(
             json!({
                 "turn_index": turn_index,
                 "ids": Vec::<String>::new(),
-                "requested_ids": retrieved_ids.clone(),
+                "requested_ids": requested_ids,
+                "skipped_selection_eligibility_ids": selection_eligibility_skipped_ids,
                 "skipped_relevance_ids": relevance_skipped_ids,
                 "skipped_over_limit_ids": over_limit_skipped_ids,
                 "skipped_no_store_ids": retrieved_ids,
                 "count": 0,
                 "skipped_relevance_count": relevance_skipped_count,
                 "skipped_over_limit_count": over_limit_skipped_count,
+                "skipped_selection_eligibility_count": selection_eligibility_skipped_count,
                 "skipped_no_store_count": no_store_skipped_count,
-                "timestamp_source": "live_now",
+                "timestamp_source": "turn_evaluation_time",
                 "skipped_reason": "no persistent memory store on cold start",
             }),
             None,
@@ -70,7 +88,6 @@ pub(crate) fn apply_live_memory_reinforcement(
     }
 
     let mut store = crate::memory::MemoryStore::load_or_empty(&memory_store_path)?;
-    let now = time::OffsetDateTime::now_utc();
     let deltas = crate::memory::co_retrieval::generate_deltas(
         &retrieved_pairs,
         &store.contents().associations,
@@ -156,15 +173,17 @@ pub(crate) fn apply_live_memory_reinforcement(
         json!({
             "turn_index": turn_index,
             "ids": reinforced_ids.clone(),
-            "requested_ids": retrieved_ids,
+            "requested_ids": requested_ids,
+            "skipped_selection_eligibility_ids": selection_eligibility_skipped_ids,
             "skipped_relevance_ids": relevance_skipped_ids,
             "skipped_over_limit_ids": over_limit_skipped_ids,
             "skipped_no_store_ids": Vec::<String>::new(),
             "count": reinforced_count,
             "skipped_relevance_count": relevance_skipped_count,
             "skipped_over_limit_count": over_limit_skipped_count,
+            "skipped_selection_eligibility_count": selection_eligibility_skipped_count,
             "skipped_no_store_count": 0,
-            "timestamp_source": "live_now",
+            "timestamp_source": "turn_evaluation_time",
         }),
         None,
     )?;
@@ -192,6 +211,7 @@ pub(crate) fn apply_live_memory_capture(
     state_dir: &Path,
     user_input: &str,
     assistant_response: &str,
+    evaluation_time: time::OffsetDateTime,
 ) -> anyhow::Result<()> {
     let previous_turn = state.turns.last();
     let capture_input = LiveCaptureInput {
@@ -229,7 +249,7 @@ pub(crate) fn apply_live_memory_capture(
 
     let memory_store_path = state_dir.join("memory-store.json");
     let mut store = crate::memory::MemoryStore::load_or_empty(&memory_store_path)?;
-    let now = time::OffsetDateTime::now_utc();
+    let now = evaluation_time;
     let mut persisted_records = Vec::new();
     let mut record_ids = Vec::new();
     let mut candidate_kinds = Vec::new();

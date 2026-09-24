@@ -97,13 +97,13 @@ impl<'a> SleepRecord<'a> {
         }
     }
 
-    pub fn retrieval_source_ids(&self) -> Vec<String> {
+    pub fn associable_retrieval_source_ids(&self) -> Vec<String> {
         match self {
-            Self::Turn(turn) => turn.context_assembly.retrieved_memory_ids().to_vec(),
+            Self::Turn(turn) => turn.context_assembly.associable_retrieval_source_ids(),
             Self::Exchange(exchange) => exchange
                 .context_assembly
                 .as_ref()
-                .map(|context| context.retrieved_memory_ids().to_vec())
+                .map(|context| context.associable_retrieval_source_ids())
                 .unwrap_or_default(),
         }
     }

@@ -460,10 +460,11 @@ pub struct ConsultedInvocation {
 pub struct SelectionCandidate {
     /// Candidate id.
     pub candidate_id: String,
-    /// Whether candidate was admitted.
+    /// Whether the candidate passed the relevance gate, even if a selection limit cut it.
     pub admitted: bool,
-    /// Caller-owned admission explanation.
-    pub admission_basis: String,
+    /// Caller-owned gate-passage explanation; absent when the gate rejected the candidate.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub admission_basis: Option<String>,
     /// Whether durable structure may consume it.
     pub associable: bool,
     /// Omission reason when not selected.
@@ -664,7 +665,7 @@ mod tests {
             candidates: vec![SelectionCandidate {
                 candidate_id: "candidate".to_owned(),
                 admitted: false,
-                admission_basis: "lexical".to_owned(),
+                admission_basis: None,
                 associable: false,
                 skip_reason: Some("timeout".to_owned()),
             }],

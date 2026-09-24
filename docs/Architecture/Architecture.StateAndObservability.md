@@ -54,6 +54,15 @@ candidate categories listed below still have no shared module.
   `qsf_realtime_server::diagnostics` remains a re-export facade
   ([crates/qsf_diagnostics/src/record.rs](../../crates/qsf_diagnostics/src/record.rs),
   [crates/qsf_realtime_server/src/realtime/routes.rs](../../crates/qsf_realtime_server/src/realtime/routes.rs))
+- Trusted realtime turns write one `memory_selection_recorded` line to
+  `state/<root>/diagnostics/<session>.jsonl`. It records selected and omitted candidates with
+  score components, matched terms, association paths, skip reasons, admission basis and selection
+  eligibility, plus `lexical_only_selected_ids`, `combination_policy_in_force`, numeric retrieval
+  and injection budgets, injected fragment ids, budget omissions, `evaluation_time`, and retrieval
+  `recorded_at`, and `retrieval_latency_micros` (including store load). Admission means passage
+  through the relevance gate, even for a candidate cut by the retrieval limit; gate rejects have
+  no admission basis. Fields shared with the later `relevance_selection_recorded` lifecycle use
+  the same names and meanings.
 - The `qsf_app transcript` command reads the persisted diagnostics ledger into a curated,
   source-integrity-aware JSONL view.
 - `qsf_realtime_server` now also records trusted sideband exchange promotion into

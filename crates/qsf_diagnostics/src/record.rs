@@ -4,8 +4,8 @@ use time::OffsetDateTime;
 use qsf_session::Exchange;
 
 use crate::{
-    LiveGoalFormationTrace, RealtimeBoundedInitiativeTrace, TurnPhase,
-    VolitionContextInjectionTrace, WorldConsultationTrace,
+    LiveGoalFormationTrace, MemorySelectionRecordedRecord, RealtimeBoundedInitiativeTrace,
+    TurnPhase, VolitionContextInjectionTrace, WorldConsultationTrace,
 };
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -107,6 +107,7 @@ pub enum DiagnosticRecord {
         recorded_at: OffsetDateTime,
         reason: String,
     },
+    MemorySelectionRecorded(MemorySelectionRecordedRecord),
     VolitionContinuityNote {
         qsf_session_id: String,
         #[serde(with = "time::serde::rfc3339")]
@@ -167,6 +168,9 @@ pub struct RecordEnvelope {
 /// The `kind` tag of `DiagnosticRecord::RealtimeBoundedInitiative`, as serde writes it. Named so
 /// readers dispatching on the tag cannot drift from the enum's `rename_all = "snake_case"`.
 pub const REALTIME_BOUNDED_INITIATIVE_KIND: &str = "realtime_bounded_initiative";
+
+/// The `kind` tag of the persisted live memory selection record.
+pub const MEMORY_SELECTION_RECORDED_KIND: &str = "memory_selection_recorded";
 
 /// Decodes only the envelope. `None` when the line is not a JSON object at all.
 pub fn decode_envelope(line: &str) -> Option<RecordEnvelope> {

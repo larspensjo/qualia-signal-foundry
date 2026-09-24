@@ -1,5 +1,6 @@
 pub(crate) mod injection;
 pub(crate) mod live_goal_formation;
+mod memory_selection;
 mod memory_store;
 mod routes;
 pub(crate) mod safety_identifier;

@@ -1,5 +1,6 @@
 use std::mem;
 use std::sync::Arc;
+use std::time::Instant;
 
 use qsf_context::ContextBudget;
 use qsf_memory::RetrievalStrategy;
@@ -20,7 +21,12 @@ use crate::realtime::injection::{
     DEFAULT_PCM_RATE_HZ, MemoryInjectionRequest, assemble_memory_context,
     build_memory_injection_packet,
 };
-use crate::realtime::memory_store::retrieve_session_memories;
+use crate::realtime::memory_selection::{
+    MemorySelectionRecordInput, build_memory_selection_record,
+};
+use crate::realtime::memory_store::{
+    load_session_memory_store_off_executor, retrieve_session_memories_from_store,
+};
 use crate::realtime::sideband::{
     DEFAULT_INJECTION_FRAGMENT_LIMIT, DEFAULT_INJECTION_TOKEN_LIMIT, SidebandRuntimeState,
     hash_request_sequence, record_latency_observation_if_ready, send_json,
@@ -73,20 +79,32 @@ pub(crate) async fn inject_trusted_turn_context_and_response(
         transcript.to_string()
     };
 
-    let retrieval = match retrieve_session_memories(
-        state,
-        qsf_session_id,
-        &retrieval_query,
-        RetrievalStrategy::AssociationWeighted,
-        DEFAULT_INJECTION_FRAGMENT_LIMIT,
-        OffsetDateTime::now_utc(),
-    ) {
-        Ok(result) => Some(result),
+    let evaluation_time = OffsetDateTime::now_utc();
+    let retrieval_started = Instant::now();
+    let retrieval_result = match load_session_memory_store_off_executor(
+        state.clone(),
+        qsf_session_id.to_owned(),
+    )
+    .await
+    {
+        Ok(store) => retrieve_session_memories_from_store(
+            &store,
+            &retrieval_query,
+            RetrievalStrategy::AssociationWeighted,
+            DEFAULT_INJECTION_FRAGMENT_LIMIT,
+            evaluation_time,
+        ),
+        Err(error) => Err(error),
+    };
+    let retrieval_latency = retrieval_started.elapsed();
+    let (retrieval, retrieval_error) = match retrieval_result {
+        Ok(result) => (Some(result), None),
         Err(error) => {
-            log::warn!(
-                "memory retrieval failed for trusted turn in session `{qsf_session_id}`: {error}"
+            engine_logging::engine_warn!(
+                "memory retrieval failed: session_id={} operation=load_and_retrieve error={error:#}",
+                qsf_session_id,
             );
-            None
+            (None, Some(format!("{error:#}")))
         }
     };
 
@@ -135,7 +153,7 @@ pub(crate) async fn inject_trusted_turn_context_and_response(
         &mut guard.session_state,
         LiveSessionEvent::MemoryContextRecorded {
             exchange_index,
-            context_assembly,
+            context_assembly: context_assembly.clone(),
             retrieved_memory_block,
             recalled_items: vec![],
             live_capture: None,
@@ -432,6 +450,17 @@ pub(crate) async fn inject_trusted_turn_context_and_response(
         );
         turn_request_values.push(response_create.clone());
         let request_hash = hash_request_sequence(&turn_request_values);
+        write_memory_selection_record(
+            &diagnostics,
+            qsf_session_id,
+            exchange_index,
+            &request_hash.to_string(),
+            retrieval.as_ref(),
+            &context_assembly,
+            evaluation_time,
+            retrieval_latency,
+            retrieval_error.as_deref(),
+        )?;
         let initiative_trace = initiative_output
             .as_ref()
             .filter(|output| {
@@ -575,6 +604,17 @@ pub(crate) async fn inject_trusted_turn_context_and_response(
     );
     turn_request_values.push(response_create.clone());
     let request_hash = hash_request_sequence(&turn_request_values);
+    write_memory_selection_record(
+        &diagnostics,
+        qsf_session_id,
+        exchange_index,
+        &request_hash.to_string(),
+        retrieval.as_ref(),
+        &context_assembly,
+        evaluation_time,
+        retrieval_latency,
+        retrieval_error.as_deref(),
+    )?;
     let world_perception_capture = build_world_perception_capture(
         qsf_session_id.to_string(),
         exchange_index,
@@ -617,6 +657,43 @@ pub(crate) async fn inject_trusted_turn_context_and_response(
         volition_inspection_capture,
         world_perception_capture,
     )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn write_memory_selection_record(
+    diagnostics: &crate::diagnostics::DiagnosticWriter,
+    qsf_session_id: &str,
+    exchange_index: usize,
+    request_hash: &str,
+    retrieval: Option<&qsf_memory::RetrievalResult>,
+    assembly: &qsf_context::ContextAssembly,
+    evaluation_time: OffsetDateTime,
+    retrieval_latency: std::time::Duration,
+    retrieval_error: Option<&str>,
+) -> anyhow::Result<()> {
+    let record = build_memory_selection_record(MemorySelectionRecordInput {
+        qsf_session_id,
+        exchange_index,
+        request_hash,
+        retrieval,
+        assembly,
+        retrieval_strategy: RetrievalStrategy::AssociationWeighted,
+        retrieval_limit: DEFAULT_INJECTION_FRAGMENT_LIMIT,
+        evaluation_time,
+        recorded_at: OffsetDateTime::now_utc(),
+        retrieval_latency,
+        retrieval_error,
+    });
+    if let Err(error) = diagnostics.write(&record) {
+        engine_logging::engine_error!(
+            "memory selection diagnostics write failed: session_id={} exchange_index={} operation=write_memory_selection_record error={}",
+            qsf_session_id,
+            exchange_index,
+            error
+        );
+        return Err(error);
+    }
+    Ok(())
 }
 
 /// Persist every authoritative consultation trace and return the last one for the latest-only

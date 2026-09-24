@@ -35,3 +35,6 @@ tokio.workspace = true
 tokio-tungstenite.workspace = true
 uuid.workspace = true
 walkdir = "2"
+
+[dev-dependencies]
+qsf_semantics = { path = "../qsf_semantics", default-features = false }

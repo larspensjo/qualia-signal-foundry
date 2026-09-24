@@ -6,6 +6,19 @@ use super::*;
 use crate::diagnostics::DiagnosticRecord;
 use crate::realtime::sideband_provider_event::handle_provider_event;
 
+fn assert_one_memory_selection_for_request(records: &[DiagnosticRecord], request_hash: &str) {
+    let selections = records
+        .iter()
+        .filter_map(|record| match record {
+            DiagnosticRecord::MemorySelectionRecorded(selection) => Some(selection),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(selections.len(), 1);
+    assert_eq!(selections[0].exchange_index, 0);
+    assert_eq!(selections[0].request_hash, request_hash);
+}
+
 async fn run_trusted_transcript_turn(
     state: &AppState,
     qsf_session_id: &str,
@@ -112,6 +125,7 @@ async fn trusted_selection_turn_publishes_volition_capture_and_cross_links_diagn
     );
 
     let records = diagnostic_records(&state, &allocation.qsf_session_id).await;
+    assert_one_memory_selection_for_request(&records, &turn_context_capture.request_hash);
     let injected = records
         .iter()
         .find_map(|record| match record {
@@ -197,6 +211,7 @@ async fn trusted_no_selection_turn_publishes_state_only_capture() {
     );
 
     let records = diagnostic_records(&state, &allocation.qsf_session_id).await;
+    assert_one_memory_selection_for_request(&records, &turn_context_capture.request_hash);
     assert!(
         records
             .iter()

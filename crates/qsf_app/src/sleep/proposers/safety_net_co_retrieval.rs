@@ -53,7 +53,7 @@ impl SafetyNetCoRetrievalProposer {
             .collect::<Vec<_>>();
         let retrievals = sleep_records
             .iter()
-            .map(|record| record.retrieval_source_ids())
+            .map(|record| record.associable_retrieval_source_ids())
             .collect::<Vec<_>>();
         let known_record_ids: HashSet<String> = store
             .records
@@ -342,6 +342,105 @@ mod tests {
         let proposals = proposer.propose(&store, &session, time::OffsetDateTime::UNIX_EPOCH);
 
         assert!(!proposals.is_empty());
+    }
+
+    #[test]
+    fn safety_net_does_not_associate_judge_influenced_context_fragments() {
+        use std::collections::BTreeMap;
+
+        use qsf_memory::{
+            AdmissionCombinationPolicy, JudgeVerdict, MemoryRecord, MemoryRecordKind,
+            RetrievalRequest, RetrievalStrategy, retrieve_memories,
+        };
+        use qsf_semantics::trace::{BackendKind, ModelIdentity, ModelIdentityKind};
+
+        let records = vec![
+            MemoryRecord::new(
+                "memory.a",
+                MemoryRecordKind::Observation,
+                "prior anchor",
+                "Prior turn anchor.",
+                vec!["anchor"],
+                time::OffsetDateTime::UNIX_EPOCH,
+                0.6,
+                0,
+                "tests",
+                10,
+            ),
+            MemoryRecord::new(
+                "memory.lexical",
+                MemoryRecordKind::Observation,
+                "alpha topic",
+                "Lexically matching memory.",
+                vec!["alpha"],
+                time::OffsetDateTime::UNIX_EPOCH,
+                0.6,
+                0,
+                "tests",
+                10,
+            ),
+            MemoryRecord::new(
+                "memory.judge",
+                MemoryRecordKind::Observation,
+                "thematic context",
+                "Judge-influenced memory without lexical overlap.",
+                vec!["context"],
+                time::OffsetDateTime::UNIX_EPOCH,
+                0.6,
+                0,
+                "tests",
+                10,
+            ),
+        ];
+        let verdict = JudgeVerdict {
+            score_basis_points: 9_000,
+            model_identity: ModelIdentity {
+                backend: BackendKind::Fixture,
+                model_id: "fixture".to_owned(),
+                identity_kind: ModelIdentityKind::Fixture,
+                identity_value: "co-retrieval-test".to_owned(),
+            },
+            question_wording_version: "memory-v1".to_owned(),
+            backend_kind: BackendKind::Fixture,
+        };
+        let retrieval = retrieve_memories(
+            &RetrievalRequest::new(
+                &records,
+                &[],
+                "alpha",
+                RetrievalStrategy::AssociationWeighted,
+                2,
+                time::OffsetDateTime::UNIX_EPOCH,
+            )
+            .with_judge_verdicts(BTreeMap::from([("memory.judge".to_owned(), verdict)]))
+            .with_combination_policy(AdmissionCombinationPolicy::ReservedSlots),
+        )
+        .unwrap();
+        let retrieval_context =
+            qsf_context::assemble_retrieval_context(&retrieval, ContextBudget::new(4, 600));
+        assert!(
+            retrieval_context
+                .retrieved_memory_ids()
+                .contains(&"memory.judge".to_owned())
+        );
+        assert!(
+            !retrieval_context
+                .associable_retrieval_source_ids()
+                .contains(&"memory.judge".to_owned())
+        );
+
+        let mut session = session_with_turns(2, &[&["memory.a"], &[]]);
+        session.turns[1].context_assembly = retrieval_context;
+        let store = store_with_records(&["memory.a", "memory.lexical", "memory.judge"]);
+        let proposer = SafetyNetCoRetrievalProposer;
+
+        let ids = session.sleep_records()[1].associable_retrieval_source_ids();
+        assert!(!ids.contains(&"memory.judge".to_owned()));
+        let proposals = proposer.propose(&store, &session, time::OffsetDateTime::UNIX_EPOCH);
+
+        assert!(proposals.iter().all(|proposal| {
+            proposal.from_id != "memory.judge" && proposal.to_id != "memory.judge"
+        }));
     }
 
     #[test]

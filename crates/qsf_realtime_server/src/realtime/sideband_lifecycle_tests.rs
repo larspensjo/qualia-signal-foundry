@@ -5,6 +5,101 @@ use super::*;
 use crate::diagnostics::{DiagnosticRecord, DiagnosticTrust};
 
 #[tokio::test]
+async fn live_turn_records_one_memory_selection_with_seeded_store() {
+    let tempdir = TempDir::new().expect("tempdir");
+    let state = state(&tempdir);
+    let allocation = state.create_session().await.expect("session");
+    let session_id = &allocation.qsf_session_id;
+    let path = state.continuity_memory_store_path(session_id);
+    let mut store = qsf_memory::MemoryStore::load_or_empty(&path).expect("store");
+    store
+        .contents_mut()
+        .records
+        .push(qsf_memory::MemoryRecord::new(
+            "hello-memory",
+            qsf_memory::MemoryRecordKind::Concept,
+            "hello tool loop",
+            "A memory about the tool loop",
+            vec!["hello", "tool"],
+            time::OffsetDateTime::UNIX_EPOCH,
+            0.5,
+            0,
+            "tests",
+            16,
+        ));
+    store.persist().expect("persist store");
+    let loads_before = crate::realtime::memory_store::session_store_load_count(&state, session_id);
+    let mut runtime_state = SidebandRuntimeState::default();
+    let (outbound_tx, _outbound_rx) = mpsc::unbounded_channel();
+    start_test_turn(&state, session_id, &mut runtime_state, &outbound_tx).await;
+
+    assert_eq!(
+        crate::realtime::memory_store::session_store_load_count(&state, session_id) - loads_before,
+        1
+    );
+    let records = diagnostic_records(&state, session_id).await;
+    let selections = records
+        .iter()
+        .filter_map(|record| match record {
+            DiagnosticRecord::MemorySelectionRecorded(selection) => Some(selection),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(selections.len(), 1);
+    let selection = selections[0];
+    assert_eq!(selection.qsf_session_id, *session_id);
+    assert_eq!(selection.exchange_index, 0);
+    assert!(
+        selection
+            .candidates
+            .iter()
+            .any(|candidate| { candidate.candidate_id == "hello-memory" && candidate.admitted })
+    );
+    let captured_hash = records.iter().find_map(|record| match record {
+        DiagnosticRecord::TurnContextCaptured {
+            exchange_index,
+            request_hash,
+            ..
+        } if *exchange_index == selection.exchange_index => Some(request_hash),
+        _ => None,
+    });
+    assert_eq!(
+        captured_hash.map(String::as_str),
+        Some(selection.request_hash.as_str())
+    );
+}
+
+#[tokio::test]
+async fn malformed_store_error_keeps_parse_cause_in_live_selection_record() {
+    let tempdir = TempDir::new().expect("tempdir");
+    let state = state(&tempdir);
+    let allocation = state.create_session().await.expect("session");
+    let session_id = &allocation.qsf_session_id;
+    let path = state.continuity_memory_store_path(session_id);
+    std::fs::create_dir_all(path.parent().unwrap()).expect("store directory");
+    std::fs::write(path, "{not-json").expect("malformed store");
+    let mut runtime_state = SidebandRuntimeState::default();
+    let (outbound_tx, _outbound_rx) = mpsc::unbounded_channel();
+    start_test_turn(&state, session_id, &mut runtime_state, &outbound_tx).await;
+
+    let records = diagnostic_records(&state, session_id).await;
+    let selections = records
+        .iter()
+        .filter_map(|record| match record {
+            DiagnosticRecord::MemorySelectionRecorded(selection) => Some(selection),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(selections.len(), 1);
+    let error = selections[0]
+        .retrieval_error
+        .as_deref()
+        .expect("retrieval error");
+    assert!(error.contains("failed to load memory store off executor"));
+    assert!(error.contains("failed to parse memory store"));
+}
+
+#[tokio::test]
 async fn live_loop_latency_observations_record_each_stage_once() {
     let tempdir = TempDir::new().expect("tempdir");
     let state = state(&tempdir);

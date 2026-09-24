@@ -47,6 +47,7 @@ pub(crate) struct TurnConsole<'a, W: Write> {
 
 struct TurnContextAssembly {
     turn_index: usize,
+    evaluation_time: OffsetDateTime,
     retrieval: RetrievalResult,
     assembly: ContextAssembly,
     retrieved_memory_block: String,
@@ -216,6 +217,7 @@ fn assemble_turn_context(
 
     Ok(TurnContextAssembly {
         turn_index,
+        evaluation_time,
         retrieval,
         assembly,
         retrieved_memory_block,
@@ -366,6 +368,7 @@ fn apply_post_response_updates(
 ) -> anyhow::Result<String> {
     let TurnContextAssembly {
         turn_index,
+        evaluation_time,
         retrieval,
         assembly,
         retrieved_memory_block,
@@ -426,8 +429,21 @@ fn apply_post_response_updates(
             audio_marker: None,
         }),
     );
-    crate::session::apply_live_memory_reinforcement(context, state, state_dir, &retrieval)?;
-    crate::session::apply_live_memory_capture(context, state, state_dir, user_input, &output_text)?;
+    crate::session::apply_live_memory_reinforcement(
+        context,
+        state,
+        state_dir,
+        &retrieval,
+        evaluation_time,
+    )?;
+    crate::session::apply_live_memory_capture(
+        context,
+        state,
+        state_dir,
+        user_input,
+        &output_text,
+        evaluation_time,
+    )?;
     let store_path = state_dir.join("memory-store.json");
     // Fixture-backed memory has no persisted store to reload. File-backed live
     // memory refreshes only after persistence creates or updates this store.

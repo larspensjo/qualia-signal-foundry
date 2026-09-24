@@ -44,8 +44,23 @@ future retrieval backends.
   the original verdict basis points are carried separately.
 - Retrieval reports the lexical-only selected ids and marks each result's
   selection eligibility from that counterfactual. The memory-to-context mapping
-  carries admission basis and associability; reinforcement and sleep consumers
-  do not yet filter on that metadata.
+  carries and persists admission basis and associability. Live reinforcement and
+  sleep-side co-retrieval both exclude judge-influenced selections using that
+  lexical-only eligibility. Relevance-skipped reinforcement counts include both
+  the lexical relevance gate and below-threshold judge verdicts.
+- Trusted realtime memory retrieval loads the session store once per turn on a
+  Tokio blocking thread. Its `memory_selection_recorded` diagnostic preserves
+  selected and omitted candidates, score components, matched terms, association
+  paths, skip reasons, selection eligibility, the numeric retrieval limit,
+  combination policy, evaluation time, and `recorded_at`. `admitted` means passage
+  through the relevance gate, including a candidate cut by the retrieval limit;
+  gate rejects have no admission basis. `retrieval_latency_micros` includes the
+  blocking store load and retrieval.
+- `MemoryReinforced` carries `skipped_selection_eligibility_ids` and
+  `skipped_selection_eligibility_count` for selections excluded from durable
+  reinforcement. Its `timestamp_source` is `turn_evaluation_time` (previously
+  `live_now`). Live memory capture uses that same turn-owned evaluation time for
+  newly created records.
 - Relevance-gated keyword/tag retrieval with explicit skip reasons for omitted
   candidates, plus a narrow identity/profile allowance for name-shaped queries
   ([memory/retrieval.rs](../../crates/qsf_app/src/memory/retrieval.rs))

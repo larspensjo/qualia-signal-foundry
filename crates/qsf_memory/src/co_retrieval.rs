@@ -108,7 +108,7 @@ pub fn generate_deltas(
 /// Generate cross-turn co-retrieval deltas across a window.
 ///
 /// `retrievals_per_turn[i]` is the set of memory IDs retrieved in turn `i`
-/// from the call site, usually `ContextAssembly::retrieved_memory_ids()`.
+/// from the call site, usually `ContextAssembly::associable_retrieval_source_ids()`.
 /// `existing_associations` is the current store's association list.
 /// `known_record_ids` is the set of memory IDs currently present in the
 /// destination store; pairs touching missing endpoints are dropped.

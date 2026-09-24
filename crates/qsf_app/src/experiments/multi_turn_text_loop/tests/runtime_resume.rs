@@ -203,7 +203,7 @@ fn live_loop_reinforces_persistent_memory_store_and_emits_events() {
     );
     assert_eq!(retrieval_requested.payload["memory_source"], "memory_store");
     assert!(proposed.payload["created_count"].as_u64().unwrap() > 0);
-    assert_eq!(reinforced.payload["timestamp_source"], "live_now");
+    assert_eq!(reinforced.payload["timestamp_source"], "turn_evaluation_time");
     assert!(reinforced.payload["count"].as_u64().unwrap() > 0);
 
     fs::remove_dir_all(base_dir).unwrap();
@@ -267,8 +267,14 @@ fn live_loop_does_not_reinforce_relevance_skipped_memory() {
 
     let mut context = test_context(base_dir.join("run"), "multi-turn-text-loop");
     let state = SessionState::new(test_config(5));
-    crate::session::apply_live_memory_reinforcement(&mut context, &state, &state_dir, &retrieval)
-        .unwrap();
+    crate::session::apply_live_memory_reinforcement(
+        &mut context,
+        &state,
+        &state_dir,
+        &retrieval,
+        time::OffsetDateTime::now_utc(),
+    )
+    .unwrap();
 
     let reloaded = crate::memory::MemoryStore::load_or_empty(&memory_store_path).unwrap();
     let ari = reloaded
@@ -297,6 +303,207 @@ fn live_loop_does_not_reinforce_relevance_skipped_memory() {
     assert_eq!(
         reinforced.payload["skipped_relevance_ids"],
         json!(["memory.ari"])
+    );
+
+    fs::remove_dir_all(base_dir).unwrap();
+}
+
+#[test]
+fn live_reinforcement_excludes_judge_influenced_selection() {
+    use std::collections::BTreeMap;
+
+    use crate::memory::retrieval::AdmissionCombinationPolicy;
+    use qsf_memory::{JudgeVerdict, SelectionEligibility};
+    use qsf_semantics::trace::{BackendKind, ModelIdentity, ModelIdentityKind};
+
+    let base_dir = std::env::temp_dir().join(format!("qsf-live-judge-memory-{}", Uuid::new_v4()));
+    let state_dir = base_dir.join("state/text-loop");
+    let memory_store_path = state_dir.join("memory-store.json");
+    let records = vec![
+        MemoryRecord::new(
+            "memory.lexical",
+            MemoryRecordKind::Observation,
+            "alpha topic",
+            "Lexically matching memory.",
+            vec!["alpha"],
+            time::OffsetDateTime::UNIX_EPOCH,
+            0.6,
+            0,
+            "tests",
+            10,
+        ),
+        MemoryRecord::new(
+            "memory.judge",
+            MemoryRecordKind::Observation,
+            "thematic context",
+            "A judge-selected memory without lexical overlap.",
+            vec!["context"],
+            time::OffsetDateTime::UNIX_EPOCH,
+            0.6,
+            0,
+            "tests",
+            10,
+        ),
+    ];
+    let mut store = MemoryStore::load_or_empty(&memory_store_path).unwrap();
+    store.append_records(records.clone());
+    store.persist().unwrap();
+
+    let model_identity = ModelIdentity {
+        backend: BackendKind::Fixture,
+        model_id: "fixture".to_owned(),
+        identity_kind: ModelIdentityKind::Fixture,
+        identity_value: "reinforcement-test".to_owned(),
+    };
+    let verdicts = BTreeMap::from([(
+        "memory.judge".to_owned(),
+        JudgeVerdict {
+            score_basis_points: 9_000,
+            model_identity: model_identity.clone(),
+            question_wording_version: "memory-v1".to_owned(),
+            backend_kind: BackendKind::Fixture,
+        },
+    )]);
+    let evaluation_time = time::OffsetDateTime::from_unix_timestamp(1_800_000_000).unwrap();
+    let retrieval = retrieve_memories(
+        &RetrievalRequest::new(
+            &records,
+            &[],
+            "alpha",
+            RetrievalStrategy::AssociationWeighted,
+            2,
+            evaluation_time,
+        )
+        .with_judge_verdicts(verdicts)
+        .with_combination_policy(AdmissionCombinationPolicy::ReservedSlots),
+    )
+    .unwrap();
+    assert_eq!(retrieval.selected.len(), 2);
+    assert!(retrieval.selected.iter().any(|memory| {
+        memory.memory.id == "memory.judge"
+            && memory.selection_eligibility == SelectionEligibility::JudgeInfluenced
+    }));
+
+    let mut context = test_context(base_dir.join("run"), "multi-turn-text-loop");
+    let state = SessionState::new(test_config(5));
+    crate::session::apply_live_memory_reinforcement(
+        &mut context,
+        &state,
+        &state_dir,
+        &retrieval,
+        evaluation_time,
+    )
+    .unwrap();
+
+    let reloaded = MemoryStore::load_or_empty(&memory_store_path).unwrap();
+    let lexical = reloaded
+        .contents()
+        .records
+        .iter()
+        .find(|record| record.id == "memory.lexical")
+        .unwrap();
+    let judge = reloaded
+        .contents()
+        .records
+        .iter()
+        .find(|record| record.id == "memory.judge")
+        .unwrap();
+    assert_eq!(lexical.reinforcement_count, 1);
+    assert_eq!(judge.reinforcement_count, 0);
+    assert!(reloaded.contents().associations.is_empty());
+
+    let events = fs::read_to_string(context.run_dir().join("events.jsonl")).unwrap();
+    let records = parse_event_records(&events);
+    let reinforced = records
+        .iter()
+        .find(|record| record.event_type == EventType::MemoryReinforced)
+        .unwrap();
+    assert_eq!(reinforced.payload["ids"], json!(["memory.lexical"]));
+    assert_eq!(
+        reinforced.payload["skipped_selection_eligibility_ids"],
+        json!(["memory.judge"])
+    );
+
+    fs::remove_dir_all(base_dir).unwrap();
+}
+
+#[test]
+fn judge_below_threshold_skip_counts_as_relevance_skipped() {
+    use std::collections::BTreeMap;
+
+    use qsf_memory::JudgeVerdict;
+    use qsf_semantics::trace::{BackendKind, ModelIdentity, ModelIdentityKind};
+
+    let base_dir = std::env::temp_dir().join(format!("qsf-live-judge-skip-{}", Uuid::new_v4()));
+    let state_dir = base_dir.join("state/text-loop");
+    let memory_store_path = state_dir.join("memory-store.json");
+    let record = MemoryRecord::new(
+        "memory.below-threshold",
+        MemoryRecordKind::Observation,
+        "unrelated subject",
+        "No lexical match for the current query.",
+        vec!["unrelated"],
+        time::OffsetDateTime::UNIX_EPOCH,
+        0.5,
+        0,
+        "tests",
+        10,
+    );
+    let mut store = MemoryStore::load_or_empty(&memory_store_path).unwrap();
+    store.append_records(vec![record.clone()]);
+    store.persist().unwrap();
+
+    let verdict = JudgeVerdict {
+        score_basis_points: 1_000,
+        model_identity: ModelIdentity {
+            backend: BackendKind::Fixture,
+            model_id: "fixture".to_owned(),
+            identity_kind: ModelIdentityKind::Fixture,
+            identity_value: "below-threshold-test".to_owned(),
+        },
+        question_wording_version: "memory-v1".to_owned(),
+        backend_kind: BackendKind::Fixture,
+    };
+    let evaluation_time = time::OffsetDateTime::from_unix_timestamp(1_800_000_000).unwrap();
+    let retrieval = retrieve_memories(
+        &RetrievalRequest::new(
+            std::slice::from_ref(&record),
+            &[],
+            "volition goals",
+            RetrievalStrategy::AssociationWeighted,
+            4,
+            evaluation_time,
+        )
+        .with_judge_verdicts(BTreeMap::from([(
+            "memory.below-threshold".to_owned(),
+            verdict,
+        )])),
+    )
+    .unwrap();
+    assert_eq!(
+        retrieval.omitted[0].skip_reason.as_deref(),
+        Some(qsf_memory::JUDGE_VERDICT_BELOW_ADMISSION_THRESHOLD_SKIP_REASON)
+    );
+
+    let mut context = test_context(base_dir.join("run"), "multi-turn-text-loop");
+    crate::session::apply_live_memory_reinforcement(
+        &mut context,
+        &SessionState::new(test_config(5)),
+        &state_dir,
+        &retrieval,
+        evaluation_time,
+    )
+    .unwrap();
+    let events = fs::read_to_string(context.run_dir().join("events.jsonl")).unwrap();
+    let records = parse_event_records(&events);
+    let reinforced = records
+        .iter()
+        .find(|record| record.event_type == EventType::MemoryReinforced)
+        .unwrap();
+    assert_eq!(reinforced.payload["skipped_relevance_count"], 1);
+    assert_eq!(
+        reinforced.payload["skipped_relevance_ids"],
+        json!(["memory.below-threshold"])
     );
 
     fs::remove_dir_all(base_dir).unwrap();

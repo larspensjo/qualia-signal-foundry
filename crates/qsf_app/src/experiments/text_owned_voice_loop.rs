@@ -351,6 +351,7 @@ impl TextOwnedVoiceLoopExperiment {
             &state,
             &state_resolution.persist_state_dir,
             &memory_retrieval,
+            evaluation_time,
         )?;
         crate::session::apply_live_memory_capture(
             context,
@@ -358,6 +359,7 @@ impl TextOwnedVoiceLoopExperiment {
             &state_resolution.persist_state_dir,
             &final_transcript,
             &model_response.output_text,
+            evaluation_time,
         )?;
 
         let speech_request =

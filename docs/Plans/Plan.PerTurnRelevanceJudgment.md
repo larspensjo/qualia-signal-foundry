@@ -1,6 +1,6 @@
 # Plan: Per-turn relevance judgment for memory and goal look-up
 
-Status: In progress — pair-scoring foundation and deterministic memory retrieval landed
+Status: In progress — pair-scoring foundation, deterministic memory retrieval, and memory selection recording landed
 Maturity: Candidate
 Area: Memory retrieval / Volition (goal activation) / Realtime live path / Evaluation infrastructure
 
@@ -662,6 +662,11 @@ remains with its later scorer-generalization work; clippy; fmt.
 
 ## Phase 3 — Selection recording, provenance, and the durable-structure exclusion
 
+**Status: Landed; recommended operator check open.** The realtime path loads memory once off-executor,
+records complete per-turn selection provenance, and excludes judge-influenced selections from
+reinforcement and co-retrieval. Run one live or probe session and inspect its ledger for legible
+selection records and a skip reason on every omitted memory.
+
 Gate-independent and independently valuable: today the live path discards every omission and every
 skip reason (Verified item 8). It also installs the C6 protection *before* any judge-influenced
 selection can exist.
@@ -686,13 +691,15 @@ selection can exist.
   (Verified item 5). `retrieved_memory_ids()` keeps its display meaning.
 
 **Verification (automated)**: `cargo build`; `cargo test -p qsf_memory -p qsf_context -p qsf_session
--p qsf_app -p qsf_realtime_server`; a test that the per-turn store load happens once and off the
-async executor; a parse test over a *generated* diagnostics ledger asserting the selection-record
-fields; exclusion tests proving a judge-influenced selection becomes neither an association nor a
-reinforcement, exercised through both consumers (co-retrieval via the context assembly, reinforcement
-via `RetrievalResult.selected`); a session-state round-trip test proving an old file without the new
-fields loads and defaults to `lexical` / `true`; clippy; fmt. If the diagnostics UI renders the new
-record, `npm run check` then `npm run fmt` from `crates/qsf_realtime_server/ui`.
+-p qsf_app -p qsf_realtime_server -p qsf_diagnostics -p qsf_semantics`; a test that the per-turn store load happens
+once and off the async executor; a parse test over a *generated* diagnostics ledger asserting the
+selection-record fields, every omitted candidate's skip reason, numeric retrieval limit,
+`evaluation_time`, and latency; exclusion tests proving a judge-influenced selection becomes neither
+an association nor a reinforcement, exercised through both consumers (co-retrieval via
+`associable_retrieval_source_ids`, reinforcement via `RetrievalResult.selected`); a session-state
+round-trip test proving an old file without the new fields loads and defaults to `lexical` / `true`;
+clippy; fmt. If the diagnostics UI renders the new record, `npm run check` then `npm run fmt` from
+`crates/qsf_realtime_server/ui`.
 
 **Experiment scaffold**: none. **Human testing (recommended)**: one live or probe session, then read
 the ledger and confirm every omitted memory has a skip reason and the selection record is legible.
