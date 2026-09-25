@@ -14,6 +14,7 @@ $script:QsfCompletionCommands = @(
     "workbench",
     "realtime",
     "probe",
+    "bench",
     "sleep",
     "goals",
     "transcript",
@@ -66,6 +67,12 @@ $script:QsfCompletionProbeFlags = @(
     "-WorldCorpusPath",
     "-ColdStart",
     "-TurnDelayMs"
+)
+
+$script:QsfCompletionBenchFlags = @(
+    "-DryRun",
+    "-NetworkDescription",
+    "-LocalOverheadMs"
 )
 
 $script:QsfCompletionSleepFlags = @(
@@ -523,6 +530,14 @@ $qsfCompleter = {
         if ($nativeContext.Arguments.Count -ge 1 -and $nativeContext.Arguments[0] -eq "probe") {
             if ($wordToComplete -like "-*" ) {
                 Select-QsfCompletionMatches -Values $script:QsfCompletionProbeFlags -WordToComplete $wordToComplete
+                return
+            }
+            return
+        }
+
+        if ($nativeContext.Arguments.Count -ge 1 -and $nativeContext.Arguments[0] -eq "bench") {
+            if ($wordToComplete -like "-*" ) {
+                Select-QsfCompletionMatches -Values $script:QsfCompletionBenchFlags -WordToComplete $wordToComplete
                 return
             }
             return

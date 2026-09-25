@@ -134,6 +134,14 @@ Describe "qsf.ps1 argument completion" {
         $completions | Should -Contain "-TurnDelayMs"
     }
 
+    It "completes bench flags" {
+        $completions = Complete-QsfInput -InputText ".\scripts\qsf.ps1 bench -"
+
+        $completions | Should -Contain "-DryRun"
+        $completions | Should -Contain "-NetworkDescription"
+        $completions | Should -Contain "-LocalOverheadMs"
+    }
+
     It "completes bundled probe phrase set names and paths" {
         $completions = Complete-QsfInput -InputText ".\scripts\qsf.ps1 probe -PhraseSet "
 

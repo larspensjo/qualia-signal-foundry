@@ -33,7 +33,10 @@ param(
     [switch]$Full,
     [string]$Out = "",
     [string]$WorldCorpusPath = "",
-    [string]$WorldCorpusLedger = "state/world-corpus/index.json"
+    [string]$WorldCorpusLedger = "state/world-corpus/index.json",
+    [switch]$DryRun,
+    [string]$NetworkDescription = "",
+    [int]$LocalOverheadMs = 0
 )
 
 $ErrorActionPreference = "Stop"
@@ -65,8 +68,16 @@ $script:QsfScriptPath = $PSCommandPath
 # needs one of these and it is absent, the launcher relaunches itself through the profile's
 # Invoke-WithSecretMap, so the value exists only in that relaunched process and its children.
 $script:QsfSecretStoreNames = [ordered]@{
-    "OPENAI_API_KEY" = "OpenAIProductionKey"
+    "OPENAI_API_KEY"   = "OpenAIProductionKey"
+    "TYPESAFE_API_KEY" = "TYPESAFE_API_KEY"
 }
+
+# Hosted relevance-judge operating point for the bench command: backend selection is explicit and
+# the model id is pinned (never jev-latest). The pinned id must have an entry in
+# crates/qsf_semantics/prices/price-table.v1.json, or the bench reports tokens without cost.
+$relevanceJudgeBackend = "remote_http"
+$relevanceJudgeBaseUrl = "https://api.typesafe.ai"
+$relevanceJudgeModel = "jev-1.13.0"
 
 # Launcher controls all non-secret QSF_* environment variables to ensure deterministic behavior.
 # Tests can use Get-TestEnvironmentDelta to see the effective changes made by the launcher.
@@ -80,6 +91,15 @@ $script:QsfKnownManagedEnvironmentVariables = @(
     "QSF_REALTIME_SESSION_MIC_DURATION_MS",
     "QSF_REALTIME_SESSION_PROVIDER",
     "QSF_REALTIME_SESSION_WAV_PATH",
+    "QSF_RELEVANCE_JUDGE_BACKEND",
+    "QSF_RELEVANCE_JUDGE_BASE_URL",
+    "QSF_RELEVANCE_JUDGE_INITIAL_BACKOFF_MS",
+    "QSF_RELEVANCE_JUDGE_INJECTION_DEADLINE_MS",
+    "QSF_RELEVANCE_JUDGE_MAX_ATTEMPTS",
+    "QSF_RELEVANCE_JUDGE_MAX_BACKOFF_MS",
+    "QSF_RELEVANCE_JUDGE_MAX_CONCURRENCY",
+    "QSF_RELEVANCE_JUDGE_MODEL",
+    "QSF_RELEVANCE_JUDGE_REQUEST_TIMEOUT_MS",
     "QSF_REVIEWED_MEMORY_SLEEP_REPORT",
     "QSF_REVIEWED_VOLITION_DRAFT",
     "QSF_SESSION_ALLOW_OVER_LIMIT",
@@ -412,6 +432,24 @@ function Get-OpenAiServerEnvironmentDelta {
     }
 }
 
+function Get-BenchEnvironmentDelta {
+    $envSets = [ordered]@{
+        "QSF_RELEVANCE_JUDGE_BACKEND"  = $relevanceJudgeBackend
+        "QSF_RELEVANCE_JUDGE_BASE_URL" = $relevanceJudgeBaseUrl
+        "QSF_RELEVANCE_JUDGE_MODEL"    = $relevanceJudgeModel
+    }
+    $clearEnv = @(
+        Get-ManagedQsfEnvironmentVariableNames |
+        Where-Object { -not $envSets.Contains($_) } |
+        Sort-Object -Unique
+    )
+
+    return [pscustomobject]@{
+        Sets   = $envSets
+        Clears = $clearEnv
+    }
+}
+
 function Get-SleepEnvironmentDelta {
     $envSets = [ordered]@{
         "QSF_MODEL_PROVIDER" = $Provider
@@ -474,6 +512,26 @@ function Show-EnvironmentDelta {
     }
 }
 
+function Set-ProcessEnvironmentValue {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$Name,
+
+        # Untyped on purpose: a [string] parameter would bind $null as an empty string.
+        [AllowNull()]
+        [object]$Value
+    )
+
+    # PowerShell passes $null to a .NET string parameter as an empty string, which leaves the
+    # variable present but empty for child processes; [NullString]::Value actually removes it.
+    if ($null -eq $Value) {
+        [System.Environment]::SetEnvironmentVariable($Name, [NullString]::Value, "Process")
+    }
+    else {
+        [System.Environment]::SetEnvironmentVariable($Name, [string]$Value, "Process")
+    }
+}
+
 function Invoke-WithEnvironmentDelta {
     param(
         [Parameter(Mandatory = $true)]
@@ -500,16 +558,16 @@ function Invoke-WithEnvironmentDelta {
 
     try {
         foreach ($name in $Delta.Clears) {
-            [System.Environment]::SetEnvironmentVariable($name, $null, "Process")
+            Set-ProcessEnvironmentValue -Name $name -Value $null
         }
         foreach ($name in $Delta.Sets.Keys) {
-            [System.Environment]::SetEnvironmentVariable($name, $Delta.Sets[$name], "Process")
+            Set-ProcessEnvironmentValue -Name $name -Value $Delta.Sets[$name]
         }
         & $ScriptBlock
     }
     finally {
         foreach ($name in $names) {
-            [System.Environment]::SetEnvironmentVariable($name, $previousValues[$name], "Process")
+            Set-ProcessEnvironmentValue -Name $name -Value $previousValues[$name]
         }
     }
 }
@@ -570,6 +628,7 @@ Usage:
   .\scripts\qsf.ps1 workbench [<store>] [-Store <path>] [-BindHost <ip>] [-Port <port>]
   .\scripts\qsf.ps1 realtime [-StateDir <path>] [-RandomSessionId] [-WorldCorpusPath <path>]
   .\scripts\qsf.ps1 probe [-PhraseSet <name|path>] [-StateDir <path>] [-WorldCorpusPath <path>] [-ColdStart] [-TurnDelayMs <ms>]
+  .\scripts\qsf.ps1 bench [-DryRun] [-NetworkDescription <text>] [-LocalOverheadMs <ms>]
   .\scripts\qsf.ps1 sleep [-StateDir <path>] [-Provider <openai|mock>] [-WorldCorpusPath <path>] [-WorldCorpusLedger <path>] [-NoBackup]
   .\scripts\qsf.ps1 goals [<session-id>] [-StateDir <path>] [-Pretty] [-Out <path>]
   .\scripts\qsf.ps1 transcript [<session-id>] [-StateDir <path>] [-All] [-Pretty] [-Full] [-Out <path>]
@@ -601,14 +660,20 @@ Defaults:
                    writes an isolated run under state/probe/<run-id>
     Probe environment: sets QSF_MODEL_PROVIDER=openai, optionally sets QSF_WORLD_CORPUS_PATH,
                        and clears other non-secret QSF_* values
+  Bench:           measures hosted relevance-judge latency and cost ($relevanceJudgeModel at
+                   $relevanceJudgeBaseUrl); requires TYPESAFE_API_KEY; prints the planned requests
+                   and estimated cost first, stops at 400 sent requests, writes runs/<run-id>/
+                   -DryRun prints and saves the plan without sending anything
+    Bench environment: pins the relevance-judge backend, base URL and model, and clears other
+                       non-secret QSF_* values
   Goals:           prints full read-only volition goal detail as JSONL from state/realtime; -Pretty restores the console view and -Out writes the result to a file
   Transcript:      prints the newest run in state/realtime/diagnostics as JSONL, one line per turn with its
                    volition traces; an optional session id bypasses ledger auto-selection; -All emits every run
   Restore:         creates undo backups as state/backups/<name>-restore-<timestamp>; latest ignores those undo backups
-  Secrets:         a required OPENAI_API_KEY that is not set is injected from SecretStore entry
-                   'OpenAIProductionKey': the launcher relaunches itself through the profile's
-                   Invoke-WithSecretMap (interactive terminal only), so the key reaches only that
-                   relaunched process and its children
+  Secrets:         a required key that is not set is injected from SecretStore (OPENAI_API_KEY from
+                   'OpenAIProductionKey', TYPESAFE_API_KEY from 'TYPESAFE_API_KEY'): the launcher
+                   relaunches itself through the profile's Invoke-WithSecretMap (interactive
+                   terminal only), so the key reaches only that relaunched process and its children
 
 Examples:
   .\scripts\qsf.ps1 app -Experiment multi-turn-text-loop
@@ -626,6 +691,8 @@ Examples:
   .\scripts\qsf.ps1 realtime -WorldCorpusPath C:\data\web_page_filet_mignon\output
   .\scripts\qsf.ps1 probe
   .\scripts\qsf.ps1 probe -PhraseSet smoke -ColdStart -TurnDelayMs 500
+  .\scripts\qsf.ps1 bench -DryRun
+  .\scripts\qsf.ps1 bench -NetworkDescription "home fibre, wired"
   .\scripts\qsf.ps1 sleep
   .\scripts\qsf.ps1 sleep -Provider mock
   .\scripts\qsf.ps1 sleep -StateDir state/probe/<run-id> -NoBackup
@@ -1150,13 +1217,13 @@ function Start-BrowserUiProcess {
 
     $previousApiUrl = [System.Environment]::GetEnvironmentVariable("QSF_BROWSER_API_URL", "Process")
     try {
-        [System.Environment]::SetEnvironmentVariable("QSF_BROWSER_API_URL", $ApiUrl, "Process")
+        Set-ProcessEnvironmentValue -Name "QSF_BROWSER_API_URL" -Value $ApiUrl
         $uiProcess = Start-Process -FilePath $npm -ArgumentList $arguments -WorkingDirectory $uiDir -WindowStyle Hidden -PassThru
         Write-Host "Browser Vite UI PID: $($uiProcess.Id)"
         return $uiProcess
     }
     finally {
-        [System.Environment]::SetEnvironmentVariable("QSF_BROWSER_API_URL", $previousApiUrl, "Process")
+        Set-ProcessEnvironmentValue -Name "QSF_BROWSER_API_URL" -Value $previousApiUrl
     }
 }
 
@@ -1238,6 +1305,7 @@ function Get-RequiredSecretNames {
     $names = switch ($Command.ToLowerInvariant()) {
         "realtime" { @("OPENAI_API_KEY") }
         "probe" { @("OPENAI_API_KEY") }
+        "bench" { @("TYPESAFE_API_KEY") }
         "sleep" { if ($Provider -eq "openai") { @("OPENAI_API_KEY") } else { @() } }
         "app" {
             if ([string]::IsNullOrWhiteSpace($LaunchProfile)) {
@@ -1410,6 +1478,32 @@ function Invoke-Probe {
 
     Invoke-WithEnvironmentDelta -Delta (Get-ProbeEnvironmentDelta) -ScriptBlock {
         Invoke-LoggedCommand -Executable "cargo" -Arguments $arguments
+    }
+}
+
+function Get-BenchCargoArguments {
+    $arguments = @("run", "-p", "qsf_semantics", "--", "bench")
+    if ($DryRun) {
+        $arguments += "--dry-run"
+    }
+    if (-not [string]::IsNullOrWhiteSpace($NetworkDescription)) {
+        $arguments += @("--network-description", $NetworkDescription)
+    }
+    if ($script:QsfScriptBoundParameters.ContainsKey("LocalOverheadMs")) {
+        $arguments += @("--local-overhead-ms", $LocalOverheadMs.ToString([System.Globalization.CultureInfo]::InvariantCulture))
+    }
+
+    return $arguments
+}
+
+function Invoke-Bench {
+    Test-RequiredSecret -Name "TYPESAFE_API_KEY"
+
+    Write-Host "Relevance judge: $relevanceJudgeModel at $relevanceJudgeBaseUrl"
+    Write-Host "TYPESAFE_API_KEY: present in environment; value not shown"
+
+    Invoke-WithEnvironmentDelta -Delta (Get-BenchEnvironmentDelta) -ScriptBlock {
+        Invoke-LoggedCommand -Executable "cargo" -Arguments (Get-BenchCargoArguments)
     }
 }
 
@@ -1860,6 +1954,9 @@ if (Test-QsfAutoRunEnabled) {
         }
         "probe" {
             Invoke-Probe
+        }
+        "bench" {
+            Invoke-Bench
         }
         "sleep" {
             Invoke-Sleep

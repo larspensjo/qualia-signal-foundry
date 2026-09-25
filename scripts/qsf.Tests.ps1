@@ -10,7 +10,9 @@ BeforeAll {
         "QSF_STATE_DIR",
         "QSF_SESSION_MAX_TURNS",
         "QSF_SESSION_MEMORY_SOURCE",
-        "QSF_WORLD_CORPUS_PATH"
+        "QSF_RELEVANCE_JUDGE_MAX_CONCURRENCY",
+        "QSF_WORLD_CORPUS_PATH",
+        "TYPESAFE_API_KEY"
     )
 
     foreach ($name in $script:TestEnvironmentNames) {
@@ -158,6 +160,26 @@ Describe "qsf.ps1 deterministic environment" {
         $delta.Sets["QSF_MODEL_PROVIDER"] | Should -Be "openai"
         $delta.Clears | Should -Not -Contain "QSF_MODEL_PROVIDER"
         $delta.Clears | Should -Contain "QSF_TRANSCRIPT_PROVIDER"
+    }
+
+    It "removes cleared variables for the child instead of passing them as empty values" {
+        $script:QsfSkipAutoRun = $true
+        . $script:LauncherScript -Command "help"
+        $name = "QSF_SESSION_MAX_TURNS"
+        [System.Environment]::SetEnvironmentVariable($name, "2", "Process")
+        $delta = [pscustomobject]@{ Sets = [ordered]@{}; Clears = @($name) }
+
+        $script:SeenDuringChild = "unset"
+        Invoke-WithEnvironmentDelta -Delta $delta -ScriptBlock {
+            $script:SeenDuringChild = [System.Environment]::GetEnvironmentVariables("Process").Contains($name)
+        } 6>$null
+
+        $script:SeenDuringChild | Should -BeFalse
+        [System.Environment]::GetEnvironmentVariable($name, "Process") | Should -Be "2"
+
+        Set-ProcessEnvironmentValue -Name $name -Value $null
+        Invoke-WithEnvironmentDelta -Delta $delta -ScriptBlock { } 6>$null
+        [System.Environment]::GetEnvironmentVariables("Process").Contains($name) | Should -BeFalse
     }
 
     It "does not manage secret-like QSF variables" {
@@ -404,6 +426,88 @@ Describe "qsf.ps1 probe launcher" {
 
         $delta.Sets["QSF_WORLD_CORPUS_PATH"] | Should -Be $worldCorpusPath
         $delta.Clears | Should -Not -Contain "QSF_WORLD_CORPUS_PATH"
+    }
+}
+
+Describe "qsf.ps1 bench launcher" {
+    BeforeAll {
+        $script:QsfSkipAutoRun = $true
+        . $script:LauncherScript -Command "help"
+    }
+
+    BeforeEach {
+        [System.Environment]::SetEnvironmentVariable("TYPESAFE_API_KEY", "test-key", "Process")
+    }
+
+    AfterEach {
+        [System.Environment]::SetEnvironmentVariable("TYPESAFE_API_KEY", $null, "Process")
+        . $script:LauncherScript -Command "help"
+    }
+
+    It "runs the semantics bench with no extra flags by default" {
+        . $script:LauncherScript -Command "bench"
+
+        Get-BenchCargoArguments | Should -Be @("run", "-p", "qsf_semantics", "--", "bench")
+    }
+
+    It "maps bench options to the cargo command line" {
+        . $script:LauncherScript -Command "bench" -DryRun -NetworkDescription "home fibre" -LocalOverheadMs 40
+
+        $arguments = @(Get-BenchCargoArguments)
+
+        $arguments | Should -Contain "--dry-run"
+        $arguments[[Array]::IndexOf($arguments, "--network-description") + 1] | Should -Be "home fibre"
+        $arguments[[Array]::IndexOf($arguments, "--local-overhead-ms") + 1] | Should -Be "40"
+    }
+
+    It "selects the hosted judge explicitly with a pinned model and clears managed variables" {
+        [System.Environment]::SetEnvironmentVariable("QSF_RELEVANCE_JUDGE_MAX_CONCURRENCY", "99", "Process")
+        try {
+            . $script:LauncherScript -Command "bench"
+
+            $delta = Get-BenchEnvironmentDelta
+
+            $delta.Sets["QSF_RELEVANCE_JUDGE_BACKEND"] | Should -Be "remote_http"
+            $delta.Sets["QSF_RELEVANCE_JUDGE_BASE_URL"] | Should -Be "https://api.typesafe.ai"
+            $delta.Sets["QSF_RELEVANCE_JUDGE_MODEL"] | Should -Be "jev-1.13.0"
+            $delta.Clears | Should -Contain "QSF_RELEVANCE_JUDGE_MAX_CONCURRENCY"
+            $delta.Clears | Should -Contain "QSF_MODEL_PROVIDER"
+        }
+        finally {
+            [System.Environment]::SetEnvironmentVariable("QSF_RELEVANCE_JUDGE_MAX_CONCURRENCY", $null, "Process")
+        }
+    }
+
+    It "prices the pinned model in the checked-in price table" {
+        . $script:LauncherScript -Command "bench"
+        $priceTablePath = Join-Path (Split-Path -Parent $PSScriptRoot) "crates/qsf_semantics/prices/price-table.v1.json"
+
+        (Get-Content -Raw $priceTablePath) | Should -Match ([regex]::Escape("`"$relevanceJudgeModel`""))
+    }
+
+    It "runs cargo under the bench environment" {
+        . $script:LauncherScript -Command "bench" -DryRun
+        $script:CapturedBenchDelta = $null
+        $script:CapturedCargoArguments = @()
+        Mock -CommandName Invoke-WithEnvironmentDelta -MockWith {
+            $script:CapturedBenchDelta = $Delta
+            & $ScriptBlock
+        }
+        Mock -CommandName Invoke-LoggedCommand -MockWith {
+            $script:CapturedCargoArguments = @($Arguments)
+        }
+
+        Invoke-Bench 6>$null
+
+        $script:CapturedBenchDelta.Sets["QSF_RELEVANCE_JUDGE_BACKEND"] | Should -Be "remote_http"
+        $script:CapturedCargoArguments | Should -Contain "--dry-run"
+    }
+
+    It "fails fast when the key is absent" {
+        [System.Environment]::SetEnvironmentVariable("TYPESAFE_API_KEY", $null, "Process")
+        . $script:LauncherScript -Command "bench"
+
+        { Invoke-Bench } | Should -Throw "*TYPESAFE_API_KEY is not set*"
     }
 }
 
@@ -765,6 +869,20 @@ Describe "qsf.ps1 secret injection" {
 
         . $script:LauncherScript -Command "app" -Experiment "multi-turn-text-loop" -LaunchProfile "openai-text"
         @(Get-RequiredSecretNames) | Should -Be @("OPENAI_API_KEY")
+    }
+
+    It "requires the TypeSafe key for the bench and maps it to its SecretStore entry" {
+        . $script:LauncherScript -Command "bench"
+        @(Get-RequiredSecretNames) | Should -Be @("TYPESAFE_API_KEY")
+        @(Get-SecretsToInject) | Should -Be @("TYPESAFE_API_KEY")
+        Mock -CommandName Invoke-WithSecretMap -MockWith { $ExitCode.Value = 0 }
+
+        Invoke-WithInjectedSecrets -Names @("TYPESAFE_API_KEY") 6>$null
+
+        Should -Invoke -CommandName Invoke-WithSecretMap -Times 1 -ParameterFilter {
+            $SecretEnvironmentMap["TYPESAFE_API_KEY"] -eq "TYPESAFE_API_KEY" -and
+            $ArgumentList -contains "bench"
+        }
     }
 
     It "requires no secret for commands that do not call the provider" {
