@@ -475,6 +475,72 @@ Per-experiment configuration variables (warm-summary thresholds, memory sources,
 transcript providers, and so on) are documented in the corresponding plan and
 experiment notes under `docs/`.
 
+### Relevance-judge bench
+
+`qsf_semantics` has a direct Cargo entry point for measuring the pair-scoring backend
+selected by `QSF_RELEVANCE_JUDGE_BACKEND`. Backend selection is explicit; having an API
+key in the environment does not select the hosted service. The default is the deterministic
+`fixture` backend, whose results are synthetic and are not relevance evidence.
+
+For the hosted System One service, pin the versioned model id and supply its key. The
+endpoint is `POST https://api.typesafe.ai/v1/systemone`:
+
+```powershell
+$env:QSF_RELEVANCE_JUDGE_BACKEND = "remote_http"
+$env:QSF_RELEVANCE_JUDGE_BASE_URL = "https://api.typesafe.ai"
+$env:QSF_RELEVANCE_JUDGE_MODEL = "jev-1.13.0"
+$env:TYPESAFE_API_KEY = "<key>"
+
+cargo run -p qsf_semantics -- bench --dry-run
+cargo run -p qsf_semantics -- bench --network-description "wired office network"
+```
+
+The remote config (including `TYPESAFE_API_KEY`) is validated for a dry run, but
+`--dry-run` sends no requests. Before any measurement, the bench prints each shaping and
+candidate-count cell, nominal requests, worst-case requests including retries, and a cost
+estimate. The default cap is 400 physical requests; change it with
+`--max-total-requests`. A nominal-plan refusal writes `bench-plan.json` and sends nothing.
+The backend also stops a run cleanly when its next send would exceed the cap and records
+the stop in `bench-report.json`. The first request warms the connection and is discarded.
+The default candidate counts are 18, 100, and 500, with 40 measured shared-state turns
+per cell and 10 measured per-candidate turns at the smallest count. Larger per-candidate
+cells are labeled derived-not-measured using per-attempt latency and concurrency waves.
+The p95 is withheld below 20 successful samples, and p99 below 100. Failed invocations
+never enter end-to-end percentiles or a deadline verdict. The preflight token estimate
+uses the actual serialized hosted request body with a bytes-per-token heuristic; the final
+measured cost uses observed provider token counts only.
+
+Rate feasibility uses a configurable target of 10 spoken turns per minute and two judge
+workloads per turn, memory and goal, sharing the documented 1,200 requests per minute.
+At 100 candidates the per-candidate shape would need 2,000 requests per minute and is
+rate-limit-infeasible; its maximum sustainable pace is 6 turns per minute. The shared
+state shape is measured at 500 candidates. The plan flags heuristic token-limit risks;
+the report also compares provider-reported per-request input tokens with the documented
+cap. Vendor limits and their read date are stored as report inputs.
+
+Reports and the preflight plan are written under `runs/<run-id>/`; nothing is copied into
+`evaluation/reports/` automatically. After reviewing a run, an operator may deliberately
+freeze its report, for example:
+
+```powershell
+$RunId = "<reviewed-run-id>"
+Copy-Item "runs/$RunId/bench-report.json" "evaluation/reports/relevance-judge-bench.$RunId.json"
+```
+
+The report records the pinned and resolved model ids, endpoint, wording version,
+machine/network description, commit and dirty state, date, request timeout, concurrency,
+retry policy, and per-shaping derived injection deadline at the largest store size,
+and the stated local-overhead input. Local overhead defaults to 0 ms as a lower-bound
+assumption; supply the measured candidate/context assembly and send overhead with
+`--local-overhead-ms`. The deadline calculation always uses
+`MAX_ADDED_TIME_TO_FIRST_AUDIO_MS = 300` and does not raise that limit. Cost comes only
+from observed usage and the checked-in price table at
+`crates/qsf_semantics/prices/price-table.v1.json`; an unpriced model reports tokens without
+cost. `jev-latest` is not priced or selected by this command's documented operating point.
+
+Only the `bench` subcommand is implemented from the planned `score` / `bench` / `verify`
+binary surface. One-shot `score` and read-only `verify` remain unspecified follow-ups.
+
 At this stage, the exact executable behavior may change frequently as the project evolves.
 
 ## Repository Structure

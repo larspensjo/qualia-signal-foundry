@@ -46,6 +46,7 @@ External or informal wording -> project vocabulary -> verify status against code
 | Selection eligibility | For a selected memory, whether lexical-only retrieval at the same time and limit would also select it. | Only a selected memory marked associable may later shape durable memory structure. |
 | Injection deadline / request timeout | The injection deadline is when a caller stops waiting to affect the current turn; the request timeout is the longer ceiling for the backend call itself. | A missed injection deadline must not cancel the request, allowing a later result to be carried by future work. |
 | Fixture backend | The deterministic, no-cost `qsf_semantics` backend selected explicitly as the default. | Its outputs exercise the seam but are never relevance evidence. |
+| Request shaping | How a pair-scoring request groups candidate questions: one shared state request or one request per candidate. | The bench measures shared state at each configured size, measures per-candidate requests at the smallest size, and labels larger per-candidate latency projections derived-not-measured; rate feasibility includes both judge workloads per spoken turn. |
 | Score kind | The interpretation attached to a pair score: `Probability` or `Similarity`. | The hosted judge emits `Probability`; local encoders may later emit `Similarity`. |
 | Basis points | Integer probability units from 0 through 10,000. | Persisted relevance probabilities use these rather than floating point. |
 

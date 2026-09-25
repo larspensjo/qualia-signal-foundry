@@ -231,6 +231,14 @@ mod tests {
     }
 
     #[test]
+    fn api_key_presence_never_selects_the_remote_backend() {
+        let config = load(&[("TYPESAFE_API_KEY", "present-but-not-selected")])
+            .expect("fixture remains selected");
+        assert_eq!(config.backend, RelevanceJudgeBackendName::Fixture);
+        assert!(config.remote.is_none());
+    }
+
+    #[test]
     fn backend_name_parser_rejects_typos() {
         assert_eq!(
             parse_backend_name(Some("remote-http")),

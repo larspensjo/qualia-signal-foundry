@@ -6,6 +6,9 @@
 
 /// Pair-scoring backend implementations.
 pub mod backends;
+/// Hosted-judge latency, request-shaping, and cost measurement.
+#[cfg(feature = "cli")]
+pub mod bench;
 /// Budget constants and timeout relationships.
 pub mod budgets;
 /// Configured HTTP backend selection and validation.

@@ -79,6 +79,9 @@ pub struct ParsedUsage {
 pub struct ServiceTracePayload {
     /// Number of HTTP attempts.
     pub attempt_count: u32,
+    /// Wall-clock duration of each physical HTTP attempt, in microseconds.
+    #[serde(default)]
+    pub attempt_latency_micros: Vec<u64>,
     /// Retryable failure names observed before completion.
     pub retry_reasons: Vec<String>,
     /// Original provider usage object, never normalized or reconstructed.
@@ -577,6 +580,21 @@ pub fn completed_candidates(
 #[cfg(test)]
 mod tests {
     use serde_json::json;
+
+    #[test]
+    fn older_service_trace_defaults_attempt_latencies() {
+        let payload = json!({
+            "attempt_count": 1,
+            "retry_reasons": [],
+            "usage_raw": null,
+            "usage_parsed": null,
+            "requested_model_id": "jev-1.13.0",
+            "resolved_model_ids": []
+        });
+        let decoded: super::ServiceTracePayload =
+            serde_json::from_value(payload).expect("legacy payload");
+        assert!(decoded.attempt_latency_micros.is_empty());
+    }
 
     use super::*;
 

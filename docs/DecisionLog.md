@@ -2477,3 +2477,14 @@ Consequences: Paid live runs need an interactive terminal with the profile loade
 SecretStore may prompt. Agent sessions cannot start them and hand the operator the command instead.
 New secrets such as `TYPESAFE_API_KEY` join the launcher's single secret-to-SecretStore mapping
 rather than adding per-command handling.
+
+## 2026-09-25 - Rate-limit pace for relevance-judge measurement
+Decision: Judge request-rate feasibility uses a sustained 10 spoken turns per minute with
+two judge workloads per turn, memory and goal, sharing the provider's documented request
+limit. The pace and workload count are recorded inputs to the stop/go gate.
+Context: Three turns per minute was an invented optimistic pace. At 100 candidate memories,
+one request per candidate plus the goal workload exceeds the provider's 1,200 requests per
+minute at a realistic spoken pace.
+Consequences: The per-candidate shape at about 100 memories is reported as
+rate-limit-infeasible under the gate assumption; reports also retain the maximum sustainable
+turns per minute for each shaping and store size.

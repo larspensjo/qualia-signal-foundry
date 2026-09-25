@@ -95,6 +95,7 @@ pub struct RemoteRelevanceJudge {
     permits: Arc<Semaphore>,
     invocation_prefix: String,
     invocation_sequence: Arc<AtomicU64>,
+    request_budget: Option<(Arc<AtomicU64>, u64)>,
 }
 
 impl RemoteRelevanceJudge {
@@ -107,7 +108,15 @@ impl RemoteRelevanceJudge {
             client: Client::new(),
             invocation_prefix: invocation_prefix("remote-http"),
             invocation_sequence: Arc::new(AtomicU64::new(1)),
+            request_budget: None,
         })
+    }
+
+    /// Shares a hard physical-request ceiling with the offline bench harness.
+    pub fn with_request_budget(mut self, maximum: u64) -> (Self, Arc<AtomicU64>) {
+        let sent = Arc::new(AtomicU64::new(0));
+        self.request_budget = Some((sent.clone(), maximum));
+        (self, sent)
     }
 
     fn invocation_id(&self) -> String {
@@ -132,12 +141,32 @@ impl RemoteRelevanceJudge {
         invocation_id: &str,
     ) -> Result<RemoteCall, AttemptFailure> {
         let mut retry_reasons = Vec::new();
+        let mut attempt_latency_micros = Vec::new();
         for attempt in 1..=self.config.max_attempts {
             let permit = self.permits.clone().acquire_owned().await.map_err(|_| {
                 AttemptFailure::terminal(SemanticFailure::BackendUnavailable {
                     detail: "remote_http concurrency limiter closed".to_owned(),
                 })
             })?;
+            if let Some((sent, maximum)) = &self.request_budget {
+                if sent
+                    .fetch_update(Ordering::SeqCst, Ordering::SeqCst, |current| {
+                        (current < *maximum).then_some(current + 1)
+                    })
+                    .is_err()
+                {
+                    return Err(AttemptFailure {
+                        failure: SemanticFailure::BackendUnavailable {
+                            detail: "bench_request_cap_reached".to_owned(),
+                        },
+                        attempts: attempt - 1,
+                        retry_reasons,
+                        attempt_latency_micros,
+                        partial_successes: Vec::new(),
+                    });
+                }
+            }
+            let attempt_started = Instant::now();
             let endpoint = self.endpoint();
             let request = self
                 .client
@@ -148,28 +177,43 @@ impl RemoteRelevanceJudge {
             let result = tokio::time::timeout(self.config.request_timeout, request).await;
             match result {
                 Err(_) => {
+                    attempt_latency_micros.push(attempt_started.elapsed().as_micros() as u64);
                     engine_error!(
                         "semantic remote request failed invocation_id={} backend=remote_http endpoint={} attempt={} status=timeout",
                         invocation_id,
                         endpoint,
                         attempt
                     );
-                    return Err(AttemptFailure::terminal(SemanticFailure::Timeout));
+                    return Err(AttemptFailure {
+                        failure: SemanticFailure::Timeout,
+                        attempts: attempt,
+                        retry_reasons,
+                        attempt_latency_micros,
+                        partial_successes: Vec::new(),
+                    });
                 }
                 Ok(Err(error)) => {
+                    attempt_latency_micros.push(attempt_started.elapsed().as_micros() as u64);
                     engine_error!(
                         "semantic remote request failed invocation_id={} backend=remote_http endpoint={} attempt={} status=transport",
                         invocation_id,
                         endpoint,
                         attempt
                     );
-                    return Err(AttemptFailure::terminal(SemanticFailure::Transport {
-                        detail: error.to_string(),
-                    }));
+                    return Err(AttemptFailure {
+                        failure: SemanticFailure::Transport {
+                            detail: error.to_string(),
+                        },
+                        attempts: attempt,
+                        retry_reasons,
+                        attempt_latency_micros,
+                        partial_successes: Vec::new(),
+                    });
                 }
                 Ok(Ok(response)) => {
                     let status = response.status();
                     if !status.is_success() {
+                        attempt_latency_micros.push(attempt_started.elapsed().as_micros() as u64);
                         drop(permit);
                         let failure = failure_for_status(status);
                         engine_error!(
@@ -193,6 +237,8 @@ impl RemoteRelevanceJudge {
                             failure,
                             attempts: attempt,
                             retry_reasons,
+                            attempt_latency_micros,
+                            partial_successes: Vec::new(),
                         });
                     }
                     let response_body = tokio::time::timeout(
@@ -200,6 +246,7 @@ impl RemoteRelevanceJudge {
                         response.json::<SystemOneResponse>(),
                     )
                     .await;
+                    attempt_latency_micros.push(attempt_started.elapsed().as_micros() as u64);
                     drop(permit);
                     let response_body = match response_body {
                         Err(_) => {
@@ -209,7 +256,13 @@ impl RemoteRelevanceJudge {
                                 endpoint,
                                 attempt
                             );
-                            return Err(AttemptFailure::terminal(SemanticFailure::Timeout));
+                            return Err(AttemptFailure {
+                                failure: SemanticFailure::Timeout,
+                                attempts: attempt,
+                                retry_reasons,
+                                attempt_latency_micros,
+                                partial_successes: Vec::new(),
+                            });
                         }
                         Ok(Err(error)) => {
                             engine_error!(
@@ -218,25 +271,43 @@ impl RemoteRelevanceJudge {
                                 endpoint,
                                 attempt
                             );
-                            return Err(AttemptFailure::terminal(SemanticFailure::Decode {
-                                detail: error.to_string(),
-                            }));
+                            return Err(AttemptFailure {
+                                failure: SemanticFailure::Decode {
+                                    detail: error.to_string(),
+                                },
+                                attempts: attempt,
+                                retry_reasons,
+                                attempt_latency_micros,
+                                partial_successes: Vec::new(),
+                            });
                         }
                         Ok(Ok(body)) => body,
                     };
                     let mut probabilities = BTreeMap::new();
                     for question_id in question_ids {
                         let answer = response_body.answers.get(&question_id).ok_or_else(|| {
-                            AttemptFailure::terminal(SemanticFailure::Decode {
-                                detail: format!(
-                                    "response omitted answer for question {question_id}"
-                                ),
-                            })
+                            AttemptFailure {
+                                failure: SemanticFailure::Decode {
+                                    detail: format!(
+                                        "response omitted answer for question {question_id}"
+                                    ),
+                                },
+                                attempts: attempt,
+                                retry_reasons: retry_reasons.clone(),
+                                attempt_latency_micros: attempt_latency_micros.clone(),
+                                partial_successes: Vec::new(),
+                            }
                         })?;
                         if answer.answer_type != "noul" {
-                            return Err(AttemptFailure::terminal(SemanticFailure::Decode {
-                                detail: format!("answer {question_id} was not noul"),
-                            }));
+                            return Err(AttemptFailure {
+                                failure: SemanticFailure::Decode {
+                                    detail: format!("answer {question_id} was not noul"),
+                                },
+                                attempts: attempt,
+                                retry_reasons,
+                                attempt_latency_micros,
+                                partial_successes: Vec::new(),
+                            });
                         }
                         probabilities.insert(
                             question_id,
@@ -245,12 +316,19 @@ impl RemoteRelevanceJudge {
                                     failure,
                                     attempts: attempt,
                                     retry_reasons: retry_reasons.clone(),
+                                    attempt_latency_micros: attempt_latency_micros.clone(),
+                                    partial_successes: Vec::new(),
                                 }
                             })?,
                         );
                     }
                     let usage_raw = response_body.usage.clone();
-                    let usage_parsed = parse_usage(&usage_raw)?;
+                    let usage_parsed = parse_usage(&usage_raw).map_err(|mut failure| {
+                        failure.attempts = attempt;
+                        failure.retry_reasons = retry_reasons.clone();
+                        failure.attempt_latency_micros = attempt_latency_micros.clone();
+                        failure
+                    })?;
                     return Ok(RemoteCall {
                         probabilities,
                         model: response_body.model,
@@ -258,6 +336,7 @@ impl RemoteRelevanceJudge {
                         usage_parsed,
                         attempts: attempt,
                         retry_reasons,
+                        attempt_latency_micros,
                     });
                 }
             }
@@ -374,7 +453,40 @@ impl RemoteRelevanceJudge {
                     .buffer_unordered(self.config.max_concurrency)
                     .collect::<Vec<_>>()
                     .await;
-                results.into_iter().collect::<Result<Vec<_>, _>>()
+                let mut calls = Vec::new();
+                let mut failure: Option<AttemptFailure> = None;
+                for result in results {
+                    match result {
+                        Ok(call) => calls.push(call),
+                        Err(error) => {
+                            if let Some(aggregate) = &mut failure {
+                                aggregate.attempts += error.attempts;
+                                aggregate
+                                    .attempt_latency_micros
+                                    .extend(error.attempt_latency_micros);
+                                aggregate.retry_reasons.extend(error.retry_reasons);
+                                aggregate.partial_successes.extend(error.partial_successes);
+                            } else {
+                                failure = Some(error);
+                            }
+                        }
+                    }
+                }
+                if let Some(mut failure) = failure {
+                    for call in &calls {
+                        failure.attempts += call.attempts;
+                        failure
+                            .attempt_latency_micros
+                            .extend(call.attempt_latency_micros.iter().copied());
+                        failure
+                            .retry_reasons
+                            .extend(call.retry_reasons.iter().cloned());
+                    }
+                    failure.partial_successes = calls;
+                    Err(failure)
+                } else {
+                    Ok(calls)
+                }
             }
         };
         let latency_micros = started.elapsed().as_micros() as u64;
@@ -385,6 +497,7 @@ impl RemoteRelevanceJudge {
                 let mut input_tokens = 0;
                 let mut output_tokens = 0;
                 let mut attempts = 0;
+                let mut attempt_latencies = Vec::new();
                 let mut retry_reasons = Vec::new();
                 let mut resolved_models = BTreeSet::new();
                 for call in calls {
@@ -393,6 +506,7 @@ impl RemoteRelevanceJudge {
                     input_tokens += call.usage_parsed.input_tokens;
                     output_tokens += call.usage_parsed.output_tokens;
                     attempts += call.attempts;
+                    attempt_latencies.extend(call.attempt_latency_micros);
                     retry_reasons.extend(call.retry_reasons);
                     resolved_models.insert(call.model);
                 }
@@ -431,6 +545,7 @@ impl RemoteRelevanceJudge {
                                 response_models: resolved_models.into_iter().collect(),
                                 usage: None,
                                 attempt_count: attempts,
+                                attempt_latency_micros: attempt_latencies,
                                 retry_reasons,
                                 failure: Some(failure.clone()),
                             },
@@ -456,6 +571,7 @@ impl RemoteRelevanceJudge {
                         response_models: resolved_models.into_iter().collect(),
                         usage: Some((usage_raw, usage_parsed)),
                         attempt_count: attempts,
+                        attempt_latency_micros: attempt_latencies,
                         retry_reasons,
                         failure: None,
                     },
@@ -463,20 +579,46 @@ impl RemoteRelevanceJudge {
                 Traced::success(trace, scores)
             }
             Err(error) => {
+                let mut response_models = BTreeSet::new();
+                let mut usage_values = Vec::new();
+                let mut input_tokens = 0;
+                let mut output_tokens = 0;
+                for call in &error.partial_successes {
+                    response_models.insert(call.model.clone());
+                    usage_values.push(call.usage_raw.clone());
+                    input_tokens += call.usage_parsed.input_tokens;
+                    output_tokens += call.usage_parsed.output_tokens;
+                }
+                let usage_raw = match usage_values.len() {
+                    0 => None,
+                    1 => usage_values.into_iter().next(),
+                    _ => Some(Value::Array(usage_values)),
+                };
+                let usage = (!error.partial_successes.is_empty()).then_some({
+                    (
+                        usage_raw,
+                        ParsedUsage {
+                            input_tokens,
+                            output_tokens,
+                        },
+                    )
+                });
+                let failure = error.failure.clone();
                 let trace = self.trace(
                     &request,
                     &invocation_id,
                     injection_deadline_ms,
                     TraceCompletion {
                         latency_micros,
-                        response_models: Vec::new(),
-                        usage: None,
+                        response_models: response_models.into_iter().collect(),
+                        usage,
                         attempt_count: error.attempts,
+                        attempt_latency_micros: error.attempt_latency_micros,
                         retry_reasons: error.retry_reasons,
-                        failure: Some(error.failure.clone()),
+                        failure: Some(failure.clone()),
                     },
                 );
-                Traced::failure_with_trace(trace, error.failure)
+                Traced::failure_with_trace(trace, failure)
             }
         }
     }
@@ -513,6 +655,7 @@ impl RemoteRelevanceJudge {
             failure: completion.failure,
             service: Some(ServiceTracePayload {
                 attempt_count: completion.attempt_count,
+                attempt_latency_micros: completion.attempt_latency_micros,
                 retry_reasons: completion.retry_reasons,
                 usage_raw: completion.usage.as_ref().and_then(|(raw, _)| raw.clone()),
                 usage_parsed: completion.usage.map(|(_, parsed)| parsed),
@@ -633,6 +776,44 @@ fn per_candidate_request(
     }
 }
 
+/// Serialized body and state-plus-longest-question byte sizes for bench heuristics.
+pub(crate) fn request_body_sizes(
+    request: &PairScoreRequest,
+    model_id: &str,
+) -> Vec<(usize, usize)> {
+    let bodies = match request.options.shaping {
+        QuestionShaping::SharedStateQuestions => vec![shared_request(request)],
+        QuestionShaping::PerCandidateRequest => request
+            .candidates
+            .iter()
+            .map(|candidate| per_candidate_request(request, candidate))
+            .collect(),
+    };
+    bodies
+        .into_iter()
+        .map(|mut body| {
+            body.model = model_id.to_owned();
+            let full = serde_json::to_vec(&body)
+                .expect("request body is serializable")
+                .len();
+            let state = serde_json::to_vec(&body.state)
+                .expect("state is serializable")
+                .len();
+            let longest_question = body
+                .questions
+                .iter()
+                .map(|(id, question)| {
+                    serde_json::to_vec(&(id, question))
+                        .expect("question is serializable")
+                        .len()
+                })
+                .max()
+                .unwrap_or_default();
+            (full, state + longest_question)
+        })
+        .collect()
+}
+
 fn noul_question() -> SystemOneQuestion {
     SystemOneQuestion {
         question_type: "noul".to_owned(),
@@ -686,6 +867,7 @@ struct RemoteCall {
     usage_raw: Value,
     usage_parsed: ParsedUsage,
     attempts: u32,
+    attempt_latency_micros: Vec<u64>,
     retry_reasons: Vec<String>,
 }
 
@@ -693,7 +875,9 @@ struct RemoteCall {
 struct AttemptFailure {
     failure: SemanticFailure,
     attempts: u32,
+    attempt_latency_micros: Vec<u64>,
     retry_reasons: Vec<String>,
+    partial_successes: Vec<RemoteCall>,
 }
 
 struct TraceCompletion {
@@ -701,6 +885,7 @@ struct TraceCompletion {
     response_models: Vec<String>,
     usage: Option<(Option<Value>, ParsedUsage)>,
     attempt_count: u32,
+    attempt_latency_micros: Vec<u64>,
     retry_reasons: Vec<String>,
     failure: Option<SemanticFailure>,
 }
@@ -712,6 +897,7 @@ impl TraceCompletion {
             response_models: Vec::new(),
             usage: None,
             attempt_count: 0,
+            attempt_latency_micros: Vec::new(),
             retry_reasons: Vec::new(),
             failure: Some(failure),
         }
@@ -723,6 +909,7 @@ impl TraceCompletion {
             response_models: Vec::new(),
             usage: None,
             attempt_count: 0,
+            attempt_latency_micros: Vec::new(),
             retry_reasons: Vec::new(),
             failure: None,
         }
@@ -734,7 +921,9 @@ impl AttemptFailure {
         Self {
             failure,
             attempts: 1,
+            attempt_latency_micros: Vec::new(),
             retry_reasons: Vec::new(),
+            partial_successes: Vec::new(),
         }
     }
 }
@@ -965,6 +1154,10 @@ mod tests {
         assert!(traced.outcome.is_ok());
         let service = traced.trace.service.expect("service trace");
         assert_eq!(service.attempt_count, 2);
+        assert_eq!(
+            service.attempt_latency_micros.len(),
+            service.attempt_count as usize
+        );
         assert_eq!(service.retry_reasons, ["rate_limited"]);
     }
 
@@ -1029,6 +1222,35 @@ mod tests {
             })
         );
         assert_eq!(service.resolved_model_ids, ["jev-a", "jev-b"]);
+    }
+
+    #[tokio::test]
+    async fn per_candidate_failure_preserves_partial_usage_and_attempts() {
+        let stub = start_stub(
+            vec![StatusCode::OK, StatusCode::UNAUTHORIZED, StatusCode::OK],
+            vec!["jev-a", "jev-b"],
+            Duration::ZERO,
+        )
+        .await;
+        let judge = remote_judge(stub.endpoint, Duration::from_millis(100), 1, 1);
+        let traced = judge
+            .score_pairs(
+                request(QuestionShaping::PerCandidateRequest, 3),
+                InjectionDeadline::from_duration(Duration::from_millis(5)),
+            )
+            .await;
+        assert_eq!(traced.outcome, Err(SemanticFailure::Unauthorized));
+        let service = traced.trace.service.expect("service trace");
+        assert_eq!(service.attempt_count, 3);
+        assert_eq!(service.attempt_latency_micros.len(), 3);
+        assert_eq!(
+            service.usage_parsed,
+            Some(ParsedUsage {
+                input_tokens: 24,
+                output_tokens: 6
+            })
+        );
+        assert_eq!(service.resolved_model_ids.len(), 2);
     }
 
     #[tokio::test]

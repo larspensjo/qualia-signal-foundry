@@ -711,6 +711,12 @@ the ledger and confirm every omitted memory has a skip reason and the selection 
 
 ## Phase 4 — Latency, request shaping and cost measured against the fixed 300 ms limit
 
+**Status: Implemented in the working tree; operator hosted run pending.** The synthetic-only bench,
+nominal/worst-case request preflight, physical-send cap, failure-aware latency reporting,
+rate/token-limit derivation, usage-based local pricing, and per-run report artifacts are implemented. The
+operator runs the explicitly selected hosted backend later; no report has been frozen into
+`evaluation/reports/`.
+
 The first paid step and the cheapest. It measures how long judging takes and what it costs; the
 *acceptable* added silence is already fixed at 300 ms (U2) and is not derived from these numbers.
 
@@ -725,9 +731,10 @@ The first paid step and the cheapest. It measures how long judging takes and wha
 - Derive the injection deadline **subject to** the 300 ms budget (C10): deadline + candidate
   assembly + context assembly + send ≤ 300 ms added at p95. If no shaping fits, that is a finding
   for the gate, not a reason to raise the limit silently.
-- Freeze the report into `evaluation/reports/`, naming explicitly which shapes are infeasible at
-  which store size (the rate-limit wall for one-request-per-candidate at large candidate counts is
-  expected to bite).
+- Keep each generated plan and report under `runs/<run-id>/`; name explicitly which shapes are
+  infeasible at which store size (the rate-limit wall for one-request-per-candidate at large
+  candidate counts is expected to bite). Freezing a chosen report into `evaluation/reports/` is an
+  operator copy step after review, never an automatic bench action.
 
 **Verification (automated)**: `cargo build`; `cargo test -p qsf_semantics` (aggregation arithmetic,
 percentile computation, cost derivation from observed usage, report serialization); a test that the

@@ -7,19 +7,28 @@ authors.workspace = true
 rust-version.workspace = true
 
 [features]
-default = ["remote-http"]
+default = ["cli"]
 remote-http = ["dep:futures-util", "dep:reqwest", "dep:tokio"]
+cli = ["remote-http", "dep:clap", "dep:time", "dep:uuid"]
 
 [dependencies]
 engine_logging = { path = "../engine_logging" }
 futures-util = { workspace = true, optional = true }
 log.workspace = true
+clap = { workspace = true, optional = true }
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"], optional = true }
 serde.workspace = true
 serde_json.workspace = true
 sha2.workspace = true
 thiserror.workspace = true
+time = { workspace = true, optional = true }
 tokio = { workspace = true, features = ["macros", "sync", "time"], optional = true }
+uuid = { workspace = true, optional = true }
+
+[[bin]]
+name = "qsf_semantics"
+path = "src/main.rs"
+required-features = ["cli"]
 
 [dev-dependencies]
 axum = "0.8"

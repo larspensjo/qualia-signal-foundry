@@ -53,8 +53,10 @@ tunes the provisional eligibility rule and 7-day half-life with real evidence.
 [Plan.PerTurnRelevanceJudgment](Plans/Plan.PerTurnRelevanceJudgment.md).**
 Why: pair-scoring contracts and backends exist; trusted realtime turns now record memory selection
 provenance and exclude judge-influenced selections from reinforcement and sleep co-retrieval. The
-live judge invocation remains unwired. The operator ledger check passed; the next measurement is the
-hosted judge's latency and cost against the fixed 300 ms added-silence limit.
+live judge invocation remains unwired. The operator ledger check passed; the offline bench now
+plans bounded hosted requests and reports successful-sample latency, failures, rate and token-limit
+risks, and usage-based cost. The next step is an operator-run hosted measurement against the fixed
+300 ms added-silence limit, followed by review of its report.
 Alternate: continue the panel labeling and freeze campaign
 ([Plan.GoalRelevancePanelLabeling](Plans/Plan.GoalRelevancePanelLabeling.md)).
 

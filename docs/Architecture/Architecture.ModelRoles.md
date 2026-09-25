@@ -27,6 +27,9 @@ policy).
 - Summarizer role — used by the warm-tier ageing path in the multi-turn loop
 - `ModelRoleRequested` / `ModelRoleCompleted` events with role, model id, latency,
   and token telemetry
+- The per-turn relevance scorer is implemented separately in `qsf_semantics` as a
+  candidate pair-scoring service; its hosted backend has an offline latency, shaping,
+  and usage bench. It is not selected through `qsf_models::ModelRole` or `ModelClient`.
 
 **Partial:**
 
@@ -350,6 +353,18 @@ MemoryCandidate
 ```
 
 The context manager should still decide which retrieved memories enter active context.
+
+### Hosted relevance judge measurement
+
+The hosted System One relevance judge scores an utterance against rendered memory candidates
+through the domain-neutral `PairScoringService` in `qsf_semantics`. The versioned model id
+and question wording are part of that operating point. The direct `qsf_semantics bench`
+command measures shared-state and small-store per-candidate request shaping, and marks larger
+per-candidate estimates as derived from per-attempt latency and configured concurrency, without adding a
+`ModelRole`; its run report keeps provider usage and local price-table cost separate from
+the conversational token ledger. Only failure-free cells with at least 20 successful samples
+can support a p95 deadline at the largest store size. The fixture backend exercises the same scoring surface
+but its latency and verdicts are not hosted-service or relevance evidence.
 
 ## Memory Extraction Role
 
