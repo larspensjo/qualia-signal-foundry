@@ -880,7 +880,10 @@ latency evidence, and an honest look at what it would have admitted on real conv
   `Get-RealtimeEnvironmentDelta` exactly as `$WorldCorpusPath` already is; the corresponding
   `QSF_RELEVANCE_JUDGE_*` names added to the managed-environment delta; a shared resolution helper
   computes the *effective* backend and mode, and `Test-RequiredSecret -Name "TYPESAFE_API_KEY"` runs
-  **only** when that resolution actually calls the remote backend. Precedence: explicit flag >
+  **only** when that resolution actually calls the remote backend. That same resolution must add
+  `TYPESAFE_API_KEY` to the command's required secrets, so the launcher injects the application key
+  (`TypesafeAiApiKey`) and ignores the ambient agent key (DecisionLog 2026-09-25, application key
+  only). Precedence: explicit flag >
   profile default > server default. The live profiles default the backend to the remote one; the
   documented rollback `-RelevanceJudgeMode off` is reachable from the launcher.
 - **Probe extension (depends on `feature/headless-conversation` landing)**: per-turn record of which

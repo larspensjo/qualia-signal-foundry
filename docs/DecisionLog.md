@@ -2478,6 +2478,20 @@ SecretStore may prompt. Agent sessions cannot start them and hand the operator t
 New secrets such as `TYPESAFE_API_KEY` join the launcher's single secret-to-SecretStore mapping
 rather than adding per-command handling.
 
+## 2026-09-25 - TypeSafe calls from launcher-run applications use the application key only
+Decision: Launcher commands that call TypeSafe always inject SecretStore entry `TypesafeAiApiKey`
+as `TYPESAFE_API_KEY`, and ignore any `TYPESAFE_API_KEY` already in the shell: the launcher removes
+the ambient value from its relaunch before injecting. This narrows the "a key already present is
+used unchanged" rule of the entry above; that rule still holds for `OPENAI_API_KEY`.
+Context: The operator keeps a persistent `TYPESAFE_API_KEY` in the user environment for agent
+plugins that use Jev. `TypesafeAiApiKey` is reserved for the operator's own applications, so their
+usage and cost stay separate from agent usage.
+Consequences: A TypeSafe-calling launcher command never runs without SecretStore, even when the
+shell has a key; agent sessions cannot run it and hand the operator the command. The relaunched
+launcher is marked (`QSF_LAUNCHER_SECRETS_INJECTED`) so it uses the injected key and never
+relaunches again. Future TypeSafe-calling launcher paths, such as the live judge on `realtime`
+and `probe`, get this behavior by listing `TYPESAFE_API_KEY` among their required secrets.
+
 ## 2026-09-25 - Rate-limit pace for relevance-judge measurement
 Decision: Judge request-rate feasibility uses a sustained 10 spoken turns per minute with
 two judge workloads per turn, memory and goal, sharing the provider's documented request

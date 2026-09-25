@@ -854,11 +854,22 @@ Describe "qsf.ps1 secret injection" {
     }
 
     BeforeEach {
-        [System.Environment]::SetEnvironmentVariable("OPENAI_API_KEY", $null, "Process")
+        $script:SavedTypesafeKey = [System.Environment]::GetEnvironmentVariable("TYPESAFE_API_KEY", "Process")
+        foreach ($name in @("OPENAI_API_KEY", "TYPESAFE_API_KEY", "QSF_LAUNCHER_SECRETS_INJECTED")) {
+            [System.Environment]::SetEnvironmentVariable($name, [NullString]::Value, "Process")
+        }
     }
 
     AfterEach {
-        [System.Environment]::SetEnvironmentVariable("OPENAI_API_KEY", $null, "Process")
+        foreach ($name in @("OPENAI_API_KEY", "QSF_LAUNCHER_SECRETS_INJECTED")) {
+            [System.Environment]::SetEnvironmentVariable($name, [NullString]::Value, "Process")
+        }
+        if ([string]::IsNullOrEmpty($script:SavedTypesafeKey)) {
+            [System.Environment]::SetEnvironmentVariable("TYPESAFE_API_KEY", [NullString]::Value, "Process")
+        }
+        else {
+            [System.Environment]::SetEnvironmentVariable("TYPESAFE_API_KEY", $script:SavedTypesafeKey, "Process")
+        }
     }
 
     It "requires the OpenAI key for commands that call the provider" {
@@ -871,7 +882,7 @@ Describe "qsf.ps1 secret injection" {
         @(Get-RequiredSecretNames) | Should -Be @("OPENAI_API_KEY")
     }
 
-    It "requires the TypeSafe key for the bench and maps it to its SecretStore entry" {
+    It "requires the TypeSafe key for the bench and maps it to the application key entry" {
         . $script:LauncherScript -Command "bench"
         @(Get-RequiredSecretNames) | Should -Be @("TYPESAFE_API_KEY")
         @(Get-SecretsToInject) | Should -Be @("TYPESAFE_API_KEY")
@@ -880,9 +891,43 @@ Describe "qsf.ps1 secret injection" {
         Invoke-WithInjectedSecrets -Names @("TYPESAFE_API_KEY") 6>$null
 
         Should -Invoke -CommandName Invoke-WithSecretMap -Times 1 -ParameterFilter {
-            $SecretEnvironmentMap["TYPESAFE_API_KEY"] -eq "TYPESAFE_API_KEY" -and
+            $SecretEnvironmentMap["TypesafeAiApiKey"] -eq "TYPESAFE_API_KEY" -and
             $ArgumentList -contains "bench"
         }
+    }
+
+    It "injects the TypeSafe application key even when an ambient agent key is set" {
+        . $script:LauncherScript -Command "bench"
+        [System.Environment]::SetEnvironmentVariable("TYPESAFE_API_KEY", "agent-key", "Process")
+
+        @(Get-SecretsToInject) | Should -Be @("TYPESAFE_API_KEY")
+    }
+
+    It "hides the ambient agent key from the relaunch and marks it as injected" {
+        . $script:LauncherScript -Command "bench"
+        [System.Environment]::SetEnvironmentVariable("TYPESAFE_API_KEY", "agent-key", "Process")
+        $script:SeenAmbientKey = "unset"
+        $script:SeenMarker = $null
+        Mock -CommandName Invoke-WithSecretMap -MockWith {
+            $script:SeenAmbientKey = [System.Environment]::GetEnvironmentVariable("TYPESAFE_API_KEY", "Process")
+            $script:SeenMarker = [System.Environment]::GetEnvironmentVariable("QSF_LAUNCHER_SECRETS_INJECTED", "Process")
+            $ExitCode.Value = 0
+        }
+
+        Invoke-WithInjectedSecrets -Names @("TYPESAFE_API_KEY") 6>$null
+
+        $script:SeenAmbientKey | Should -BeNullOrEmpty
+        $script:SeenMarker | Should -Be "1"
+        [System.Environment]::GetEnvironmentVariable("TYPESAFE_API_KEY", "Process") | Should -Be "agent-key"
+        [System.Environment]::GetEnvironmentVariable("QSF_LAUNCHER_SECRETS_INJECTED", "Process") | Should -BeNullOrEmpty
+    }
+
+    It "does not relaunch again from the relaunched launcher" {
+        . $script:LauncherScript -Command "bench"
+        [System.Environment]::SetEnvironmentVariable("QSF_LAUNCHER_SECRETS_INJECTED", "1", "Process")
+        [System.Environment]::SetEnvironmentVariable("TYPESAFE_API_KEY", "application-key", "Process")
+
+        @(Get-SecretsToInject) | Should -BeNullOrEmpty
     }
 
     It "requires no secret for commands that do not call the provider" {
@@ -936,7 +981,7 @@ Describe "qsf.ps1 secret injection" {
         Mock -CommandName Test-CommandAvailable -ParameterFilter { $Name -eq "Invoke-WithSecretMap" } -MockWith { $false }
 
         { Invoke-WithInjectedSecrets -Names @("OPENAI_API_KEY") } |
-            Should -Throw "*OPENAI_API_KEY is not set and Invoke-WithSecretMap is unavailable*"
+            Should -Throw "*Cannot inject OPENAI_API_KEY from SecretStore: Invoke-WithSecretMap is unavailable*"
     }
 
     It "refuses to prompt for SecretStore in a non-interactive session" {

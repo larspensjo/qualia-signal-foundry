@@ -193,14 +193,19 @@ accepted as a compatibility alias, but new examples use `-LaunchProfile`:
 `openai-text` and `openai-transcription-mic` require `OPENAI_API_KEY`; the launcher
 checks this before starting the experiment and does not print secret-like values.
 
-When a command needs an API key and the shell does not have it, the launcher injects
-it from PowerShell SecretStore: it relaunches itself with the same arguments through
-`Invoke-WithSecretMap` (from the PowerShell profile's SecretLaunch module). SecretStore
-entry `OpenAIProductionKey` becomes `OPENAI_API_KEY` for `realtime`, `probe`, `sleep`
-with the `openai` provider, and OpenAI-backed `app` profiles; SecretStore entry
-`TYPESAFE_API_KEY` becomes `TYPESAFE_API_KEY` for `bench`. The key then exists only in
-that relaunched launcher and the processes it starts, never in your shell. This needs an interactive terminal, because SecretStore may prompt for
-its password. A key already set in the shell is used as-is.
+When a command needs an API key, the launcher injects it from PowerShell SecretStore: it
+relaunches itself with the same arguments through `Invoke-WithSecretMap` (from the
+PowerShell profile's SecretLaunch module). The key then exists only in that relaunched
+launcher and the processes it starts, never in your shell. This needs an interactive
+terminal, because SecretStore may prompt for its password.
+
+- SecretStore entry `OpenAIProductionKey` becomes `OPENAI_API_KEY` for `realtime`,
+  `probe`, `sleep` with the `openai` provider, and OpenAI-backed `app` profiles. An
+  `OPENAI_API_KEY` already set in the shell is used as-is.
+- SecretStore entry `TypesafeAiApiKey` (the application key) becomes `TYPESAFE_API_KEY`
+  for `bench`, always. A persistent `TYPESAFE_API_KEY` in the shell belongs to agent
+  plugins and is never used: the launcher removes it from the relaunch before injecting
+  the application key.
 
 For `multi-turn-text-loop`, the launcher passes an empty session-memory source by
 default; the loop still resumes from `state/session/memory-store.json` when that
@@ -220,7 +225,8 @@ Check local prerequisites without starting Cargo, Vite, or the API server:
 
 `doctor` reports PowerShell, Cargo, Rust, Node/npm, UI dependencies (browser and
 realtime), the default memory store, ports `3939` and `3940`, and whether
-`OPENAI_API_KEY` and `TYPESAFE_API_KEY` are present or can be injected from SecretStore,
+`OPENAI_API_KEY` and `TYPESAFE_API_KEY` are present or can be injected from SecretStore
+(`TYPESAFE_API_KEY` is always injected, whatever the shell holds),
 without printing their values. General checks warn about
 optional UI or OpenAI prerequisites; `-Workbench` turns workbench requirements into
 failures.
@@ -483,8 +489,8 @@ key in the environment does not select the hosted service. The default is the de
 `fixture` backend, whose results are synthetic and are not relevance evidence.
 
 The launcher runs it against the hosted System One service with the pinned model
-`jev-1.13.0`, fetching `TYPESAFE_API_KEY` from SecretStore when the shell does not have
-it:
+`jev-1.13.0`, always using the application key from SecretStore entry `TypesafeAiApiKey`
+as `TYPESAFE_API_KEY`, never the agent key in the shell:
 
 ```powershell
 .\scripts\qsf.ps1 bench -DryRun
@@ -495,14 +501,15 @@ it:
 `bench` pins the backend, base URL and model and clears every other non-secret `QSF_*`
 variable, so ambient retry or concurrency overrides never reach a measurement.
 
-To run it directly, pin the versioned model id and supply its key. The endpoint is
+To run it directly, pin the versioned model id and supply the application key (not the
+agent key). The endpoint is
 `POST https://api.typesafe.ai/v1/systemone`:
 
 ```powershell
 $env:QSF_RELEVANCE_JUDGE_BACKEND = "remote_http"
 $env:QSF_RELEVANCE_JUDGE_BASE_URL = "https://api.typesafe.ai"
 $env:QSF_RELEVANCE_JUDGE_MODEL = "jev-1.13.0"
-$env:TYPESAFE_API_KEY = "<key>"
+$env:TYPESAFE_API_KEY = "<application key>"
 
 cargo run -p qsf_semantics -- bench --dry-run
 cargo run -p qsf_semantics -- bench --network-description "wired office network"

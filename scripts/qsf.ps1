@@ -69,8 +69,16 @@ $script:QsfScriptPath = $PSCommandPath
 # Invoke-WithSecretMap, so the value exists only in that relaunched process and its children.
 $script:QsfSecretStoreNames = [ordered]@{
     "OPENAI_API_KEY"   = "OpenAIProductionKey"
-    "TYPESAFE_API_KEY" = "TYPESAFE_API_KEY"
+    "TYPESAFE_API_KEY" = "TypesafeAiApiKey"
 }
+
+# Secrets always injected from SecretStore, ignoring any ambient value. The operator keeps a
+# persistent TYPESAFE_API_KEY for agent plugins; launcher-run applications must use the separate
+# application key instead, so the ambient value is removed before the relaunch.
+$script:QsfSecretsFromStoreOnly = @("TYPESAFE_API_KEY")
+
+# Set only for the relaunched launcher, so it uses the injected secrets instead of relaunching again.
+$script:QsfSecretsInjectedMarker = "QSF_LAUNCHER_SECRETS_INJECTED"
 
 # Hosted relevance-judge operating point for the bench command: backend selection is explicit and
 # the model id is pinned (never jev-latest). The pinned id must have an entry in
@@ -670,10 +678,11 @@ Defaults:
   Transcript:      prints the newest run in state/realtime/diagnostics as JSONL, one line per turn with its
                    volition traces; an optional session id bypasses ledger auto-selection; -All emits every run
   Restore:         creates undo backups as state/backups/<name>-restore-<timestamp>; latest ignores those undo backups
-  Secrets:         a required key that is not set is injected from SecretStore (OPENAI_API_KEY from
-                   'OpenAIProductionKey', TYPESAFE_API_KEY from 'TYPESAFE_API_KEY'): the launcher
-                   relaunches itself through the profile's Invoke-WithSecretMap (interactive
-                   terminal only), so the key reaches only that relaunched process and its children
+  Secrets:         the launcher relaunches itself through the profile's Invoke-WithSecretMap
+                   (interactive terminal only), so a key reaches only that relaunched process and
+                   its children. OPENAI_API_KEY comes from 'OpenAIProductionKey' when not already
+                   set. TYPESAFE_API_KEY always comes from the application key 'TypesafeAiApiKey';
+                   an ambient TYPESAFE_API_KEY (the agent key) is never used
 
 Examples:
   .\scripts\qsf.ps1 app -Experiment multi-turn-text-loop
@@ -931,7 +940,11 @@ function Invoke-Doctor {
 
     $canInjectSecrets = Test-CommandAvailable -Name "Invoke-WithSecretMap"
     foreach ($secretName in $script:QsfSecretStoreNames.Keys) {
-        if (-not [string]::IsNullOrEmpty([System.Environment]::GetEnvironmentVariable($secretName, "Process"))) {
+        if ($script:QsfSecretsFromStoreOnly -contains $secretName) {
+            $status = if ($canInjectSecrets) { "ok" } else { "warn" }
+            Add-DoctorCheck $checks (New-DoctorCheck -Status $status -Name $secretName -Message "Always injected from SecretStore entry '$($script:QsfSecretStoreNames[$secretName])' via Invoke-WithSecretMap; any ambient value (the agent key) is ignored.")
+        }
+        elseif (-not [string]::IsNullOrEmpty([System.Environment]::GetEnvironmentVariable($secretName, "Process"))) {
             Add-DoctorCheck $checks (New-DoctorCheck -Status "ok" -Name $secretName -Message "Set in process environment; value not shown.")
         }
         elseif ($canInjectSecrets) {
@@ -1324,9 +1337,18 @@ function Get-RequiredSecretNames {
 }
 
 function Get-SecretsToInject {
+    # The relaunched launcher never relaunches again; if injection left a secret missing, the
+    # command's own requirement check reports it.
+    if (-not [string]::IsNullOrEmpty([System.Environment]::GetEnvironmentVariable($script:QsfSecretsInjectedMarker, "Process"))) {
+        return @()
+    }
+
     $missing = @(
         Get-RequiredSecretNames |
-        Where-Object { [string]::IsNullOrEmpty([System.Environment]::GetEnvironmentVariable($_, "Process")) }
+        Where-Object {
+            ($script:QsfSecretsFromStoreOnly -contains $_) -or
+            [string]::IsNullOrEmpty([System.Environment]::GetEnvironmentVariable($_, "Process"))
+        }
     )
     # A missing secret with no SecretStore entry cannot be injected; launch normally and let the
     # command's own requirement check report it.
@@ -1361,11 +1383,13 @@ function Invoke-WithInjectedSecrets {
     )
 
     $nameList = $Names -join ", "
+    $storeOnlyNames = @($Names | Where-Object { $script:QsfSecretsFromStoreOnly -contains $_ })
+    $manualHint = if ($storeOnlyNames.Count -eq 0) { ", or set it before launching" } else { "" }
     if (-not (Test-CommandAvailable -Name "Invoke-WithSecretMap")) {
-        Write-Error "$nameList is not set and Invoke-WithSecretMap is unavailable to inject it. Load your PowerShell profile, or set it before launching."
+        Write-Error "Cannot inject $nameList from SecretStore: Invoke-WithSecretMap is unavailable. Load your PowerShell profile$manualHint."
     }
     if ((Test-CommandAvailable -Name "Test-SecretStorePromptAvailable") -and -not (Test-SecretStorePromptAvailable)) {
-        Write-Error "$nameList is not set and SecretStore cannot prompt in this non-interactive session. Run the launcher from an interactive PowerShell terminal, or set it before launching."
+        Write-Error "Cannot inject $nameList from SecretStore: it cannot prompt in this non-interactive session. Run the launcher from an interactive PowerShell terminal$manualHint."
     }
 
     $secretMap = [ordered]@{}
@@ -1373,13 +1397,21 @@ function Invoke-WithInjectedSecrets {
         $secretMap[$script:QsfSecretStoreNames[$name]] = $name
     }
 
+    # The relaunch inherits the marker, and never an ambient value of a store-only secret.
+    $relaunchDelta = [pscustomobject]@{
+        Sets   = [ordered]@{ $script:QsfSecretsInjectedMarker = "1" }
+        Clears = $storeOnlyNames
+    }
+
     Write-Host "Injecting $nameList from SecretStore into a relaunched launcher; values not shown."
     $childExitCode = 1
-    Invoke-WithSecretMap `
-        -SecretEnvironmentMap $secretMap `
-        -Executable (Get-Process -Id $PID).Path `
-        -ArgumentList (Get-SecretRelaunchArguments) `
-        -ExitCode ([ref]$childExitCode)
+    Invoke-WithEnvironmentDelta -Delta $relaunchDelta -ScriptBlock {
+        Invoke-WithSecretMap `
+            -SecretEnvironmentMap $secretMap `
+            -Executable (Get-Process -Id $PID).Path `
+            -ArgumentList (Get-SecretRelaunchArguments) `
+            -ExitCode ([ref]$childExitCode)
+    }
     $script:QsfExitCode = $childExitCode
 }
 
@@ -1500,7 +1532,7 @@ function Invoke-Bench {
     Test-RequiredSecret -Name "TYPESAFE_API_KEY"
 
     Write-Host "Relevance judge: $relevanceJudgeModel at $relevanceJudgeBaseUrl"
-    Write-Host "TYPESAFE_API_KEY: present in environment; value not shown"
+    Write-Host "TYPESAFE_API_KEY: application key from SecretStore entry '$($script:QsfSecretStoreNames["TYPESAFE_API_KEY"])'; value not shown"
 
     Invoke-WithEnvironmentDelta -Delta (Get-BenchEnvironmentDelta) -ScriptBlock {
         Invoke-LoggedCommand -Executable "cargo" -Arguments (Get-BenchCargoArguments)
@@ -1932,6 +1964,7 @@ if (Test-QsfAutoRunEnabled) {
         Invoke-WithInjectedSecrets -Names $secretsToInject
         exit $script:QsfExitCode
     }
+    Set-ProcessEnvironmentValue -Name $script:QsfSecretsInjectedMarker -Value $null
 
     switch ($Command.ToLowerInvariant()) {
         "help" {
