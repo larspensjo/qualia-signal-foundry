@@ -59,6 +59,14 @@ $realtimeUiUrl = "http://localhost:$realtimeUiPort"
 $profilesPath = Join-Path $PSScriptRoot "qsf.profiles.json"
 $script:QsfExitCode = 0
 $script:QsfScriptBoundParameters = @{} + $PSBoundParameters
+$script:QsfScriptPath = $PSCommandPath
+
+# SecretStore entry for each secret environment variable the launcher can inject. When a command
+# needs one of these and it is absent, the launcher relaunches itself through the profile's
+# Invoke-WithSecretMap, so the value exists only in that relaunched process and its children.
+$script:QsfSecretStoreNames = [ordered]@{
+    "OPENAI_API_KEY" = "OpenAIProductionKey"
+}
 
 # Launcher controls all non-secret QSF_* environment variables to ensure deterministic behavior.
 # Tests can use Get-TestEnvironmentDelta to see the effective changes made by the launcher.
@@ -597,6 +605,10 @@ Defaults:
   Transcript:      prints the newest run in state/realtime/diagnostics as JSONL, one line per turn with its
                    volition traces; an optional session id bypasses ledger auto-selection; -All emits every run
   Restore:         creates undo backups as state/backups/<name>-restore-<timestamp>; latest ignores those undo backups
+  Secrets:         a required OPENAI_API_KEY that is not set is injected from SecretStore entry
+                   'OpenAIProductionKey': the launcher relaunches itself through the profile's
+                   Invoke-WithSecretMap (interactive terminal only), so the key reaches only that
+                   relaunched process and its children
 
 Examples:
   .\scripts\qsf.ps1 app -Experiment multi-turn-text-loop
@@ -850,11 +862,17 @@ function Invoke-Doctor {
         Add-DoctorCheck $checks (New-DoctorCheck -Status "ok" -Name "Port $realtimeServerPort" -Message "127.0.0.1:$realtimeServerPort appears available.")
     }
 
-    if ([string]::IsNullOrEmpty([System.Environment]::GetEnvironmentVariable("OPENAI_API_KEY", "Process"))) {
-        Add-DoctorCheck $checks (New-DoctorCheck -Status "warn" -Name "OPENAI_API_KEY" -Message "Not set; only OpenAI-backed profiles need it.")
-    }
-    else {
-        Add-DoctorCheck $checks (New-DoctorCheck -Status "ok" -Name "OPENAI_API_KEY" -Message "Set in process environment; value not shown.")
+    $canInjectSecrets = Test-CommandAvailable -Name "Invoke-WithSecretMap"
+    foreach ($secretName in $script:QsfSecretStoreNames.Keys) {
+        if (-not [string]::IsNullOrEmpty([System.Environment]::GetEnvironmentVariable($secretName, "Process"))) {
+            Add-DoctorCheck $checks (New-DoctorCheck -Status "ok" -Name $secretName -Message "Set in process environment; value not shown.")
+        }
+        elseif ($canInjectSecrets) {
+            Add-DoctorCheck $checks (New-DoctorCheck -Status "ok" -Name $secretName -Message "Not set; injected on demand from SecretStore entry '$($script:QsfSecretStoreNames[$secretName])' via Invoke-WithSecretMap.")
+        }
+        else {
+            Add-DoctorCheck $checks (New-DoctorCheck -Status "warn" -Name $secretName -Message "Not set and Invoke-WithSecretMap is unavailable (PowerShell profile not loaded); only commands that call the provider need it.")
+        }
     }
 
     if (-not [string]::IsNullOrWhiteSpace($LaunchProfile)) {
@@ -1212,8 +1230,89 @@ function Test-RequiredSecret {
 
     $value = [System.Environment]::GetEnvironmentVariable($Name, "Process")
     if ([string]::IsNullOrEmpty($value)) {
-        Write-Error "$Name is not set in the current environment. Set it before launching; the launcher never prints its value."
+        Write-Error "$Name is not set in the current environment. Launch from an interactive terminal with your PowerShell profile loaded so the launcher can inject it from SecretStore, or set it before launching; the launcher never prints its value."
     }
+}
+
+function Get-RequiredSecretNames {
+    $names = switch ($Command.ToLowerInvariant()) {
+        "realtime" { @("OPENAI_API_KEY") }
+        "probe" { @("OPENAI_API_KEY") }
+        "sleep" { if ($Provider -eq "openai") { @("OPENAI_API_KEY") } else { @() } }
+        "app" {
+            if ([string]::IsNullOrWhiteSpace($LaunchProfile)) {
+                @()
+            }
+            else {
+                @((Get-ProfileDefinition -Name $LaunchProfile).requires |
+                    Where-Object { $null -ne $_ -and $_.kind -eq "env" } |
+                    ForEach-Object { [string]$_.name })
+            }
+        }
+        default { @() }
+    }
+
+    return @($names | Sort-Object -Unique)
+}
+
+function Get-SecretsToInject {
+    $missing = @(
+        Get-RequiredSecretNames |
+        Where-Object { [string]::IsNullOrEmpty([System.Environment]::GetEnvironmentVariable($_, "Process")) }
+    )
+    # A missing secret with no SecretStore entry cannot be injected; launch normally and let the
+    # command's own requirement check report it.
+    if (@($missing | Where-Object { -not $script:QsfSecretStoreNames.Contains($_) }).Count -gt 0) {
+        return @()
+    }
+
+    return $missing
+}
+
+function Get-SecretRelaunchArguments {
+    $arguments = @("-NoProfile", "-File", $script:QsfScriptPath)
+    foreach ($name in @($script:QsfScriptBoundParameters.Keys | Sort-Object)) {
+        $value = $script:QsfScriptBoundParameters[$name]
+        if ($value -is [System.Management.Automation.SwitchParameter]) {
+            if ($value.IsPresent) {
+                $arguments += "-$name"
+            }
+            continue
+        }
+        $arguments += "-$name"
+        $arguments += [System.Convert]::ToString($value, [System.Globalization.CultureInfo]::InvariantCulture)
+    }
+
+    return $arguments
+}
+
+function Invoke-WithInjectedSecrets {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string[]]$Names
+    )
+
+    $nameList = $Names -join ", "
+    if (-not (Test-CommandAvailable -Name "Invoke-WithSecretMap")) {
+        Write-Error "$nameList is not set and Invoke-WithSecretMap is unavailable to inject it. Load your PowerShell profile, or set it before launching."
+    }
+    if ((Test-CommandAvailable -Name "Test-SecretStorePromptAvailable") -and -not (Test-SecretStorePromptAvailable)) {
+        Write-Error "$nameList is not set and SecretStore cannot prompt in this non-interactive session. Run the launcher from an interactive PowerShell terminal, or set it before launching."
+    }
+
+    $secretMap = [ordered]@{}
+    foreach ($name in $Names) {
+        $secretMap[$script:QsfSecretStoreNames[$name]] = $name
+    }
+
+    Write-Host "Injecting $nameList from SecretStore into a relaunched launcher; values not shown."
+    $childExitCode = 1
+    Invoke-WithSecretMap `
+        -SecretEnvironmentMap $secretMap `
+        -Executable (Get-Process -Id $PID).Path `
+        -ArgumentList (Get-SecretRelaunchArguments) `
+        -ExitCode ([ref]$childExitCode)
+    $script:QsfExitCode = $childExitCode
 }
 
 function Get-ProbeRunId {
@@ -1734,6 +1833,12 @@ function Test-QsfAutoRunEnabled {
 }
 
 if (Test-QsfAutoRunEnabled) {
+    $secretsToInject = @(Get-SecretsToInject)
+    if ($secretsToInject.Count -gt 0) {
+        Invoke-WithInjectedSecrets -Names $secretsToInject
+        exit $script:QsfExitCode
+    }
+
     switch ($Command.ToLowerInvariant()) {
         "help" {
             Show-Help

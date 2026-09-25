@@ -2463,3 +2463,17 @@ Context: Probability scores from different model versions or wordings are not in
 a mixed verdict set cannot be evaluated against one threshold.
 Consequences: A retrieval request rejects verdicts from mixed identities. Any model or wording
 change requires threshold evaluation on the development split before use.
+
+## 2026-09-25 - Launcher secrets come from SecretStore, scoped to one relaunched process
+Decision: API keys are not kept in the shell environment. When a launcher command needs a key that
+is absent, the launcher relaunches itself with the same arguments through the PowerShell profile's
+`Invoke-WithSecretMap`, which injects the key from SecretStore into that one process. Only the
+launcher's commands and their children ever see the value. A key already present in the shell is
+used unchanged.
+Context: The operator removed standing keys from the environment and uses SecretStore across
+sibling projects. Asking the operator to wrap each paid run by hand made the launcher's own
+commands unusable on their own.
+Consequences: Paid live runs need an interactive terminal with the profile loaded, because
+SecretStore may prompt. Agent sessions cannot start them and hand the operator the command instead.
+New secrets such as `TYPESAFE_API_KEY` join the launcher's single secret-to-SecretStore mapping
+rather than adding per-command handling.

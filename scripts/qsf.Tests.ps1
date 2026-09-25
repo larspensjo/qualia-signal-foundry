@@ -736,3 +736,95 @@ Describe "qsf.ps1 state backups" {
             Should -Match 'live-only'
     }
 }
+
+Describe "qsf.ps1 secret injection" {
+    BeforeAll {
+        $script:QsfSkipAutoRun = $true
+        . $script:LauncherScript -Command "help"
+
+        # Stand-ins for the profile's SecretLaunch helpers so Pester can mock them.
+        function Invoke-WithSecretMap {
+            param($SecretEnvironmentMap, $Executable, $ArgumentList, [ref]$ExitCode)
+        }
+        function Test-SecretStorePromptAvailable { $true }
+    }
+
+    BeforeEach {
+        [System.Environment]::SetEnvironmentVariable("OPENAI_API_KEY", $null, "Process")
+    }
+
+    AfterEach {
+        [System.Environment]::SetEnvironmentVariable("OPENAI_API_KEY", $null, "Process")
+    }
+
+    It "requires the OpenAI key for commands that call the provider" {
+        foreach ($command in @("realtime", "probe", "sleep")) {
+            . $script:LauncherScript -Command $command
+            @(Get-RequiredSecretNames) | Should -Be @("OPENAI_API_KEY")
+        }
+
+        . $script:LauncherScript -Command "app" -Experiment "multi-turn-text-loop" -LaunchProfile "openai-text"
+        @(Get-RequiredSecretNames) | Should -Be @("OPENAI_API_KEY")
+    }
+
+    It "requires no secret for commands that do not call the provider" {
+        . $script:LauncherScript -Command "sleep" -Provider "mock"
+        @(Get-RequiredSecretNames) | Should -BeNullOrEmpty
+
+        . $script:LauncherScript -Command "app" -Experiment "multi-turn-text-loop" -LaunchProfile "mock"
+        @(Get-RequiredSecretNames) | Should -BeNullOrEmpty
+
+        foreach ($command in @("help", "transcript", "goals", "doctor")) {
+            . $script:LauncherScript -Command $command
+            @(Get-RequiredSecretNames) | Should -BeNullOrEmpty
+        }
+    }
+
+    It "injects only a required secret that is absent" {
+        . $script:LauncherScript -Command "probe"
+        @(Get-SecretsToInject) | Should -Be @("OPENAI_API_KEY")
+
+        [System.Environment]::SetEnvironmentVariable("OPENAI_API_KEY", "already-set", "Process")
+        @(Get-SecretsToInject) | Should -BeNullOrEmpty
+    }
+
+    It "relaunches with the original command, values and switches" {
+        . $script:LauncherScript -Command "probe" -PhraseSet "smoke" -TurnDelayMs 500 -ColdStart
+
+        $arguments = Get-SecretRelaunchArguments
+
+        $arguments[0..2] | Should -Be @("-NoProfile", "-File", $script:LauncherScript)
+        ($arguments -join " ") | Should -Match "-Command probe"
+        ($arguments -join " ") | Should -Match "-PhraseSet smoke"
+        ($arguments -join " ") | Should -Match "-TurnDelayMs 500"
+        $arguments | Should -Contain "-ColdStart"
+    }
+
+    It "hands the SecretStore entry to Invoke-WithSecretMap and keeps the child's exit code" {
+        . $script:LauncherScript -Command "probe"
+        Mock -CommandName Invoke-WithSecretMap -MockWith { $ExitCode.Value = 7 }
+
+        Invoke-WithInjectedSecrets -Names @("OPENAI_API_KEY") 6>$null
+
+        Should -Invoke -CommandName Invoke-WithSecretMap -Times 1 -ParameterFilter {
+            $SecretEnvironmentMap["OpenAIProductionKey"] -eq "OPENAI_API_KEY" -and
+            $ArgumentList -contains "probe"
+        }
+        $script:QsfExitCode | Should -Be 7
+        [System.Environment]::GetEnvironmentVariable("OPENAI_API_KEY", "Process") | Should -BeNullOrEmpty
+    }
+
+    It "explains how to recover when the profile helper is unavailable" {
+        Mock -CommandName Test-CommandAvailable -ParameterFilter { $Name -eq "Invoke-WithSecretMap" } -MockWith { $false }
+
+        { Invoke-WithInjectedSecrets -Names @("OPENAI_API_KEY") } |
+            Should -Throw "*OPENAI_API_KEY is not set and Invoke-WithSecretMap is unavailable*"
+    }
+
+    It "refuses to prompt for SecretStore in a non-interactive session" {
+        Mock -CommandName Test-SecretStorePromptAvailable -MockWith { $false }
+
+        { Invoke-WithInjectedSecrets -Names @("OPENAI_API_KEY") } |
+            Should -Throw "*non-interactive session*"
+    }
+}

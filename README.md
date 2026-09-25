@@ -190,9 +190,17 @@ accepted as a compatibility alias, but new examples use `-LaunchProfile`:
 .\scripts\qsf.ps1 app -Experiment voice-loop
 ```
 
-`openai-text` and `openai-transcription-mic` require `OPENAI_API_KEY` to already exist
-in the shell environment; the launcher checks this before starting the experiment and
-does not print secret-like values.
+`openai-text` and `openai-transcription-mic` require `OPENAI_API_KEY`; the launcher
+checks this before starting the experiment and does not print secret-like values.
+
+When a command needs `OPENAI_API_KEY` (`realtime`, `probe`, `sleep` with the `openai`
+provider, or an OpenAI-backed `app` profile) and the shell does not have it, the
+launcher injects it from PowerShell SecretStore: it relaunches itself with the same
+arguments through `Invoke-WithSecretMap` (from the PowerShell profile's SecretLaunch
+module), mapping SecretStore entry `OpenAIProductionKey` to `OPENAI_API_KEY`. The key
+then exists only in that relaunched launcher and the processes it starts, never in
+your shell. This needs an interactive terminal, because SecretStore may prompt for
+its password. A key already set in the shell is used as-is.
 
 For `multi-turn-text-loop`, the launcher passes an empty session-memory source by
 default; the loop still resumes from `state/session/memory-store.json` when that
@@ -212,7 +220,8 @@ Check local prerequisites without starting Cargo, Vite, or the API server:
 
 `doctor` reports PowerShell, Cargo, Rust, Node/npm, UI dependencies (browser and
 realtime), the default memory store, ports `3939` and `3940`, and whether
-`OPENAI_API_KEY` is present without printing its value. General checks warn about
+`OPENAI_API_KEY` is present or can be injected from SecretStore, without printing its
+value. General checks warn about
 optional UI or OpenAI prerequisites; `-Workbench` turns workbench requirements into
 failures.
 
@@ -377,8 +386,9 @@ can contain floating point because `qsf_corpus::QueryCandidate.score` is `f64`.
   another port, for example `.\scripts\qsf.ps1 browser -Port 3950`. The realtime
   server's port is fixed at `3940`; free it before running `realtime`.
 - **Missing API key:** OpenAI-backed profiles and the `realtime` and `probe` commands
-  require `OPENAI_API_KEY` in the current shell before launch. The launcher checks
-  presence but never prints the value. The default `sleep` command is also
+  require `OPENAI_API_KEY`. When it is not set, the launcher injects it from
+  SecretStore, which needs your PowerShell profile loaded and an interactive terminal;
+  otherwise it stops and says which is missing. The launcher never prints the value. The default `sleep` command is also
   OpenAI-backed; use `.\scripts\qsf.ps1 sleep -Provider mock` for a deterministic
   local smoke run.
 - **Probe state directory already exists:** `probe` refuses to write into an existing
