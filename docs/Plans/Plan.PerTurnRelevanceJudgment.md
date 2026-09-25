@@ -662,10 +662,13 @@ remains with its later scorer-generalization work; clippy; fmt.
 
 ## Phase 3 — Selection recording, provenance, and the durable-structure exclusion
 
-**Status: Landed; recommended operator check open.** The realtime path loads memory once off-executor,
-records complete per-turn selection provenance, and excludes judge-influenced selections from
-reinforcement and co-retrieval. Run one live or probe session and inspect its ledger for legible
-selection records and a skip reason on every omitted memory.
+**Status: Landed; operator check passed (2026-09-25).** The realtime path loads memory once
+off-executor, records complete per-turn selection provenance, and excludes judge-influenced
+selections from reinforcement and co-retrieval. A 12-turn designed probe run produced one selection
+record per turn, a skip reason on every omitted memory, lexical-only admission throughout and
+sub-2 ms retrieval; the reviewer's verdict was "complete and legible". The same run showed lexical
+admission riding on function words ("the", "are", "that") on most turns, a baseline weakness the
+scoring set should expose, not a recording defect.
 
 Gate-independent and independently valuable: today the live path discards every omission and every
 skip reason (Verified item 8). It also installs the C6 protection *before* any judge-influenced
