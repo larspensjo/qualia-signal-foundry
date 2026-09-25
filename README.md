@@ -523,7 +523,11 @@ estimate. The default cap is 400 physical requests; change it with
 The backend also stops a run cleanly when its next send would exceed the cap and records
 the stop in `bench-report.json`. The first request warms the connection and is discarded.
 The default candidate counts are 18, 100, and 500, with 40 measured shared-state turns
-per cell and 10 measured per-candidate turns at the smallest count. Larger per-candidate
+per cell and 10 measured per-candidate turns at the smallest count. Cells run from the
+smallest to the largest store within each shaping, with shared-state cells first. A cell
+stops after three consecutive failed invocations, records the stop and last failure, and
+the bench continues with the next cell. The preflight plan retains all configured
+repetitions and its full request and cost estimate. Larger per-candidate
 cells are labeled derived-not-measured using per-attempt latency and concurrency waves.
 The p95 is withheld below 20 successful samples, and p99 below 100. Failed invocations
 never enter end-to-end percentiles or a deadline verdict. The preflight token estimate
@@ -550,6 +554,8 @@ Copy-Item "runs/$RunId/bench-report.json" "evaluation/reports/relevance-judge-be
 The report records the pinned and resolved model ids, endpoint, wording version,
 machine/network description, commit and dirty state, date, request timeout, concurrency,
 retry policy, and per-shaping derived injection deadline at the largest store size,
+alongside the largest measured store that fits the fixed limit for each shaping and
+overall (with its p95-derived deadline and sample count),
 and the stated local-overhead input. Local overhead defaults to 0 ms as a lower-bound
 assumption; supply the measured candidate/context assembly and send overhead with
 `--local-overhead-ms`. The deadline calculation always uses

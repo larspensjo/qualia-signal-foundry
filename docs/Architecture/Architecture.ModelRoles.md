@@ -362,8 +362,11 @@ and question wording are part of that operating point. The direct `qsf_semantics
 command measures shared-state and small-store per-candidate request shaping, and marks larger
 per-candidate estimates as derived from per-attempt latency and configured concurrency, without adding a
 `ModelRole`; its run report keeps provider usage and local price-table cost separate from
-the conversational token ledger. Only failure-free cells with at least 20 successful samples
-can support a p95 deadline at the largest store size. The fixture backend exercises the same scoring surface
+the conversational token ledger. Within each shaping, cells run from the smallest store to
+the largest and stop after three consecutive failures. Only measured, rate-feasible,
+failure-free cells with at least 20 successful samples can support a p95 deadline.
+The report preserves the largest configured store verdict and separately identifies the
+largest measured fitting store for each shaping and overall. The fixture backend exercises the same scoring surface
 but its latency and verdicts are not hosted-service or relevance evidence.
 
 ## Memory Extraction Role

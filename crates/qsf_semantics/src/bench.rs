@@ -12,7 +12,7 @@ use std::{
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 
-use engine_logging::engine_error;
+use engine_logging::engine_warn;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use thiserror::Error;
@@ -61,6 +61,8 @@ pub const DEFAULT_CONVERSATION_TURNS: u64 = 10;
 pub const MIN_SAMPLES_FOR_MEANINGFUL_P99: usize = 100;
 /// Minimum successful end-to-end observations for a descriptive p95.
 pub const MIN_SAMPLES_FOR_P95: usize = 20;
+/// Stop a measured cell after this many failures without an intervening success.
+pub const MAX_CONSECUTIVE_CELL_FAILURES: usize = 3;
 const PREFLIGHT_ESTIMATOR: &str = "estimated input tokens are ceil(actual serialized hosted request bytes / 4); output is excluded; this is a planning heuristic, not vendor tokenization";
 const PRICE_TABLE_TEXT: &str = include_str!("../prices/price-table.v1.json");
 
@@ -526,6 +528,9 @@ pub struct BenchCellReport {
     pub failed_invocations: u64,
     /// Failure counts by typed failure string.
     pub failure_histogram: BTreeMap<String, u64>,
+    /// Early stop after consecutive failed invocations, if one occurred.
+    #[serde(default)]
+    pub stop: Option<BenchCellStop>,
     /// Derived end-to-end estimate for unmeasured per-candidate shapes.
     pub derived_end_to_end_p95_micros: Option<u64>,
     /// End-to-end latency percentiles.
@@ -550,6 +555,18 @@ pub struct BenchCellReport {
     pub cell_wall_time_micros: u64,
     /// Per-repetition observations.
     pub samples: Vec<BenchSample>,
+}
+
+/// Why a measured cell stopped before its planned repetitions completed.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct BenchCellStop {
+    /// Machine-readable stop reason.
+    pub status: String,
+    /// Failed invocations in the final consecutive streak.
+    pub consecutive_failures: usize,
+    /// Failure returned by the final invocation.
+    pub last_failure_reason: String,
 }
 
 /// Retry incidence numerator and denominator.
@@ -580,6 +597,26 @@ pub struct DerivedInjectionDeadline {
     pub finding: Option<String>,
     /// Per-shaping result at the largest configured store.
     pub per_shaping: Vec<ShapingDeadline>,
+    /// Largest measured fitting store for each shaping, when one exists.
+    #[serde(default)]
+    pub largest_fitting_store_by_shaping: Vec<FittingStoreDeadline>,
+    /// Largest fitting store across shapings; ties use the lower deadline.
+    #[serde(default)]
+    pub largest_fitting_store: Option<FittingStoreDeadline>,
+}
+
+/// Measured store with enough failure-free samples to support a deadline.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct FittingStoreDeadline {
+    /// Question-shaping policy.
+    pub shaping: QuestionShaping,
+    /// Number of candidates in the measured store.
+    pub candidate_count: usize,
+    /// p95-derived deadline capped at the maximum permitted wait.
+    pub deadline_ms: u64,
+    /// Successful observations behind the p95.
+    pub sample_count: usize,
 }
 
 /// Deadline assessment for one shaping at the largest configured store.
@@ -702,7 +739,7 @@ pub fn plan_run(
         QuestionShaping::PerCandidateRequest,
     ] {
         let mut counts = options.candidate_counts.clone();
-        counts.sort_unstable_by(|left, right| right.cmp(left));
+        counts.sort_unstable();
         for candidate_count in &counts {
             let requests_per_turn = match shaping {
                 QuestionShaping::SharedStateQuestions => 1,
@@ -725,7 +762,7 @@ pub fn plan_run(
             });
             let measured = rate_limit_feasible
                 && (shaping == QuestionShaping::SharedStateQuestions
-                    || *candidate_count == *counts.last().expect("nonempty"));
+                    || *candidate_count == *counts.first().expect("nonempty"));
             let repetitions = if measured {
                 if shaping == QuestionShaping::SharedStateQuestions {
                     options.repetitions
@@ -905,6 +942,9 @@ pub fn render_plan(plan: &BenchPlan) -> String {
         plan.planned_nominal_total_requests, plan.max_total_requests, plan.planned_worst_case_total_requests, plan.max_total_requests, total_cost
     ));
     output.push_str(&format!("Estimate method: {}\n", plan.estimate_method));
+    output.push_str(&format!(
+        "A measured cell stops after {MAX_CONSECUTIVE_CELL_FAILURES} consecutive failed invocations.\n"
+    ));
     output
 }
 
@@ -930,10 +970,11 @@ pub fn render_report_summary(report: &BenchReport) -> String {
             continue;
         }
         output.push_str(&format!(
-            "  shaping={} candidates={} status={} requests/turn={} actual_attempts={} failures={}/{} retry_incidence={}/{} end_to_end[{}] per_attempt[{}] derived_end_to_end_p95_micros={:?} input_tokens/request={} output_tokens/request={} ",
+            "  shaping={} candidates={} status={} stop={:?} requests/turn={} actual_attempts={} failures={}/{} retry_incidence={}/{} end_to_end[{}] per_attempt[{}] derived_end_to_end_p95_micros={:?} input_tokens/request={} output_tokens/request={} ",
             shaping_name(cell.plan.shaping),
             cell.plan.candidate_count,
             cell.plan.measurement_status,
+            cell.stop,
             cell.plan.requests_per_turn,
             cell.observed_attempt_count,
             cell.failed_invocations,
@@ -982,6 +1023,16 @@ pub fn render_report_summary(report: &BenchReport) -> String {
             shaping.fits,
             shaping.status
         ));
+    }
+    match &report.derived_injection_deadline.largest_fitting_store {
+        Some(store) => output.push_str(&format!(
+            "Largest store that fits: {} candidates, shaping={}, deadline {} ms (p95 over {} samples)\n",
+            store.candidate_count,
+            shaping_name(store.shaping),
+            store.deadline_ms,
+            store.sample_count
+        )),
+        None => output.push_str("Largest store that fits: none\n"),
     }
     for finding in &report.findings {
         output.push_str(&format!("Finding: {finding}\n"));
@@ -1083,6 +1134,8 @@ async fn run_with_service_counted(
         let cell_started = Instant::now();
         let candidates = synthetic_candidates(cell_plan.candidate_count);
         let mut samples = Vec::new();
+        let mut consecutive_failures = 0;
+        let mut cell_stop = None;
         for repetition in 0..cell_plan.repetitions {
             let sent = physical_sent
                 .as_ref()
@@ -1099,16 +1152,37 @@ async fn run_with_service_counted(
                 )
                 .await;
             if let Some(failure) = &traced.trace.failure {
-                engine_error!(
-                    "semantic bench invocation failed invocation_id={} endpoint={} cell={}x{} failure={}",
+                engine_warn!(
+                    "semantic bench invocation failed invocation_id={} endpoint={} cell={}x{} repetition={} failure={}",
                     traced.trace.invocation_id,
                     backend.endpoint,
                     shaping_name(cell_plan.shaping),
                     cell_plan.candidate_count,
+                    repetition,
                     failure
                 );
             }
             let sample = sample_from_trace(repetition, &traced);
+            if let Some(failure) = &sample.failure {
+                consecutive_failures += 1;
+                if consecutive_failures >= MAX_CONSECUTIVE_CELL_FAILURES {
+                    cell_stop = Some(BenchCellStop {
+                        status: "stopped_after_consecutive_failures".to_owned(),
+                        consecutive_failures,
+                        last_failure_reason: failure.clone(),
+                    });
+                    engine_warn!(
+                        "semantic bench cell stopped early endpoint={} cell={}x{} after {} consecutive failed invocations last_failure={}",
+                        backend.endpoint,
+                        shaping_name(cell_plan.shaping),
+                        cell_plan.candidate_count,
+                        consecutive_failures,
+                        failure
+                    );
+                }
+            } else {
+                consecutive_failures = 0;
+            }
             traced_attempts = traced_attempts.saturating_add(u64::from(sample.attempt_count));
             if sample
                 .failure
@@ -1141,18 +1215,20 @@ async fn run_with_service_counted(
                 });
             }
             samples.push(sample);
-            if stopped_at_request_cap {
+            if stopped_at_request_cap || cell_stop.is_some() {
                 break;
             }
         }
-        reports.push(aggregate_cell(
+        let mut report = aggregate_cell(
             cell_plan.clone(),
             samples,
             cell_started.elapsed(),
             options.local_overhead_ms,
             options.conversation_turns,
             price,
-        ));
+        );
+        report.stop = cell_stop;
+        reports.push(report);
     }
     let reports = with_derived_per_candidate_latency(reports, backend.max_concurrency);
     let largest_count = *options.candidate_counts.iter().max().unwrap_or(&0);
@@ -1343,6 +1419,44 @@ pub fn derive_injection_deadline(
         })
         .max_by_key(|(deadline, _)| *deadline);
     let largest_fits = fitting.is_some();
+    let largest_fitting_store_by_shaping = [
+        QuestionShaping::SharedStateQuestions,
+        QuestionShaping::PerCandidateRequest,
+    ]
+    .into_iter()
+    .filter_map(|shaping| {
+        cells
+            .iter()
+            .filter(|cell| cell.plan.shaping == shaping)
+            .filter_map(|cell| {
+                let p95 = cell.end_to_end_latency.p95.value_micros?;
+                let deadline_ms = p95.div_ceil(1_000);
+                (cell.plan.measurement_status == "measured"
+                    && cell.plan.rate_limit_feasible
+                    && cell.stop.is_none()
+                    && cell.failed_invocations == 0
+                    && cell.end_to_end_latency.p95.sample_count >= MIN_SAMPLES_FOR_P95
+                    && deadline_ms.saturating_add(local_overhead_ms)
+                        <= MAX_ADDED_TIME_TO_FIRST_AUDIO_MS
+                    && deadline_ms < request_timeout_ms)
+                    .then_some(FittingStoreDeadline {
+                        shaping,
+                        candidate_count: cell.plan.candidate_count,
+                        deadline_ms: deadline_ms.min(maximum_permitted_ms),
+                        sample_count: cell.end_to_end_latency.p95.sample_count,
+                    })
+            })
+            .max_by_key(|store| store.candidate_count)
+    })
+    .collect::<Vec<_>>();
+    let largest_fitting_store = largest_fitting_store_by_shaping
+        .iter()
+        .max_by(|left, right| {
+            left.candidate_count
+                .cmp(&right.candidate_count)
+                .then_with(|| right.deadline_ms.cmp(&left.deadline_ms))
+        })
+        .cloned();
     DerivedInjectionDeadline {
         deadline_ms: fitting.map(|(deadline, _)| deadline.min(maximum_permitted_ms)),
         maximum_permitted_ms,
@@ -1355,6 +1469,8 @@ pub fn derive_injection_deadline(
             )
         }),
         per_shaping,
+        largest_fitting_store_by_shaping,
+        largest_fitting_store,
     }
 }
 
@@ -1475,6 +1591,7 @@ fn aggregate_cell(
         sample_count: samples.len(),
         failed_invocations,
         failure_histogram,
+        stop: None,
         derived_end_to_end_p95_micros: None,
         end_to_end_latency: percentile_set(&latency),
         per_attempt_latency: percentile_set(&attempt_latency),
@@ -1626,6 +1743,18 @@ fn build_findings(
         findings.push(format!(
             "no measured shaping fits the fixed {MAX_ADDED_TIME_TO_FIRST_AUDIO_MS} ms limit at the largest configured store size ({largest_count} candidates)"
         ));
+    }
+    if !deadline.any_shape_fits_largest_store {
+        findings.push(match &deadline.largest_fitting_store {
+            Some(store) => format!(
+                "largest store that fits the fixed {MAX_ADDED_TIME_TO_FIRST_AUDIO_MS} ms limit is {} candidates with {} shaping; the largest configured store ({largest_count} candidates) does not",
+                store.candidate_count,
+                shaping_name(store.shaping)
+            ),
+            None => format!(
+                "no measured store fits the fixed {MAX_ADDED_TIME_TO_FIRST_AUDIO_MS} ms limit; the largest configured store ({largest_count} candidates) does not"
+            ),
+        });
     }
     if backend.backend_kind == BackendKind::Fixture {
         findings.push(
@@ -1940,6 +2069,7 @@ mod tests {
     use crate::{
         backends::remote_http::{RemoteRelevanceJudge, RemoteRelevanceJudgeConfig},
         pair_scoring::{PairScorer, PairScoringService},
+        trace::SemanticFailure,
     };
 
     use super::*;
@@ -2141,9 +2271,83 @@ mod tests {
         target.plan.shaping = QuestionShaping::PerCandidateRequest;
         target.plan.candidate_count = 100;
         target.plan.measurement_status = "derived_not_measured".to_owned();
-        let reports = with_derived_per_candidate_latency(vec![source, target], 4);
-        assert_eq!(reports[1].derived_end_to_end_p95_micros, Some(50_000));
-        assert_eq!(reports[1].end_to_end_latency.p95.value_micros, None);
+        let reports = with_derived_per_candidate_latency(vec![target, source], 4);
+        assert_eq!(reports[0].derived_end_to_end_p95_micros, Some(50_000));
+        assert_eq!(reports[0].end_to_end_latency.p95.value_micros, None);
+    }
+
+    #[test]
+    fn plan_runs_smallest_store_first_within_each_shaping() {
+        let plan =
+            plan_run(&options(PathBuf::from("runs/test")), &remote_settings()).expect("plan");
+        assert_eq!(
+            plan.cells
+                .iter()
+                .map(|cell| (cell.shaping, cell.candidate_count))
+                .collect::<Vec<_>>(),
+            vec![
+                (QuestionShaping::SharedStateQuestions, 18),
+                (QuestionShaping::SharedStateQuestions, 100),
+                (QuestionShaping::SharedStateQuestions, 500),
+                (QuestionShaping::PerCandidateRequest, 18),
+                (QuestionShaping::PerCandidateRequest, 100),
+                (QuestionShaping::PerCandidateRequest, 500),
+            ]
+        );
+        assert_eq!(plan.cells[3].measurement_status, "measured");
+        assert_eq!(plan.cells[4].measurement_status, "derived_not_measured");
+        assert!(render_plan(&plan).contains("stops after 3 consecutive failed invocations"));
+    }
+
+    #[test]
+    fn smaller_fitting_store_does_not_change_largest_store_verdict() {
+        let mut small = fake_cell(100_000, MIN_SAMPLES_FOR_P95);
+        small.plan.candidate_count = 18;
+        let mut large = fake_cell(100_000, MIN_SAMPLES_FOR_P95);
+        large.plan.candidate_count = 500;
+        large.failed_invocations = 1;
+        let derived = derive_injection_deadline(&[small, large], 500, 0, 1_000);
+        assert_eq!(derived.deadline_ms, None);
+        assert!(!derived.any_shape_fits_largest_store);
+        assert_eq!(derived.per_shaping[0].status, "failed_invocations");
+        assert_eq!(derived.largest_fitting_store_by_shaping.len(), 1);
+        let fitting = derived.largest_fitting_store.as_ref().expect("small fit");
+        assert_eq!(fitting.candidate_count, 18);
+        assert_eq!(fitting.deadline_ms, 100);
+        assert_eq!(fitting.sample_count, MIN_SAMPLES_FOR_P95);
+        let findings = build_findings(&[], &derived, &remote_settings(), 500);
+        assert!(
+            findings
+                .iter()
+                .any(|finding| finding.contains("18 candidates"))
+        );
+        assert!(
+            findings
+                .iter()
+                .any(|finding| finding.contains("(500 candidates) does not"))
+        );
+    }
+
+    #[test]
+    fn no_fitting_store_is_reported_as_none() {
+        let mut cell = fake_cell(301_000, MIN_SAMPLES_FOR_P95);
+        cell.plan.candidate_count = 500;
+        let derived = derive_injection_deadline(&[cell], 500, 0, 1_000);
+        assert_eq!(derived.deadline_ms, None);
+        assert!(derived.largest_fitting_store_by_shaping.is_empty());
+        assert_eq!(derived.largest_fitting_store, None);
+    }
+
+    #[test]
+    fn equal_sized_fitting_stores_choose_lower_deadline() {
+        let shared = fake_cell(150_000, MIN_SAMPLES_FOR_P95);
+        let mut per_candidate = fake_cell(100_000, MIN_SAMPLES_FOR_P95);
+        per_candidate.plan.shaping = QuestionShaping::PerCandidateRequest;
+        let derived = derive_injection_deadline(&[shared, per_candidate], 18, 0, 1_000);
+        assert_eq!(derived.largest_fitting_store_by_shaping.len(), 2);
+        let best = derived.largest_fitting_store.expect("best fit");
+        assert_eq!(best.shaping, QuestionShaping::PerCandidateRequest);
+        assert_eq!(best.deadline_ms, 100);
     }
 
     #[test]
@@ -2246,6 +2450,62 @@ mod tests {
         assert_eq!(service.0.load(Ordering::SeqCst), 0);
         assert!(run_dir.join("bench-plan.json").exists());
         assert!(!run_dir.join("bench-report.json").exists());
+    }
+
+    #[tokio::test]
+    async fn failed_cell_stops_after_three_and_next_cell_runs() {
+        let temp = tempdir().expect("temp");
+        let mut configured = options(temp.path().join("stopped"));
+        configured.candidate_counts = vec![2, 1];
+        configured.repetitions = 6;
+        let service = ScriptedService::new((0..100).collect());
+        let outcome = run_with_service(configured, remote_settings(), &service)
+            .await
+            .expect("bench");
+        let BenchOutcome::Completed { report_path } = outcome else {
+            panic!("report");
+        };
+        let report: BenchReport =
+            serde_json::from_slice(&fs::read(report_path).expect("report file"))
+                .expect("parse report");
+        assert_eq!(report.cells[0].sample_count, 3);
+        assert_eq!(report.cells[0].failed_invocations, 3);
+        let stop = report.cells[0].stop.as_ref().expect("early stop");
+        assert_eq!(stop.status, "stopped_after_consecutive_failures");
+        assert_eq!(stop.consecutive_failures, 3);
+        assert_eq!(
+            stop.last_failure_reason,
+            SemanticFailure::Timeout.to_string()
+        );
+        assert_eq!(report.cells[0].p95_fits_added_time_limit, None);
+        assert_eq!(report.cells[1].sample_count, 3);
+        assert!(report.cells[1].stop.is_some());
+        assert_eq!(service.calls.load(Ordering::SeqCst), 8);
+    }
+
+    #[tokio::test]
+    async fn success_resets_consecutive_failure_count() {
+        let temp = tempdir().expect("temp");
+        let mut configured = options(temp.path().join("reset"));
+        configured.candidate_counts = vec![1];
+        configured.repetitions = 6;
+        let service = ScriptedService::new(vec![1, 2, 4, 5, 6]);
+        let outcome = run_with_service(configured, remote_settings(), &service)
+            .await
+            .expect("bench");
+        let BenchOutcome::Completed { report_path } = outcome else {
+            panic!("report");
+        };
+        let report: BenchReport =
+            serde_json::from_slice(&fs::read(report_path).expect("report file"))
+                .expect("parse report");
+        assert_eq!(report.cells[0].sample_count, 6);
+        assert_eq!(report.cells[0].failed_invocations, 5);
+        assert_eq!(
+            report.cells[0].stop.as_ref().unwrap().consecutive_failures,
+            3
+        );
+        assert_eq!(service.calls.load(Ordering::SeqCst), 8);
     }
 
     #[test]
@@ -2507,6 +2767,42 @@ mod tests {
             self.0.fetch_add(1, Ordering::SeqCst);
             let scorer = FixtureRelevanceJudge::new(FixtureRelevanceJudgeConfig::default());
             Box::pin(async move { scorer.score_pairs(request) })
+        }
+    }
+
+    struct ScriptedService {
+        calls: Arc<AtomicUsize>,
+        failed_calls: Vec<usize>,
+    }
+
+    impl ScriptedService {
+        fn new(failed_calls: Vec<usize>) -> Self {
+            Self {
+                calls: Arc::new(AtomicUsize::new(0)),
+                failed_calls,
+            }
+        }
+    }
+
+    impl PairScoringService for ScriptedService {
+        fn score_pairs(
+            &self,
+            request: PairScoreRequest,
+            _deadline: InjectionDeadline,
+        ) -> std::pin::Pin<
+            Box<dyn std::future::Future<Output = Traced<Vec<crate::PairScore>>> + Send + '_>,
+        > {
+            let call = self.calls.fetch_add(1, Ordering::SeqCst);
+            let fails = self.failed_calls.contains(&call);
+            let scorer = FixtureRelevanceJudge::new(FixtureRelevanceJudgeConfig::default());
+            Box::pin(async move {
+                let mut traced = scorer.score_pairs(request);
+                if fails {
+                    traced.trace.failure = Some(SemanticFailure::Timeout);
+                    traced.outcome = Err(SemanticFailure::Timeout);
+                }
+                traced
+            })
         }
     }
 
